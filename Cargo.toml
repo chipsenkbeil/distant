@@ -12,13 +12,13 @@ codegen-units = 1
 
 [dependencies]
 derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error"] }
-hkdf = "0.11.0"
-hmac = "0.11.0"
-k256 = "0.9.6"
+directories = "3.0.2"
+fork = "0.1.18"
+hex = "0.4.3"
 log = "0.4.14"
+orion = "0.16.0"
 serde = { version = "1.0.126", features = ["derive"] }
 serde_cbor = "0.11.1"
-sha2 = "0.9.5"
 tokio = { version = "1.9.0", features = ["full"] }
 
 # Binary-specific dependencies
