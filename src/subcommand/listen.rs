@@ -1,4 +1,4 @@
-use crate::opt::ListenSubcommand;
+use crate::opt::{ConvertToIpAddrError, ListenSubcommand};
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
 use orion::aead::SecretKey;
@@ -9,49 +9,52 @@ pub type Result = std::result::Result<(), Error>;
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
+    ConvertToIpAddrError(ConvertToIpAddrError),
     ForkError,
     IoError(io::Error),
     Utf8Error(FromUtf8Error),
 }
 
 pub fn run(cmd: ListenSubcommand) -> Result {
-    // TODO: Determine actual port bound to pre-fork if possible...
-    //
-    // 1. See if we can bind to a tcp port and then fork
-    // 2. If not, we can still output to stdout in the child process (see publish_data); so,
-    //    would just bind early in the child process
-    let port = cmd.port;
-    let key = SecretKey::default();
-
     if cmd.daemon {
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
         match daemon(false, true) {
             Ok(Fork::Child) => {
-                publish_data(port, &key);
-
-                // For the child, we want to fully disconnect it from pipes, which we do now
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(async { run_async(cmd, true).await })?;
+            }
+            Ok(Fork::Parent(pid)) => {
+                eprintln!("[distant detached, pid = {}]", pid);
                 if let Err(_) = fork::close_fd() {
                     return Err(Error::ForkError);
                 }
-
-                let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(async { run_async(cmd).await })?;
             }
-            Ok(Fork::Parent(pid)) => eprintln!("[distant detached, pid = {}]", pid),
             Err(_) => return Err(Error::ForkError),
         }
     } else {
-        publish_data(port, &key);
-
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async { run_async(cmd).await })?;
+        rt.block_on(async { run_async(cmd, false).await })?;
     }
 
     // MAC -> Decrypt
     Ok(())
 }
 
-async fn run_async(_cmd: ListenSubcommand) -> Result {
+async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
+    let addr = cmd.host.to_ip_addr()?;
+    let socket_addrs = cmd.port.make_socket_addrs(addr);
+    let listener = tokio::net::TcpListener::bind(socket_addrs.as_slice()).await?;
+    let port = listener.local_addr()?.port();
+    let key = SecretKey::default();
+    publish_data(port, &key);
+
+    // For the child, we want to fully disconnect it from pipes, which we do now
+    if is_forked {
+        if let Err(_) = fork::close_fd() {
+            return Err(Error::ForkError);
+        }
+    }
+
     // TODO: Implement server logic
     Ok(())
 }

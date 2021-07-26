@@ -1,8 +1,9 @@
 use crate::subcommand;
-use derive_more::Display;
+use derive_more::{Display, Error, From};
 use lazy_static::lazy_static;
 use std::{
-    net::{AddrParseError, IpAddr, Ipv4Addr},
+    env,
+    net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     str::FromStr,
 };
@@ -77,6 +78,32 @@ pub enum BindAddress {
     Ip(IpAddr),
 }
 
+#[derive(Clone, Debug, Display, From, Error, PartialEq, Eq)]
+pub enum ConvertToIpAddrError {
+    ClientIpParseError(AddrParseError),
+    MissingClientIp,
+    VarError(env::VarError),
+}
+
+impl BindAddress {
+    /// Converts address into valid IP
+    pub fn to_ip_addr(&self) -> Result<IpAddr, ConvertToIpAddrError> {
+        match self {
+            Self::Ssh => {
+                let ssh_connection = env::var("SSH_CONNECTION")?;
+                let ip_str = ssh_connection
+                    .split(' ')
+                    .next()
+                    .ok_or(ConvertToIpAddrError::MissingClientIp)?;
+                let ip = ip_str.parse::<IpAddr>()?;
+                Ok(ip)
+            }
+            Self::Any => Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            Self::Ip(addr) => Ok(*addr),
+        }
+    }
+}
+
 impl FromStr for BindAddress {
     type Err = AddrParseError;
 
@@ -136,6 +163,62 @@ pub struct LaunchSubcommand {
     pub host: String,
 }
 
+/// Represents some range of ports
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PortRange {
+    pub start: u16,
+    pub end: Option<u16>,
+}
+
+impl PortRange {
+    /// Builds a collection of `SocketAddr` instances from the port range and given ip address
+    pub fn make_socket_addrs(&self, addr: impl Into<IpAddr>) -> Vec<SocketAddr> {
+        let mut socket_addrs = Vec::new();
+        let addr = addr.into();
+
+        for port in self.start..=self.end.unwrap_or(self.start) {
+            socket_addrs.push(SocketAddr::from((addr, port)));
+        }
+
+        socket_addrs
+    }
+}
+
+#[derive(Copy, Clone, Debug, Display, Error, PartialEq, Eq)]
+pub enum PortRangeParseError {
+    InvalidPort,
+    MissingPort,
+}
+
+impl FromStr for PortRange {
+    type Err = PortRangeParseError;
+
+    /// Parses PORT into single range or PORT1:PORTN into full range
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut tokens = s.trim().split(':');
+        let start = tokens
+            .next()
+            .ok_or(PortRangeParseError::MissingPort)?
+            .parse::<u16>()
+            .map_err(|_| PortRangeParseError::InvalidPort)?;
+        let end = if let Some(token) = tokens.next() {
+            Some(
+                token
+                    .parse::<u16>()
+                    .map_err(|_| PortRangeParseError::InvalidPort)?,
+            )
+        } else {
+            None
+        };
+
+        if tokens.next().is_some() {
+            return Err(PortRangeParseError::InvalidPort);
+        }
+
+        Ok(Self { start, end })
+    }
+}
+
 /// Represents subcommand to operate in listen mode for incoming requests
 #[derive(Debug, StructOpt)]
 pub struct ListenSubcommand {
@@ -151,7 +234,9 @@ pub struct ListenSubcommand {
     #[structopt(long)]
     pub bind_ssh_connection: bool,
 
-    /// Control the IP address that the distant binds to. There are three options here:
+    /// Control the IP address that the distant binds to
+    ///
+    /// There are three options here:
     ///
     /// 1. `ssh`: the server will reply from the IP address that the SSH
     /// connection came from (as found in the SSH_CONNECTION environment variable). This is
@@ -163,15 +248,14 @@ pub struct ListenSubcommand {
     ///
     /// 3. `IP`: the server will attempt to bind to the specified IP address.
     #[structopt(short, long, default_value = "localhost")]
-    pub host: String,
+    pub host: BindAddress,
 
-    /// Represents the port to bind to when listening
-    #[structopt(short, long, default_value = "60000")]
-    pub port: u16,
-
-    /// Represents total range of ports to try if a port is already taken
-    /// when binding, applying range incrementally against the specified
-    /// port (e.g. 60000-61000 inclusively if range is 1000)
-    #[structopt(long, default_value = "1000")]
-    pub port_range: u16,
+    // Set the port(s) that the server will attempt to bind to
+    //
+    // This can be in the form of PORT1 or PORT1:PORTN to provide a range of ports.
+    // With -p 0, the server will let the operating system pick an available TCP port.
+    //
+    // Please note that this option does not affect the server-side port used by SSH
+    #[structopt(short, long, default_value = "60000:61000")]
+    pub port: PortRange,
 }
