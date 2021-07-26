@@ -77,7 +77,7 @@ async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
     let (port, key) = result?;
     let key_hex_str = hex::encode(key.unprotected_as_bytes());
 
-    if cmd.print_startup_info {
+    if cmd.print_startup_data {
         println!("DISTANT DATA {} {}", port, key_hex_str);
     }
 

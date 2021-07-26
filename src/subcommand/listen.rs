@@ -46,7 +46,11 @@ async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
     let listener = tokio::net::TcpListener::bind(socket_addrs.as_slice()).await?;
     let port = listener.local_addr()?.port();
     let key = SecretKey::default();
-    publish_data(port, &key);
+
+    // Print information about port, key, etc. unless told not to
+    if !cmd.no_print_startup_data {
+        publish_data(port, &key);
+    }
 
     // For the child, we want to fully disconnect it from pipes, which we do now
     if is_forked {

@@ -122,7 +122,7 @@ impl FromStr for BindAddress {
 pub struct LaunchSubcommand {
     /// Outputs port and key of remotely-started binary
     #[structopt(long)]
-    pub print_startup_info: bool,
+    pub print_startup_data: bool,
 
     /// Path to remote program to execute via ssh
     #[structopt(short, long, default_value = "distant")]
@@ -143,7 +143,7 @@ pub struct LaunchSubcommand {
     /// another tool that makes the SSH connection appear to come from localhost.
     ///
     /// With --bind-server=IP, the server will attempt to bind to the specified IP address.
-    #[structopt(long, default_value = "ssh")]
+    #[structopt(long, value_name = "ssh|any|IP", default_value = "ssh")]
     pub bind_server: BindAddress,
 
     /// Username to use when sshing into remote machine
@@ -228,11 +228,7 @@ pub struct ListenSubcommand {
 
     /// Prevents output of selected port, key, and other info
     #[structopt(long)]
-    pub no_print_startup_info: bool,
-
-    /// If specified, will attempt to bind to SSH_CONNECTION instead of host
-    #[structopt(long)]
-    pub bind_ssh_connection: bool,
+    pub no_print_startup_data: bool,
 
     /// Control the IP address that the distant binds to
     ///
@@ -247,15 +243,20 @@ pub struct ListenSubcommand {
     /// another tool that makes the SSH connection appear to come from localhost.
     ///
     /// 3. `IP`: the server will attempt to bind to the specified IP address.
-    #[structopt(short, long, default_value = "localhost")]
+    #[structopt(short, long, value_name = "ssh|any|IP", default_value = "localhost")]
     pub host: BindAddress,
 
-    // Set the port(s) that the server will attempt to bind to
-    //
-    // This can be in the form of PORT1 or PORT1:PORTN to provide a range of ports.
-    // With -p 0, the server will let the operating system pick an available TCP port.
-    //
-    // Please note that this option does not affect the server-side port used by SSH
-    #[structopt(short, long, default_value = "60000:61000")]
+    /// Set the port(s) that the server will attempt to bind to
+    ///
+    /// This can be in the form of PORT1 or PORT1:PORTN to provide a range of ports.
+    /// With -p 0, the server will let the operating system pick an available TCP port.
+    ///
+    /// Please note that this option does not affect the server-side port used by SSH
+    #[structopt(
+        short,
+        long,
+        value_name = "PORT[:PORT2]",
+        default_value = "60000:61000"
+    )]
     pub port: PortRange,
 }
