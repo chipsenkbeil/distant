@@ -1,4 +1,4 @@
-use crate::subcommand;
+use crate::{subcommand, data::Operation};
 use derive_more::{Display, Error, From};
 use lazy_static::lazy_static;
 use std::{
@@ -64,9 +64,52 @@ impl Subcommand {
     }
 }
 
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+pub enum ExecuteFormat {
+    #[display(fmt = "shell")]
+    Shell,
+    #[display(fmt = "json")]
+    Json,
+}
+
+#[derive(Clone, Debug, Display, From, Error, PartialEq, Eq)]
+pub enum ExecuteFormatParseError {
+    InvalidVariant(#[error(not(source))] String),
+}
+
+impl FromStr for ExecuteFormat {
+    type Err = ExecuteFormatParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "shell" => Ok(Self::Shell),
+            "json" => Ok(Self::Json),
+            x => Err(ExecuteFormatParseError::InvalidVariant(x.to_string())),
+        }
+    }
+}
+
 /// Represents subcommand to execute some operation remotely
 #[derive(Debug, StructOpt)]
-pub struct ExecuteSubcommand {}
+#[structopt(verbatim_doc_comment)]
+pub struct ExecuteSubcommand {
+    /// Represents the format that results should be returned
+    ///
+    /// Currently, there are two possible formats:
+    /// 1. "shell": printing out human-readable results for interactive shell usage
+    /// 2. "json": printing our JSON for external program usage
+    #[structopt(
+        short, 
+        long, 
+        value_name = "shell|json", 
+        default_value = "shell", 
+        possible_values = &["shell", "json"]
+    )]
+    pub format: ExecuteFormat,
+
+    #[structopt(subcommand)]
+    pub operation: Operation,
+}
 
 /// Represents options for binding a server to an IP address
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]

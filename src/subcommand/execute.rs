@@ -3,8 +3,6 @@ use derive_more::{Display, Error, From};
 use orion::aead::SecretKey;
 use tokio::io;
 
-pub type Result = std::result::Result<(), Error>;
-
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
     #[display(fmt = "Invalid key for session")]
@@ -25,31 +23,14 @@ pub enum Error {
     NoSessionFile,
 }
 
-pub fn run(cmd: ExecuteSubcommand) -> Result {
+pub fn run(cmd: ExecuteSubcommand) -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async { run_async(cmd).await })
 }
 
-async fn run_async(_cmd: ExecuteSubcommand) -> Result {
-    // Load our session file's port and key
-    let (port, key) = {
-        let text = tokio::fs::read_to_string(SESSION_PATH.as_path())
-            .await
-            .map_err(|_| Error::NoSessionFile)?;
-        let mut tokens = text.split(' ').take(2);
-        let port = tokens
-            .next()
-            .ok_or(Error::MissingSessionPort)?
-            .parse::<u16>()
-            .map_err(|_| Error::InvalidSessionPort)?;
-        let key = SecretKey::from_slice(
-            &hex::decode(tokens.next().ok_or(Error::MissingSessionKey)?.to_string())
-                .map_err(|_| Error::InvalidSessionKey)?,
-        )
-        .map_err(|_| Error::InvalidSessionKey)?;
-        (port, key)
-    };
+async fn run_async(cmd: ExecuteSubcommand) -> Result<(), Error> {
+    let (port, key) = load_session().await?;
 
     println!(
         "PORT:{}; KEY:{}",
@@ -57,5 +38,26 @@ async fn run_async(_cmd: ExecuteSubcommand) -> Result {
         hex::encode(key.unprotected_as_bytes())
     );
 
+    println!("FORMAT: {}", cmd.format);
+    println!("OPERATION: {:?}", cmd.operation);
+
     Ok(())
+}
+
+async fn load_session() -> Result<(u16, SecretKey), Error> {
+    let text = tokio::fs::read_to_string(SESSION_PATH.as_path())
+        .await
+        .map_err(|_| Error::NoSessionFile)?;
+    let mut tokens = text.split(' ').take(2);
+    let port = tokens
+        .next()
+        .ok_or(Error::MissingSessionPort)?
+        .parse::<u16>()
+        .map_err(|_| Error::InvalidSessionPort)?;
+    let key = SecretKey::from_slice(
+        &hex::decode(tokens.next().ok_or(Error::MissingSessionKey)?.to_string())
+            .map_err(|_| Error::InvalidSessionKey)?,
+    )
+    .map_err(|_| Error::InvalidSessionKey)?;
+    Ok((port, key))
 }
