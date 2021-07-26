@@ -1,0 +1,28 @@
+[package]
+name = "distant"
+description = "Operate on a remote computer through file and process manipulation"
+version = "0.1.0"
+edition = "2018"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+
+[dependencies]
+derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error"] }
+hkdf = "0.11.0"
+hmac = "0.11.0"
+k256 = "0.9.6"
+log = "0.4.14"
+serde = { version = "1.0.126", features = ["derive"] }
+serde_cbor = "0.11.1"
+sha2 = "0.9.5"
+tokio = { version = "1.9.0", features = ["full"] }
+
+# Binary-specific dependencies
+lazy_static = "1.4.0"
+stderrlog = "0.5.1"
+structopt = "0.3.22"
+whoami = "1.1.2"
