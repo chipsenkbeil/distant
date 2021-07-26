@@ -16,10 +16,19 @@ pub enum Error {
     Utf8Error(FromUtf8Error),
 }
 
-pub async fn run(cmd: LaunchSubcommand) -> Result<(), Error> {
-    let remote_command = format!("{} listen --daemon --host 0.0.0.0", cmd.remote_program);
+pub fn run(cmd: LaunchSubcommand) -> Result<(), Error> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async { run_async(cmd).await })
+}
+
+async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
+    let remote_command = format!(
+        "{} listen --daemon --host {}",
+        cmd.remote_program, cmd.bind_server
+    );
     let ssh_command = format!(
-        "ssh -o StrictHostKeyChecking=no ssh://{}@{}:{} {} {}",
+        "{} -o StrictHostKeyChecking=no ssh://{}@{}:{} {} {}",
+        cmd.ssh_program,
         cmd.username,
         cmd.host,
         cmd.port,

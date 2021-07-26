@@ -25,7 +25,13 @@ pub enum Error {
     NoSessionFile,
 }
 
-pub async fn run(_cmd: ExecuteSubcommand) -> Result {
+pub fn run(cmd: ExecuteSubcommand) -> Result {
+    let rt = tokio::runtime::Runtime::new()?;
+
+    rt.block_on(async { run_async(cmd).await })
+}
+
+async fn run_async(_cmd: ExecuteSubcommand) -> Result {
     // Load our session file's port and key
     let (port, key) = {
         let text = tokio::fs::read_to_string(SESSION_PATH.as_path())
@@ -51,6 +57,5 @@ pub async fn run(_cmd: ExecuteSubcommand) -> Result {
         hex::encode(key.unprotected_as_bytes())
     );
 
-    // Encrypt -> MAC
     Ok(())
 }

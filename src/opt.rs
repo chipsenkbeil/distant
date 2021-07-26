@@ -1,6 +1,11 @@
 use crate::subcommand;
+use derive_more::Display;
 use lazy_static::lazy_static;
-use std::path::PathBuf;
+use std::{
+    net::{AddrParseError, IpAddr, Ipv4Addr},
+    path::PathBuf,
+    str::FromStr,
+};
 use structopt::StructOpt;
 
 lazy_static! {
@@ -47,11 +52,11 @@ pub enum Subcommand {
 
 impl Subcommand {
     /// Runs the subcommand, returning the result
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::Execute(cmd) => subcommand::execute::run(cmd).await?,
-            Self::Launch(cmd) => subcommand::launch::run(cmd).await?,
-            Self::Listen(cmd) => subcommand::listen::run(cmd).await?,
+            Self::Execute(cmd) => subcommand::execute::run(cmd)?,
+            Self::Launch(cmd) => subcommand::launch::run(cmd)?,
+            Self::Listen(cmd) => subcommand::listen::run(cmd)?,
         }
 
         Ok(())
@@ -61,6 +66,29 @@ impl Subcommand {
 /// Represents subcommand to execute some operation remotely
 #[derive(Debug, StructOpt)]
 pub struct ExecuteSubcommand {}
+
+/// Represents options for binding a server to an IP address
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+pub enum BindAddress {
+    #[display(fmt = "ssh")]
+    Ssh,
+    #[display(fmt = "any")]
+    Any,
+    Ip(IpAddr),
+}
+
+impl FromStr for BindAddress {
+    type Err = AddrParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "ssh" => Ok(Self::Ssh),
+            "any" => Ok(Self::Any),
+            "localhost" => Ok(Self::Ip(IpAddr::V4(Ipv4Addr::LOCALHOST))),
+            x => x.parse(),
+        }
+    }
+}
 
 /// Represents subcommand to launch a remote server
 #[derive(Debug, StructOpt)]
@@ -72,6 +100,24 @@ pub struct LaunchSubcommand {
     /// Path to remote program to execute via ssh
     #[structopt(short, long, default_value = "distant")]
     pub remote_program: String,
+
+    /// Path to ssh program to execute
+    #[structopt(short, long, default_value = "ssh")]
+    pub ssh_program: String,
+
+    /// Control the IP address that the mosh-server binds to.
+    ///
+    /// The default is `ssh', in which case the server will reply from the IP address that the SSH
+    /// connection came from (as found in the SSH_CONNECTION environment variable). This is
+    /// useful for multihomed servers.
+    ///
+    /// With --bind-server=any, the server will reply on the default interface and will not bind to
+    /// a particular IP address. This can be useful if the connection is made through sslh or
+    /// another tool that makes the SSH connection appear to come from localhost.
+    ///
+    /// With --bind-server=IP, the server will attempt to bind to the specified IP address.
+    #[structopt(long, default_value = "ssh")]
+    pub bind_server: BindAddress,
 
     /// Username to use when sshing into remote machine
     #[structopt(short, long, default_value = &USERNAME)]
@@ -101,7 +147,21 @@ pub struct ListenSubcommand {
     #[structopt(long)]
     pub no_print_startup_info: bool,
 
-    /// Represents the host to bind to when listening
+    /// If specified, will attempt to bind to SSH_CONNECTION instead of host
+    #[structopt(long)]
+    pub bind_ssh_connection: bool,
+
+    /// Control the IP address that the distant binds to. There are three options here:
+    ///
+    /// 1. `ssh`: the server will reply from the IP address that the SSH
+    /// connection came from (as found in the SSH_CONNECTION environment variable). This is
+    /// useful for multihomed servers.
+    ///
+    /// 2. `any`: the server will reply on the default interface and will not bind to
+    /// a particular IP address. This can be useful if the connection is made through sslh or
+    /// another tool that makes the SSH connection appear to come from localhost.
+    ///
+    /// 3. `IP`: the server will attempt to bind to the specified IP address.
     #[structopt(short, long, default_value = "localhost")]
     pub host: String,
 

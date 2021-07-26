@@ -14,6 +14,15 @@ lazy_static::lazy_static! {
     static ref SESSION_PATH: PathBuf = PROJECT_DIRS.cache_dir().join("session");
 }
 
+/// Main entrypoint into the program
+pub fn run() {
+    let opt = Opt::load();
+    init_logging(&opt.common);
+    if let Err(x) = opt.subcommand.run() {
+        eprintln!("{}", x);
+    }
+}
+
 pub fn init_logging(opt: &opt::CommonOpt) {
     stderrlog::new()
         .module("distant")
