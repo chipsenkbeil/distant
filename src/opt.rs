@@ -45,6 +45,9 @@ pub struct CommonOpt {
 
 #[derive(Debug, StructOpt)]
 pub enum Subcommand {
+    /// Clears the global session file
+    ClearSession,
+
     #[structopt(visible_aliases = &["exec", "x"])]
     Execute(ExecuteSubcommand),
     Launch(LaunchSubcommand),
@@ -55,6 +58,7 @@ impl Subcommand {
     /// Runs the subcommand, returning the result
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
+            Self::ClearSession => subcommand::clear_session::run()?,
             Self::Execute(cmd) => subcommand::execute::run(cmd)?,
             Self::Launch(cmd) => subcommand::launch::run(cmd)?,
             Self::Listen(cmd) => subcommand::listen::run(cmd)?,

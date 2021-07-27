@@ -1,9 +1,13 @@
-use crate::opt::{ConvertToIpAddrError, ListenSubcommand};
+use crate::{
+    data::{Operation, Response, ResponsePayload},
+    net::{Transport, TransportError},
+    opt::{ConvertToIpAddrError, ListenSubcommand},
+};
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
 use orion::aead::SecretKey;
-use std::string::FromUtf8Error;
-use tokio::io;
+use std::{string::FromUtf8Error, sync::Arc};
+use tokio::{io, net::TcpListener};
 
 pub type Result = std::result::Result<(), Error>;
 
@@ -36,16 +40,15 @@ pub fn run(cmd: ListenSubcommand) -> Result {
         rt.block_on(async { run_async(cmd, false).await })?;
     }
 
-    // MAC -> Decrypt
     Ok(())
 }
 
 async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
     let addr = cmd.host.to_ip_addr()?;
     let socket_addrs = cmd.port.make_socket_addrs(addr);
-    let listener = tokio::net::TcpListener::bind(socket_addrs.as_slice()).await?;
+    let listener = TcpListener::bind(socket_addrs.as_slice()).await?;
     let port = listener.local_addr()?.port();
-    let key = SecretKey::default();
+    let key = Arc::new(SecretKey::default());
 
     // Print information about port, key, etc. unless told not to
     if !cmd.no_print_startup_data {
@@ -59,7 +62,38 @@ async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
         }
     }
 
-    // TODO: Implement server logic
+    // Begin our listen loop
+    loop {
+        // Wait for a client connection
+        let (client, _) = listener.accept().await?;
+
+        // Build a transport around the client
+        let mut transport = Transport::new(client, Arc::clone(&key));
+
+        // Spawn a new task that loops to handle requests from the client
+        tokio::spawn(async move {
+            loop {
+                match transport.receive::<Operation>().await {
+                    Ok(_request) => {
+                        let response = Response::Error {
+                            msg: String::from("Unimplemented"),
+                        };
+
+                        if let Err(x) = transport.send(response).await {
+                            eprintln!("ERROR: {:?}", x);
+                            break;
+                        }
+                    }
+                    Err(x) => {
+                        eprintln!("ERROR: {:?}", x);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    #[allow(unreachable_code)]
     Ok(())
 }
 

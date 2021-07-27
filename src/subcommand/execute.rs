@@ -1,26 +1,17 @@
-use crate::{opt::ExecuteSubcommand, SESSION_PATH};
+use crate::{
+    data::Response,
+    net::{Transport, TransportError},
+    opt::ExecuteSubcommand,
+    utils::{Session, SessionError},
+};
 use derive_more::{Display, Error, From};
-use orion::aead::SecretKey;
 use tokio::io;
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
-    #[display(fmt = "Invalid key for session")]
-    InvalidSessionKey,
-
-    #[display(fmt = "Invalid port for session")]
-    InvalidSessionPort,
-
     IoError(io::Error),
-
-    #[display(fmt = "Missing key for session")]
-    MissingSessionKey,
-
-    #[display(fmt = "Missing port for session")]
-    MissingSessionPort,
-
-    #[display(fmt = "No session file: {:?}", SESSION_PATH.as_path())]
-    NoSessionFile,
+    SessionError(SessionError),
+    TransportError(TransportError),
 }
 
 pub fn run(cmd: ExecuteSubcommand) -> Result<(), Error> {
@@ -30,34 +21,19 @@ pub fn run(cmd: ExecuteSubcommand) -> Result<(), Error> {
 }
 
 async fn run_async(cmd: ExecuteSubcommand) -> Result<(), Error> {
-    let (port, key) = load_session().await?;
+    let session = Session::load().await?;
+    let mut transport = Transport::connect(session).await?;
 
-    println!(
-        "PORT:{}; KEY:{}",
-        port,
-        hex::encode(key.unprotected_as_bytes())
-    );
+    // Send our operation
+    transport.send(cmd.operation).await?;
 
-    println!("FORMAT: {}", cmd.format);
-    println!("OPERATION: {:?}", cmd.operation);
+    // Continue to receive and process responses as long as we get them or we decide to end
+    loop {
+        let response = transport.receive::<Response>().await?;
+        println!("RESPONSE: {:?}", response);
+    }
+
+    println!("DONE");
 
     Ok(())
-}
-
-async fn load_session() -> Result<(u16, SecretKey), Error> {
-    let text = tokio::fs::read_to_string(SESSION_PATH.as_path())
-        .await
-        .map_err(|_| Error::NoSessionFile)?;
-    let mut tokens = text.split(' ').take(2);
-    let port = tokens
-        .next()
-        .ok_or(Error::MissingSessionPort)?
-        .parse::<u16>()
-        .map_err(|_| Error::InvalidSessionPort)?;
-    let key = SecretKey::from_slice(
-        &hex::decode(tokens.next().ok_or(Error::MissingSessionKey)?.to_string())
-            .map_err(|_| Error::InvalidSessionKey)?,
-    )
-    .map_err(|_| Error::InvalidSessionKey)?;
-    Ok((port, key))
 }

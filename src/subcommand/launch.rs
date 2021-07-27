@@ -1,4 +1,4 @@
-use crate::{opt::LaunchSubcommand, PROJECT_DIRS, SESSION_PATH};
+use crate::{opt::LaunchSubcommand, utils::Session};
 use derive_more::{Display, Error, From};
 use hex::FromHexError;
 use orion::{aead::SecretKey, errors::UnknownCryptoError};
@@ -30,7 +30,7 @@ async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
         "{} -o StrictHostKeyChecking=no ssh://{}@{}:{} {} {}",
         cmd.ssh_program,
         cmd.username,
-        cmd.host,
+        cmd.host.as_str(),
         cmd.port,
         cmd.identity_file
             .map(|f| format!("-i {}", f.as_path().display()))
@@ -75,18 +75,17 @@ async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
 
     // Write a session file containing our data for use in subsequent calls
     let (port, key) = result?;
-    let key_hex_str = hex::encode(key.unprotected_as_bytes());
+    let session = Session {
+        host: cmd.host,
+        port,
+        key,
+    };
+
+    session.save().await?;
 
     if cmd.print_startup_data {
-        println!("DISTANT DATA {} {}", port, key_hex_str);
+        println!("DISTANT DATA {} {}", port, session.to_hex_key());
     }
-
-    // Ensure our cache directory exists
-    let cache_dir = PROJECT_DIRS.cache_dir();
-    tokio::fs::create_dir_all(cache_dir).await?;
-
-    // Write our session file
-    tokio::fs::write(SESSION_PATH.as_path(), format!("{} {}", port, key_hex_str)).await?;
 
     Ok(())
 }
