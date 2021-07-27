@@ -46,7 +46,9 @@ impl Transport {
     /// Sends some data across the wire
     pub async fn send<T: Serialize>(&mut self, data: T) -> Result<(), TransportError> {
         // Serialize, encrypt, and then (TODO) sign
-        let data = serde_cbor::ser::to_vec_packed(&data)?;
+        // NOTE: Cannot used packed implementation for now due to issues with deserialization
+        // let data = serde_cbor::ser::to_vec_packed(&data)?;
+        let data = serde_cbor::to_vec(&data)?;
         let data = aead::seal(&self.key, &data)?;
 
         self.inner

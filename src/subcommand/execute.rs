@@ -33,7 +33,5 @@ async fn run_async(cmd: ExecuteSubcommand) -> Result<(), Error> {
         println!("RESPONSE: {:?}", response);
     }
 
-    println!("DONE");
-
     Ok(())
 }
