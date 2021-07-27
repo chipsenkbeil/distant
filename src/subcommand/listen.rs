@@ -1,10 +1,11 @@
 use crate::{
-    data::{Operation, Response, ResponsePayload},
-    net::{Transport, TransportError},
-    opt::{ConvertToIpAddrError, ListenSubcommand},
+    data::{Operation, Response},
+    net::Transport,
+    opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
+use log::*;
 use orion::aead::SecretKey;
 use std::{string::FromUtf8Error, sync::Arc};
 use tokio::{io, net::TcpListener};
@@ -19,16 +20,16 @@ pub enum Error {
     Utf8Error(FromUtf8Error),
 }
 
-pub fn run(cmd: ListenSubcommand) -> Result {
+pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result {
     if cmd.daemon {
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
         match daemon(false, true) {
             Ok(Fork::Child) => {
                 let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(async { run_async(cmd, true).await })?;
+                rt.block_on(async { run_async(cmd, opt, true).await })?;
             }
             Ok(Fork::Parent(pid)) => {
-                eprintln!("[distant detached, pid = {}]", pid);
+                info!("[distant detached, pid = {}]", pid);
                 if let Err(_) = fork::close_fd() {
                     return Err(Error::ForkError);
                 }
@@ -37,17 +38,22 @@ pub fn run(cmd: ListenSubcommand) -> Result {
         }
     } else {
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async { run_async(cmd, false).await })?;
+        rt.block_on(async { run_async(cmd, opt, false).await })?;
     }
 
     Ok(())
 }
 
-async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
-    let addr = cmd.host.to_ip_addr()?;
+async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> Result {
+    let addr = cmd.host.to_ip_addr(cmd.use_ipv6)?;
     let socket_addrs = cmd.port.make_socket_addrs(addr);
+
+    debug!("Binding to {} in range {}", addr, cmd.port);
     let listener = TcpListener::bind(socket_addrs.as_slice()).await?;
+
     let port = listener.local_addr()?.port();
+    debug!("Bound to port: {}", port);
+
     let key = Arc::new(SecretKey::default());
 
     // Print information about port, key, etc. unless told not to
@@ -67,6 +73,19 @@ async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
         // Wait for a client connection
         let (client, _) = listener.accept().await?;
 
+        // Grab the client's remote address for later logging purposes
+        let addr_string = match client.peer_addr() {
+            Ok(addr) => {
+                let addr_string = addr.to_string();
+                info!("New client from {}", addr_string);
+                addr_string
+            }
+            Err(x) => {
+                error!("Unable to examine client's peer address: {}", x);
+                "???".to_string()
+            }
+        };
+
         // Build a transport around the client
         let mut transport = Transport::new(client, Arc::clone(&key));
 
@@ -74,18 +93,24 @@ async fn run_async(cmd: ListenSubcommand, is_forked: bool) -> Result {
         tokio::spawn(async move {
             loop {
                 match transport.receive::<Operation>().await {
-                    Ok(_request) => {
+                    Ok(request) => {
+                        trace!(
+                            "[{}] Received request of type {}",
+                            addr_string.as_str(),
+                            request.as_ref()
+                        );
+
                         let response = Response::Error {
                             msg: String::from("Unimplemented"),
                         };
 
                         if let Err(x) = transport.send(response).await {
-                            eprintln!("ERROR: {:?}", x);
+                            error!("{}", x);
                             break;
                         }
                     }
                     Err(x) => {
-                        eprintln!("ERROR: {:?}", x);
+                        error!("{}", x);
                         break;
                     }
                 }

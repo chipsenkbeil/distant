@@ -1,6 +1,10 @@
-use crate::{opt::LaunchSubcommand, utils::Session};
+use crate::{
+    opt::{CommonOpt, LaunchSubcommand},
+    utils::Session,
+};
 use derive_more::{Display, Error, From};
 use hex::FromHexError;
+use log::*;
 use orion::{aead::SecretKey, errors::UnknownCryptoError};
 use std::string::FromUtf8Error;
 use tokio::{io, process::Command};
@@ -16,15 +20,25 @@ pub enum Error {
     Utf8Error(FromUtf8Error),
 }
 
-pub fn run(cmd: LaunchSubcommand) -> Result<(), Error> {
+pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async { run_async(cmd).await })
+    rt.block_on(async { run_async(cmd, opt).await })
 }
 
-async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
+async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let remote_command = format!(
-        "{} listen --daemon --host {}",
-        cmd.remote_program, cmd.bind_server
+        "{} listen --daemon --host {} {} {} {}",
+        cmd.remote_program,
+        cmd.bind_server,
+        if cmd.use_ipv6 { "-6" } else { "" },
+        cmd.server_log_file
+            .as_ref()
+            .map(|path| format!("--log-file {:?}", path))
+            .unwrap_or_default(),
+        match cmd.server_log_level {
+            0 => String::new(),
+            n => format!("-{}", "v".repeat(n as usize)),
+        },
     );
     let ssh_command = format!(
         "{} -o StrictHostKeyChecking=no ssh://{}@{}:{} {} {}",
@@ -35,7 +49,7 @@ async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
         cmd.identity_file
             .map(|f| format!("-i {}", f.as_path().display()))
             .unwrap_or_default(),
-        remote_command,
+        remote_command.trim(),
     );
     let out = Command::new("sh")
         .arg("-c")
@@ -84,7 +98,7 @@ async fn run_async(cmd: LaunchSubcommand) -> Result<(), Error> {
     session.save().await?;
 
     if cmd.print_startup_data {
-        println!("DISTANT DATA {} {}", port, session.to_hex_key());
+        info!("DISTANT DATA {} {}", port, session.to_hex_key());
     }
 
     Ok(())

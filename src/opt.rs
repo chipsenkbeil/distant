@@ -3,7 +3,7 @@ use derive_more::{Display, Error, From};
 use lazy_static::lazy_static;
 use std::{
     env,
-    net::{AddrParseError, IpAddr, Ipv4Addr, SocketAddr},
+    net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     str::FromStr,
 };
@@ -41,6 +41,10 @@ pub struct CommonOpt {
     /// Quiet mode
     #[structopt(short, long, global = true)]
     pub quiet: bool,
+
+    /// Log output to disk instead of stderr
+    #[structopt(long, global = true)]
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -56,12 +60,12 @@ pub enum Subcommand {
 
 impl Subcommand {
     /// Runs the subcommand, returning the result
-    pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(self, opt: CommonOpt) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             Self::ClearSession => subcommand::clear_session::run()?,
-            Self::Execute(cmd) => subcommand::execute::run(cmd)?,
-            Self::Launch(cmd) => subcommand::launch::run(cmd)?,
-            Self::Listen(cmd) => subcommand::listen::run(cmd)?,
+            Self::Execute(cmd) => subcommand::execute::run(cmd, opt)?,
+            Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,
+            Self::Listen(cmd) => subcommand::listen::run(cmd, opt)?,
         }
 
         Ok(())
@@ -127,24 +131,28 @@ pub enum BindAddress {
 
 #[derive(Clone, Debug, Display, From, Error, PartialEq, Eq)]
 pub enum ConvertToIpAddrError {
-    ClientIpParseError(AddrParseError),
-    MissingClientIp,
+    AddrParseError(AddrParseError),
+    #[display(fmt = "SSH_CONNECTION missing 3rd argument (host ip)")]
+    MissingSshAddr,
     VarError(env::VarError),
 }
 
 impl BindAddress {
-    /// Converts address into valid IP
-    pub fn to_ip_addr(&self) -> Result<IpAddr, ConvertToIpAddrError> {
+    /// Converts address into valid IP; in the case of "any", will leverage the
+    /// `use_ipv6` flag to determine if binding should use ipv4 or ipv6
+    pub fn to_ip_addr(&self, use_ipv6: bool) -> Result<IpAddr, ConvertToIpAddrError> {
         match self {
             Self::Ssh => {
                 let ssh_connection = env::var("SSH_CONNECTION")?;
                 let ip_str = ssh_connection
                     .split(' ')
+                    .skip(2)
                     .next()
-                    .ok_or(ConvertToIpAddrError::MissingClientIp)?;
+                    .ok_or(ConvertToIpAddrError::MissingSshAddr)?;
                 let ip = ip_str.parse::<IpAddr>()?;
                 Ok(ip)
             }
+            Self::Any if use_ipv6 => Ok(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
             Self::Any => Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
             Self::Ip(addr) => Ok(*addr),
         }
@@ -159,7 +167,7 @@ impl FromStr for BindAddress {
             "ssh" => Ok(Self::Ssh),
             "any" => Ok(Self::Any),
             "localhost" => Ok(Self::Ip(IpAddr::V4(Ipv4Addr::LOCALHOST))),
-            x => x.parse(),
+            x => Ok(Self::Ip(x.parse::<IpAddr>()?)),
         }
     }
 }
@@ -193,6 +201,19 @@ pub struct LaunchSubcommand {
     #[structopt(long, value_name = "ssh|any|IP", default_value = "ssh")]
     pub bind_server: BindAddress,
 
+    /// If specified, will write server logs to a file instead of discarding them
+    #[structopt(long)]
+    pub server_log_file: Option<PathBuf>,
+
+    /// If specified, will set the server's log level (0 is warning and above, 1 is info, 2 is
+    /// debug, and 3 or higher is trace)
+    #[structopt(long, default_value = "0")]
+    pub server_log_level: u8,
+
+    /// If specified, will bind server to the ipv6 interface if host is "any" instead of ipv4
+    #[structopt(short = "6", long)]
+    pub use_ipv6: bool,
+
     /// Username to use when sshing into remote machine
     #[structopt(short, long, default_value = &USERNAME)]
     pub username: String,
@@ -211,7 +232,12 @@ pub struct LaunchSubcommand {
 }
 
 /// Represents some range of ports
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Display, PartialEq, Eq)]
+#[display(
+    fmt = "{}{}", 
+    start, 
+    "end.as_ref().map(|end| format!(\"[:{}]\", end)).unwrap_or_default()"
+)]
 pub struct PortRange {
     pub start: u16,
     pub end: Option<u16>,
@@ -292,6 +318,10 @@ pub struct ListenSubcommand {
     /// 3. `IP`: the server will attempt to bind to the specified IP address.
     #[structopt(short, long, value_name = "ssh|any|IP", default_value = "localhost")]
     pub host: BindAddress,
+
+    /// If specified, will bind to the ipv6 interface if host is "any" instead of ipv4
+    #[structopt(short = "6", long)]
+    pub use_ipv6: bool,
 
     /// Set the port(s) that the server will attempt to bind to
     ///

@@ -1,7 +1,7 @@
 use crate::{
     data::Response,
     net::{Transport, TransportError},
-    opt::ExecuteSubcommand,
+    opt::{CommonOpt, ExecuteSubcommand},
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
@@ -14,13 +14,13 @@ pub enum Error {
     TransportError(TransportError),
 }
 
-pub fn run(cmd: ExecuteSubcommand) -> Result<(), Error> {
+pub fn run(cmd: ExecuteSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new()?;
 
-    rt.block_on(async { run_async(cmd).await })
+    rt.block_on(async { run_async(cmd, opt).await })
 }
 
-async fn run_async(cmd: ExecuteSubcommand) -> Result<(), Error> {
+async fn run_async(cmd: ExecuteSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let session = Session::load().await?;
     let mut transport = Transport::connect(session).await?;
 

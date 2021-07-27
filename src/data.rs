@@ -1,15 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use structopt::StructOpt;
+use strum::AsRefStr;
 
 /// Represents an operation to be performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, StructOpt, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, StructOpt, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
     tag = "type",
     content = "payload"
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum Operation {
     /// Reads a file from the specified path on the remote machine
     #[structopt(visible_aliases = &["cat"])]
@@ -136,13 +138,14 @@ pub enum Operation {
 }
 
 /// Represents an response to an operation performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
     tag = "status",
     content = "payload"
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum Response {
     /// Represents a successfully-handled operation
     Ok(ResponsePayload),
@@ -155,7 +158,7 @@ pub enum Response {
 }
 
 /// Represents the payload of a successful response
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
