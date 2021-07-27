@@ -47,7 +47,6 @@ impl Transport {
     pub async fn send<T: Serialize>(&mut self, data: T) -> Result<(), TransportError> {
         // Serialize, encrypt, and then (TODO) sign
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        // let data = serde_cbor::ser::to_vec_packed(&data)?;
         let data = serde_cbor::to_vec(&data)?;
         let data = aead::seal(&self.key, &data)?;
 
@@ -57,24 +56,18 @@ impl Transport {
             .map_err(TransportError::CodecError)
     }
 
-    /// Receives some data from out on the wire, waiting until it's available
-    pub async fn receive<T: DeserializeOwned>(&mut self) -> Result<T, TransportError> {
-        loop {
-            if let Some(data) = self.try_receive().await? {
-                break Ok(data);
-            }
-        }
-    }
-
-    /// Attempts to receive some data from out on the wire, returning that data if available
-    /// or none if unavailable
-    pub async fn try_receive<T: DeserializeOwned>(&mut self) -> Result<Option<T>, TransportError> {
+    /// Receives some data from out on the wire, waiting until it's available,
+    /// returning none if the transport is now closed
+    pub async fn receive<T: DeserializeOwned>(&mut self) -> Result<Option<T>, TransportError> {
+        // If data is received, we process like usual
         if let Some(data) = self.inner.next().await {
-            // Validate (TODO), decrypt, and then deserialize
+            // Validate (TODO) signature, decrypt, and then deserialize
             let data = data?;
             let data = aead::open(&self.key, &data)?;
             let data = serde_cbor::from_slice(&data)?;
             Ok(Some(data))
+
+        // Otherwise, if no data is received, this means that our socket has closed
         } else {
             Ok(None)
         }

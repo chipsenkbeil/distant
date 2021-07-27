@@ -68,16 +68,14 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
         }
     }
 
-    // Begin our listen loop
-    loop {
-        // Wait for a client connection
-        let (client, _) = listener.accept().await?;
-
+    // Wait for a client connection, then spawn a new task to handle
+    // receiving data from the client
+    while let Ok((client, _)) = listener.accept().await {
         // Grab the client's remote address for later logging purposes
         let addr_string = match client.peer_addr() {
             Ok(addr) => {
                 let addr_string = addr.to_string();
-                info!("New client from {}", addr_string);
+                info!("<Client @ {}> Established connection", addr_string);
                 addr_string
             }
             Err(x) => {
@@ -93,9 +91,9 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
         tokio::spawn(async move {
             loop {
                 match transport.receive::<Operation>().await {
-                    Ok(request) => {
+                    Ok(Some(request)) => {
                         trace!(
-                            "[{}] Received request of type {}",
+                            "<Client @ {}> Received request of type {}",
                             addr_string.as_str(),
                             request.as_ref()
                         );
@@ -105,12 +103,16 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
                         };
 
                         if let Err(x) = transport.send(response).await {
-                            error!("{}", x);
+                            error!("<Client @ {}> {}", addr_string.as_str(), x);
                             break;
                         }
                     }
+                    Ok(None) => {
+                        info!("<Client @ {}> Closed connection", addr_string.as_str());
+                        break;
+                    }
                     Err(x) => {
-                        error!("{}", x);
+                        error!("<Client @ {}> {}", addr_string.as_str(), x);
                         break;
                     }
                 }
@@ -118,7 +120,6 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
         });
     }
 
-    #[allow(unreachable_code)]
     Ok(())
 }
 

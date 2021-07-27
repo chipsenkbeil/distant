@@ -4,7 +4,6 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use hex::FromHexError;
-use log::*;
 use orion::{aead::SecretKey, errors::UnknownCryptoError};
 use std::string::FromUtf8Error;
 use tokio::{io, process::Command};
@@ -27,18 +26,10 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let remote_command = format!(
-        "{} listen --daemon --host {} {} {} {}",
+        "{} listen --daemon --host {} {}",
         cmd.remote_program,
         cmd.bind_server,
-        if cmd.use_ipv6 { "-6" } else { "" },
-        cmd.server_log_file
-            .as_ref()
-            .map(|path| format!("--log-file {:?}", path))
-            .unwrap_or_default(),
-        match cmd.server_log_level {
-            0 => String::new(),
-            n => format!("-{}", "v".repeat(n as usize)),
-        },
+        cmd.extra_server_args.unwrap_or_default(),
     );
     let ssh_command = format!(
         "{} -o StrictHostKeyChecking=no ssh://{}@{}:{} {} {}",
@@ -98,7 +89,7 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
     session.save().await?;
 
     if cmd.print_startup_data {
-        info!("DISTANT DATA {} {}", port, session.to_hex_key());
+        println!("DISTANT DATA {} {}", port, session.to_hex_key());
     }
 
     Ok(())

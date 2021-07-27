@@ -187,7 +187,7 @@ pub struct LaunchSubcommand {
     #[structopt(short, long, default_value = "ssh")]
     pub ssh_program: String,
 
-    /// Control the IP address that the mosh-server binds to.
+    /// Control the IP address that the server binds to.
     ///
     /// The default is `ssh', in which case the server will reply from the IP address that the SSH
     /// connection came from (as found in the SSH_CONNECTION environment variable). This is
@@ -201,14 +201,9 @@ pub struct LaunchSubcommand {
     #[structopt(long, value_name = "ssh|any|IP", default_value = "ssh")]
     pub bind_server: BindAddress,
 
-    /// If specified, will write server logs to a file instead of discarding them
-    #[structopt(long)]
-    pub server_log_file: Option<PathBuf>,
-
-    /// If specified, will set the server's log level (0 is warning and above, 1 is info, 2 is
-    /// debug, and 3 or higher is trace)
-    #[structopt(long, default_value = "0")]
-    pub server_log_level: u8,
+    /// Additional arguments to provide to the server
+    #[structopt(long, allow_hyphen_values(true))]
+    pub extra_server_args: Option<String>,
 
     /// If specified, will bind server to the ipv6 interface if host is "any" instead of ipv4
     #[structopt(short = "6", long)]
@@ -333,7 +328,7 @@ pub struct ListenSubcommand {
         short,
         long,
         value_name = "PORT[:PORT2]",
-        default_value = "60000:61000"
+        default_value = "8080:8099"
     )]
     pub port: PortRange,
 }
