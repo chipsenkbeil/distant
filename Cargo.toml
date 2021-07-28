@@ -12,7 +12,7 @@ codegen-units = 1
 
 [dependencies]
 bytes = "1.0.1"
-derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error"] }
+derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error", "is_variant"] }
 directories = "3.0.2"
 futures = "0.3.16"
 hex = "0.4.3"
@@ -26,6 +26,7 @@ strum = { version = "0.21.0", features = ["derive"] }
 tokio = { version = "1.9.0", features = ["full"] }
 tokio-stream = { version = "0.1.7", features = ["sync"] }
 tokio-util = { version = "0.6.7", features = ["codec"] }
+walkdir = "2.3.2"
 
 # Binary-specific dependencies
 flexi_logger = "0.18.0"

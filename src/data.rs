@@ -1,3 +1,4 @@
+use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -23,7 +24,7 @@ impl From<RequestPayload> for Request {
 }
 
 /// Represents the payload of a request to be performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, StructOpt, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, StructOpt, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
@@ -35,6 +36,13 @@ pub enum RequestPayload {
     /// Reads a file from the specified path on the remote machine
     #[structopt(visible_aliases = &["cat"])]
     FileRead {
+        /// The path to the file on the remote machine
+        path: PathBuf,
+    },
+
+    /// Reads a file from the specified path on the remote machine
+    /// and treats the contents as text
+    FileReadText {
         /// The path to the file on the remote machine
         path: PathBuf,
     },
@@ -89,32 +97,32 @@ pub enum RequestPayload {
         all: bool,
     },
 
-    /// Removes a directory on the remote machine
-    DirRemove {
-        /// The path to the directory on the remote machine
+    /// Removes a file or directory on the remote machine
+    Remove {
+        /// The path to the file or directory on the remote machine
         path: PathBuf,
 
-        /// Whether or not to remove all contents within directory; if false
-        /// and there are still contents, then the directory is not removed
+        /// Whether or not to remove all contents within directory if is a directory.
+        /// Does nothing different for files
         #[structopt(short, long)]
-        all: bool,
+        force: bool,
     },
 
-    /// Copies a file/directory on the remote machine
+    /// Copies a file or directory on the remote machine
     Copy {
-        /// The path to the file/directory on the remote machine
+        /// The path to the file or directory on the remote machine
         src: PathBuf,
 
-        /// New location on the remote machine for copy of file/directory
+        /// New location on the remote machine for copy of file or directory
         dst: PathBuf,
     },
 
     /// Moves/renames a file or directory on the remote machine
     Rename {
-        /// The path to the file/directory on the remote machine
+        /// The path to the file or directory on the remote machine
         src: PathBuf,
 
-        /// New location on the remote machine for the file/directory
+        /// New location on the remote machine for the file or directory
         dst: PathBuf,
     },
 
@@ -197,7 +205,7 @@ impl From<ResponsePayload> for Response {
 }
 
 /// Represents the payload of a successful response
-#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
@@ -222,11 +230,10 @@ pub enum ResponsePayload {
         data: Vec<u8>,
     },
 
-    /// Response when some data was written on the remote machine
-    /// such as a file write or append
-    Written {
-        /// Total bytes written
-        bytes_written: usize,
+    /// Response containing some arbitrary, text data
+    Text {
+        /// Text data associated with the response
+        data: String,
     },
 
     /// Response to reading a directory
@@ -294,7 +301,7 @@ pub struct DirEntry {
 }
 
 /// Represents the type associated with a dir entry
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, untagged)]
 pub enum FileType {
     Dir,
