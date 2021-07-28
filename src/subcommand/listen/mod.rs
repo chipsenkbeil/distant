@@ -1,6 +1,6 @@
 use crate::{
     data::{Request, Response},
-    net::{Transport, TransportReadHalf, TransportWriteHalf},
+    net::{TransportReadHalf, TransportWriteHalf},
     opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
 };
 use derive_more::{Display, Error, From};
@@ -132,7 +132,9 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 
         // Build a transport around the client, splitting into read and write halves so we can
         // handle input and output concurrently
-        let (t_read, t_write) = Transport::new(client, Arc::clone(&key)).split();
+        let (r, w) = client.into_split();
+        let t_read = TransportReadHalf::new(r, Arc::clone(&key));
+        let t_write = TransportWriteHalf::new(w, Arc::clone(&key));
         let (tx, rx) = mpsc::channel(cmd.max_msg_capacity as usize);
 
         // Spawn a new task that loops to handle requests from the client
