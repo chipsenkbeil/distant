@@ -56,23 +56,23 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
 }
 
 fn print_response(fmt: ResponseFormat, res: Response) -> io::Result<()> {
-    // If we are not program format or we are program format and got stdout/stderr, we want
+    // If we are not shell format or we are shell format and got stdout/stderr, we want
     // to print out the results
-    let is_fmt_program = fmt.is_program();
+    let is_fmt_shell = fmt.is_shell();
     let is_type_stderr = res.payload.is_proc_stderr();
     let is_type_stdout = res.payload.is_proc_stdout();
-    let do_print = !is_fmt_program || is_type_stderr || is_type_stdout;
+    let do_print = !is_fmt_shell || is_type_stderr || is_type_stdout;
 
     let out = format_response(fmt, res)?;
 
     // Print out our response if flagged to do so
     if do_print {
-        // If we are program format and got stderr, write it to stderr without altering content
-        if is_fmt_program && is_type_stderr {
+        // If we are shell format and got stderr, write it to stderr without altering content
+        if is_fmt_shell && is_type_stderr {
             eprint!("{}", out);
 
-        // Else, if we are program format and got stdout, write it to stdout without altering content
-        } else if is_fmt_program && is_type_stdout {
+        // Else, if we are shell format and got stdout, write it to stdout without altering content
+        } else if is_fmt_shell && is_type_stdout {
             print!("{}", out);
 
         // Otherwise, always go to stdout with traditional println
@@ -86,14 +86,14 @@ fn print_response(fmt: ResponseFormat, res: Response) -> io::Result<()> {
 
 fn format_response(fmt: ResponseFormat, res: Response) -> io::Result<String> {
     Ok(match fmt {
+        ResponseFormat::Human => format_human(res),
         ResponseFormat::Json => serde_json::to_string(&res)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
-        ResponseFormat::Program => format_program(res),
-        ResponseFormat::Shell => format_human(res),
+        ResponseFormat::Shell => format_shell(res),
     })
 }
 
-fn format_program(res: Response) -> String {
+fn format_shell(res: Response) -> String {
     match res.payload {
         ResponsePayload::ProcStdout { data, .. } => String::from_utf8_lossy(&data).to_string(),
         ResponsePayload::ProcStderr { data, .. } => String::from_utf8_lossy(&data).to_string(),
