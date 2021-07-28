@@ -89,7 +89,7 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
     session.save().await?;
 
     if cmd.print_startup_data {
-        println!("DISTANT DATA {} {}", port, session.to_hex_key());
+        println!("DISTANT DATA {} {}", port, session.to_unprotected_hex_key());
     }
 
     Ok(())

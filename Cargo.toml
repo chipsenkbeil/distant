@@ -16,6 +16,7 @@ derive_more = { version = "0.99.16", default-features = false, features = ["disp
 directories = "3.0.2"
 futures = "0.3.16"
 hex = "0.4.3"
+k256 = { version = "0.9.6", features = ["ecdh"] }
 log = "0.4.14"
 orion = "0.16.0"
 rand = "0.8.4"

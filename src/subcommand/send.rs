@@ -23,7 +23,7 @@ pub fn run(cmd: SendSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let session = Session::load().await?;
-    let client = Client::connect(session).await?;
+    let mut client = Client::connect(session).await?;
 
     let req = Request::from(cmd.operation);
 
@@ -43,6 +43,12 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     if is_proc_req && not_detach {
         let mut stream = client.to_response_stream();
         while let Some(res) = stream.next().await {
+            let res = res.map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Response stream no longer available",
+                )
+            })?;
             let done = res.payload.is_proc_done();
             print_response(cmd.format, res)?;
 

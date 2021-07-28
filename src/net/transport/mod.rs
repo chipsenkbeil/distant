@@ -7,7 +7,7 @@ use orion::{
     errors::UnknownCryptoError,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     io,
     net::{tcp, TcpStream},
@@ -46,7 +46,13 @@ impl Transport {
         Ok(Self::new(stream, Arc::new(session.key)))
     }
 
+    /// Returns the address of the peer the transport is connected to
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.get_ref().peer_addr()
+    }
+
     /// Sends some data across the wire
+    #[allow(dead_code)]
     pub async fn send<T: Serialize>(&mut self, data: T) -> Result<(), TransportError> {
         // Serialize, encrypt, and then (TODO) sign
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
@@ -61,6 +67,7 @@ impl Transport {
 
     /// Receives some data from out on the wire, waiting until it's available,
     /// returning none if the transport is now closed
+    #[allow(dead_code)]
     pub async fn receive<T: DeserializeOwned>(&mut self) -> Result<Option<T>, TransportError> {
         // If data is received, we process like usual
         if let Some(data) = self.inner.next().await {

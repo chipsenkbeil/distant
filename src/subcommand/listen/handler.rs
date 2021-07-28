@@ -207,7 +207,7 @@ async fn proc_run(
     // Spawn a task that sends stdout as a response
     let tx_2 = tx.clone();
     let mut stdout = child.stdout.take().unwrap();
-    tokio::spawn(async move {
+    let stdout_task = tokio::spawn(async move {
         loop {
             let mut data = Vec::new();
             match stdout.read_to_end(&mut data).await {
@@ -228,7 +228,7 @@ async fn proc_run(
     // Spawn a task that sends stderr as a response
     let tx_2 = tx.clone();
     let mut stderr = child.stderr.take().unwrap();
-    tokio::spawn(async move {
+    let stderr_task = tokio::spawn(async move {
         loop {
             let mut data = Vec::new();
             match stderr.read_to_end(&mut data).await {
@@ -265,6 +265,14 @@ async fn proc_run(
     tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
+                if let Err(x) = stderr_task.await {
+                    error!("Join on stderr task failed: {}", x);
+                }
+
+                if let Err(x) = stdout_task.await {
+                    error!("Join on stdout task failed: {}", x);
+                }
+
                 match status {
                     Ok(status) => {
                         let success = status.success();
@@ -290,6 +298,14 @@ async fn proc_run(
             _ = kill_rx => {
                 if let Err(x) = child.kill().await {
                     error!("Unable to kill process {}: {}", id, x);
+                }
+
+                if let Err(x) = stderr_task.await {
+                    error!("Join on stderr task failed: {}", x);
+                }
+
+                if let Err(x) = stdout_task.await {
+                    error!("Join on stdout task failed: {}", x);
                 }
 
                 if let Err(_) = tx

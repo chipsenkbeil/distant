@@ -42,7 +42,7 @@ pub struct Session {
 
 impl Session {
     /// Returns a string representing the secret key as hex
-    pub fn to_hex_key(&self) -> String {
+    pub fn to_unprotected_hex_key(&self) -> String {
         hex::encode(self.key.unprotected_as_bytes())
     }
 
@@ -75,7 +75,7 @@ impl Session {
 
     /// Saves a session to disk
     pub async fn save(&self) -> io::Result<()> {
-        let key_hex_str = self.to_hex_key();
+        let key_hex_str = self.to_unprotected_hex_key();
 
         // Ensure our cache directory exists
         let cache_dir = PROJECT_DIRS.cache_dir();
