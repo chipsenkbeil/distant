@@ -121,7 +121,7 @@ pub struct ExecuteSubcommand {
         long, 
         value_name = "json|program|shell", 
         default_value = "shell", 
-        possible_values = &["shell", "json"]
+        possible_values = &["json", "program", "shell"]
     )]
     pub format: ExecuteFormat,
 
