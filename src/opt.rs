@@ -1,5 +1,5 @@
 use crate::{subcommand, data::RequestPayload};
-use derive_more::{Display, Error, From};
+use derive_more::{Display, Error, From, IsVariant};
 use lazy_static::lazy_static;
 use std::{
     env,
@@ -72,12 +72,20 @@ impl Subcommand {
     }
 }
 
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant)]
 pub enum ExecuteFormat {
-    #[display(fmt = "shell")]
-    Shell,
+    /// Output responses in JSON format
     #[display(fmt = "json")]
     Json,
+
+    /// Provides special formatting to stdout & stderr that only
+    /// outputs that of the remotely-executed program
+    #[display(fmt = "program")]
+    Program,
+
+    /// Output responses in human-readable format for shells
+    #[display(fmt = "shell")]
+    Shell,
 }
 
 #[derive(Clone, Debug, Display, From, Error, PartialEq, Eq)]
@@ -90,8 +98,9 @@ impl FromStr for ExecuteFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim() {
-            "shell" => Ok(Self::Shell),
             "json" => Ok(Self::Json),
+            "program" => Ok(Self::Program),
+            "shell" => Ok(Self::Shell),
             x => Err(ExecuteFormatParseError::InvalidVariant(x.to_string())),
         }
     }
@@ -104,12 +113,13 @@ pub struct ExecuteSubcommand {
     /// Represents the format that results should be returned
     ///
     /// Currently, there are two possible formats:
-    /// 1. "shell": printing out human-readable results for interactive shell usage
-    /// 2. "json": printing our JSON for external program usage
+    /// 1. "json": printing out JSON for external program usage
+    /// 2. "program": printing out verbatim all stdout and stderr of remotely-executed program 
+    /// 3. "shell": printing out human-readable results for interactive shell usage
     #[structopt(
         short, 
         long, 
-        value_name = "shell|json", 
+        value_name = "json|program|shell", 
         default_value = "shell", 
         possible_values = &["shell", "json"]
     )]
@@ -317,6 +327,10 @@ pub struct ListenSubcommand {
     /// If specified, will bind to the ipv6 interface if host is "any" instead of ipv4
     #[structopt(short = "6", long)]
     pub use_ipv6: bool,
+
+    /// Maximum capacity for concurrent message handling by the server
+    #[structopt(long, default_value = "1000")]
+    pub max_msg_capacity: u16,
 
     /// Set the port(s) that the server will attempt to bind to
     ///

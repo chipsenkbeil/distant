@@ -279,7 +279,7 @@ pub enum ResponsePayload {
     },
 
     /// Response to retrieving a list of managed processes
-    ProcList {
+    ProcEntries {
         /// List of managed processes
         entries: Vec<RunningProcess>,
     },

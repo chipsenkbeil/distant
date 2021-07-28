@@ -25,6 +25,7 @@ pub enum DistantCodecError {
 }
 
 /// Represents the codec to encode and decode data for transmission
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DistantCodec;
 
 impl<'a> Encoder<&'a [u8]> for DistantCodec {

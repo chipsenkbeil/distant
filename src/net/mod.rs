@@ -1,5 +1,5 @@
 mod transport;
-pub use transport::{Transport, TransportError};
+pub use transport::{Transport, TransportError, TransportReadHalf, TransportWriteHalf};
 
 use crate::{
     data::{Request, Response, ResponsePayload},
