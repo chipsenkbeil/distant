@@ -60,17 +60,22 @@ fn print_response(fmt: ResponseFormat, res: Response) -> io::Result<()> {
     // to print out the results
     let is_fmt_program = fmt.is_program();
     let is_type_stderr = res.payload.is_proc_stderr();
-    let do_print = !is_fmt_program || is_type_stderr || res.payload.is_proc_stdout();
+    let is_type_stdout = res.payload.is_proc_stdout();
+    let do_print = !is_fmt_program || is_type_stderr || is_type_stdout;
 
     let out = format_response(fmt, res)?;
 
     // Print out our response if flagged to do so
     if do_print {
-        // If we are program format and got stderr, write it to stderr
+        // If we are program format and got stderr, write it to stderr without altering content
         if is_fmt_program && is_type_stderr {
-            eprintln!("{}", out);
+            eprint!("{}", out);
 
-        // Otherwise, always go to stdout
+        // Else, if we are program format and got stdout, write it to stdout without altering content
+        } else if is_fmt_program && is_type_stdout {
+            print!("{}", out);
+
+        // Otherwise, always go to stdout with traditional println
         } else {
             println!("{}", out);
         }

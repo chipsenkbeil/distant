@@ -77,29 +77,25 @@ impl Transport {
     }
 
     /// Splits transport into read and write halves
-    #[allow(dead_code)]
-    pub fn split(self) -> (TransportReadHalf, TransportWriteHalf) {
+    pub fn into_split(self) -> (TransportReadHalf, TransportWriteHalf) {
         let key = self.key;
         let parts = self.inner.into_parts();
         let (read_half, write_half) = parts.io.into_split();
 
-        // TODO: I can't figure out a way to re-inject the read/write buffers from parts
-        //       into the new framed instances. This means we are dropping our old buffer
-        //       data (I think). This shouldn't be a problem since we are splitting
-        //       immediately, but it would be nice to cover this properly one day
-        //
-        //       From initial testing, this may actually be a problem where part of a frame
-        //       arrives so quickly that we lose the first message. So recommendation for
-        //       now is to create the frame halves separately first so we have no
-        //       chance of building a partial frame
-        //
-        //       See https://github.com/tokio-rs/tokio/issues/4000
+        // Create our split read half and populate its buffer with existing contents
+        let mut f_read = FramedRead::new(read_half, parts.codec);
+        *f_read.read_buffer_mut() = parts.read_buf;
+
+        // Create our split write half and populate its buffer with existing contents
+        let mut f_write = FramedWrite::new(write_half, parts.codec);
+        *f_write.write_buffer_mut() = parts.write_buf;
+
         let t_read = TransportReadHalf {
-            inner: FramedRead::new(read_half, parts.codec),
+            inner: f_read,
             key: Arc::clone(&key),
         };
         let t_write = TransportWriteHalf {
-            inner: FramedWrite::new(write_half, parts.codec),
+            inner: f_write,
             key,
         };
 
@@ -114,14 +110,6 @@ pub struct TransportWriteHalf {
 }
 
 impl TransportWriteHalf {
-    /// Creates a new transport write half directly from a TCP write half
-    pub fn new(write_half: tcp::OwnedWriteHalf, key: Arc<SecretKey>) -> Self {
-        Self {
-            inner: FramedWrite::new(write_half, DistantCodec),
-            key,
-        }
-    }
-
     /// Sends some data across the wire
     pub async fn send<T: Serialize>(&mut self, data: T) -> Result<(), TransportError> {
         // Serialize, encrypt, and then (TODO) sign
@@ -143,14 +131,6 @@ pub struct TransportReadHalf {
 }
 
 impl TransportReadHalf {
-    /// Creates a new transport read half directly from a TCP read half
-    pub fn new(read_half: tcp::OwnedReadHalf, key: Arc<SecretKey>) -> Self {
-        Self {
-            inner: FramedRead::new(read_half, DistantCodec),
-            key,
-        }
-    }
-
     /// Receives some data from out on the wire, waiting until it's available,
     /// returning none if the transport is now closed
     pub async fn receive<T: DeserializeOwned>(&mut self) -> Result<Option<T>, TransportError> {
