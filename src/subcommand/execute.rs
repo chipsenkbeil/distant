@@ -1,7 +1,7 @@
 use crate::{
-    data::Response,
-    net::{Transport, TransportError},
-    opt::{CommonOpt, ExecuteSubcommand},
+    data::{Request, Response},
+    net::{Client, TransportError},
+    opt::{CommonOpt, ExecuteFormat, ExecuteSubcommand},
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
@@ -22,16 +22,20 @@ pub fn run(cmd: ExecuteSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 async fn run_async(cmd: ExecuteSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let session = Session::load().await?;
-    let mut transport = Transport::connect(session).await?;
+    let client = Client::connect(session).await?;
 
-    // Send our operation
-    transport.send(cmd.operation).await?;
+    let req = Request::from(cmd.operation);
 
-    // Continue to receive and process responses as long as we get them or we decide to end
-    loop {
-        let response = transport.receive::<Response>().await?;
-        println!("RESPONSE: {:?}", response);
-    }
+    let res = client.send(req).await?;
+    let res_string = match cmd.format {
+        ExecuteFormat::Json => serde_json::to_string(&res)
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
+        ExecuteFormat::Shell => format!("{:?}", res),
+    };
+    println!("{}", res_string);
+
+    // TODO: Process result to determine if we want to create a watch stream and continue
+    //       to examine results
 
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::{
-    data::{Operation, Response},
+    data::{Request, Response, ResponsePayload},
     net::Transport,
     opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
 };
@@ -90,17 +90,20 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
         // Spawn a new task that loops to handle requests from the client
         tokio::spawn(async move {
             loop {
-                match transport.receive::<Operation>().await {
+                match transport.receive::<Request>().await {
                     Ok(Some(request)) => {
                         trace!(
                             "<Client @ {}> Received request of type {}",
                             addr_string.as_str(),
-                            request.as_ref()
+                            request.payload.as_ref()
                         );
 
-                        let response = Response::Error {
-                            msg: String::from("Unimplemented"),
-                        };
+                        let response = Response::from_payload_with_origin(
+                            ResponsePayload::Error {
+                                description: String::from("Unimplemented"),
+                            },
+                            request.id,
+                        );
 
                         if let Err(x) = transport.send(response).await {
                             error!("<Client @ {}> {}", addr_string.as_str(), x);

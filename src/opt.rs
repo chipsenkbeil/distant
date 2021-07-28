@@ -1,4 +1,4 @@
-use crate::{subcommand, data::Operation};
+use crate::{subcommand, data::RequestPayload};
 use derive_more::{Display, Error, From};
 use lazy_static::lazy_static;
 use std::{
@@ -116,7 +116,7 @@ pub struct ExecuteSubcommand {
     pub format: ExecuteFormat,
 
     #[structopt(subcommand)]
-    pub operation: Operation,
+    pub operation: RequestPayload,
 }
 
 /// Represents options for binding a server to an IP address

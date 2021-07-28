@@ -3,16 +3,35 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 use strum::AsRefStr;
 
-/// Represents an operation to be performed on the remote machine
+/// Represents the request to be performed on the remote machine
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct Request {
+    /// A unique id associated with the request
+    pub id: usize,
+
+    /// The main payload containing the type and data of the request
+    pub payload: RequestPayload,
+}
+
+impl From<RequestPayload> for Request {
+    /// Produces a new request with the given payload and a randomly-generated id
+    fn from(payload: RequestPayload) -> Self {
+        let id = rand::random();
+        Self { id, payload }
+    }
+}
+
+/// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, AsRefStr, StructOpt, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
     tag = "type",
-    content = "payload"
+    content = "data"
 )]
 #[strum(serialize_all = "snake_case")]
-pub enum Operation {
+pub enum RequestPayload {
     /// Reads a file from the specified path on the remote machine
     #[structopt(visible_aliases = &["cat"])]
     FileRead {
@@ -137,24 +156,44 @@ pub enum Operation {
     ProcList {},
 }
 
-/// Represents an response to an operation performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, Serialize, Deserialize)]
-#[serde(
-    rename_all = "snake_case",
-    deny_unknown_fields,
-    tag = "status",
-    content = "payload"
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum Response {
-    /// Represents a successfully-handled operation
-    Ok(ResponsePayload),
+/// Represents an response to a request performed on the remote machine
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct Response {
+    /// A unique id associated with the response
+    pub id: usize,
 
-    /// Represents an operation that failed
-    Error {
-        /// The message associated with the failure
-        msg: String,
-    },
+    /// The id of the originating request, if there was one
+    /// (some responses are sent unprompted)
+    pub origin_id: Option<usize>,
+
+    /// The main payload containing the type and data of the response
+    pub payload: ResponsePayload,
+}
+
+impl Response {
+    /// Produces a new response with the given payload and origin id while supplying
+    /// randomly-generated id
+    pub fn from_payload_with_origin(payload: ResponsePayload, origin_id: usize) -> Self {
+        let id = rand::random();
+        Self {
+            id,
+            origin_id: Some(origin_id),
+            payload,
+        }
+    }
+}
+
+impl From<ResponsePayload> for Response {
+    /// Produces a new response with the given payload, no origin id, and a randomly-generated id
+    fn from(payload: ResponsePayload) -> Self {
+        let id = rand::random();
+        Self {
+            id,
+            origin_id: None,
+            payload,
+        }
+    }
 }
 
 /// Represents the payload of a successful response
@@ -166,73 +205,34 @@ pub enum Response {
     content = "data"
 )]
 pub enum ResponsePayload {
-    /// Response to reading a file
-    FileRead {
-        /// The path to the file on the remote machine
-        path: PathBuf,
+    /// General okay with no extra data, returned in cases like
+    /// creating or removing a directory, copying a file, or renaming
+    /// a file
+    Ok,
 
-        /// Contents of the file
+    /// General-purpose failure that occurred from some request
+    Error {
+        /// Details about the error
+        description: String,
+    },
+
+    /// Response containing some arbitrary, binary data
+    Blob {
+        /// Binary data associated with the response
         data: Vec<u8>,
     },
 
-    /// Response to writing a file
-    FileWrite {
-        /// The path to the file on the remote machine
-        path: PathBuf,
-
-        /// Total bytes written
-        bytes_written: usize,
-    },
-
-    /// Response to appending to a file
-    FileAppend {
-        /// The path to the file on the remote machine
-        path: PathBuf,
-
+    /// Response when some data was written on the remote machine
+    /// such as a file write or append
+    Written {
         /// Total bytes written
         bytes_written: usize,
     },
 
     /// Response to reading a directory
-    DirRead {
-        /// The path to the directory on the remote machine
-        path: PathBuf,
-
-        /// Entries contained within directory
+    DirEntries {
+        /// Entries contained within the requested directory
         entries: Vec<DirEntry>,
-    },
-
-    /// Response to creating a directory
-    DirCreate {
-        /// The path to the directory on the remote machine
-        path: PathBuf,
-    },
-
-    /// Response to removing a directory
-    DirRemove {
-        /// The path to the directory on the remote machine
-        path: PathBuf,
-
-        /// Total files & directories removed within the directory (0 if directory was empty)
-        total_removed: usize,
-    },
-
-    /// Response to copying a file/directory
-    Copy {
-        /// The path to the file/directory on the remote machine
-        src: PathBuf,
-
-        /// New location on the remote machine for copy of file/directory
-        dst: PathBuf,
-    },
-
-    /// Response to moving/renaming a file/directory
-    Rename {
-        /// The path to the file/directory on the remote machine
-        src: PathBuf,
-
-        /// New location on the remote machine for the file/directory
-        dst: PathBuf,
     },
 
     /// Response to starting a new process
