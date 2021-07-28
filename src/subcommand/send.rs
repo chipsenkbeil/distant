@@ -1,7 +1,7 @@
 use crate::{
     data::{Request, RequestPayload, Response, ResponsePayload},
     net::{Client, TransportError},
-    opt::{CommonOpt, ExecuteFormat, ExecuteSubcommand},
+    opt::{CommonOpt, ResponseFormat, SendSubcommand},
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
@@ -15,13 +15,13 @@ pub enum Error {
     TransportError(TransportError),
 }
 
-pub fn run(cmd: ExecuteSubcommand, opt: CommonOpt) -> Result<(), Error> {
+pub fn run(cmd: SendSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async { run_async(cmd, opt).await })
 }
 
-async fn run_async(cmd: ExecuteSubcommand, _opt: CommonOpt) -> Result<(), Error> {
+async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let session = Session::load().await?;
     let client = Client::connect(session).await?;
 
@@ -55,7 +55,7 @@ async fn run_async(cmd: ExecuteSubcommand, _opt: CommonOpt) -> Result<(), Error>
     Ok(())
 }
 
-fn print_response(fmt: ExecuteFormat, res: Response) -> io::Result<()> {
+fn print_response(fmt: ResponseFormat, res: Response) -> io::Result<()> {
     // If we are not program format or we are program format and got stdout/stderr, we want
     // to print out the results
     let is_fmt_program = fmt.is_program();
@@ -79,12 +79,12 @@ fn print_response(fmt: ExecuteFormat, res: Response) -> io::Result<()> {
     Ok(())
 }
 
-fn format_response(fmt: ExecuteFormat, res: Response) -> io::Result<String> {
+fn format_response(fmt: ResponseFormat, res: Response) -> io::Result<String> {
     Ok(match fmt {
-        ExecuteFormat::Json => serde_json::to_string(&res)
+        ResponseFormat::Json => serde_json::to_string(&res)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
-        ExecuteFormat::Program => format_program(res),
-        ExecuteFormat::Shell => format_human(res),
+        ResponseFormat::Program => format_program(res),
+        ResponseFormat::Shell => format_human(res),
     })
 }
 

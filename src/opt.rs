@@ -49,12 +49,16 @@ pub struct CommonOpt {
 
 #[derive(Debug, StructOpt)]
 pub enum Subcommand {
-    /// Clears the global session file
-    ClearSession,
+    /// Performs some task related to the current session
+    Session(SessionSubcommand),
 
-    #[structopt(visible_aliases = &["exec", "x"])]
-    Execute(ExecuteSubcommand),
+    /// Sends some operation to be performed on a remote machine
+    Send(SendSubcommand),
+
+    /// Launches the server-portion of the binary on a remote machine
     Launch(LaunchSubcommand),
+
+    /// Begins listening for incoming requests
     Listen(ListenSubcommand),
 }
 
@@ -62,8 +66,8 @@ impl Subcommand {
     /// Runs the subcommand, returning the result
     pub fn run(self, opt: CommonOpt) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::ClearSession => subcommand::clear_session::run()?,
-            Self::Execute(cmd) => subcommand::execute::run(cmd, opt)?,
+            Self::Session(cmd) => subcommand::session::run(cmd, opt)?,
+            Self::Send(cmd) => subcommand::send::run(cmd, opt)?,
             Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,
             Self::Listen(cmd) => subcommand::listen::run(cmd, opt)?,
         }
@@ -72,8 +76,15 @@ impl Subcommand {
     }
 }
 
+/// Represents subcommand to operate on a session
+#[derive(Debug, StructOpt)]
+pub enum SessionSubcommand {
+    /// Clears the current session
+    Clear,
+}
+
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant)]
-pub enum ExecuteFormat {
+pub enum ResponseFormat {
     /// Output responses in JSON format
     #[display(fmt = "json")]
     Json,
@@ -89,19 +100,19 @@ pub enum ExecuteFormat {
 }
 
 #[derive(Clone, Debug, Display, From, Error, PartialEq, Eq)]
-pub enum ExecuteFormatParseError {
+pub enum ResponseFormatParseError {
     InvalidVariant(#[error(not(source))] String),
 }
 
-impl FromStr for ExecuteFormat {
-    type Err = ExecuteFormatParseError;
+impl FromStr for ResponseFormat {
+    type Err = ResponseFormatParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim() {
             "json" => Ok(Self::Json),
             "program" => Ok(Self::Program),
             "shell" => Ok(Self::Shell),
-            x => Err(ExecuteFormatParseError::InvalidVariant(x.to_string())),
+            x => Err(ResponseFormatParseError::InvalidVariant(x.to_string())),
         }
     }
 }
@@ -109,7 +120,7 @@ impl FromStr for ExecuteFormat {
 /// Represents subcommand to execute some operation remotely
 #[derive(Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
-pub struct ExecuteSubcommand {
+pub struct SendSubcommand {
     /// Represents the format that results should be returned
     ///
     /// Currently, there are two possible formats:
@@ -123,7 +134,7 @@ pub struct ExecuteSubcommand {
         default_value = "shell", 
         possible_values = &["json", "program", "shell"]
     )]
-    pub format: ExecuteFormat,
+    pub format: ResponseFormat,
 
     #[structopt(subcommand)]
     pub operation: RequestPayload,
