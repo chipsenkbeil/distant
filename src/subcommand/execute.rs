@@ -43,7 +43,12 @@ async fn run_async(cmd: ExecuteSubcommand, _opt: CommonOpt) -> Result<(), Error>
     if is_proc_req && not_detach {
         let mut stream = client.to_response_stream();
         while let Some(res) = stream.next().await {
+            let done = res.payload.is_proc_done();
             print_response(cmd.format, res)?;
+
+            if done {
+                break;
+            }
         }
     }
 

@@ -211,7 +211,7 @@ async fn proc_run(
         loop {
             let mut data = Vec::new();
             match stdout.read_to_end(&mut data).await {
-                Ok(_) => {
+                Ok(n) if n > 0 => {
                     if let Err(_) = tx_2
                         .send(Response::from(ResponsePayload::ProcStdout { id, data }))
                         .await
@@ -219,25 +219,28 @@ async fn proc_run(
                         break;
                     }
                 }
+                Ok(_) => break,
                 Err(_) => break,
             }
         }
     });
 
     // Spawn a task that sends stderr as a response
+    let tx_2 = tx.clone();
     let mut stderr = child.stderr.take().unwrap();
     tokio::spawn(async move {
         loop {
             let mut data = Vec::new();
             match stderr.read_to_end(&mut data).await {
-                Ok(_) => {
-                    if let Err(_) = tx
+                Ok(n) if n > 0 => {
+                    if let Err(_) = tx_2
                         .send(Response::from(ResponsePayload::ProcStderr { id, data }))
                         .await
                     {
                         break;
                     }
                 }
+                Ok(_) => break,
                 Err(_) => break,
             }
         }
@@ -256,12 +259,46 @@ async fn proc_run(
         }
     });
 
-    // Spawn a task that kills the process when triggered
+    // Spawn a task that waits on the process to exit but can also
+    // kill the process when triggered
     let (kill_tx, kill_rx) = oneshot::channel();
     tokio::spawn(async move {
-        let _ = kill_rx.await;
-        if let Err(x) = child.kill().await {
-            error!("Unable to kill process {}: {}", id, x);
+        tokio::select! {
+            status = child.wait() => {
+                match status {
+                    Ok(status) => {
+                        let success = status.success();
+                        let code = status.code();
+                        if let Err(_) = tx
+                            .send(Response::from(ResponsePayload::ProcDone { id, success, code }))
+                            .await
+                        {
+                            error!("Failed to send done for process {}!", id);
+                        }
+                    }
+                    Err(x) => {
+                        if let Err(_) = tx
+                            .send(Response::from(ResponsePayload::Error { description: x.to_string() }))
+                            .await
+                        {
+                            error!("Failed to send error for waiting on process {}!", id);
+                        }
+                    }
+                }
+
+            },
+            _ = kill_rx => {
+                if let Err(x) = child.kill().await {
+                    error!("Unable to kill process {}: {}", id, x);
+                }
+
+                if let Err(_) = tx
+                    .send(Response::from(ResponsePayload::ProcDone { id, success: false, code: None }))
+                    .await
+                {
+                    error!("Failed to send done for process {}!", id);
+                }
+            }
         }
     });
 
