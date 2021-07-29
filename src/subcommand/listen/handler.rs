@@ -40,7 +40,6 @@ pub(super) async fn process(
             RequestPayload::ProcRun { cmd, args, detach } => {
                 proc_run(client_id, state, tx, cmd, args, detach).await
             }
-            RequestPayload::ProcConnect { id } => proc_connect(id).await,
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
             RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestPayload::ProcList {} => proc_list(state).await,
@@ -340,10 +339,6 @@ async fn proc_run(
     }
 
     Ok(ResponsePayload::ProcStart { id })
-}
-
-async fn proc_connect(id: usize) -> Result<ResponsePayload, Box<dyn Error>> {
-    todo!();
 }
 
 async fn proc_kill(state: HState, id: usize) -> Result<ResponsePayload, Box<dyn Error>> {

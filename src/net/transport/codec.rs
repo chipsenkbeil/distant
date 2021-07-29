@@ -1,5 +1,4 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use derive_more::{Display, Error, From};
+use bytes::{Buf, BufMut, BytesMut};
 use std::convert::TryInto;
 use tokio::io;
 use tokio_util::codec::{Decoder, Encoder};
@@ -13,20 +12,12 @@ fn frame_size(msg_size: usize) -> usize {
     LEN_SIZE + msg_size
 }
 
-/// Possible errors that can occur during encoding and decoding
-#[derive(Debug, Display, Error, From)]
-pub enum DistantCodecError {
-    #[display(fmt = "Corrupt Marker: {:?}", _0)]
-    CorruptMarker(#[error(not(source))] Bytes),
-    IoError(io::Error),
-}
-
 /// Represents the codec to encode and decode data for transmission
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DistantCodec;
 
 impl<'a> Encoder<&'a [u8]> for DistantCodec {
-    type Error = DistantCodecError;
+    type Error = io::Error;
 
     fn encode(&mut self, item: &'a [u8], dst: &mut BytesMut) -> Result<(), Self::Error> {
         // Add our full frame to the bytes
@@ -40,7 +31,7 @@ impl<'a> Encoder<&'a [u8]> for DistantCodec {
 
 impl Decoder for DistantCodec {
     type Item = Vec<u8>;
-    type Error = DistantCodecError;
+    type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // First, check if we have more data than just our frame's message length

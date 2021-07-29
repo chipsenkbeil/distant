@@ -79,17 +79,21 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
         .unwrap_or(Err(Error::MissingSessionData));
 
     // Write a session file containing our data for use in subsequent calls
-    let (port, key) = result?;
+    let (port, auth_key) = result?;
     let session = Session {
         host: cmd.host,
         port,
-        key,
+        auth_key,
     };
 
     session.save().await?;
 
     if cmd.print_startup_data {
-        println!("DISTANT DATA {} {}", port, session.to_unprotected_hex_key());
+        println!(
+            "DISTANT DATA {} {}",
+            port,
+            session.to_unprotected_hex_auth_key()
+        );
     }
 
     Ok(())

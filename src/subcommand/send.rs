@@ -29,7 +29,7 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let req = Request::from(cmd.operation);
 
     // Special conditions for continuing to process responses
-    let is_proc_req = req.payload.is_proc_run() || req.payload.is_proc_connect();
+    let is_proc_req = req.payload.is_proc_run();
     let not_detach = if let RequestPayload::ProcRun { detach, .. } = req.payload {
         !detach
     } else {

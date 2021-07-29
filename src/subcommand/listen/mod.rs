@@ -136,9 +136,18 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
         // Create a unique id for the client
         let id = rand::random();
 
-        // Build a transport around the client, splitting into read and write halves so we can
-        // handle input and output concurrently
-        let (t_read, t_write) = Transport::new(client, Arc::clone(&key)).into_split();
+        // Establish a proper connection via a handshake, discarding the connection otherwise
+        let transport = match Transport::from_handshake(client, Arc::clone(&key)).await {
+            Ok(transport) => transport,
+            Err(x) => {
+                error!("<Client @ {}> Failed handshake: {}", addr_string, x);
+                continue;
+            }
+        };
+
+        // Split the transport into read and write halves so we can handle input
+        // and output concurrently
+        let (t_read, t_write) = transport.into_split();
         let (tx, rx) = mpsc::channel(cmd.max_msg_capacity as usize);
 
         // Spawn a new task that loops to handle requests from the client

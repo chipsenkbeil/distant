@@ -37,13 +37,13 @@ pub enum SessionError {
 pub struct Session {
     pub host: String,
     pub port: u16,
-    pub key: SecretKey,
+    pub auth_key: SecretKey,
 }
 
 impl Session {
     /// Returns a string representing the secret key as hex
-    pub fn to_unprotected_hex_key(&self) -> String {
-        hex::encode(self.key.unprotected_as_bytes())
+    pub fn to_unprotected_hex_auth_key(&self) -> String {
+        hex::encode(self.auth_key.unprotected_as_bytes())
     }
 
     /// Returns the ip address associated with the session based on the host
@@ -75,7 +75,7 @@ impl Session {
 
     /// Saves a session to disk
     pub async fn save(&self) -> io::Result<()> {
-        let key_hex_str = self.to_unprotected_hex_key();
+        let key_hex_str = self.to_unprotected_hex_auth_key();
 
         // Ensure our cache directory exists
         let cache_dir = PROJECT_DIRS.cache_dir();
@@ -115,12 +115,16 @@ impl Session {
             .map_err(|_| SessionError::InvalidSessionPort)?;
 
         // Third, load up the key and convert it back into a secret key from a hex slice
-        let key = SecretKey::from_slice(
+        let auth_key = SecretKey::from_slice(
             &hex::decode(tokens.next().ok_or(SessionError::MissingSessionKey)?.trim())
                 .map_err(|_| SessionError::BadSessionHexKey)?,
         )
         .map_err(|_| SessionError::InvalidSessionKey)?;
 
-        Ok(Session { host, port, key })
+        Ok(Session {
+            host,
+            port,
+            auth_key,
+        })
     }
 }

@@ -139,12 +139,6 @@ pub enum RequestPayload {
         detach: bool,
     },
 
-    /// Re-connects to a detached process on the remote machine (to receive stdout/stderr)
-    ProcConnect {
-        /// Id of the actively-running process
-        id: usize,
-    },
-
     /// Kills a process running on the remote machine
     ProcKill {
         /// Id of the actively-running process
