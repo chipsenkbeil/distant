@@ -117,7 +117,7 @@ pub struct TransportWriteHalf {
 }
 
 impl TransportWriteHalf {
-    /// Sends some data across the wire
+    /// Sends some data across the wire, waiting for it to completely send
     pub async fn send<T: Serialize>(&mut self, data: T) -> Result<(), TransportError> {
         // Serialize, encrypt, and then (TODO) sign
         // NOTE: Cannot used packed implementation for now due to issues with deserialization

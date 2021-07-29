@@ -5,7 +5,8 @@ use crate::{
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
-use tokio::io;
+use log::*;
+use tokio::{io, sync::mpsc};
 use tokio_stream::StreamExt;
 
 #[derive(Debug, Display, Error, From)]
@@ -36,12 +37,40 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     };
 
     let res = client.send(req).await?;
+
+    // Store the spawned process id for using in sending stdin (if we spawned a proc)
+    let proc_id = match &res.payload {
+        ResponsePayload::ProcStart { id } => *id,
+        _ => 0,
+    };
+
     print_response(cmd.format, res)?;
 
     // If we are executing a process and not detaching, we want to continue receiving
     // responses sent to us
     if is_proc_req && not_detach {
         let mut stream = client.to_response_stream();
+
+        // We also want to spawn a task to handle sending stdin to the remote process
+        let mut rx = spawn_stdin_reader();
+        tokio::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                trace!("Client sending stdin: {:?}", line);
+                let req = Request::from(RequestPayload::ProcStdin {
+                    id: proc_id,
+                    data: line.into_bytes(),
+                });
+                let result = client.send(req).await;
+
+                if let Err(x) = result {
+                    error!(
+                        "Failed to send stdin to remote process ({}): {}",
+                        proc_id, x
+                    );
+                }
+            }
+        });
+
         while let Some(res) = stream.next().await {
             let res = res.map_err(|_| {
                 io::Error::new(
@@ -88,6 +117,32 @@ fn print_response(fmt: ResponseFormat, res: Response) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn spawn_stdin_reader() -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel(1);
+
+    // NOTE: Using blocking I/O per tokio's advice to read from stdin line-by-line and then
+    //       pass the results to a separate async handler to forward to the remote process
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+
+        loop {
+            let mut line = String::new();
+            if stdin.read_line(&mut line).is_ok() {
+                if let Err(x) = tx.blocking_send(line) {
+                    error!(
+                        "Failed to pass along stdin to be sent to remote process: {}",
+                        x
+                    );
+                }
+            } else {
+                break;
+            }
+        }
+    });
+
+    rx
 }
 
 fn format_response(fmt: ResponseFormat, res: Response) -> io::Result<String> {
