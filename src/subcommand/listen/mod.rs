@@ -88,6 +88,12 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     let addr = cmd.host.to_ip_addr(cmd.use_ipv6)?;
     let socket_addrs = cmd.port.make_socket_addrs(addr);
 
+    // If specified, change the current working directory of this program
+    if let Some(path) = cmd.current_dir.as_ref() {
+        debug!("Setting current directory to {:?}", path);
+        std::env::set_current_dir(path)?;
+    }
+
     debug!("Binding to {} in range {}", addr, cmd.port);
     let listener = TcpListener::bind(socket_addrs.as_slice()).await?;
 

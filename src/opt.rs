@@ -339,9 +339,13 @@ pub struct ListenSubcommand {
     #[structopt(short = "6", long)]
     pub use_ipv6: bool,
 
-    /// Maximum capacity for concurrent message handling by the server
+    /// Maximum capacity for concurrent message handled by the server
     #[structopt(long, default_value = "1000")]
     pub max_msg_capacity: u16,
+
+    /// Changes the current working directory (cwd) to the specified directory
+    #[structopt(long)]
+    pub current_dir: Option<PathBuf>,
 
     /// Set the port(s) that the server will attempt to bind to
     ///
