@@ -50,7 +50,7 @@ pub fn init_logging(opt: &opt::CommonOpt) {
     }
 
     // Create our logger, but don't initialize yet
-    let logger = Logger::with(builder.build());
+    let logger = Logger::with(builder.build()).format_for_files(flexi_logger::opt_format);
 
     // If provided, log to file instead of stderr
     let logger = if let Some(path) = opt.log_file.as_ref() {

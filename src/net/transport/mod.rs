@@ -47,6 +47,12 @@ impl Transport {
     /// Takes a pre-existing connection and performs a handshake to build out the encryption key
     /// with the remote system, returning a transport ready to communicate with the other side
     pub async fn from_handshake(stream: TcpStream, auth_key: Arc<SecretKey>) -> io::Result<Self> {
+        let addr_str = stream
+            .peer_addr()
+            .map(|x| x.to_string())
+            .unwrap_or_else(|_| String::from("???"));
+        log::trace!("Beginning handshake @ {}", addr_str);
+
         // First, wrap the raw stream in our framed codec
         let mut conn = Framed::new(stream, DistantCodec);
 
@@ -106,10 +112,7 @@ impl Transport {
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
         let crypt_key = Arc::new(derived_key);
-        log::trace!(
-            "Handshake complete: {}",
-            hex::encode(crypt_key.unprotected_as_bytes())
-        );
+        log::trace!("Completed handshake @ {}", addr_str);
 
         Ok(Self {
             conn,
