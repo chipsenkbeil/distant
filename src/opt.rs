@@ -85,16 +85,11 @@ pub enum SessionSubcommand {
 
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant)]
 pub enum ResponseFormat {
-    /// Output responses in human-readable format
-    #[display(fmt = "human")]
-    Human,
-
     /// Output responses in JSON format
     #[display(fmt = "json")]
     Json,
 
-    /// Provides special formatting to stdout & stderr that only
-    /// outputs that of the remotely-executed program
+    /// Output responses in a manner that makes sense from a shell
     #[display(fmt = "shell")]
     Shell,
 }
@@ -109,7 +104,6 @@ impl FromStr for ResponseFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim() {
-            "human" => Ok(Self::Human),
             "json" => Ok(Self::Json),
             "shell" => Ok(Self::Shell),
             x => Err(ResponseFormatParseError::InvalidVariant(x.to_string())),
@@ -125,14 +119,13 @@ pub struct SendSubcommand {
     ///
     /// Currently, there are two possible formats:
     /// 1. "json": printing out JSON for external program usage
-    /// 2. "program": printing out verbatim all stdout and stderr of remotely-executed program 
     /// 3. "shell": printing out human-readable results for interactive shell usage
     #[structopt(
         short, 
         long, 
-        value_name = "human|json|shell", 
-        default_value = "human", 
-        possible_values = &["human", "json", "shell"]
+        value_name = "json|shell", 
+        default_value = "shell", 
+        possible_values = &["json", "shell"]
     )]
     pub format: ResponseFormat,
 
