@@ -219,10 +219,6 @@ pub struct LaunchSubcommand {
     #[structopt(long, allow_hyphen_values(true))]
     pub extra_server_args: Option<String>,
 
-    /// If specified, will bind server to the ipv6 interface if host is "any" instead of ipv4
-    #[structopt(short = "6", long)]
-    pub use_ipv6: bool,
-
     /// Username to use when sshing into remote machine
     #[structopt(short, long, default_value = &USERNAME)]
     pub username: String,
