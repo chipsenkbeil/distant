@@ -109,13 +109,19 @@ pub struct SendSubcommand {
         short, 
         long, 
         case_insensitive = true,
-        default_value = "Shell", 
+        default_value = "shell", 
         possible_values = SendMode::VARIANTS
     )]
     pub mode: SendMode,
 
+    /// If specified, commands to send are sent over stdin and responses are received
+    /// over stdout (and stderr if mode is shell)
+    #[structopt(short, long)]
+    pub interactive: bool,
+
+    /// Operation to send over the wire if not in interactive mode
     #[structopt(subcommand)]
-    pub operation: RequestPayload,
+    pub operation: Option<RequestPayload>,
 }
 
 /// Represents options for binding a server to an IP address

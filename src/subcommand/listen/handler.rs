@@ -3,7 +3,7 @@ use crate::data::{
     DirEntry, FileType, Request, RequestPayload, Response, ResponsePayload, RunningProcess,
 };
 use log::*;
-use std::{error::Error, path::PathBuf, process::Stdio, sync::Arc};
+use std::{error::Error, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
@@ -16,13 +16,13 @@ type HState = Arc<Mutex<State>>;
 
 /// Processes the provided request, sending replies using the given sender
 pub(super) async fn process(
-    client_id: usize,
+    addr: SocketAddr,
     state: HState,
     req: Request,
     tx: Reply,
 ) -> Result<(), mpsc::error::SendError<Response>> {
     async fn inner(
-        client_id: usize,
+        addr: SocketAddr,
         state: HState,
         payload: RequestPayload,
         tx: Reply,
@@ -37,9 +37,7 @@ pub(super) async fn process(
             RequestPayload::Remove { path, force } => remove(path, force).await,
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
             RequestPayload::Rename { src, dst } => rename(src, dst).await,
-            RequestPayload::ProcRun { cmd, args } => {
-                proc_run(client_id, state, tx, cmd, args).await
-            }
+            RequestPayload::ProcRun { cmd, args } => proc_run(addr, state, tx, cmd, args).await,
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
             RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestPayload::ProcList {} => proc_list(state).await,
@@ -47,13 +45,19 @@ pub(super) async fn process(
     }
 
     let res = Response::from_payload_with_origin(
-        match inner(client_id, state, req.payload, tx.clone()).await {
+        match inner(addr, state, req.payload, tx.clone()).await {
             Ok(payload) => payload,
             Err(x) => ResponsePayload::Error {
                 description: x.to_string(),
             },
         },
         req.id,
+    );
+
+    trace!(
+        "<Client @ {}> Sending response of type {}",
+        addr,
+        res.payload.as_ref()
     );
 
     // Send out our primary response from processing the request
@@ -187,7 +191,7 @@ async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponsePayload, Box<dyn E
 }
 
 async fn proc_run(
-    client_id: usize,
+    addr: SocketAddr,
     state: HState,
     tx: Reply,
     cmd: String,
@@ -210,10 +214,13 @@ async fn proc_run(
             let mut data = Vec::new();
             match stdout.read_to_end(&mut data).await {
                 Ok(n) if n > 0 => {
-                    if let Err(_) = tx_2
-                        .send(Response::from(ResponsePayload::ProcStdout { id, data }))
-                        .await
-                    {
+                    let res = Response::from(ResponsePayload::ProcStdout { id, data });
+                    trace!(
+                        "<Client @ {}> Sending response of type {}",
+                        addr,
+                        res.payload.as_ref()
+                    );
+                    if let Err(_) = tx_2.send(res).await {
                         break;
                     }
                 }
@@ -231,10 +238,13 @@ async fn proc_run(
             let mut data = Vec::new();
             match stderr.read_to_end(&mut data).await {
                 Ok(n) if n > 0 => {
-                    if let Err(_) = tx_2
-                        .send(Response::from(ResponsePayload::ProcStderr { id, data }))
-                        .await
-                    {
+                    let res = Response::from(ResponsePayload::ProcStderr { id, data });
+                    trace!(
+                        "<Client @ {}> Sending response of type {}",
+                        addr,
+                        res.payload.as_ref()
+                    );
+                    if let Err(_) = tx_2.send(res).await {
                         break;
                     }
                 }
@@ -275,18 +285,26 @@ async fn proc_run(
                     Ok(status) => {
                         let success = status.success();
                         let code = status.code();
-                        if let Err(_) = tx
-                            .send(Response::from(ResponsePayload::ProcDone { id, success, code }))
-                            .await
-                        {
+                        let res = Response::from(ResponsePayload::ProcDone { id, success, code });
+                        trace!(
+                            "<Client @ {}> Sending response of type {}",
+                            addr,
+                            res.payload.as_ref()
+                        );
+                        if let Err(_) = tx.send(res).await {
                             error!("Failed to send done for process {}!", id);
                         }
                     }
                     Err(x) => {
-                        if let Err(_) = tx
-                            .send(Response::from(ResponsePayload::Error { description: x.to_string() }))
-                            .await
-                        {
+                        let res = Response::from(ResponsePayload::Error {
+                            description: x.to_string()
+                        });
+                        trace!(
+                            "<Client @ {}> Sending response of type {}",
+                            addr,
+                            res.payload.as_ref()
+                        );
+                        if let Err(_) = tx.send(res).await {
                             error!("Failed to send error for waiting on process {}!", id);
                         }
                     }
@@ -306,8 +324,17 @@ async fn proc_run(
                     error!("Join on stdout task failed: {}", x);
                 }
 
+
+                let res = Response::from(ResponsePayload::ProcDone {
+                    id, success: false, code: None
+                });
+                trace!(
+                    "<Client @ {}> Sending response of type {}",
+                    addr,
+                    res.payload.as_ref()
+                );
                 if let Err(_) = tx
-                    .send(Response::from(ResponsePayload::ProcDone { id, success: false, code: None }))
+                    .send(res)
                     .await
                 {
                     error!("Failed to send done for process {}!", id);
@@ -330,7 +357,7 @@ async fn proc_run(
         .lock()
         .await
         .client_processes
-        .entry(client_id)
+        .entry(addr)
         .or_insert(Vec::new())
         .push(id);
 

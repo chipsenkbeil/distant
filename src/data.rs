@@ -202,6 +202,7 @@ impl From<ResponsePayload> for Response {
     tag = "type",
     content = "data"
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum ResponsePayload {
     /// General okay with no extra data, returned in cases like
     /// creating or removing a directory, copying a file, or renaming

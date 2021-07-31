@@ -7,7 +7,7 @@ use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
 use log::*;
 use orion::aead::SecretKey;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{
     io,
     net::TcpListener,
@@ -30,13 +30,13 @@ struct State {
     processes: HashMap<usize, Process>,
 
     /// List of processes that will be killed when a client drops
-    client_processes: HashMap<usize, Vec<usize>>,
+    client_processes: HashMap<SocketAddr, Vec<usize>>,
 }
 
 impl State {
     /// Cleans up state associated with a particular client
-    pub async fn cleanup_client(&mut self, id: usize) {
-        if let Some(ids) = self.client_processes.remove(&id) {
+    pub async fn cleanup_client(&mut self, addr: SocketAddr) {
+        if let Some(ids) = self.client_processes.remove(&addr) {
             for id in ids {
                 if let Some(process) = self.processes.remove(&id) {
                     if let Err(_) = process.kill_tx.send(()) {
@@ -121,26 +121,22 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     // receiving data from the client
     while let Ok((client, _)) = listener.accept().await {
         // Grab the client's remote address for later logging purposes
-        let addr_string = match client.peer_addr() {
+        let addr = match client.peer_addr() {
             Ok(addr) => {
-                let addr_string = addr.to_string();
-                info!("<Client @ {}> Established connection", addr_string);
-                addr_string
+                info!("<Client @ {}> Established connection", addr);
+                addr
             }
             Err(x) => {
                 error!("Unable to examine client's peer address: {}", x);
-                "???".to_string()
+                continue;
             }
         };
-
-        // Create a unique id for the client
-        let id = rand::random();
 
         // Establish a proper connection via a handshake, discarding the connection otherwise
         let transport = match Transport::from_handshake(client, Arc::clone(&key)).await {
             Ok(transport) => transport,
             Err(x) => {
-                error!("<Client @ {}> Failed handshake: {}", addr_string, x);
+                error!("<Client @ {}> Failed handshake: {}", addr, x);
                 continue;
             }
         };
@@ -152,17 +148,17 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 
         // Spawn a new task that loops to handle requests from the client
         tokio::spawn({
-            let f = request_loop(id, addr_string.to_string(), Arc::clone(&state), t_read, tx);
+            let f = request_loop(addr, Arc::clone(&state), t_read, tx);
 
             let state = Arc::clone(&state);
             async move {
                 f.await;
-                state.lock().await.cleanup_client(id).await;
+                state.lock().await.cleanup_client(addr).await;
             }
         });
 
         // Spawn a new task that loops to handle responses to the client
-        tokio::spawn(async move { response_loop(addr_string, t_write, rx).await });
+        tokio::spawn(async move { response_loop(addr, t_write, rx).await });
     }
 
     Ok(())
@@ -171,8 +167,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 /// Repeatedly reads in new requests, processes them, and sends their responses to the
 /// response loop
 async fn request_loop(
-    id: usize,
-    addr: String,
+    addr: SocketAddr,
     state: Arc<Mutex<State>>,
     mut transport: TransportReadHalf,
     tx: mpsc::Sender<Response>,
@@ -182,21 +177,21 @@ async fn request_loop(
             Ok(Some(req)) => {
                 trace!(
                     "<Client @ {}> Received request of type {}",
-                    addr.as_str(),
+                    addr,
                     req.payload.as_ref()
                 );
 
-                if let Err(x) = handler::process(id, Arc::clone(&state), req, tx.clone()).await {
-                    error!("<Client @ {}> {}", addr.as_str(), x);
+                if let Err(x) = handler::process(addr, Arc::clone(&state), req, tx.clone()).await {
+                    error!("<Client @ {}> {}", addr, x);
                     break;
                 }
             }
             Ok(None) => {
-                info!("<Client @ {}> Closed connection", addr.as_str());
+                info!("<Client @ {}> Closed connection", addr);
                 break;
             }
             Err(x) => {
-                error!("<Client @ {}> {}", addr.as_str(), x);
+                error!("<Client @ {}> {}", addr, x);
                 break;
             }
         }
@@ -204,13 +199,13 @@ async fn request_loop(
 }
 
 async fn response_loop(
-    addr: String,
+    addr: SocketAddr,
     mut transport: TransportWriteHalf,
     mut rx: mpsc::Receiver<Response>,
 ) {
     while let Some(res) = rx.recv().await {
         if let Err(x) = transport.send(res).await {
-            error!("<Client @ {}> {}", addr.as_str(), x);
+            error!("<Client @ {}> {}", addr, x);
             break;
         }
     }
