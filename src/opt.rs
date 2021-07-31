@@ -8,6 +8,7 @@ use std::{
     str::FromStr,
 };
 use structopt::StructOpt;
+use strum::{EnumString, EnumVariantNames, VariantNames};
 
 lazy_static! {
     static ref USERNAME: String = whoami::username();
@@ -83,32 +84,16 @@ pub enum SessionSubcommand {
     Clear,
 }
 
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant)]
-pub enum ResponseFormat {
-    /// Output responses in JSON format
-    #[display(fmt = "json")]
+/// Represents the communication medium used for the send command
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "snake_case")]
+pub enum SendMode {
+    /// Sends and receives data in JSON format
     Json,
 
-    /// Output responses in a manner that makes sense from a shell
-    #[display(fmt = "shell")]
+    /// Commands are traditional shell commands and output responses are
+    /// inline with what is expected of a program's output in a shell
     Shell,
-}
-
-#[derive(Clone, Debug, Display, From, Error, PartialEq, Eq)]
-pub enum ResponseFormatParseError {
-    InvalidVariant(#[error(not(source))] String),
-}
-
-impl FromStr for ResponseFormat {
-    type Err = ResponseFormatParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim() {
-            "json" => Ok(Self::Json),
-            "shell" => Ok(Self::Shell),
-            x => Err(ResponseFormatParseError::InvalidVariant(x.to_string())),
-        }
-    }
 }
 
 /// Represents subcommand to execute some operation remotely
@@ -123,11 +108,11 @@ pub struct SendSubcommand {
     #[structopt(
         short, 
         long, 
-        value_name = "json|shell", 
-        default_value = "shell", 
-        possible_values = &["json", "shell"]
+        case_insensitive = true,
+        default_value = "Shell", 
+        possible_values = SendMode::VARIANTS
     )]
-    pub format: ResponseFormat,
+    pub mode: SendMode,
 
     #[structopt(subcommand)]
     pub operation: RequestPayload,

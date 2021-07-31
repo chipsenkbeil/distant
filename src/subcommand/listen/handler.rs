@@ -37,8 +37,8 @@ pub(super) async fn process(
             RequestPayload::Remove { path, force } => remove(path, force).await,
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
             RequestPayload::Rename { src, dst } => rename(src, dst).await,
-            RequestPayload::ProcRun { cmd, args, detach } => {
-                proc_run(client_id, state, tx, cmd, args, detach).await
+            RequestPayload::ProcRun { cmd, args } => {
+                proc_run(client_id, state, tx, cmd, args).await
             }
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
             RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
@@ -192,7 +192,6 @@ async fn proc_run(
     tx: Reply,
     cmd: String,
     args: Vec<String>,
-    detach: bool,
 ) -> Result<ResponsePayload, Box<dyn Error>> {
     let id = rand::random();
 
@@ -327,16 +326,13 @@ async fn proc_run(
     };
     state.lock().await.processes.insert(id, process);
 
-    // If we are not detaching from process, we want to associate it with our client
-    if !detach {
-        state
-            .lock()
-            .await
-            .client_processes
-            .entry(client_id)
-            .or_insert(Vec::new())
-            .push(id);
-    }
+    state
+        .lock()
+        .await
+        .client_processes
+        .entry(client_id)
+        .or_insert(Vec::new())
+        .push(id);
 
     Ok(ResponsePayload::ProcStart { id })
 }

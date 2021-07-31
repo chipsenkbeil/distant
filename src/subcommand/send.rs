@@ -1,7 +1,7 @@
 use crate::{
     data::{Request, RequestPayload, Response, ResponsePayload},
     net::{Client, TransportError},
-    opt::{CommonOpt, ResponseFormat, SendSubcommand},
+    opt::{CommonOpt, SendMode, SendSubcommand},
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
@@ -30,11 +30,6 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
 
     // Special conditions for continuing to process responses
     let is_proc_req = req.payload.is_proc_run();
-    let not_detach = if let RequestPayload::ProcRun { detach, .. } = req.payload {
-        !detach
-    } else {
-        false
-    };
 
     let res = client.send(req).await?;
 
@@ -44,11 +39,11 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
         _ => 0,
     };
 
-    format_response(cmd.format, res)?.print();
+    format_response(cmd.mode, res)?.print();
 
     // If we are executing a process and not detaching, we want to continue receiving
     // responses sent to us
-    if is_proc_req && not_detach {
+    if is_proc_req {
         let mut stream = client.to_response_stream();
 
         // We also want to spawn a task to handle sending stdin to the remote process
@@ -80,7 +75,7 @@ async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
             })?;
             let done = res.payload.is_proc_done();
 
-            format_response(cmd.format, res)?.print();
+            format_response(cmd.mode, res)?.print();
 
             if done {
                 break;
@@ -134,13 +129,13 @@ impl ResponseOut {
     }
 }
 
-fn format_response(fmt: ResponseFormat, res: Response) -> io::Result<ResponseOut> {
-    Ok(match fmt {
-        ResponseFormat::Json => ResponseOut::Stdout(
+fn format_response(mode: SendMode, res: Response) -> io::Result<ResponseOut> {
+    Ok(match mode {
+        SendMode::Json => ResponseOut::Stdout(
             serde_json::to_string(&res)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
         ),
-        ResponseFormat::Shell => format_shell(res),
+        SendMode::Shell => format_shell(res),
     })
 }
 

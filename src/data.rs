@@ -133,10 +133,6 @@ pub enum RequestPayload {
 
         /// Arguments for the command
         args: Vec<String>,
-
-        /// Whether or not to detach from the running process without killing it
-        #[structopt(long)]
-        detach: bool,
     },
 
     /// Kills a process running on the remote machine
