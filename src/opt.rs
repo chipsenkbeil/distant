@@ -232,7 +232,7 @@ pub struct LaunchSubcommand {
     pub port: u16,
 
     /// Host to use for sshing into the remote machine
-    #[structopt(name = "ADDRESS")]
+    #[structopt(name = "HOST")]
     pub host: String,
 }
 
