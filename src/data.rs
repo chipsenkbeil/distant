@@ -293,7 +293,7 @@ pub struct DirEntry {
 
 /// Represents the type associated with a dir entry
 #[derive(Copy, Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields, untagged)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum FileType {
     Dir,
     File,
