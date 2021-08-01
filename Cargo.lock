@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytes",
  "derive_more",
