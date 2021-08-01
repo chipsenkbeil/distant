@@ -73,6 +73,11 @@ impl Session {
         tokio::fs::remove_file(SESSION_PATH.as_path()).await
     }
 
+    /// Returns true if a session is available
+    pub fn exists() -> bool {
+        SESSION_PATH.exists()
+    }
+
     /// Saves a session to disk
     pub async fn save(&self) -> io::Result<()> {
         let key_hex_str = self.to_unprotected_hex_auth_key();

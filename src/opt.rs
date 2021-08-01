@@ -82,12 +82,32 @@ impl Subcommand {
 pub enum SessionSubcommand {
     /// Clears the current session
     Clear,
+
+    /// Reports whether or not a session exists
+    Exists,
+
+    /// Prints out information about the available sessions
+    Info { 
+        /// Represents the format that results should be returned
+        ///
+        /// Currently, there are two possible formats:
+        /// 1. "json": printing out JSON for external program usage
+        /// 3. "shell": printing out human-readable results for interactive shell usage
+        #[structopt(
+            short, 
+            long, 
+            case_insensitive = true,
+            default_value = "shell", 
+            possible_values = Mode::VARIANTS
+        )]
+        mode: Mode,
+    },
 }
 
 /// Represents the communication medium used for the send command
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant, EnumString, EnumVariantNames)]
 #[strum(serialize_all = "snake_case")]
-pub enum SendMode {
+pub enum Mode {
     /// Sends and receives data in JSON format
     Json,
 
@@ -110,9 +130,9 @@ pub struct SendSubcommand {
         long, 
         case_insensitive = true,
         default_value = "shell", 
-        possible_values = SendMode::VARIANTS
+        possible_values = Mode::VARIANTS
     )]
-    pub mode: SendMode,
+    pub mode: Mode,
 
     /// If specified, commands to send are sent over stdin and responses are received
     /// over stdout (and stderr if mode is shell)

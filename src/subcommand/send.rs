@@ -1,7 +1,7 @@
 use crate::{
     data::{Request, RequestPayload, Response, ResponsePayload},
     net::{Client, TransportError},
-    opt::{CommonOpt, SendMode, SendSubcommand},
+    opt::{CommonOpt, Mode, SendSubcommand},
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
@@ -98,7 +98,7 @@ fn spawn_stdin_reader() -> mpsc::Receiver<String> {
 async fn interactive_loop(
     mut client: Client,
     id: usize,
-    mode: SendMode,
+    mode: Mode,
     interactive: bool,
 ) -> Result<(), Error> {
     let mut stream = client.to_response_stream();
@@ -120,7 +120,7 @@ async fn interactive_loop(
                 }
 
                 // For json mode, all stdin is treated as individual requests
-                SendMode::Json => {
+                Mode::Json => {
                     trace!("Client sending request: {:?}", line);
                     let result = serde_json::from_str(&line)
                         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
@@ -141,7 +141,7 @@ async fn interactive_loop(
                 }
 
                 // For interactive shell mode, parse stdin as individual commands
-                SendMode::Shell if interactive => {
+                Mode::Shell if interactive => {
                     if line.trim().is_empty() {
                         continue;
                     }
@@ -171,7 +171,7 @@ async fn interactive_loop(
                 }
 
                 // For non-interactive shell mode, all stdin is treated as a proc's stdin
-                SendMode::Shell => {
+                Mode::Shell => {
                     trace!("Client sending stdin: {:?}", line);
                     let req = Request::from(RequestPayload::ProcStdin {
                         id,
@@ -231,14 +231,14 @@ impl ResponseOut {
     }
 }
 
-fn format_response(mode: SendMode, res: Response) -> io::Result<ResponseOut> {
+fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
     Ok(match mode {
-        SendMode::Json => ResponseOut::Stdout(format!(
+        Mode::Json => ResponseOut::Stdout(format!(
             "{}\n",
             serde_json::to_string(&res)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
         )),
-        SendMode::Shell => format_shell(res),
+        Mode::Shell => format_shell(res),
     })
 }
 
