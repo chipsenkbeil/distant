@@ -25,6 +25,7 @@ pub fn run() {
     init_logging(&opt.common);
     if let Err(x) = opt.subcommand.run(opt.common) {
         error!("{}", x);
+        std::process::exit(-1);
     }
 }
 
