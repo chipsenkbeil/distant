@@ -1,9 +1,12 @@
 use super::{Process, State};
 use crate::data::{
-    DirEntry, FileType, Request, RequestPayload, Response, ResponsePayload, RunningProcess,
+    DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
+    RunningProcess,
 };
 use log::*;
-use std::{error::Error, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc};
+use std::{
+    error::Error, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::SystemTime,
+};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
@@ -37,6 +40,7 @@ pub(super) async fn process(
             RequestPayload::Remove { path, force } => remove(path, force).await,
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
             RequestPayload::Rename { src, dst } => rename(src, dst).await,
+            RequestPayload::Metadata { path } => metadata(path).await,
             RequestPayload::ProcRun { cmd, args } => proc_run(addr, state, tx, cmd, args).await,
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
             RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
@@ -188,6 +192,39 @@ async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponsePayload, Box<dyn E
     tokio::fs::rename(src, dst).await?;
 
     Ok(ResponsePayload::Ok)
+}
+
+async fn metadata(path: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
+    let metadata = tokio::fs::metadata(path).await?;
+
+    Ok(ResponsePayload::Metadata {
+        data: Metadata {
+            accessed: metadata
+                .accessed()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis()),
+            created: metadata
+                .created()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis()),
+            modified: metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis()),
+            len: metadata.len(),
+            readonly: metadata.permissions().readonly(),
+            file_type: if metadata.is_dir() {
+                FileType::Dir
+            } else if metadata.is_file() {
+                FileType::File
+            } else {
+                FileType::SymLink
+            },
+        },
+    })
 }
 
 async fn proc_run(

@@ -270,6 +270,22 @@ fn format_shell(res: Response) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         )),
+        ResponsePayload::Metadata { data } => ResponseOut::Stdout(format!(
+            concat!(
+                "Type: {}\n",
+                "Len: {}\n",
+                "Readonly: {}\n",
+                "Created: {}\n",
+                "Last Accessed: {}\n",
+                "Last Modified: {}\n",
+            ),
+            data.file_type.as_ref(),
+            data.len,
+            data.readonly,
+            data.created.unwrap_or_default(),
+            data.accessed.unwrap_or_default(),
+            data.modified.unwrap_or_default(),
+        )),
         ResponsePayload::ProcEntries { entries } => ResponseOut::Stdout(format!(
             "{}\n",
             entries

@@ -126,6 +126,12 @@ pub enum RequestPayload {
         dst: PathBuf,
     },
 
+    /// Retrieves filesystem metadata for the specified path on the remote machine
+    Metadata {
+        /// The path to the file, directory, or symlink on the remote machine
+        path: PathBuf,
+    },
+
     /// Runs a process on the remote machine
     ProcRun {
         /// Name of the command to run
@@ -233,6 +239,12 @@ pub enum ResponsePayload {
         entries: Vec<DirEntry>,
     },
 
+    /// Response to reading metadata
+    Metadata {
+        /// Metadata associated with queried path
+        data: Metadata,
+    },
+
     /// Response to starting a new process
     ProcStart {
         /// Arbitrary id associated with running process
@@ -291,9 +303,36 @@ pub struct DirEntry {
     pub depth: usize,
 }
 
-/// Represents the type associated with a dir entry
-#[derive(Copy, Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
+/// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct Metadata {
+    /// Represents the type of the entry as a file/dir/symlink
+    pub file_type: FileType,
+
+    /// Size of the file/directory/symlink in bytes
+    pub len: u64,
+
+    /// Whether or not the file/directory/symlink is marked as unwriteable
+    pub readonly: bool,
+
+    /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
+    /// can be optional as certain systems don't support this
+    pub accessed: Option<u128>,
+
+    /// Represents when (in milliseconds) the file/directory/symlink was created;
+    /// can be optional as certain systems don't support this
+    pub created: Option<u128>,
+
+    /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
+    /// can be optional as certain systems don't support this
+    pub modified: Option<u128>,
+}
+
+/// Represents the type associated with a dir entry
+#[derive(Copy, Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[strum(serialize_all = "snake_case")]
 pub enum FileType {
     Dir,
     File,
