@@ -198,6 +198,7 @@ async fn request_loop(
     }
 }
 
+/// Repeatedly sends responses out over the wire
 async fn response_loop(
     addr: SocketAddr,
     mut transport: TransportWriteHalf,
@@ -211,10 +212,10 @@ async fn response_loop(
     }
 }
 
+/// Prints out the port and **secret auth key** to share with a client when
+/// establishing communication. This is **highly unsafe** and should only be
+/// done when the server is launched over a secure channel such as SSH.
 fn publish_data(port: u16, key: &SecretKey) {
-    // TODO: We have to share the key in some manner (maybe use k256 to arrive at the same key?)
-    //       For now, we do what mosh does and print out the key knowing that this is shared over
-    //       ssh, which should provide security
     println!(
         "DISTANT DATA {} {}",
         port,

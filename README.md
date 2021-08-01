@@ -1,5 +1,12 @@
 # distant
 
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk]
+
+[distant_crates_img]: https://img.shields.io/crates/v/distant.svg
+[distant_crates_lnk]: https://crates.io/crates/distant
+[distant_doc_img]: https://docs.rs/distant/badge.svg
+[distant_doc_lnk]: https://docs.rs/distant
+
 Binary to connect with a remote machine to edit files and run programs.
 
 ## Details
@@ -25,9 +32,9 @@ starting the `distant` executable:
 distant launch my.example.com
 
 # After the session is established, you can perform different operations
-# on the remote machine via `distant send {command} [args]`
-distant send copy path/to/file new/path/to/file
-distant send proc-run echo 'Hello, this is from the other side'
+# on the remote machine via `distant action {command} [args]`
+distant action copy path/to/file new/path/to/file
+distant action proc-run -- echo 'Hello, this is from the other side'
 ```
 
 ## License

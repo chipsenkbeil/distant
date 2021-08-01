@@ -1,7 +1,7 @@
 use crate::{
     data::{Request, RequestPayload, Response, ResponsePayload},
     net::{Client, TransportError},
-    opt::{CommonOpt, Mode, SendSubcommand},
+    opt::{ActionSubcommand, CommonOpt, Mode},
     utils::{Session, SessionError},
 };
 use derive_more::{Display, Error, From};
@@ -26,13 +26,13 @@ pub enum Error {
     MissingOperation,
 }
 
-pub fn run(cmd: SendSubcommand, opt: CommonOpt) -> Result<(), Error> {
+pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async { run_async(cmd, opt).await })
 }
 
-async fn run_async(cmd: SendSubcommand, _opt: CommonOpt) -> Result<(), Error> {
+async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     let session = Session::load().await?;
     let mut client = Client::connect(session).await?;
 

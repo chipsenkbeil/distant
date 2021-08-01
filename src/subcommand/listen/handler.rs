@@ -255,7 +255,6 @@ async fn proc_run(
     });
 
     // Spawn a task that sends stdin to the process
-    // TODO: Should this be configurable?
     let mut stdin = child.stdin.take().unwrap();
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(1);
     tokio::spawn(async move {

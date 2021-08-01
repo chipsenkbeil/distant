@@ -50,27 +50,27 @@ pub struct CommonOpt {
 
 #[derive(Debug, StructOpt)]
 pub enum Subcommand {
-    /// Performs some task related to the current session
-    Session(SessionSubcommand),
-
-    /// Sends some operation to be performed on a remote machine
-    Send(SendSubcommand),
+    /// Performs some action on a remote machine
+    Action(ActionSubcommand),
 
     /// Launches the server-portion of the binary on a remote machine
     Launch(LaunchSubcommand),
 
     /// Begins listening for incoming requests
     Listen(ListenSubcommand),
+
+    /// Performs some task related to the current session
+    Session(SessionSubcommand),
 }
 
 impl Subcommand {
     /// Runs the subcommand, returning the result
     pub fn run(self, opt: CommonOpt) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::Session(cmd) => subcommand::session::run(cmd, opt)?,
-            Self::Send(cmd) => subcommand::send::run(cmd, opt)?,
+            Self::Action(cmd) => subcommand::action::run(cmd, opt)?,
             Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,
             Self::Listen(cmd) => subcommand::listen::run(cmd, opt)?,
+            Self::Session(cmd) => subcommand::session::run(cmd, opt)?,
         }
 
         Ok(())
@@ -119,7 +119,7 @@ pub enum Mode {
 /// Represents subcommand to execute some operation remotely
 #[derive(Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
-pub struct SendSubcommand {
+pub struct ActionSubcommand {
     /// Represents the format that results should be returned
     ///
     /// Currently, there are two possible formats:
