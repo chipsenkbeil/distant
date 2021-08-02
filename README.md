@@ -22,6 +22,25 @@ talk to the server.
     - [BLAKE2b-256](https://www.blake2.net/) in keyed mode for a second authentication
     - [Elliptic Curve Diffie-Hellman](https://en.wikipedia.org/wiki/Elliptic-curve_Diffie%E2%80%93Hellman) (ECDH) for key exchange
 
+## Installation
+
+### Prebuilt Binaries
+
+If you would like a pre-built binary, check out the 
+[releases section](https://github.com/chipsenkbeil/distant/releases).
+
+### Building from Source
+
+If you have [`cargo`](https://github.com/rust-lang/cargo) installed, you can
+directly download and build the source via:
+
+```bash
+cargo install distant
+```
+
+Alternatively, you can clone this repository and build from source following
+the [build guide](./BUILDING.md).
+
 ## Examples
 
 Launch a remote instance of `distant` by SSHing into another machine and
