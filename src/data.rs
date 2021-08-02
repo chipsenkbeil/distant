@@ -53,13 +53,18 @@ pub enum RequestPayload {
         /// The path to the file on the remote machine
         path: PathBuf,
 
-        /// Source for client-side loading of content (if not provided, stdin is used)
-        #[serde(skip)]
-        input: Option<PathBuf>,
+        /// Data for server-side writing of content
+        data: Vec<u8>,
+    },
+
+    /// Writes a file using text instead of bytes, creating it if it does not exist,
+    /// and overwriting any existing content on the remote machine
+    FileWriteText {
+        /// The path to the file on the remote machine
+        path: PathBuf,
 
         /// Data for server-side writing of content
-        #[structopt(skip)]
-        data: Vec<u8>,
+        text: String,
     },
 
     /// Appends to a file, creating it if it does not exist, on the remote machine
@@ -67,13 +72,17 @@ pub enum RequestPayload {
         /// The path to the file on the remote machine
         path: PathBuf,
 
-        /// Source for client-side loading of content (if not provided, stdin is used)
-        #[serde(skip)]
-        input: Option<PathBuf>,
+        /// Data for server-side writing of content
+        data: Vec<u8>,
+    },
+
+    /// Appends text to a file, creating it if it does not exist, on the remote machine
+    FileAppendText {
+        /// The path to the file on the remote machine
+        path: PathBuf,
 
         /// Data for server-side writing of content
-        #[structopt(skip)]
-        data: Vec<u8>,
+        text: String,
     },
 
     /// Reads a directory from the specified path on the remote machine

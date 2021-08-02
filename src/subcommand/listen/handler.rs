@@ -33,8 +33,10 @@ pub(super) async fn process(
         match payload {
             RequestPayload::FileRead { path } => file_read(path).await,
             RequestPayload::FileReadText { path } => file_read_text(path).await,
-            RequestPayload::FileWrite { path, data, .. } => file_write(path, data).await,
-            RequestPayload::FileAppend { path, data, .. } => file_append(path, data).await,
+            RequestPayload::FileWrite { path, data } => file_write(path, data).await,
+            RequestPayload::FileWriteText { path, text } => file_write(path, text).await,
+            RequestPayload::FileAppend { path, data } => file_append(path, data).await,
+            RequestPayload::FileAppendText { path, text } => file_append(path, text).await,
             RequestPayload::DirRead { path, all } => dir_read(path, all).await,
             RequestPayload::DirCreate { path, all } => dir_create(path, all).await,
             RequestPayload::Remove { path, force } => remove(path, force).await,
@@ -80,17 +82,23 @@ async fn file_read_text(path: PathBuf) -> Result<ResponsePayload, Box<dyn Error>
     })
 }
 
-async fn file_write(path: PathBuf, data: Vec<u8>) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn file_write(
+    path: PathBuf,
+    data: impl AsRef<[u8]>,
+) -> Result<ResponsePayload, Box<dyn Error>> {
     tokio::fs::write(path, data).await?;
     Ok(ResponsePayload::Ok)
 }
 
-async fn file_append(path: PathBuf, data: Vec<u8>) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn file_append(
+    path: PathBuf,
+    data: impl AsRef<[u8]>,
+) -> Result<ResponsePayload, Box<dyn Error>> {
     let mut file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(path)
         .await?;
-    file.write_all(&data).await?;
+    file.write_all(data.as_ref()).await?;
     Ok(ResponsePayload::Ok)
 }
 

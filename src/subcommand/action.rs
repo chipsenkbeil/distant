@@ -47,6 +47,7 @@ async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> 
     if let Some(req) = cmd.operation.map(Request::from) {
         is_proc_req = req.payload.is_proc_run();
 
+        trace!("Client sending request: {:?}", req);
         let res = client.send(req).await?;
 
         // Store the spawned process id for using in sending stdin (if we spawned a proc)
