@@ -102,10 +102,8 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 
     let key = Arc::new(SecretKey::default());
 
-    // Print information about port, key, etc. unless told not to
-    if !cmd.no_print_startup_data {
-        publish_data(port, &key);
-    }
+    // Print information about port, key, etc.
+    publish_data(port, &key);
 
     // For the child, we want to fully disconnect it from pipes, which we do now
     if is_forked {

@@ -1,6 +1,6 @@
 use crate::{
     opt::{CommonOpt, Mode, SessionSubcommand},
-    utils::Session,
+    session::SessionFile,
 };
 use tokio::io;
 
@@ -8,9 +8,9 @@ pub fn run(cmd: SessionSubcommand, _opt: CommonOpt) -> Result<(), io::Error> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         match cmd {
-            SessionSubcommand::Clear => Session::clear().await,
+            SessionSubcommand::Clear => SessionFile::clear().await,
             SessionSubcommand::Exists => {
-                if Session::exists() {
+                if SessionFile::exists() {
                     Ok(())
                 } else {
                     Err(io::Error::new(
@@ -20,7 +20,7 @@ pub fn run(cmd: SessionSubcommand, _opt: CommonOpt) -> Result<(), io::Error> {
                 }
             }
             SessionSubcommand::Info { mode } => {
-                let session = Session::load()
+                let session = SessionFile::load()
                     .await
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
                 match mode {

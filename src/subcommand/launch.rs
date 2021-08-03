@@ -1,6 +1,6 @@
 use crate::{
-    opt::{CommonOpt, LaunchSubcommand},
-    utils::Session,
+    opt::{CommonOpt, LaunchSubcommand, SessionSharing},
+    session::{Session, SessionFile},
 };
 use derive_more::{Display, Error, From};
 use hex::FromHexError;
@@ -86,14 +86,13 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
         auth_key,
     };
 
-    session.save().await?;
-
-    if cmd.print_startup_data {
-        println!(
-            "DISTANT DATA {} {}",
-            port,
-            session.to_unprotected_hex_auth_key()
-        );
+    // Handle sharing resulting session in different ways
+    // NOTE: Environment is unreachable here as we disallow it from the defined options since
+    //       there is no way to set the shell's environment variables, only this running process
+    match cmd.session {
+        SessionSharing::Environment => unreachable!(),
+        SessionSharing::File => SessionFile::from(session).save().await?,
+        SessionSharing::Pipe => println!("{}", session.to_unprotected_string().await?),
     }
 
     Ok(())

@@ -1,8 +1,8 @@
 use crate::{
     data::{Request, RequestPayload, Response, ResponsePayload},
     net::{Client, TransportError},
-    opt::{ActionSubcommand, CommonOpt, Mode},
-    utils::{Session, SessionError},
+    opt::{ActionSubcommand, CommonOpt, Mode, SessionSharing},
+    session::{Session, SessionFile},
 };
 use derive_more::{Display, Error, From};
 use log::*;
@@ -19,7 +19,6 @@ use tokio_stream::StreamExt;
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
     IoError(io::Error),
-    SessionError(SessionError),
     TransportError(TransportError),
 
     #[display(fmt = "Non-interactive but no operation supplied")]
@@ -33,7 +32,12 @@ pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
 }
 
 async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> {
-    let session = Session::load().await?;
+    let session = match cmd.session {
+        SessionSharing::Environment => Session::from_environment()?,
+        SessionSharing::File => SessionFile::load().await?.into(),
+        SessionSharing::Pipe => Session::from_stdin()?,
+    };
+
     let mut client = Client::connect(session).await?;
 
     if !cmd.interactive && cmd.operation.is_none() {

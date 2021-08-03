@@ -1,4 +1,4 @@
-use crate::{constants::SALT_LEN, utils::Session};
+use crate::{constants::SALT_LEN, session::Session};
 use codec::DistantCodec;
 use derive_more::{Display, Error, From};
 use futures::SinkExt;

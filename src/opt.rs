@@ -8,7 +8,7 @@ use std::{
     str::FromStr,
 };
 use structopt::StructOpt;
-use strum::{EnumString, EnumVariantNames, VariantNames};
+use strum::{EnumString, EnumVariantNames, VariantNames, IntoStaticStr};
 
 lazy_static! {
     static ref USERNAME: String = whoami::username();
@@ -134,6 +134,10 @@ pub struct ActionSubcommand {
     )]
     pub mode: Mode,
 
+    /// Represents the medium for retrieving a session for use in performing the action
+    #[structopt(long, default_value = "file", possible_values = SessionSharing::VARIANTS)]
+    pub session: SessionSharing,
+
     /// If specified, commands to send are sent over stdin and responses are received
     /// over stdout (and stderr if mode is shell)
     #[structopt(short, long)]
@@ -197,12 +201,42 @@ impl FromStr for BindAddress {
     }
 }
 
+/// Represents the means by which to share the session from launching on a remote machine
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IntoStaticStr, IsVariant, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "snake_case")]
+pub enum SessionSharing {
+    /// Session is in a environment variables
+    ///
+    /// * `DISTANT_HOST=<host>`
+    /// * `DISTANT_PORT=<port>`
+    /// * `DISTANT_AUTH_KEY=<auth key>`
+    Environment,
+
+    /// Session is in a file in the form of `DISTANT DATA <host> <port> <auth key>`
+    File,
+
+    /// Session is stored and retrieved over anonymous pipes (stdout/stdin) 
+    /// in form of `DISTANT DATA <host> <port> <auth key>`
+    Pipe,
+}
+
+impl SessionSharing {
+    /// Represents session configurations that can be used for output
+    pub fn output_variants() -> Vec<&'static str> { 
+        vec![Self::File.into(), Self::Pipe.into()]
+    }
+}
+
 /// Represents subcommand to launch a remote server
 #[derive(Debug, StructOpt)]
 pub struct LaunchSubcommand {
-    /// Outputs port and key of remotely-started binary
-    #[structopt(long)]
-    pub print_startup_data: bool,
+    /// Represents the medium for sharing the session upon launching on a remote machine
+    #[structopt(
+        long, 
+        default_value = SessionSharing::File.into(), 
+        possible_values = &SessionSharing::output_variants()
+    )]
+    pub session: SessionSharing,
 
     /// Path to remote program to execute via ssh
     #[structopt(short, long, default_value = "distant")]
@@ -314,10 +348,6 @@ pub struct ListenSubcommand {
     /// Runs in background via daemon-mode (does nothing on windows)
     #[structopt(short, long)]
     pub daemon: bool,
-
-    /// Prevents output of selected port, key, and other info
-    #[structopt(long)]
-    pub no_print_startup_data: bool,
 
     /// Control the IP address that the distant binds to
     ///

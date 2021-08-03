@@ -4,7 +4,7 @@ pub use transport::{Transport, TransportError, TransportReadHalf, TransportWrite
 use crate::{
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, Response},
-    utils::Session,
+    session::Session,
 };
 use log::*;
 use std::{

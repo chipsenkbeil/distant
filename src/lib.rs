@@ -2,8 +2,8 @@ mod constants;
 mod data;
 mod net;
 mod opt;
+mod session;
 mod subcommand;
-mod utils;
 
 use log::error;
 pub use opt::Opt;
