@@ -1,13 +1,16 @@
 use crate::{
-    data::{Request, RequestPayload, Response, ResponsePayload},
-    net::Client,
-    opt::Mode,
+    cli::opt::Mode,
+    core::{
+        data::{Request, RequestPayload, Response, ResponsePayload},
+        net::{Client, DataStream},
+    },
 };
 use derive_more::IsVariant;
 use log::*;
+use std::marker::Unpin;
 use structopt::StructOpt;
 use tokio::{
-    io,
+    io::{self, AsyncRead, AsyncWrite},
     sync::{
         mpsc,
         oneshot::{self, error::TryRecvError},
@@ -34,8 +37,15 @@ impl From<LoopConfig> for Mode {
 /// Starts a new action loop that processes requests and receives responses
 ///
 /// id represents the id of a remote process
-pub async fn interactive_loop(mut client: Client, config: LoopConfig) -> io::Result<()> {
-    let mut stream = client.to_response_stream();
+pub async fn interactive_loop<T>(
+    mut client: Client<T>,
+    tenant: String,
+    config: LoopConfig,
+) -> io::Result<()>
+where
+    T: AsyncRead + AsyncWrite + DataStream + Unpin + 'static,
+{
+    let mut stream = client.to_response_broadcast_stream();
 
     // Create a channel that can report when we should stop the loop based on a received request
     let (tx_stop, mut rx_stop) = oneshot::channel::<()>();
@@ -55,7 +65,7 @@ pub async fn interactive_loop(mut client: Client, config: LoopConfig) -> io::Res
 
                 // For json mode, all stdin is treated as individual requests
                 LoopConfig::Json => {
-                    trace!("Client sending request: {:?}", line);
+                    debug!("Client sending request: {:?}", line);
                     let result = serde_json::from_str(&line)
                         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
                     match result {
@@ -80,7 +90,7 @@ pub async fn interactive_loop(mut client: Client, config: LoopConfig) -> io::Res
                         continue;
                     }
 
-                    trace!("Client sending command: {:?}", line);
+                    debug!("Client sending command: {:?}", line);
 
                     // NOTE: We have to stick something in as the first argument as clap/structopt
                     //       expect the binary name as the first item in the iterator
@@ -89,15 +99,17 @@ pub async fn interactive_loop(mut client: Client, config: LoopConfig) -> io::Res
                             .chain(line.trim().split(' ').filter(|s| !s.trim().is_empty())),
                     );
                     match payload_result {
-                        Ok(payload) => match client.send(Request::from(payload)).await {
-                            Ok(res) => match format_response(Mode::Shell, res) {
-                                Ok(out) => out.print(),
-                                Err(x) => error!("Failed to format response: {}", x),
-                            },
-                            Err(x) => {
-                                error!("Failed to send request: {}", x)
+                        Ok(payload) => {
+                            match client.send(Request::new(tenant.as_str(), payload)).await {
+                                Ok(res) => match format_response(Mode::Shell, res) {
+                                    Ok(out) => out.print(),
+                                    Err(x) => error!("Failed to format response: {}", x),
+                                },
+                                Err(x) => {
+                                    error!("Failed to send request: {}", x)
+                                }
                             }
-                        },
+                        }
                         Err(x) => {
                             error!("Failed to parse command: {}", x);
                         }
@@ -106,11 +118,14 @@ pub async fn interactive_loop(mut client: Client, config: LoopConfig) -> io::Res
 
                 // For non-interactive shell mode, all stdin is treated as a proc's stdin
                 LoopConfig::Proc { id } => {
-                    trace!("Client sending stdin: {:?}", line);
-                    let req = Request::from(RequestPayload::ProcStdin {
-                        id,
-                        data: line.into_bytes(),
-                    });
+                    debug!("Client sending stdin: {:?}", line);
+                    let req = Request::new(
+                        tenant.as_str(),
+                        RequestPayload::ProcStdin {
+                            id,
+                            data: line.into_bytes(),
+                        },
+                    );
                     let result = client.send(req).await;
 
                     if let Err(x) = result {

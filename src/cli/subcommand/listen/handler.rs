@@ -1,5 +1,5 @@
 use super::{Process, State};
-use crate::data::{
+use crate::core::data::{
     DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
     RunningProcess,
 };
@@ -25,6 +25,7 @@ pub(super) async fn process(
     tx: Reply,
 ) -> Result<(), mpsc::error::SendError<Response>> {
     async fn inner(
+        tenant: String,
         addr: SocketAddr,
         state: HState,
         payload: RequestPayload,
@@ -43,24 +44,28 @@ pub(super) async fn process(
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
             RequestPayload::Rename { src, dst } => rename(src, dst).await,
             RequestPayload::Metadata { path } => metadata(path).await,
-            RequestPayload::ProcRun { cmd, args } => proc_run(addr, state, tx, cmd, args).await,
+            RequestPayload::ProcRun { cmd, args } => {
+                proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
+            }
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
             RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestPayload::ProcList {} => proc_list(state).await,
         }
     }
 
-    let res = Response::from_payload_with_origin(
-        match inner(addr, state, req.payload, tx.clone()).await {
+    let tenant = req.tenant.clone();
+    let res = Response::new(
+        req.tenant,
+        Some(req.id),
+        match inner(tenant, addr, state, req.payload, tx.clone()).await {
             Ok(payload) => payload,
             Err(x) => ResponsePayload::Error {
                 description: x.to_string(),
             },
         },
-        req.id,
     );
 
-    trace!(
+    debug!(
         "<Client @ {}> Sending response of type {}",
         addr,
         res.payload.as_ref()
@@ -236,6 +241,7 @@ async fn metadata(path: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
 }
 
 async fn proc_run(
+    tenant: String,
     addr: SocketAddr,
     state: HState,
     tx: Reply,
@@ -253,14 +259,19 @@ async fn proc_run(
 
     // Spawn a task that sends stdout as a response
     let tx_2 = tx.clone();
+    let tenant_2 = tenant.clone();
     let mut stdout = child.stdout.take().unwrap();
     let stdout_task = tokio::spawn(async move {
         loop {
             let mut data = Vec::new();
             match stdout.read_to_end(&mut data).await {
                 Ok(n) if n > 0 => {
-                    let res = Response::from(ResponsePayload::ProcStdout { id, data });
-                    trace!(
+                    let res = Response::new(
+                        tenant_2.as_str(),
+                        None,
+                        ResponsePayload::ProcStdout { id, data },
+                    );
+                    debug!(
                         "<Client @ {}> Sending response of type {}",
                         addr,
                         res.payload.as_ref()
@@ -277,14 +288,19 @@ async fn proc_run(
 
     // Spawn a task that sends stderr as a response
     let tx_2 = tx.clone();
+    let tenant_2 = tenant.clone();
     let mut stderr = child.stderr.take().unwrap();
     let stderr_task = tokio::spawn(async move {
         loop {
             let mut data = Vec::new();
             match stderr.read_to_end(&mut data).await {
                 Ok(n) if n > 0 => {
-                    let res = Response::from(ResponsePayload::ProcStderr { id, data });
-                    trace!(
+                    let res = Response::new(
+                        tenant_2.as_str(),
+                        None,
+                        ResponsePayload::ProcStderr { id, data },
+                    );
+                    debug!(
                         "<Client @ {}> Sending response of type {}",
                         addr,
                         res.payload.as_ref()
@@ -329,8 +345,12 @@ async fn proc_run(
                     Ok(status) => {
                         let success = status.success();
                         let code = status.code();
-                        let res = Response::from(ResponsePayload::ProcDone { id, success, code });
-                        trace!(
+                        let res = Response::new(
+                            tenant.as_str(),
+                            None,
+                            ResponsePayload::ProcDone { id, success, code }
+                        );
+                        debug!(
                             "<Client @ {}> Sending response of type {}",
                             addr,
                             res.payload.as_ref()
@@ -340,10 +360,10 @@ async fn proc_run(
                         }
                     }
                     Err(x) => {
-                        let res = Response::from(ResponsePayload::Error {
+                        let res = Response::new(tenant.as_str(), None, ResponsePayload::Error {
                             description: x.to_string()
                         });
-                        trace!(
+                        debug!(
                             "<Client @ {}> Sending response of type {}",
                             addr,
                             res.payload.as_ref()
@@ -369,10 +389,10 @@ async fn proc_run(
                 }
 
 
-                let res = Response::from(ResponsePayload::ProcDone {
+                let res = Response::new(tenant.as_str(), None, ResponsePayload::ProcDone {
                     id, success: false, code: None
                 });
-                trace!(
+                debug!(
                     "<Client @ {}> Sending response of type {}",
                     addr,
                     res.payload.as_ref()

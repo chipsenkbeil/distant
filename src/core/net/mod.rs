@@ -1,7 +1,7 @@
 mod transport;
-pub use transport::{Transport, TransportError, TransportReadHalf, TransportWriteHalf};
+pub use transport::{DataStream, Transport, TransportError, TransportReadHalf, TransportWriteHalf};
 
-use crate::{
+use crate::core::{
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, Response},
     session::Session,
@@ -13,6 +13,7 @@ use std::{
 };
 use tokio::{
     io,
+    net::TcpStream,
     sync::{broadcast, oneshot},
 };
 use tokio_stream::wrappers::BroadcastStream;
@@ -20,9 +21,12 @@ use tokio_stream::wrappers::BroadcastStream;
 type Callbacks = Arc<Mutex<HashMap<usize, oneshot::Sender<Response>>>>;
 
 /// Represents a client that can make requests against a server
-pub struct Client {
+pub struct Client<T>
+where
+    T: DataStream,
+{
     /// Underlying transport used by client
-    t_write: TransportWriteHalf,
+    t_write: TransportWriteHalf<T::Write>,
 
     /// Collection of callbacks to be invoked upon receiving a response to a request
     callbacks: Callbacks,
@@ -36,10 +40,10 @@ pub struct Client {
     init_broadcast_receiver: Option<broadcast::Receiver<Response>>,
 }
 
-impl Client {
-    /// Establishes a connection using the provided session
-    pub async fn connect(session: Session) -> io::Result<Self> {
-        let transport = Transport::connect(session).await?;
+impl Client<TcpStream> {
+    /// Connect to a remote TCP session
+    pub async fn tcp_connect(session: Session) -> io::Result<Self> {
+        let transport = Transport::<TcpStream>::connect(session).await?;
         debug!(
             "Client has connected to {}",
             transport
@@ -47,7 +51,35 @@ impl Client {
                 .map(|x| x.to_string())
                 .unwrap_or_else(|_| String::from("???"))
         );
+        Self::inner_connect(transport).await
+    }
+}
 
+#[cfg(unix)]
+impl Client<tokio::net::UnixStream> {
+    /// Connect to a proxy unix socket
+    pub async fn unix_connect(
+        path: impl AsRef<std::path::Path>,
+        auth_key: Option<Arc<orion::aead::SecretKey>>,
+    ) -> io::Result<Self> {
+        let transport = Transport::<tokio::net::UnixStream>::connect(path, auth_key).await?;
+        debug!(
+            "Client has connected to {}",
+            transport
+                .peer_addr()
+                .map(|x| format!("{:?}", x))
+                .unwrap_or_else(|_| String::from("???"))
+        );
+        Self::inner_connect(transport).await
+    }
+}
+
+impl<T> Client<T>
+where
+    T: DataStream,
+{
+    /// Establishes a connection using the provided session
+    async fn inner_connect(transport: Transport<T>) -> io::Result<Self> {
         let (mut t_read, t_write) = transport.into_split();
         let callbacks: Callbacks = Arc::new(Mutex::new(HashMap::new()));
         let (broadcast, init_broadcast_receiver) =
@@ -112,8 +144,21 @@ impl Client {
             .map_err(|x| TransportError::from(io::Error::new(io::ErrorKind::ConnectionAborted, x)))
     }
 
-    /// Creates and returns a new stream of responses that are received with no originating request
-    pub fn to_response_stream(&mut self) -> BroadcastStream<Response> {
+    /// Sends a request without waiting for a response
+    ///
+    /// Any response that would be received gets sent over the broadcast channel instead
+    pub async fn fire(&mut self, req: Request) -> Result<(), TransportError> {
+        self.t_write.send(req).await
+    }
+
+    /// Clones a new instance of the broadcaster used by the client
+    pub fn to_response_broadcaster(&self) -> broadcast::Sender<Response> {
+        self.broadcast.clone()
+    }
+
+    /// Creates and returns a new stream of responses that are received that do not match the
+    /// response to a `send` request
+    pub fn to_response_broadcast_stream(&mut self) -> BroadcastStream<Response> {
         BroadcastStream::new(
             self.init_broadcast_receiver
                 .take()

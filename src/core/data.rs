@@ -8,6 +8,9 @@ use strum::AsRefStr;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Request {
+    /// A name tied to the requester (tenant)
+    pub tenant: String,
+
     /// A unique id associated with the request
     pub id: usize,
 
@@ -15,11 +18,15 @@ pub struct Request {
     pub payload: RequestPayload,
 }
 
-impl From<RequestPayload> for Request {
-    /// Produces a new request with the given payload and a randomly-generated id
-    fn from(payload: RequestPayload) -> Self {
+impl Request {
+    /// Creates a new request, generating a unique id for it
+    pub fn new(tenant: impl Into<String>, payload: RequestPayload) -> Self {
         let id = rand::random();
-        Self { id, payload }
+        Self {
+            tenant: tenant.into(),
+            id,
+            payload,
+        }
     }
 }
 
@@ -173,6 +180,9 @@ pub enum RequestPayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Response {
+    /// A name tied to the requester (tenant)
+    pub tenant: String,
+
     /// A unique id associated with the response
     pub id: usize,
 
@@ -185,25 +195,17 @@ pub struct Response {
 }
 
 impl Response {
-    /// Produces a new response with the given payload and origin id while supplying
-    /// randomly-generated id
-    pub fn from_payload_with_origin(payload: ResponsePayload, origin_id: usize) -> Self {
+    /// Creates a new response, generating a unique id for it
+    pub fn new(
+        tenant: impl Into<String>,
+        origin_id: Option<usize>,
+        payload: ResponsePayload,
+    ) -> Self {
         let id = rand::random();
         Self {
+            tenant: tenant.into(),
             id,
-            origin_id: Some(origin_id),
-            payload,
-        }
-    }
-}
-
-impl From<ResponsePayload> for Response {
-    /// Produces a new response with the given payload, no origin id, and a randomly-generated id
-    fn from(payload: ResponsePayload) -> Self {
-        let id = rand::random();
-        Self {
-            id,
-            origin_id: None,
+            origin_id,
             payload,
         }
     }

@@ -1,11 +1,10 @@
-use crate::{PROJECT_DIRS, SESSION_PATH};
 use derive_more::{Display, Error};
 use orion::aead::SecretKey;
 use std::{
     env,
     net::{IpAddr, SocketAddr},
     ops::Deref,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 use tokio::{io, net::lookup_host};
@@ -160,11 +159,20 @@ impl Session {
 }
 
 /// Provides operations related to working with a session that is disk-based
-pub struct SessionFile(Session);
+pub struct SessionFile {
+    path: PathBuf,
+    session: Session,
+}
+
+impl AsRef<Path> for SessionFile {
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
 
 impl AsRef<Session> for SessionFile {
     fn as_ref(&self) -> &Session {
-        &self.0
+        self.as_session()
     }
 }
 
@@ -172,56 +180,60 @@ impl Deref for SessionFile {
     type Target = Session;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.session
     }
 }
 
 impl From<SessionFile> for Session {
     fn from(sf: SessionFile) -> Self {
-        sf.0
-    }
-}
-
-impl From<Session> for SessionFile {
-    fn from(session: Session) -> Self {
-        Self(session)
+        sf.session
     }
 }
 
 impl SessionFile {
-    /// Clears the global session file
-    pub async fn clear() -> io::Result<()> {
-        tokio::fs::remove_file(SESSION_PATH.as_path()).await
+    /// Creates a new inmemory pointer to a session and its file
+    pub fn new(path: impl Into<PathBuf>, session: Session) -> Self {
+        Self {
+            path: path.into(),
+            session,
+        }
     }
 
-    /// Returns true if the global session file exists
-    pub fn exists() -> bool {
-        SESSION_PATH.exists()
+    /// Returns a reference to the path to the session file
+    pub fn as_path(&self) -> &Path {
+        self.path.as_path()
     }
 
-    /// Saves a session to the global session file
+    /// Returns a reference to the session
+    pub fn as_session(&self) -> &Session {
+        &self.session
+    }
+
+    /// Saves a session by overwriting its current
     pub async fn save(&self) -> io::Result<()> {
-        // Ensure our cache directory exists
-        let cache_dir = PROJECT_DIRS.cache_dir();
-        tokio::fs::create_dir_all(cache_dir).await?;
-
-        self.save_to(SESSION_PATH.as_path()).await
+        self.save_to(self.as_path(), true).await
     }
 
     /// Saves a session to to a file at the specified path
-    pub async fn save_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        tokio::fs::write(path.as_ref(), self.0.to_unprotected_string()).await
-    }
+    ///
+    /// If all is true, will create all directories leading up to file's location
+    pub async fn save_to(&self, path: impl AsRef<Path>, all: bool) -> io::Result<()> {
+        if all {
+            if let Some(dir) = path.as_ref().parent() {
+                tokio::fs::create_dir_all(dir).await?;
+            }
+        }
 
-    /// Loads a session from the global session file
-    pub async fn load() -> io::Result<Self> {
-        Self::load_from(SESSION_PATH.as_path()).await
+        tokio::fs::write(path.as_ref(), self.session.to_unprotected_string()).await
     }
 
     /// Loads a session from a file at the specified path
     pub async fn load_from(path: impl AsRef<Path>) -> io::Result<Self> {
         let text = tokio::fs::read_to_string(path.as_ref()).await?;
 
-        Ok(Self(text.parse()?))
+        Ok(Self {
+            path: path.as_ref().to_path_buf(),
+            session: text.parse()?,
+        })
     }
 }

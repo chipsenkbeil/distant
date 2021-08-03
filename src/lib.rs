@@ -1,27 +1,11 @@
-mod constants;
-mod data;
-mod net;
-mod opt;
-mod session;
-mod subcommand;
+mod cli;
+mod core;
 
 use log::error;
-pub use opt::Opt;
-use std::path::PathBuf;
-
-lazy_static::lazy_static! {
-    static ref PROJECT_DIRS: directories::ProjectDirs =
-        directories::ProjectDirs::from(
-            "org",
-            "senkbeil",
-            "distant",
-        ).expect("Failed to find valid home directory path");
-    static ref SESSION_PATH: PathBuf = PROJECT_DIRS.cache_dir().join("session");
-}
 
 /// Main entrypoint into the program
 pub fn run() {
-    let opt = Opt::load();
+    let opt = cli::opt::Opt::load();
     init_logging(&opt.common);
     if let Err(x) = opt.subcommand.run(opt.common) {
         error!("{}", x);
@@ -29,7 +13,7 @@ pub fn run() {
     }
 }
 
-pub fn init_logging(opt: &opt::CommonOpt) {
+fn init_logging(opt: &cli::opt::CommonOpt) {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
     let module = "distant";
 

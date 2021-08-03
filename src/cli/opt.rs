@@ -1,4 +1,10 @@
-use crate::{data::RequestPayload, subcommand};
+use crate::{
+    cli::subcommand,
+    core::{
+        constants::{SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR},
+        data::RequestPayload,
+    },
+};
 use derive_more::{Display, Error, From, IsVariant};
 use lazy_static::lazy_static;
 use std::{
@@ -48,6 +54,20 @@ pub struct CommonOpt {
     pub log_file: Option<PathBuf>,
 }
 
+/// Contains options related sessions
+#[derive(Debug, StructOpt)]
+pub struct SessionOpt {
+    /// Represents the location of the file containing session information,
+    /// only useful when the session is set to "file"
+    #[structopt(long, default_value = &SESSION_FILE_PATH_STR)]
+    pub session_file: PathBuf,
+
+    /// Represents the location of the session's socket to communicate across,
+    /// only useful when the session is set to "socket"
+    #[structopt(long, default_value = &SESSION_SOCKET_PATH_STR)]
+    pub session_socket: PathBuf,
+}
+
 #[derive(Debug, StructOpt)]
 pub enum Subcommand {
     /// Performs some action on a remote machine
@@ -58,9 +78,6 @@ pub enum Subcommand {
 
     /// Begins listening for incoming requests
     Listen(ListenSubcommand),
-
-    /// Performs some task related to the current session
-    Session(SessionSubcommand),
 }
 
 impl Subcommand {
@@ -70,39 +87,10 @@ impl Subcommand {
             Self::Action(cmd) => subcommand::action::run(cmd, opt)?,
             Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,
             Self::Listen(cmd) => subcommand::listen::run(cmd, opt)?,
-            Self::Session(cmd) => subcommand::session::run(cmd, opt)?,
         }
 
         Ok(())
     }
-}
-
-/// Represents subcommand to operate on a session
-#[derive(Debug, StructOpt)]
-pub enum SessionSubcommand {
-    /// Clears the current session
-    Clear,
-
-    /// Reports whether or not a session exists
-    Exists,
-
-    /// Prints out information about the available sessions
-    Info {
-        /// Represents the format that results should be returned
-        ///
-        /// Currently, there are two possible formats:
-        ///
-        /// 1. "json": printing out JSON for external program usage
-        /// 2. "shell": printing out human-readable results for interactive shell usage
-        #[structopt(
-            short,
-            long,
-            case_insensitive = true,
-            default_value = Mode::Shell.into(),
-            possible_values = Mode::VARIANTS
-        )]
-        mode: Mode,
-    },
 }
 
 /// Represents the communication medium used for the send command
@@ -150,10 +138,14 @@ pub struct ActionSubcommand {
     /// Represents the medium for retrieving a session for use in performing the action
     #[structopt(
         long,
-        default_value = SessionInput::File.into(),
+        default_value = SessionInput::default().into(),
         possible_values = SessionInput::VARIANTS
     )]
     pub session: SessionInput,
+
+    /// Contains additional information related to sessions
+    #[structopt(flatten)]
+    pub session_data: SessionOpt,
 
     /// If specified, commands to send are sent over stdin and responses are received
     /// over stdout (and stderr if mode is shell)
@@ -244,6 +236,25 @@ pub enum SessionOutput {
     /// Session is stored and retrieved over anonymous pipes (stdout/stdin)
     /// in form of `DISTANT DATA <host> <port> <auth key>`
     Pipe,
+
+    /// Special scenario where the session is not shared but is instead kept within the
+    /// launch program, where the program now listens on a unix socket for input
+    #[cfg(unix)]
+    Socket,
+}
+
+impl Default for SessionOutput {
+    /// For unix-based systems, output defaults to a socket
+    #[cfg(unix)]
+    fn default() -> Self {
+        Self::Socket
+    }
+
+    /// For non-unix-based systems, output defaults to a file
+    #[cfg(not(unix))]
+    fn default() -> Self {
+        Self::File
+    }
 }
 
 /// Represents the means by which to consume a session when performing an action
@@ -274,6 +285,25 @@ pub enum SessionInput {
     /// Session is stored and retrieved over anonymous pipes (stdout/stdin)
     /// in form of `DISTANT DATA <host> <port> <auth key>`
     Pipe,
+
+    /// Session isn't directly available but instead there is a process listening
+    /// on a unix socket that will forward requests and responses
+    #[cfg(unix)]
+    Socket,
+}
+
+impl Default for SessionInput {
+    /// For unix-based systems, input defaults to a socket
+    #[cfg(unix)]
+    fn default() -> Self {
+        Self::Socket
+    }
+
+    /// For non-unix-based systems, input defaults to a file
+    #[cfg(not(unix))]
+    fn default() -> Self {
+        Self::File
+    }
 }
 
 /// Represents subcommand to launch a remote server
@@ -282,10 +312,19 @@ pub struct LaunchSubcommand {
     /// Represents the medium for sharing the session upon launching on a remote machine
     #[structopt(
         long,
-        default_value = SessionOutput::File.into(),
+        default_value = SessionOutput::default().into(),
         possible_values = SessionOutput::VARIANTS
     )]
     pub session: SessionOutput,
+
+    /// Contains additional information related to sessions
+    #[structopt(flatten)]
+    pub session_data: SessionOpt,
+
+    /// Runs in background via daemon-mode (does nothing on windows); only applies
+    /// when session is socket
+    #[structopt(short, long)]
+    pub daemon: bool,
 
     /// Represents the format that results should be returned when session is "keep",
     /// causing the launcher to enter an interactive loop to handle input and output
@@ -299,13 +338,13 @@ pub struct LaunchSubcommand {
     )]
     pub mode: Mode,
 
-    /// Path to remote program to execute via ssh
-    #[structopt(short, long, default_value = "distant")]
-    pub remote_program: String,
+    /// Path to distant program to execute via ssh
+    #[structopt(long, default_value = "distant")]
+    pub distant: String,
 
     /// Path to ssh program to execute
-    #[structopt(short, long, default_value = "ssh")]
-    pub ssh_program: String,
+    #[structopt(long, default_value = "ssh")]
+    pub ssh: String,
 
     /// Control the IP address that the server binds to.
     ///

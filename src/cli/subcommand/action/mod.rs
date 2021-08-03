@@ -1,8 +1,11 @@
 use crate::{
-    data::{Request, ResponsePayload},
-    net::{Client, TransportError},
-    opt::{ActionSubcommand, CommonOpt, Mode, SessionInput},
-    session::{Session, SessionFile},
+    cli::opt::{ActionSubcommand, CommonOpt, Mode, SessionInput},
+    core::{
+        data::{Request, ResponsePayload},
+        net::{Client, DataStream, TransportError},
+        session::{Session, SessionFile},
+        utils,
+    },
 };
 use derive_more::{Display, Error, From};
 use log::*;
@@ -26,26 +29,55 @@ pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
 }
 
 async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> {
-    let session = match cmd.session {
-        SessionInput::Environment => Session::from_environment()?,
-        SessionInput::File => SessionFile::load().await?.into(),
-        SessionInput::Pipe => Session::from_stdin()?,
-    };
+    match cmd.session {
+        SessionInput::Environment => {
+            start(
+                cmd,
+                Client::tcp_connect(Session::from_environment()?).await?,
+            )
+            .await
+        }
+        SessionInput::File => {
+            let path = cmd.session_data.session_file.clone();
+            start(
+                cmd,
+                Client::tcp_connect(SessionFile::load_from(path).await?.into()).await?,
+            )
+            .await
+        }
+        SessionInput::Pipe => start(cmd, Client::tcp_connect(Session::from_stdin()?).await?).await,
+        #[cfg(unix)]
+        SessionInput::Socket => {
+            let path = cmd.session_data.session_socket.clone();
+            start(cmd, Client::unix_connect(path, None).await?).await
+        }
+        #[cfg(not(unix))]
+        SessionInput::Socket => unreachable!(),
+    }
+}
 
-    let mut client = Client::connect(session).await?;
-
+async fn start<T>(cmd: ActionSubcommand, mut client: Client<T>) -> Result<(), Error>
+where
+    T: DataStream + 'static,
+{
     if !cmd.interactive && cmd.operation.is_none() {
         return Err(Error::MissingOperation);
     }
+
+    // Make up a tenant name
+    let tenant = utils::new_tenant();
 
     // Special conditions for continuing to process responses
     let mut is_proc_req = false;
     let mut proc_id = 0;
 
-    if let Some(req) = cmd.operation.map(Request::from) {
+    if let Some(req) = cmd
+        .operation
+        .map(|payload| Request::new(tenant.as_str(), payload))
+    {
         is_proc_req = req.payload.is_proc_run();
 
-        trace!("Client sending request: {:?}", req);
+        debug!("Client sending request: {:?}", req);
         let res = client.send(req).await?;
 
         // Store the spawned process id for using in sending stdin (if we spawned a proc)
@@ -67,7 +99,7 @@ async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> 
             Mode::Shell if cmd.interactive => inner::LoopConfig::Shell,
             Mode::Shell => inner::LoopConfig::Proc { id: proc_id },
         };
-        inner::interactive_loop(client, config).await?;
+        inner::interactive_loop(client, tenant, config).await?;
     }
 
     Ok(())

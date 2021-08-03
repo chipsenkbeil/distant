@@ -1,8 +1,10 @@
 use crate::{
-    data::{Request, Response},
-    net::{Transport, TransportReadHalf, TransportWriteHalf},
-    opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
-    session::Session,
+    cli::opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
+    core::{
+        data::{Request, Response},
+        net::{Transport, TransportReadHalf, TransportWriteHalf},
+        session::Session,
+    },
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
@@ -11,7 +13,7 @@ use orion::aead::SecretKey;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{
     io,
-    net::TcpListener,
+    net::{tcp, TcpListener},
     sync::{mpsc, oneshot, Mutex},
 };
 
@@ -126,21 +128,9 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 
     // Wait for a client connection, then spawn a new task to handle
     // receiving data from the client
-    while let Ok((client, _)) = listener.accept().await {
-        // Grab the client's remote address for later logging purposes
-        let addr = match client.peer_addr() {
-            Ok(addr) => {
-                info!("<Client @ {}> Established connection", addr);
-                addr
-            }
-            Err(x) => {
-                error!("Unable to examine client's peer address: {}", x);
-                continue;
-            }
-        };
-
+    while let Ok((client, addr)) = listener.accept().await {
         // Establish a proper connection via a handshake, discarding the connection otherwise
-        let transport = match Transport::from_handshake(client, Arc::clone(&key)).await {
+        let transport = match Transport::from_handshake(client, Some(Arc::clone(&key))).await {
             Ok(transport) => transport,
             Err(x) => {
                 error!("<Client @ {}> Failed handshake: {}", addr, x);
@@ -176,13 +166,13 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 async fn request_loop(
     addr: SocketAddr,
     state: Arc<Mutex<State>>,
-    mut transport: TransportReadHalf,
+    mut transport: TransportReadHalf<tcp::OwnedReadHalf>,
     tx: mpsc::Sender<Response>,
 ) {
     loop {
         match transport.receive::<Request>().await {
             Ok(Some(req)) => {
-                trace!(
+                debug!(
                     "<Client @ {}> Received request of type {}",
                     addr,
                     req.payload.as_ref()
@@ -208,7 +198,7 @@ async fn request_loop(
 /// Repeatedly sends responses out over the wire
 async fn response_loop(
     addr: SocketAddr,
-    mut transport: TransportWriteHalf,
+    mut transport: TransportWriteHalf<tcp::OwnedWriteHalf>,
     mut rx: mpsc::Receiver<Response>,
 ) {
     while let Some(res) = rx.recv().await {
