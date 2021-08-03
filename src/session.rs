@@ -117,6 +117,11 @@ impl Session {
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
     }
 
+    /// Consumes the session and returns the auth key
+    pub fn into_auth_key(self) -> SecretKey {
+        self.auth_key
+    }
+
     /// Returns the ip address associated with the session based on the host
     pub async fn to_ip_addr(&self) -> io::Result<IpAddr> {
         let addr = match self.host.parse::<IpAddr>() {
@@ -143,14 +148,14 @@ impl Session {
     }
 
     /// Converts to unprotected string that exposes the auth key in the form of
-    /// `DISTANT DATA <addr> <port> <auth key>`
-    pub async fn to_unprotected_string(&self) -> io::Result<String> {
-        Ok(format!(
+    /// `DISTANT DATA <host> <port> <auth key>`
+    pub fn to_unprotected_string(&self) -> String {
+        format!(
             "DISTANT DATA {} {} {}",
-            self.to_ip_addr().await?,
+            self.host,
             self.port,
             self.to_unprotected_hex_auth_key()
-        ))
+        )
     }
 }
 
@@ -205,7 +210,7 @@ impl SessionFile {
 
     /// Saves a session to to a file at the specified path
     pub async fn save_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        tokio::fs::write(path.as_ref(), self.0.to_unprotected_string().await?).await
+        tokio::fs::write(path.as_ref(), self.0.to_unprotected_string()).await
     }
 
     /// Loads a session from the global session file

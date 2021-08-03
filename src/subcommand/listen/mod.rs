@@ -2,6 +2,7 @@ use crate::{
     data::{Request, Response},
     net::{Transport, TransportReadHalf, TransportWriteHalf},
     opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
+    session::Session,
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
@@ -100,10 +101,18 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     let port = listener.local_addr()?.port();
     debug!("Bound to port: {}", port);
 
-    let key = Arc::new(SecretKey::default());
-
     // Print information about port, key, etc.
-    publish_data(port, &key);
+    let key = {
+        let session = Session {
+            host: "--".to_string(),
+            port,
+            auth_key: SecretKey::default(),
+        };
+
+        println!("{}", session.to_unprotected_string());
+
+        Arc::new(session.into_auth_key())
+    };
 
     // For the child, we want to fully disconnect it from pipes, which we do now
     if is_forked {
@@ -208,15 +217,4 @@ async fn response_loop(
             break;
         }
     }
-}
-
-/// Prints out the port and **secret auth key** to share with a client when
-/// establishing communication. This is **highly unsafe** and should only be
-/// done when the server is launched over a secure channel such as SSH.
-fn publish_data(port: u16, key: &SecretKey) {
-    println!(
-        "DISTANT DATA {} {}",
-        port,
-        hex::encode(key.unprotected_as_bytes())
-    );
 }

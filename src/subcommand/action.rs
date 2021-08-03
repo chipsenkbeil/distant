@@ -93,7 +93,6 @@ fn spawn_stdin_reader() -> mpsc::Receiver<String> {
                             x
                         );
                     }
-                    // std::thread::sleep(std::time::Duration::from_millis(1));
                     std::thread::yield_now();
                 }
             }
@@ -139,7 +138,7 @@ async fn interactive_loop(
                                 Err(x) => error!("Failed to format response: {}", x),
                             },
                             Err(x) => {
-                                error!("Failed to send request to remote process ({}): {}", id, x)
+                                error!("Failed to send request: {}", x)
                             }
                         },
                         Err(x) => {
@@ -169,7 +168,7 @@ async fn interactive_loop(
                                 Err(x) => error!("Failed to format response: {}", x),
                             },
                             Err(x) => {
-                                error!("Failed to send request to remote process ({}): {}", id, x)
+                                error!("Failed to send request: {}", x)
                             }
                         },
                         Err(x) => {

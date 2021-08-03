@@ -4,7 +4,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use hex::FromHexError;
-use orion::{aead::SecretKey, errors::UnknownCryptoError};
+use orion::errors::UnknownCryptoError;
 use std::string::FromUtf8Error;
 use tokio::{io, process::Command};
 
@@ -56,35 +56,14 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
         )));
     }
 
-    // Parse our output for the specific info line
+    // Parse our output for the specific session line
+    // NOTE: The host provided on this line isn't valid, so we fill it in with our actual host
     let out = String::from_utf8(out.stdout)?.trim().to_string();
-    let result = out
+    let mut session = out
         .lines()
-        .find_map(|line| {
-            let tokens: Vec<&str> = line.split(' ').take(4).collect();
-            let is_data_line = tokens.len() == 4 && tokens[0] == "DISTANT" && tokens[1] == "DATA";
-            match tokens[2].parse::<u16>() {
-                Ok(port) if is_data_line => {
-                    let key = hex::decode(tokens[3])
-                        .map_err(Error::from)
-                        .and_then(|bytes| SecretKey::from_slice(&bytes).map_err(Error::from));
-                    match key {
-                        Ok(key) => Some(Ok((port, key))),
-                        Err(x) => Some(Err(x)),
-                    }
-                }
-                _ => None,
-            }
-        })
-        .unwrap_or(Err(Error::MissingSessionData));
-
-    // Write a session file containing our data for use in subsequent calls
-    let (port, auth_key) = result?;
-    let session = Session {
-        host: cmd.host,
-        port,
-        auth_key,
-    };
+        .find_map(|line| line.parse::<Session>().ok())
+        .ok_or(Error::MissingSessionData)?;
+    session.host = cmd.host;
 
     // Handle sharing resulting session in different ways
     // NOTE: Environment is unreachable here as we disallow it from the defined options since
@@ -92,7 +71,7 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
     match cmd.session {
         SessionSharing::Environment => unreachable!(),
         SessionSharing::File => SessionFile::from(session).save().await?,
-        SessionSharing::Pipe => println!("{}", session.to_unprotected_string().await?),
+        SessionSharing::Pipe => println!("{}", session.to_unprotected_string()),
     }
 
     Ok(())
