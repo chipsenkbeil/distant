@@ -1,4 +1,4 @@
-use crate::{subcommand, data::RequestPayload};
+use crate::{data::RequestPayload, subcommand};
 use derive_more::{Display, Error, From, IsVariant};
 use lazy_static::lazy_static;
 use std::{
@@ -8,7 +8,7 @@ use std::{
     str::FromStr,
 };
 use structopt::StructOpt;
-use strum::{EnumString, EnumVariantNames, VariantNames, IntoStaticStr};
+use strum::{EnumString, EnumVariantNames, IntoStaticStr, VariantNames};
 
 lazy_static! {
     static ref USERNAME: String = whoami::username();
@@ -87,17 +87,18 @@ pub enum SessionSubcommand {
     Exists,
 
     /// Prints out information about the available sessions
-    Info { 
+    Info {
         /// Represents the format that results should be returned
         ///
         /// Currently, there are two possible formats:
+        ///
         /// 1. "json": printing out JSON for external program usage
-        /// 3. "shell": printing out human-readable results for interactive shell usage
+        /// 2. "shell": printing out human-readable results for interactive shell usage
         #[structopt(
-            short, 
-            long, 
+            short,
+            long,
             case_insensitive = true,
-            default_value = "shell", 
+            default_value = Mode::Shell.into(),
             possible_values = Mode::VARIANTS
         )]
         mode: Mode,
@@ -105,7 +106,18 @@ pub enum SessionSubcommand {
 }
 
 /// Represents the communication medium used for the send command
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant, EnumString, EnumVariantNames)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Display,
+    PartialEq,
+    Eq,
+    IsVariant,
+    IntoStaticStr,
+    EnumString,
+    EnumVariantNames,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum Mode {
     /// Sends and receives data in JSON format
@@ -123,20 +135,25 @@ pub struct ActionSubcommand {
     /// Represents the format that results should be returned
     ///
     /// Currently, there are two possible formats:
+    ///
     /// 1. "json": printing out JSON for external program usage
-    /// 3. "shell": printing out human-readable results for interactive shell usage
+    /// 2. "shell": printing out human-readable results for interactive shell usage
     #[structopt(
-        short, 
-        long, 
+        short,
+        long,
         case_insensitive = true,
-        default_value = "shell", 
+        default_value = Mode::Shell.into(),
         possible_values = Mode::VARIANTS
     )]
     pub mode: Mode,
 
     /// Represents the medium for retrieving a session for use in performing the action
-    #[structopt(long, default_value = "file", possible_values = SessionSharing::VARIANTS)]
-    pub session: SessionSharing,
+    #[structopt(
+        long,
+        default_value = SessionInput::File.into(),
+        possible_values = SessionInput::VARIANTS
+    )]
+    pub session: SessionInput,
 
     /// If specified, commands to send are sent over stdin and responses are received
     /// over stdout (and stderr if mode is shell)
@@ -149,7 +166,7 @@ pub struct ActionSubcommand {
 }
 
 /// Represents options for binding a server to an IP address
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant)]
 pub enum BindAddress {
     #[display(fmt = "ssh")]
     Ssh,
@@ -202,9 +219,48 @@ impl FromStr for BindAddress {
 }
 
 /// Represents the means by which to share the session from launching on a remote machine
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IntoStaticStr, IsVariant, EnumString, EnumVariantNames)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Display,
+    PartialEq,
+    Eq,
+    IntoStaticStr,
+    IsVariant,
+    EnumString,
+    EnumVariantNames,
+)]
 #[strum(serialize_all = "snake_case")]
-pub enum SessionSharing {
+pub enum SessionOutput {
+    /// Session is in a file in the form of `DISTANT DATA <host> <port> <auth key>`
+    File,
+
+    /// Special scenario where the session is not shared but is instead kept within the
+    /// launch program, causing the program itself to listen on stdin for input rather
+    /// than terminating
+    Keep,
+
+    /// Session is stored and retrieved over anonymous pipes (stdout/stdin)
+    /// in form of `DISTANT DATA <host> <port> <auth key>`
+    Pipe,
+}
+
+/// Represents the means by which to consume a session when performing an action
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Display,
+    PartialEq,
+    Eq,
+    IntoStaticStr,
+    IsVariant,
+    EnumString,
+    EnumVariantNames,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum SessionInput {
     /// Session is in a environment variables
     ///
     /// * `DISTANT_HOST=<host>`
@@ -215,16 +271,9 @@ pub enum SessionSharing {
     /// Session is in a file in the form of `DISTANT DATA <host> <port> <auth key>`
     File,
 
-    /// Session is stored and retrieved over anonymous pipes (stdout/stdin) 
+    /// Session is stored and retrieved over anonymous pipes (stdout/stdin)
     /// in form of `DISTANT DATA <host> <port> <auth key>`
     Pipe,
-}
-
-impl SessionSharing {
-    /// Represents session configurations that can be used for output
-    pub fn output_variants() -> Vec<&'static str> { 
-        vec![Self::File.into(), Self::Pipe.into()]
-    }
 }
 
 /// Represents subcommand to launch a remote server
@@ -232,11 +281,23 @@ impl SessionSharing {
 pub struct LaunchSubcommand {
     /// Represents the medium for sharing the session upon launching on a remote machine
     #[structopt(
-        long, 
-        default_value = SessionSharing::File.into(), 
-        possible_values = &SessionSharing::output_variants()
+        long,
+        default_value = SessionOutput::File.into(),
+        possible_values = SessionOutput::VARIANTS
     )]
-    pub session: SessionSharing,
+    pub session: SessionOutput,
+
+    /// Represents the format that results should be returned when session is "keep",
+    /// causing the launcher to enter an interactive loop to handle input and output
+    /// itself rather than enabling other clients to connect
+    #[structopt(
+        short,
+        long,
+        case_insensitive = true,
+        default_value = Mode::Shell.into(),
+        possible_values = Mode::VARIANTS
+    )]
+    pub mode: Mode,
 
     /// Path to remote program to execute via ssh
     #[structopt(short, long, default_value = "distant")]
@@ -284,8 +345,8 @@ pub struct LaunchSubcommand {
 /// Represents some range of ports
 #[derive(Clone, Debug, Display, PartialEq, Eq)]
 #[display(
-    fmt = "{}{}", 
-    start, 
+    fmt = "{}{}",
+    start,
     "end.as_ref().map(|end| format!(\"[:{}]\", end)).unwrap_or_default()"
 )]
 pub struct PortRange {
@@ -383,11 +444,6 @@ pub struct ListenSubcommand {
     /// With -p 0, the server will let the operating system pick an available TCP port.
     ///
     /// Please note that this option does not affect the server-side port used by SSH
-    #[structopt(
-        short,
-        long,
-        value_name = "PORT[:PORT2]",
-        default_value = "8080:8099"
-    )]
+    #[structopt(short, long, value_name = "PORT[:PORT2]", default_value = "8080:8099")]
     pub port: PortRange,
 }

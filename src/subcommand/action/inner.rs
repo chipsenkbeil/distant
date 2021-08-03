@@ -1,10 +1,9 @@
 use crate::{
     data::{Request, RequestPayload, Response, ResponsePayload},
-    net::{Client, TransportError},
-    opt::{ActionSubcommand, CommonOpt, Mode, SessionSharing},
-    session::{Session, SessionFile},
+    net::Client,
+    opt::Mode,
 };
-use derive_more::{Display, Error, From};
+use derive_more::IsVariant;
 use log::*;
 use structopt::StructOpt;
 use tokio::{
@@ -16,59 +15,134 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 
-#[derive(Debug, Display, Error, From)]
-pub enum Error {
-    IoError(io::Error),
-    TransportError(TransportError),
-
-    #[display(fmt = "Non-interactive but no operation supplied")]
-    MissingOperation,
+#[derive(Copy, Clone, PartialEq, Eq, IsVariant)]
+pub enum LoopConfig {
+    Json,
+    Proc { id: usize },
+    Shell,
 }
 
-pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
-    let rt = tokio::runtime::Runtime::new()?;
-
-    rt.block_on(async { run_async(cmd, opt).await })
+impl From<LoopConfig> for Mode {
+    fn from(config: LoopConfig) -> Self {
+        match config {
+            LoopConfig::Json => Self::Json,
+            LoopConfig::Proc { .. } | LoopConfig::Shell => Self::Shell,
+        }
+    }
 }
 
-async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> {
-    let session = match cmd.session {
-        SessionSharing::Environment => Session::from_environment()?,
-        SessionSharing::File => SessionFile::load().await?.into(),
-        SessionSharing::Pipe => Session::from_stdin()?,
-    };
+/// Starts a new action loop that processes requests and receives responses
+///
+/// id represents the id of a remote process
+pub async fn interactive_loop(mut client: Client, config: LoopConfig) -> io::Result<()> {
+    let mut stream = client.to_response_stream();
 
-    let mut client = Client::connect(session).await?;
+    // Create a channel that can report when we should stop the loop based on a received request
+    let (tx_stop, mut rx_stop) = oneshot::channel::<()>();
 
-    if !cmd.interactive && cmd.operation.is_none() {
-        return Err(Error::MissingOperation);
-    }
+    // We also want to spawn a task to handle sending stdin to the remote process
+    let mut rx = spawn_stdin_reader();
+    tokio::spawn(async move {
+        while let Some(line) = rx.recv().await {
+            match config {
+                // Special exit condition for interactive mode
+                _ if line.trim() == "exit" => {
+                    if let Err(_) = tx_stop.send(()) {
+                        error!("Failed to close interactive loop!");
+                    }
+                    break;
+                }
 
-    // Special conditions for continuing to process responses
-    let mut is_proc_req = false;
-    let mut proc_id = 0;
+                // For json mode, all stdin is treated as individual requests
+                LoopConfig::Json => {
+                    trace!("Client sending request: {:?}", line);
+                    let result = serde_json::from_str(&line)
+                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
+                    match result {
+                        Ok(req) => match client.send(req).await {
+                            Ok(res) => match format_response(Mode::Json, res) {
+                                Ok(out) => out.print(),
+                                Err(x) => error!("Failed to format response: {}", x),
+                            },
+                            Err(x) => {
+                                error!("Failed to send request: {}", x)
+                            }
+                        },
+                        Err(x) => {
+                            error!("Failed to serialize request: {}", x);
+                        }
+                    }
+                }
 
-    if let Some(req) = cmd.operation.map(Request::from) {
-        is_proc_req = req.payload.is_proc_run();
+                // For interactive shell mode, parse stdin as individual commands
+                LoopConfig::Shell => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
 
-        trace!("Client sending request: {:?}", req);
-        let res = client.send(req).await?;
+                    trace!("Client sending command: {:?}", line);
 
-        // Store the spawned process id for using in sending stdin (if we spawned a proc)
-        proc_id = match &res.payload {
-            ResponsePayload::ProcStart { id } => *id,
-            _ => 0,
-        };
+                    // NOTE: We have to stick something in as the first argument as clap/structopt
+                    //       expect the binary name as the first item in the iterator
+                    let payload_result = RequestPayload::from_iter_safe(
+                        std::iter::once("distant")
+                            .chain(line.trim().split(' ').filter(|s| !s.trim().is_empty())),
+                    );
+                    match payload_result {
+                        Ok(payload) => match client.send(Request::from(payload)).await {
+                            Ok(res) => match format_response(Mode::Shell, res) {
+                                Ok(out) => out.print(),
+                                Err(x) => error!("Failed to format response: {}", x),
+                            },
+                            Err(x) => {
+                                error!("Failed to send request: {}", x)
+                            }
+                        },
+                        Err(x) => {
+                            error!("Failed to parse command: {}", x);
+                        }
+                    }
+                }
 
-        format_response(cmd.mode, res)?.print();
-    }
+                // For non-interactive shell mode, all stdin is treated as a proc's stdin
+                LoopConfig::Proc { id } => {
+                    trace!("Client sending stdin: {:?}", line);
+                    let req = Request::from(RequestPayload::ProcStdin {
+                        id,
+                        data: line.into_bytes(),
+                    });
+                    let result = client.send(req).await;
 
-    // If we are executing a process, we want to continue interacting via stdin and receiving
-    // results via stdout/stderr
-    //
-    // If we are interactive, we want to continue looping regardless
-    if is_proc_req || cmd.interactive {
-        interactive_loop(client, proc_id, cmd.mode, cmd.interactive).await?;
+                    if let Err(x) = result {
+                        error!("Failed to send stdin to remote process ({}): {}", id, x);
+                    }
+                }
+            }
+        }
+    });
+
+    while let Err(TryRecvError::Empty) = rx_stop.try_recv() {
+        if let Some(res) = stream.next().await {
+            let res = res.map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Response stream no longer available",
+                )
+            })?;
+            let done = res.payload.is_proc_done() && config.is_proc();
+
+            format_response(config.into(), res)?.print();
+
+            // If we aren't interactive but are just running a proc and
+            // we've received the end of the proc, we should exit
+            if done {
+                break;
+            }
+
+        // If we have nothing else in our stream, we should also exit
+        } else {
+            break;
+        }
     }
 
     Ok(())
@@ -102,127 +176,8 @@ fn spawn_stdin_reader() -> mpsc::Receiver<String> {
     rx
 }
 
-async fn interactive_loop(
-    mut client: Client,
-    id: usize,
-    mode: Mode,
-    interactive: bool,
-) -> Result<(), Error> {
-    let mut stream = client.to_response_stream();
-
-    // Create a channel that can report when we should stop the loop based on a received request
-    let (tx_stop, mut rx_stop) = oneshot::channel::<()>();
-
-    // We also want to spawn a task to handle sending stdin to the remote process
-    let mut rx = spawn_stdin_reader();
-    tokio::spawn(async move {
-        while let Some(line) = rx.recv().await {
-            match mode {
-                // Special exit condition for interactive mode
-                _ if line.trim() == "exit" => {
-                    if let Err(_) = tx_stop.send(()) {
-                        error!("Failed to close interactive loop!");
-                    }
-                    break;
-                }
-
-                // For json mode, all stdin is treated as individual requests
-                Mode::Json => {
-                    trace!("Client sending request: {:?}", line);
-                    let result = serde_json::from_str(&line)
-                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
-                    match result {
-                        Ok(req) => match client.send(req).await {
-                            Ok(res) => match format_response(mode, res) {
-                                Ok(out) => out.print(),
-                                Err(x) => error!("Failed to format response: {}", x),
-                            },
-                            Err(x) => {
-                                error!("Failed to send request: {}", x)
-                            }
-                        },
-                        Err(x) => {
-                            error!("Failed to serialize request: {}", x);
-                        }
-                    }
-                }
-
-                // For interactive shell mode, parse stdin as individual commands
-                Mode::Shell if interactive => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-
-                    trace!("Client sending command: {:?}", line);
-
-                    // NOTE: We have to stick something in as the first argument as clap/structopt
-                    //       expect the binary name as the first item in the iterator
-                    let payload_result = RequestPayload::from_iter_safe(
-                        std::iter::once("distant")
-                            .chain(line.trim().split(' ').filter(|s| !s.trim().is_empty())),
-                    );
-                    match payload_result {
-                        Ok(payload) => match client.send(Request::from(payload)).await {
-                            Ok(res) => match format_response(mode, res) {
-                                Ok(out) => out.print(),
-                                Err(x) => error!("Failed to format response: {}", x),
-                            },
-                            Err(x) => {
-                                error!("Failed to send request: {}", x)
-                            }
-                        },
-                        Err(x) => {
-                            error!("Failed to parse command: {}", x);
-                        }
-                    }
-                }
-
-                // For non-interactive shell mode, all stdin is treated as a proc's stdin
-                Mode::Shell => {
-                    trace!("Client sending stdin: {:?}", line);
-                    let req = Request::from(RequestPayload::ProcStdin {
-                        id,
-                        data: line.into_bytes(),
-                    });
-                    let result = client.send(req).await;
-
-                    if let Err(x) = result {
-                        error!("Failed to send stdin to remote process ({}): {}", id, x);
-                    }
-                }
-            }
-        }
-    });
-
-    while let Err(TryRecvError::Empty) = rx_stop.try_recv() {
-        if let Some(res) = stream.next().await {
-            let res = res.map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Response stream no longer available",
-                )
-            })?;
-            let done = res.payload.is_proc_done() && !interactive;
-
-            format_response(mode, res)?.print();
-
-            // If we aren't interactive but are just running a proc and
-            // we've received the end of the proc, we should exit
-            if done {
-                break;
-            }
-
-        // If we have nothing else in our stream, we should also exit
-        } else {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
 /// Represents the output content and destination
-enum ResponseOut {
+pub enum ResponseOut {
     Stdout(String),
     Stderr(String),
     None,
@@ -238,7 +193,7 @@ impl ResponseOut {
     }
 }
 
-fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
+pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
     Ok(match mode {
         Mode::Json => ResponseOut::Stdout(format!(
             "{}\n",

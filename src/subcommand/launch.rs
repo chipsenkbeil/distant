@@ -1,5 +1,6 @@
 use crate::{
-    opt::{CommonOpt, LaunchSubcommand, SessionSharing},
+    net::Client,
+    opt::{CommonOpt, LaunchSubcommand, Mode, SessionOutput},
     session::{Session, SessionFile},
 };
 use derive_more::{Display, Error, From};
@@ -66,12 +67,18 @@ async fn run_async(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<(), Error> 
     session.host = cmd.host;
 
     // Handle sharing resulting session in different ways
-    // NOTE: Environment is unreachable here as we disallow it from the defined options since
-    //       there is no way to set the shell's environment variables, only this running process
     match cmd.session {
-        SessionSharing::Environment => unreachable!(),
-        SessionSharing::File => SessionFile::from(session).save().await?,
-        SessionSharing::Pipe => println!("{}", session.to_unprotected_string()),
+        SessionOutput::File => SessionFile::from(session).save().await?,
+        SessionOutput::Keep => {
+            use crate::subcommand::action::inner;
+            let client = Client::connect(session).await?;
+            let config = match cmd.mode {
+                Mode::Json => inner::LoopConfig::Json,
+                Mode::Shell => inner::LoopConfig::Shell,
+            };
+            inner::interactive_loop(client, config).await?;
+        }
+        SessionOutput::Pipe => println!("{}", session.to_unprotected_string()),
     }
 
     Ok(())
