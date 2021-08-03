@@ -84,15 +84,18 @@ fn spawn_stdin_reader() -> mpsc::Receiver<String> {
 
         loop {
             let mut line = String::new();
-            if stdin.read_line(&mut line).is_ok() {
-                if let Err(x) = tx.blocking_send(line) {
-                    error!(
-                        "Failed to pass along stdin to be sent to remote process: {}",
-                        x
-                    );
+            match stdin.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if let Err(x) = tx.blocking_send(line) {
+                        error!(
+                            "Failed to pass along stdin to be sent to remote process: {}",
+                            x
+                        );
+                    }
+                    // std::thread::sleep(std::time::Duration::from_millis(1));
+                    std::thread::yield_now();
                 }
-            } else {
-                break;
             }
         }
     });
