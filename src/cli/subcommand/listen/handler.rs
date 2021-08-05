@@ -58,7 +58,7 @@ pub(super) async fn process(
                 proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
             }
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
-            RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
+            RequestPayload::ProcStdin { id, line } => proc_stdin(state, id, line).await,
             RequestPayload::ProcList {} => proc_list(state).await,
         }
     }
@@ -312,7 +312,6 @@ async fn proc_run(
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
     let stdout_task = tokio::spawn(async move {
         loop {
-            trace!("Reading stdout...");
             match stdout.next_line().await {
                 Ok(Some(line)) => {
                     let res = Response::new(
@@ -365,10 +364,20 @@ async fn proc_run(
 
     // Spawn a task that sends stdin to the process
     let mut stdin = child.stdin.take().unwrap();
-    let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(1);
+    let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1);
     tokio::spawn(async move {
-        while let Some(data) = stdin_rx.recv().await {
-            if let Err(x) = stdin.write_all(&data).await {
+        while let Some(mut line) = stdin_rx.recv().await {
+            // NOTE: If the line coming in does not have a newline character,
+            //       we must add it to properly flush to stdin of process
+            //
+            //       Given that our data structure is called line, we assume
+            //       that it represents a complete line whether or not it
+            //       ends with the linefeed character
+            if !line.ends_with('\n') {
+                line.push('\n');
+            }
+
+            if let Err(x) = stdin.write_all(line.as_bytes()).await {
                 error!("Failed to send stdin to process {}: {}", id, x);
                 break;
             }
@@ -492,10 +501,10 @@ async fn proc_kill(state: HState, id: usize) -> Result<ResponsePayload, Box<dyn 
 async fn proc_stdin(
     state: HState,
     id: usize,
-    data: Vec<u8>,
+    line: String,
 ) -> Result<ResponsePayload, Box<dyn Error>> {
     if let Some(process) = state.lock().await.processes.get(&id) {
-        process.stdin_tx.send(data).await.map_err(|_| {
+        process.stdin_tx.send(line).await.map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "Unable to send stdin to process")
         })?;
     }

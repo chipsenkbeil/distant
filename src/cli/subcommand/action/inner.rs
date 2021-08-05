@@ -119,13 +119,7 @@ where
                 // For non-interactive shell mode, all stdin is treated as a proc's stdin
                 LoopConfig::Proc { id } => {
                     debug!("Client sending stdin: {:?}", line);
-                    let req = Request::new(
-                        tenant.as_str(),
-                        RequestPayload::ProcStdin {
-                            id,
-                            data: line.into_bytes(),
-                        },
-                    );
+                    let req = Request::new(tenant.as_str(), RequestPayload::ProcStdin { id, line });
                     let result = client.send(req).await;
 
                     if let Err(x) = result {

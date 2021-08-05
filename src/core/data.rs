@@ -184,8 +184,8 @@ pub enum RequestPayload {
         /// Id of the actively-running process to send stdin data
         id: usize,
 
-        /// Data to send to stdin of process
-        data: Vec<u8>,
+        /// Complete line to stdin of process
+        line: String,
     },
 
     /// Retrieve a list of all processes being managed by the remote server

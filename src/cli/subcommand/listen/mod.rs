@@ -65,7 +65,7 @@ struct Process {
     pub id: usize,
     pub cmd: String,
     pub args: Vec<String>,
-    pub stdin_tx: mpsc::Sender<Vec<u8>>,
+    pub stdin_tx: mpsc::Sender<String>,
     pub kill_tx: oneshot::Sender<()>,
 }
 
