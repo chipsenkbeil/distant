@@ -230,9 +230,26 @@ pub enum ResponseOut {
 impl ResponseOut {
     pub fn print(self) {
         match self {
-            Self::Stdout(x) => print!("{}", x),
+            Self::Stdout(x) => {
+                // NOTE: Because we are not including a newline in the output,
+                //       it is not guaranteed to be written out. In the case of
+                //       LSP protocol, the JSON content is not followed by a
+                //       newline and was not picked up when the response was
+                //       sent back to the client; so, we need to manually flush
+                use std::io::Write;
+                print!("{}", x);
+                if let Err(x) = std::io::stdout().lock().flush() {
+                    error!("Failed to flush stdout: {}", x);
+                }
+            }
             Self::StdoutLine(x) => println!("{}", x),
-            Self::Stderr(x) => eprint!("{}", x),
+            Self::Stderr(x) => {
+                use std::io::Write;
+                eprint!("{}", x);
+                if let Err(x) = std::io::stderr().lock().flush() {
+                    error!("Failed to flush stderr: {}", x);
+                }
+            }
             Self::StderrLine(x) => eprintln!("{}", x),
             Self::None => {}
         }
