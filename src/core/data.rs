@@ -1,6 +1,6 @@
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 use structopt::StructOpt;
 use strum::AsRefStr;
 
@@ -98,9 +98,25 @@ pub enum RequestPayload {
         /// The path to the directory on the remote machine
         path: PathBuf,
 
-        /// Whether or not to read subdirectories recursively
+        /// Maximum depth to traverse with 0 indicating there is no maximum
+        /// depth and 1 indicating the most immediate children within the
+        /// directory
+        #[serde(default = "one")]
+        #[structopt(short, long, default_value = "1")]
+        depth: usize,
+
+        /// Whether or not to return absolute or relative paths
         #[structopt(short, long)]
-        all: bool,
+        absolute: bool,
+
+        /// Whether or not to canonicalize the resulting paths, meaning
+        /// returning the canonical, absolute form of a path with all
+        /// intermediate components normalized and symbolic links resolved
+        ///
+        /// Note that the flag absolute must be true to have absolute paths
+        /// returned, even if canonicalize is flagged as true
+        #[structopt(short, long)]
+        canonicalize: bool,
     },
 
     /// Creates a directory on the remote machine
@@ -248,6 +264,9 @@ pub enum ResponsePayload {
     DirEntries {
         /// Entries contained within the requested directory
         entries: Vec<DirEntry>,
+
+        /// Errors encountered while scanning for entries
+        errors: Vec<Error>,
     },
 
     /// Response to reading metadata
@@ -267,8 +286,8 @@ pub enum ResponsePayload {
         /// Arbitrary id associated with running process
         id: usize,
 
-        /// Data sent to stdout by process
-        data: Vec<u8>,
+        /// Line sent to stdout by the process
+        line: String,
     },
 
     /// Actively-transmitted stderr as part of running process
@@ -276,8 +295,8 @@ pub enum ResponsePayload {
         /// Arbitrary id associated with running process
         id: usize,
 
-        /// Data sent to stderr by process
-        data: Vec<u8>,
+        /// Line sent to stderr by the process
+        line: String,
     },
 
     /// Response to a process finishing
@@ -364,4 +383,42 @@ pub struct RunningProcess {
     ///
     /// Not the same as the process' pid!
     pub id: usize,
+}
+
+/// General purpose error type that can be sent across the wire
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct Error {
+    /// Label describing the kind of error
+    pub kind: String,
+
+    /// Description of the error itself
+    pub description: String,
+}
+
+impl From<io::Error> for Error {
+    fn from(x: io::Error) -> Self {
+        Self {
+            kind: format!("{:?}", x.kind()),
+            description: format!("{}", x),
+        }
+    }
+}
+
+impl From<walkdir::Error> for Error {
+    fn from(x: walkdir::Error) -> Self {
+        if x.io_error().is_some() {
+            x.into_io_error().map(Self::from).unwrap()
+        } else {
+            Self {
+                kind: String::from("Loop"),
+                description: format!("{}", x),
+            }
+        }
+    }
+}
+
+/// Used to provide a default serde value of 1
+const fn one() -> usize {
+    1
 }

@@ -1,14 +1,19 @@
 use super::{Process, State};
 use crate::core::data::{
-    DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
+    self, DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
     RunningProcess,
 };
 use log::*;
 use std::{
-    error::Error, net::SocketAddr, path::PathBuf, process::Stdio, sync::Arc, time::SystemTime,
+    error::Error,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::SystemTime,
 };
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
     sync::{mpsc, oneshot, Mutex},
 };
@@ -38,7 +43,12 @@ pub(super) async fn process(
             RequestPayload::FileWriteText { path, text } => file_write(path, text).await,
             RequestPayload::FileAppend { path, data } => file_append(path, data).await,
             RequestPayload::FileAppendText { path, text } => file_append(path, text).await,
-            RequestPayload::DirRead { path, all } => dir_read(path, all).await,
+            RequestPayload::DirRead {
+                path,
+                depth,
+                absolute,
+                canonicalize,
+            } => dir_read(path, depth, absolute, canonicalize).await,
             RequestPayload::DirCreate { path, all } => dir_create(path, all).await,
             RequestPayload::Remove { path, force } => remove(path, force).await,
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
@@ -107,21 +117,57 @@ async fn file_append(
     Ok(ResponsePayload::Ok)
 }
 
-async fn dir_read(path: PathBuf, all: bool) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn dir_read(
+    path: PathBuf,
+    depth: usize,
+    absolute: bool,
+    canonicalize: bool,
+) -> Result<ResponsePayload, Box<dyn Error>> {
+    // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
+    let root_path = tokio::fs::canonicalize(path).await?;
+
     // Traverse, but don't include root directory in entries (hence min depth 1)
-    let dir = WalkDir::new(path.as_path()).min_depth(1);
+    let dir = WalkDir::new(root_path.as_path()).min_depth(1);
 
-    // If all, will recursively traverse, otherwise just return directly from dir
-    let dir = if all { dir } else { dir.max_depth(1) };
+    // If depth > 0, will recursively traverse to specified max depth, otherwise
+    // performs infinite traversal
+    let dir = if depth > 0 { dir.max_depth(depth) } else { dir };
 
-    // TODO: Support both returning errors and successfully-traversed entries
-    // TODO: Support returning full paths instead of always relative?
-    Ok(ResponsePayload::DirEntries {
-        entries: dir
-            .into_iter()
-            .map(|e| {
-                e.map(|e| DirEntry {
-                    path: e.path().strip_prefix(path.as_path()).unwrap().to_path_buf(),
+    // Determine our entries and errors
+    let mut entries = Vec::new();
+    let mut errors = Vec::new();
+
+    for entry in dir {
+        match entry.map_err(data::Error::from) {
+            Ok(e) => {
+                // Canonicalize the path if specified, otherwise just return
+                // the path as is
+                let mut path = if canonicalize {
+                    match tokio::fs::canonicalize(e.path()).await {
+                        Ok(path) => path,
+                        Err(x) => {
+                            errors.push(data::Error::from(x));
+                            continue;
+                        }
+                    }
+                } else {
+                    e.path().to_path_buf()
+                };
+
+                // Strip the path of its prefix based if not flagged as absolute
+                if !absolute {
+                    // NOTE: In the situation where we canonicalized the path earlier,
+                    //       there is no guarantee that our root path is still the
+                    //       parent of the symlink's destination; so, in that case we MUST just
+                    //       return the path if the strip_prefix fails
+                    path = path
+                        .strip_prefix(root_path.as_path())
+                        .map(Path::to_path_buf)
+                        .unwrap_or(path);
+                };
+
+                entries.push(DirEntry {
+                    path,
                     file_type: if e.file_type().is_dir() {
                         FileType::Dir
                     } else if e.file_type().is_file() {
@@ -130,10 +176,13 @@ async fn dir_read(path: PathBuf, all: bool) -> Result<ResponsePayload, Box<dyn E
                         FileType::SymLink
                     },
                     depth: e.depth(),
-                })
-            })
-            .collect::<Result<Vec<DirEntry>, walkdir::Error>>()?,
-    })
+                });
+            }
+            Err(x) => errors.push(x),
+        }
+    }
+
+    Ok(ResponsePayload::DirEntries { entries, errors })
 }
 
 async fn dir_create(path: PathBuf, all: bool) -> Result<ResponsePayload, Box<dyn Error>> {
@@ -260,16 +309,16 @@ async fn proc_run(
     // Spawn a task that sends stdout as a response
     let tx_2 = tx.clone();
     let tenant_2 = tenant.clone();
-    let mut stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
     let stdout_task = tokio::spawn(async move {
         loop {
-            let mut data = Vec::new();
-            match stdout.read_to_end(&mut data).await {
-                Ok(n) if n > 0 => {
+            trace!("Reading stdout...");
+            match stdout.next_line().await {
+                Ok(Some(line)) => {
                     let res = Response::new(
                         tenant_2.as_str(),
                         None,
-                        ResponsePayload::ProcStdout { id, data },
+                        ResponsePayload::ProcStdout { id, line },
                     );
                     debug!(
                         "<Client @ {}> Sending response of type {}",
@@ -280,7 +329,7 @@ async fn proc_run(
                         break;
                     }
                 }
-                Ok(_) => break,
+                Ok(None) => break,
                 Err(_) => break,
             }
         }
@@ -289,16 +338,15 @@ async fn proc_run(
     // Spawn a task that sends stderr as a response
     let tx_2 = tx.clone();
     let tenant_2 = tenant.clone();
-    let mut stderr = child.stderr.take().unwrap();
+    let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
     let stderr_task = tokio::spawn(async move {
         loop {
-            let mut data = Vec::new();
-            match stderr.read_to_end(&mut data).await {
-                Ok(n) if n > 0 => {
+            match stderr.next_line().await {
+                Ok(Some(line)) => {
                     let res = Response::new(
                         tenant_2.as_str(),
                         None,
-                        ResponsePayload::ProcStderr { id, data },
+                        ResponsePayload::ProcStderr { id, line },
                     );
                     debug!(
                         "<Client @ {}> Sending response of type {}",
@@ -309,7 +357,7 @@ async fn proc_run(
                         break;
                     }
                 }
-                Ok(_) => break,
+                Ok(None) => break,
                 Err(_) => break,
             }
         }

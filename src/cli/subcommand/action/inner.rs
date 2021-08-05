@@ -201,8 +201,8 @@ pub enum ResponseOut {
 impl ResponseOut {
     pub fn print(self) {
         match self {
-            Self::Stdout(x) => print!("{}", x),
-            Self::Stderr(x) => eprint!("{}", x),
+            Self::Stdout(x) => println!("{}", x),
+            Self::Stderr(x) => eprintln!("{}", x),
             Self::None => {}
         }
     }
@@ -211,7 +211,7 @@ impl ResponseOut {
 pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
     Ok(match mode {
         Mode::Json => ResponseOut::Stdout(format!(
-            "{}\n",
+            "{}",
             serde_json::to_string(&res)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
         )),
@@ -223,14 +223,14 @@ fn format_shell(res: Response) -> ResponseOut {
     match res.payload {
         ResponsePayload::Ok => ResponseOut::None,
         ResponsePayload::Error { description } => {
-            ResponseOut::Stderr(format!("Failed: '{}'.\n", description))
+            ResponseOut::Stderr(format!("Failed: '{}'.", description))
         }
         ResponsePayload::Blob { data } => {
             ResponseOut::Stdout(String::from_utf8_lossy(&data).to_string())
         }
         ResponsePayload::Text { data } => ResponseOut::Stdout(data),
-        ResponsePayload::DirEntries { entries } => ResponseOut::Stdout(format!(
-            "{}\n",
+        ResponsePayload::DirEntries { entries, .. } => ResponseOut::Stdout(format!(
+            "{}",
             entries
                 .into_iter()
                 .map(|entry| {
@@ -238,6 +238,12 @@ fn format_shell(res: Response) -> ResponseOut {
                         "{}{}",
                         entry.path.as_os_str().to_string_lossy(),
                         if entry.file_type.is_dir() {
+                            // NOTE: This can be different from the server if
+                            //       the server OS is unix and the client is
+                            //       not or vice versa; for now, this doesn't
+                            //       matter as we only support unix-based
+                            //       operating systems, but something to keep
+                            //       in mind
                             std::path::MAIN_SEPARATOR.to_string()
                         } else {
                             String::new()
@@ -254,7 +260,7 @@ fn format_shell(res: Response) -> ResponseOut {
                 "Readonly: {}\n",
                 "Created: {}\n",
                 "Last Accessed: {}\n",
-                "Last Modified: {}\n",
+                "Last Modified: {}",
             ),
             data.file_type.as_ref(),
             data.len,
@@ -264,7 +270,7 @@ fn format_shell(res: Response) -> ResponseOut {
             data.modified.unwrap_or_default(),
         )),
         ResponsePayload::ProcEntries { entries } => ResponseOut::Stdout(format!(
-            "{}\n",
+            "{}",
             entries
                 .into_iter()
                 .map(|entry| format!("{}: {} {}", entry.id, entry.cmd, entry.args.join(" ")))
@@ -272,19 +278,15 @@ fn format_shell(res: Response) -> ResponseOut {
                 .join("\n"),
         )),
         ResponsePayload::ProcStart { .. } => ResponseOut::None,
-        ResponsePayload::ProcStdout { data, .. } => {
-            ResponseOut::Stdout(String::from_utf8_lossy(&data).to_string())
-        }
-        ResponsePayload::ProcStderr { data, .. } => {
-            ResponseOut::Stderr(String::from_utf8_lossy(&data).to_string())
-        }
+        ResponsePayload::ProcStdout { line, .. } => ResponseOut::Stdout(line),
+        ResponsePayload::ProcStderr { line, .. } => ResponseOut::Stderr(line),
         ResponsePayload::ProcDone { id, success, code } => {
             if success {
                 ResponseOut::None
             } else if let Some(code) = code {
-                ResponseOut::Stderr(format!("Proc {} failed with code {}\n", id, code))
+                ResponseOut::Stderr(format!("Proc {} failed with code {}", id, code))
             } else {
-                ResponseOut::Stderr(format!("Proc {} failed\n", id))
+                ResponseOut::Stderr(format!("Proc {} failed", id))
             }
         }
     }

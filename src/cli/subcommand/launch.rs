@@ -62,8 +62,17 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 "Forking and entering interactive loop over unix socket {:?}",
                 session_socket
             );
+
+            // Force runtime shutdown by dropping it BEFORE forking as otherwise
+            // this produces a garbage process that won't die
+            drop(rt);
+
             match daemon(false, false) {
                 Ok(Fork::Child) => {
+                    // NOTE: We need to create a runtime within the forked process as
+                    //       tokio's runtime doesn't support being transferred from
+                    //       parent to child in a fork
+                    let rt = tokio::runtime::Runtime::new()?;
                     rt.block_on(async { socket_loop(session_socket, session).await })?
                 }
                 Ok(_) => {}
@@ -109,13 +118,16 @@ async fn keep_loop(session: Session, mode: Mode) -> io::Result<()> {
 async fn socket_loop(socket_path: impl AsRef<Path>, session: Session) -> io::Result<()> {
     // We need to form a connection with the actual server to forward requests
     // and responses between connections
+    debug!("Connecting to {} {}", session.host, session.port);
     let mut client = Client::tcp_connect(session).await?;
 
     // Get a copy of our client's broadcaster so we can have each connection
     // subscribe to it for new messages filtered by tenant
+    debug!("Acquiring client broadcaster");
     let broadcaster = client.to_response_broadcaster();
 
     // Spawn task to send to the server requests from connections
+    debug!("Spawning request forwarding task");
     let (req_tx, mut req_rx) = mpsc::channel::<Request>(CLIENT_BROADCAST_CHANNEL_CAPACITY);
     tokio::spawn(async move {
         while let Some(req) = req_rx.recv().await {
@@ -132,7 +144,9 @@ async fn socket_loop(socket_path: impl AsRef<Path>, session: Session) -> io::Res
 
     // Continue to receive connections over the unix socket, store them in our
     // connection mapping
+    debug!("Binding to unix socket: {:?}", socket_path.as_ref());
     let listener = tokio::net::UnixListener::bind(socket_path)?;
+
     while let Ok((conn, addr)) = listener.accept().await {
         // Establish a proper connection via a handshake, discarding the connection otherwise
         let transport = match Transport::from_handshake(conn, None).await {

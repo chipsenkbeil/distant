@@ -39,9 +39,15 @@ struct State {
 impl State {
     /// Cleans up state associated with a particular client
     pub async fn cleanup_client(&mut self, addr: SocketAddr) {
+        debug!("<Client @ {}> Cleaning up state", addr);
         if let Some(ids) = self.client_processes.remove(&addr) {
             for id in ids {
                 if let Some(process) = self.processes.remove(&id) {
+                    trace!(
+                        "<Client @ {}> Requesting proc {} be killed",
+                        addr,
+                        process.id
+                    );
                     if let Err(_) = process.kill_tx.send(()) {
                         error!(
                             "Client {} failed to send process {} kill signal",
