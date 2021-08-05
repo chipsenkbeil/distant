@@ -4,17 +4,18 @@ use crate::{
         data::{Request, Response},
         net::{Transport, TransportReadHalf, TransportWriteHalf},
         session::Session,
+        state::ServerState,
     },
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
 use log::*;
 use orion::aead::SecretKey;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     io,
     net::{tcp, TcpListener},
-    sync::{mpsc, oneshot, Mutex},
+    sync::{mpsc, Mutex},
 };
 
 mod handler;
@@ -24,49 +25,6 @@ pub enum Error {
     ConvertToIpAddrError(ConvertToIpAddrError),
     ForkError,
     IoError(io::Error),
-}
-
-/// Holds state relevant to the server
-#[derive(Default)]
-struct State {
-    /// Map of all processes running on the server
-    processes: HashMap<usize, Process>,
-
-    /// List of processes that will be killed when a client drops
-    client_processes: HashMap<SocketAddr, Vec<usize>>,
-}
-
-impl State {
-    /// Cleans up state associated with a particular client
-    pub async fn cleanup_client(&mut self, addr: SocketAddr) {
-        debug!("<Client @ {}> Cleaning up state", addr);
-        if let Some(ids) = self.client_processes.remove(&addr) {
-            for id in ids {
-                if let Some(process) = self.processes.remove(&id) {
-                    trace!(
-                        "<Client @ {}> Requesting proc {} be killed",
-                        addr,
-                        process.id
-                    );
-                    if let Err(_) = process.kill_tx.send(()) {
-                        error!(
-                            "Client {} failed to send process {} kill signal",
-                            id, process.id
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Represents an actively-running process maintained by the server
-struct Process {
-    pub id: usize,
-    pub cmd: String,
-    pub args: Vec<String>,
-    pub stdin_tx: mpsc::Sender<String>,
-    pub kill_tx: oneshot::Sender<()>,
 }
 
 pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
@@ -130,7 +88,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     }
 
     // Build our state for the server
-    let state = Arc::new(Mutex::new(State::default()));
+    let state: Arc<Mutex<ServerState<SocketAddr>>> = Arc::new(Mutex::new(ServerState::default()));
 
     // Wait for a client connection, then spawn a new task to handle
     // receiving data from the client
@@ -171,7 +129,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 /// response loop
 async fn request_loop(
     addr: SocketAddr,
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<ServerState<SocketAddr>>>,
     mut transport: TransportReadHalf<tcp::OwnedReadHalf>,
     tx: mpsc::Sender<Response>,
 ) {

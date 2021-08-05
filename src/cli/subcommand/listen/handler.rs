@@ -1,7 +1,9 @@
-use super::{Process, State};
-use crate::core::data::{
-    self, DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
-    RunningProcess,
+use crate::core::{
+    data::{
+        self, DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
+        RunningProcess,
+    },
+    state::{Process, ServerState},
 };
 use log::*;
 use std::{
@@ -20,7 +22,7 @@ use tokio::{
 use walkdir::WalkDir;
 
 pub type Reply = mpsc::Sender<Response>;
-type HState = Arc<Mutex<State>>;
+type HState = Arc<Mutex<ServerState<SocketAddr>>>;
 
 /// Processes the provided request, sending replies using the given sender
 pub(super) async fn process(
@@ -472,15 +474,7 @@ async fn proc_run(
         stdin_tx,
         kill_tx,
     };
-    state.lock().await.processes.insert(id, process);
-
-    state
-        .lock()
-        .await
-        .client_processes
-        .entry(addr)
-        .or_insert(Vec::new())
-        .push(id);
+    state.lock().await.push_process(addr, process);
 
     Ok(ResponsePayload::ProcStart { id })
 }
