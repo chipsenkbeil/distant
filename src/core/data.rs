@@ -184,8 +184,8 @@ pub enum RequestPayload {
         /// Id of the actively-running process to send stdin data
         id: usize,
 
-        /// Complete line to stdin of process
-        line: String,
+        /// Data to send to a process's stdin pipe
+        data: String,
     },
 
     /// Retrieve a list of all processes being managed by the remote server
@@ -286,8 +286,8 @@ pub enum ResponsePayload {
         /// Arbitrary id associated with running process
         id: usize,
 
-        /// Line sent to stdout by the process
-        line: String,
+        /// Data read from a process' stdout pipe
+        data: String,
     },
 
     /// Actively-transmitted stderr as part of running process
@@ -295,8 +295,8 @@ pub enum ResponsePayload {
         /// Arbitrary id associated with running process
         id: usize,
 
-        /// Line sent to stderr by the process
-        line: String,
+        /// Data read from a process' stderr pipe
+        data: String,
     },
 
     /// Response to a process finishing

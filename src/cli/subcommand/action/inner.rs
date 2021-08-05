@@ -1,8 +1,10 @@
 use crate::{
     cli::opt::Mode,
     core::{
+        constants::MAX_PIPE_CHUNK_SIZE,
         data::{Request, RequestPayload, Response, ResponsePayload},
         net::{Client, DataStream},
+        utils::StringBuf,
     },
 };
 use derive_more::IsVariant;
@@ -53,10 +55,12 @@ where
     // We also want to spawn a task to handle sending stdin to the remote process
     let mut rx = spawn_stdin_reader();
     tokio::spawn(async move {
-        while let Some(line) = rx.recv().await {
+        let mut buf = StringBuf::new();
+
+        while let Some(data) = rx.recv().await {
             match config {
                 // Special exit condition for interactive mode
-                _ if line.trim() == "exit" => {
+                _ if buf.trim() == "exit" => {
                     if let Err(_) = tx_stop.send(()) {
                         error!("Failed to close interactive loop!");
                     }
@@ -65,61 +69,80 @@ where
 
                 // For json mode, all stdin is treated as individual requests
                 LoopConfig::Json => {
-                    debug!("Client sending request: {:?}", line);
-                    let result = serde_json::from_str(&line)
-                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
-                    match result {
-                        Ok(req) => match client.send(req).await {
-                            Ok(res) => match format_response(Mode::Json, res) {
-                                Ok(out) => out.print(),
-                                Err(x) => error!("Failed to format response: {}", x),
-                            },
-                            Err(x) => {
-                                error!("Failed to send request: {}", x)
+                    buf.push_str(&data);
+                    let (lines, new_buf) = buf.into_full_lines();
+                    buf = new_buf;
+
+                    // For each complete line, parse it as json and
+                    if let Some(lines) = lines {
+                        for data in lines.lines() {
+                            debug!("Client sending request: {:?}", data);
+                            let result = serde_json::from_str(&data)
+                                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
+                            match result {
+                                Ok(req) => match client.send(req).await {
+                                    Ok(res) => match format_response(Mode::Json, res) {
+                                        Ok(out) => out.print(),
+                                        Err(x) => error!("Failed to format response: {}", x),
+                                    },
+                                    Err(x) => {
+                                        error!("Failed to send request: {}", x)
+                                    }
+                                },
+                                Err(x) => {
+                                    error!("Failed to serialize request ('{}'): {}", data, x);
+                                }
                             }
-                        },
-                        Err(x) => {
-                            error!("Failed to serialize request: {}", x);
                         }
                     }
                 }
 
                 // For interactive shell mode, parse stdin as individual commands
                 LoopConfig::Shell => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
+                    buf.push_str(&data);
+                    let (lines, new_buf) = buf.into_full_lines();
+                    buf = new_buf;
 
-                    debug!("Client sending command: {:?}", line);
+                    if let Some(lines) = lines {
+                        for data in lines.lines() {
+                            trace!("Shell processing line: {:?}", data);
+                            if data.trim().is_empty() {
+                                continue;
+                            }
 
-                    // NOTE: We have to stick something in as the first argument as clap/structopt
-                    //       expect the binary name as the first item in the iterator
-                    let payload_result = RequestPayload::from_iter_safe(
-                        std::iter::once("distant")
-                            .chain(line.trim().split(' ').filter(|s| !s.trim().is_empty())),
-                    );
-                    match payload_result {
-                        Ok(payload) => {
-                            match client.send(Request::new(tenant.as_str(), payload)).await {
-                                Ok(res) => match format_response(Mode::Shell, res) {
-                                    Ok(out) => out.print(),
-                                    Err(x) => error!("Failed to format response: {}", x),
-                                },
+                            debug!("Client sending command: {:?}", data);
+
+                            // NOTE: We have to stick something in as the first argument as clap/structopt
+                            //       expect the binary name as the first item in the iterator
+                            let payload_result = RequestPayload::from_iter_safe(
+                                std::iter::once("distant")
+                                    .chain(data.trim().split(' ').filter(|s| !s.trim().is_empty())),
+                            );
+                            match payload_result {
+                                Ok(payload) => {
+                                    match client.send(Request::new(tenant.as_str(), payload)).await
+                                    {
+                                        Ok(res) => match format_response(Mode::Shell, res) {
+                                            Ok(out) => out.print(),
+                                            Err(x) => error!("Failed to format response: {}", x),
+                                        },
+                                        Err(x) => {
+                                            error!("Failed to send request: {}", x)
+                                        }
+                                    }
+                                }
                                 Err(x) => {
-                                    error!("Failed to send request: {}", x)
+                                    error!("Failed to parse command: {}", x);
                                 }
                             }
-                        }
-                        Err(x) => {
-                            error!("Failed to parse command: {}", x);
                         }
                     }
                 }
 
                 // For non-interactive shell mode, all stdin is treated as a proc's stdin
                 LoopConfig::Proc { id } => {
-                    debug!("Client sending stdin: {:?}", line);
-                    let req = Request::new(tenant.as_str(), RequestPayload::ProcStdin { id, line });
+                    debug!("Client sending stdin: {:?}", data);
+                    let req = Request::new(tenant.as_str(), RequestPayload::ProcStdin { id, data });
                     let result = client.send(req).await;
 
                     if let Err(x) = result {
@@ -163,18 +186,28 @@ fn spawn_stdin_reader() -> mpsc::Receiver<String> {
     // NOTE: Using blocking I/O per tokio's advice to read from stdin line-by-line and then
     //       pass the results to a separate async handler to forward to the remote process
     std::thread::spawn(move || {
-        let stdin = std::io::stdin();
+        use std::io::{self, BufReader, Read};
+        let mut stdin = BufReader::new(io::stdin());
+
+        // Maximum chunk that we expect to read at any one time
+        let mut buf = [0; MAX_PIPE_CHUNK_SIZE];
 
         loop {
-            let mut line = String::new();
-            match stdin.read_line(&mut line) {
+            match stdin.read(&mut buf) {
                 Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    if let Err(x) = tx.blocking_send(line) {
-                        error!(
-                            "Failed to pass along stdin to be sent to remote process: {}",
-                            x
-                        );
+                Ok(n) => {
+                    match String::from_utf8(buf[..n].to_vec()) {
+                        Ok(text) => {
+                            if let Err(x) = tx.blocking_send(text) {
+                                error!(
+                                    "Failed to pass along stdin to be sent to remote process: {}",
+                                    x
+                                );
+                            }
+                        }
+                        Err(x) => {
+                            error!("Input over stdin is invalid: {}", x);
+                        }
                     }
                     std::thread::yield_now();
                 }
@@ -188,15 +221,19 @@ fn spawn_stdin_reader() -> mpsc::Receiver<String> {
 /// Represents the output content and destination
 pub enum ResponseOut {
     Stdout(String),
+    StdoutLine(String),
     Stderr(String),
+    StderrLine(String),
     None,
 }
 
 impl ResponseOut {
     pub fn print(self) {
         match self {
-            Self::Stdout(x) => println!("{}", x),
-            Self::Stderr(x) => eprintln!("{}", x),
+            Self::Stdout(x) => print!("{}", x),
+            Self::StdoutLine(x) => println!("{}", x),
+            Self::Stderr(x) => eprint!("{}", x),
+            Self::StderrLine(x) => eprintln!("{}", x),
             Self::None => {}
         }
     }
@@ -204,7 +241,7 @@ impl ResponseOut {
 
 pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
     Ok(match mode {
-        Mode::Json => ResponseOut::Stdout(format!(
+        Mode::Json => ResponseOut::StdoutLine(format!(
             "{}",
             serde_json::to_string(&res)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
@@ -217,13 +254,13 @@ fn format_shell(res: Response) -> ResponseOut {
     match res.payload {
         ResponsePayload::Ok => ResponseOut::None,
         ResponsePayload::Error { description } => {
-            ResponseOut::Stderr(format!("Failed: '{}'.", description))
+            ResponseOut::StderrLine(format!("Failed: '{}'.", description))
         }
         ResponsePayload::Blob { data } => {
-            ResponseOut::Stdout(String::from_utf8_lossy(&data).to_string())
+            ResponseOut::StdoutLine(String::from_utf8_lossy(&data).to_string())
         }
-        ResponsePayload::Text { data } => ResponseOut::Stdout(data),
-        ResponsePayload::DirEntries { entries, .. } => ResponseOut::Stdout(format!(
+        ResponsePayload::Text { data } => ResponseOut::StdoutLine(data),
+        ResponsePayload::DirEntries { entries, .. } => ResponseOut::StdoutLine(format!(
             "{}",
             entries
                 .into_iter()
@@ -247,7 +284,7 @@ fn format_shell(res: Response) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         )),
-        ResponsePayload::Metadata { data } => ResponseOut::Stdout(format!(
+        ResponsePayload::Metadata { data } => ResponseOut::StdoutLine(format!(
             concat!(
                 "Type: {}\n",
                 "Len: {}\n",
@@ -263,7 +300,7 @@ fn format_shell(res: Response) -> ResponseOut {
             data.accessed.unwrap_or_default(),
             data.modified.unwrap_or_default(),
         )),
-        ResponsePayload::ProcEntries { entries } => ResponseOut::Stdout(format!(
+        ResponsePayload::ProcEntries { entries } => ResponseOut::StdoutLine(format!(
             "{}",
             entries
                 .into_iter()
@@ -272,15 +309,15 @@ fn format_shell(res: Response) -> ResponseOut {
                 .join("\n"),
         )),
         ResponsePayload::ProcStart { .. } => ResponseOut::None,
-        ResponsePayload::ProcStdout { line, .. } => ResponseOut::Stdout(line),
-        ResponsePayload::ProcStderr { line, .. } => ResponseOut::Stderr(line),
+        ResponsePayload::ProcStdout { data, .. } => ResponseOut::Stdout(data),
+        ResponsePayload::ProcStderr { data, .. } => ResponseOut::Stderr(data),
         ResponsePayload::ProcDone { id, success, code } => {
             if success {
                 ResponseOut::None
             } else if let Some(code) = code {
-                ResponseOut::Stderr(format!("Proc {} failed with code {}", id, code))
+                ResponseOut::StderrLine(format!("Proc {} failed with code {}", id, code))
             } else {
-                ResponseOut::Stderr(format!("Proc {} failed", id))
+                ResponseOut::StderrLine(format!("Proc {} failed", id))
             }
         }
     }

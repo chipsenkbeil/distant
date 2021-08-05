@@ -1,4 +1,5 @@
 use crate::core::{
+    constants::MAX_PIPE_CHUNK_SIZE,
     data::{
         self, DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
         RunningProcess,
@@ -15,7 +16,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
     sync::{mpsc, oneshot, Mutex},
 };
@@ -60,7 +61,7 @@ pub(super) async fn process(
                 proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
             }
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
-            RequestPayload::ProcStdin { id, line } => proc_stdin(state, id, line).await,
+            RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestPayload::ProcList {} => proc_list(state).await,
         }
     }
@@ -311,26 +312,33 @@ async fn proc_run(
     // Spawn a task that sends stdout as a response
     let tx_2 = tx.clone();
     let tenant_2 = tenant.clone();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut stdout = child.stdout.take().unwrap();
     let stdout_task = tokio::spawn(async move {
+        let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
-            match stdout.next_line().await {
-                Ok(Some(line)) => {
-                    let res = Response::new(
-                        tenant_2.as_str(),
-                        None,
-                        ResponsePayload::ProcStdout { id, line },
-                    );
-                    debug!(
-                        "<Client @ {}> Sending response of type {}",
-                        addr,
-                        res.payload.as_ref()
-                    );
-                    if let Err(_) = tx_2.send(res).await {
+            match stdout.read(&mut buf).await {
+                Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
+                    Ok(data) => {
+                        let res = Response::new(
+                            tenant_2.as_str(),
+                            None,
+                            ResponsePayload::ProcStdout { id, data },
+                        );
+                        debug!(
+                            "<Client @ {}> Sending response of type {}",
+                            addr,
+                            res.payload.as_ref()
+                        );
+                        if let Err(_) = tx_2.send(res).await {
+                            break;
+                        }
+                    }
+                    Err(x) => {
+                        error!("Invalid data read from stdout pipe: {}", x);
                         break;
                     }
-                }
-                Ok(None) => break,
+                },
+                Ok(_) => break,
                 Err(_) => break,
             }
         }
@@ -339,26 +347,33 @@ async fn proc_run(
     // Spawn a task that sends stderr as a response
     let tx_2 = tx.clone();
     let tenant_2 = tenant.clone();
-    let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
+    let mut stderr = child.stderr.take().unwrap();
     let stderr_task = tokio::spawn(async move {
+        let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
-            match stderr.next_line().await {
-                Ok(Some(line)) => {
-                    let res = Response::new(
-                        tenant_2.as_str(),
-                        None,
-                        ResponsePayload::ProcStderr { id, line },
-                    );
-                    debug!(
-                        "<Client @ {}> Sending response of type {}",
-                        addr,
-                        res.payload.as_ref()
-                    );
-                    if let Err(_) = tx_2.send(res).await {
+            match stderr.read(&mut buf).await {
+                Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
+                    Ok(data) => {
+                        let res = Response::new(
+                            tenant_2.as_str(),
+                            None,
+                            ResponsePayload::ProcStderr { id, data },
+                        );
+                        debug!(
+                            "<Client @ {}> Sending response of type {}",
+                            addr,
+                            res.payload.as_ref()
+                        );
+                        if let Err(_) = tx_2.send(res).await {
+                            break;
+                        }
+                    }
+                    Err(x) => {
+                        error!("Invalid data read from stdout pipe: {}", x);
                         break;
                     }
-                }
-                Ok(None) => break,
+                },
+                Ok(_) => break,
                 Err(_) => break,
             }
         }
@@ -368,17 +383,7 @@ async fn proc_run(
     let mut stdin = child.stdin.take().unwrap();
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1);
     tokio::spawn(async move {
-        while let Some(mut line) = stdin_rx.recv().await {
-            // NOTE: If the line coming in does not have a newline character,
-            //       we must add it to properly flush to stdin of process
-            //
-            //       Given that our data structure is called line, we assume
-            //       that it represents a complete line whether or not it
-            //       ends with the linefeed character
-            if !line.ends_with('\n') {
-                line.push('\n');
-            }
-
+        while let Some(line) = stdin_rx.recv().await {
             if let Err(x) = stdin.write_all(line.as_bytes()).await {
                 error!("Failed to send stdin to process {}: {}", id, x);
                 break;
@@ -495,10 +500,10 @@ async fn proc_kill(state: HState, id: usize) -> Result<ResponsePayload, Box<dyn 
 async fn proc_stdin(
     state: HState,
     id: usize,
-    line: String,
+    data: String,
 ) -> Result<ResponsePayload, Box<dyn Error>> {
     if let Some(process) = state.lock().await.processes.get(&id) {
-        process.stdin_tx.send(line).await.map_err(|_| {
+        process.stdin_tx.send(data).await.map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "Unable to send stdin to process")
         })?;
     }
