@@ -178,7 +178,7 @@ async fn socket_loop(
     });
 
     // Remove the socket file if it already exists
-    if fail_if_socket_exists && socket_path.as_ref().exists() {
+    if !fail_if_socket_exists && socket_path.as_ref().exists() {
         debug!("Removing old unix socket instance");
         tokio::fs::remove_file(socket_path.as_ref()).await?;
     }
@@ -233,6 +233,7 @@ async fn socket_loop(
                         ct_2.lock().await.increment();
                         handle_conn_incoming(conn_id, state, t_read, tenant_tx, req_tx).await;
                         ct_2.lock().await.decrement();
+                        debug!("<Client @ {:?}> Disconnected", conn_id);
                     });
                 }
                 Err(x) => {
