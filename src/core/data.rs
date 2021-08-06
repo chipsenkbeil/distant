@@ -117,6 +117,14 @@ pub enum RequestPayload {
         /// returned, even if canonicalize is flagged as true
         #[structopt(short, long)]
         canonicalize: bool,
+
+        /// Whether or not to include the root directory in the retrieved
+        /// entries
+        ///
+        /// If included, the root directory will also be a canonicalized,
+        /// absolute path and will not follow any of the other flags
+        #[structopt(long)]
+        include_root: bool,
     },
 
     /// Creates a directory on the remote machine
@@ -190,6 +198,9 @@ pub enum RequestPayload {
 
     /// Retrieve a list of all processes being managed by the remote server
     ProcList {},
+
+    /// Retrieve information about the server and the system it is on
+    SystemInfo {},
 }
 
 /// Represents an response to a request performed on the remote machine
@@ -315,6 +326,28 @@ pub enum ResponsePayload {
     ProcEntries {
         /// List of managed processes
         entries: Vec<RunningProcess>,
+    },
+
+    /// Response to retrieving information about the server and the system it is on
+    SystemInfo {
+        /// Family of the operating system as described in
+        /// https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html
+        family: String,
+
+        /// Name of the specific operating system as described in
+        /// https://doc.rust-lang.org/std/env/consts/constant.OS.html
+        os: String,
+
+        /// Architecture of the CPI as described in
+        /// https://doc.rust-lang.org/std/env/consts/constant.ARCH.html
+        arch: String,
+
+        /// Current working directory of the running server process
+        current_dir: PathBuf,
+
+        /// Primary separator for path components for the current platform
+        /// as defined in https://doc.rust-lang.org/std/path/constant.MAIN_SEPARATOR.html
+        main_separator: char,
     },
 }
 

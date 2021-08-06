@@ -2,7 +2,7 @@
 name = "distant"
 description = "Operate on a remote computer through file and process manipulation"
 categories = ["command-line-utilities"]
-version = "0.7.1"
+version = "0.8.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2018"
 homepage = "https://github.com/chipsenkbeil/distant"

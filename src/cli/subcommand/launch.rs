@@ -18,6 +18,7 @@ use tokio::{
     io::{self, AsyncRead, AsyncWrite},
     process::Command,
     sync::{broadcast, mpsc, oneshot, Mutex},
+    time::Duration,
 };
 
 #[derive(Debug, Display, Error, From)]
@@ -46,6 +47,8 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
     let session_file = cmd.session_data.session_file.clone();
     let session_socket = cmd.session_data.session_socket.clone();
+    let fail_if_socket_exists = cmd.fail_if_socket_exists;
+    let timeout = Duration::from_millis(opt.timeout as u64);
 
     let session = rt.block_on(async { spawn_remote_server(cmd, opt).await })?;
 
@@ -57,7 +60,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
         }
         SessionOutput::Keep => {
             debug!("Entering interactive loop over stdin");
-            rt.block_on(async { keep_loop(session, mode).await })?
+            rt.block_on(async { keep_loop(session, mode, timeout).await })?
         }
         SessionOutput::Pipe => {
             debug!("Piping session to stdout");
@@ -79,7 +82,9 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                     //       tokio's runtime doesn't support being transferred from
                     //       parent to child in a fork
                     let rt = tokio::runtime::Runtime::new()?;
-                    rt.block_on(async { socket_loop(session_socket, session).await })?
+                    rt.block_on(async {
+                        socket_loop(session_socket, session, timeout, fail_if_socket_exists).await
+                    })?
                 }
                 Ok(_) => {}
                 Err(x) => return Err(Error::ForkError(x)),
@@ -91,7 +96,9 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 "Entering interactive loop over unix socket {:?}",
                 session_socket
             );
-            rt.block_on(async { socket_loop(session_socket, session).await })?
+            rt.block_on(async {
+                socket_loop(session_socket, session, timeout, fail_if_socket_exists).await
+            })?
         }
         #[cfg(not(unix))]
         SessionOutput::Socket => {
@@ -106,9 +113,9 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     Ok(())
 }
 
-async fn keep_loop(session: Session, mode: Mode) -> io::Result<()> {
+async fn keep_loop(session: Session, mode: Mode, duration: Duration) -> io::Result<()> {
     use crate::cli::subcommand::action::inner;
-    match Client::tcp_connect(session).await {
+    match Client::tcp_connect_timeout(session, duration).await {
         Ok(client) => {
             let config = match mode {
                 Mode::Json => inner::LoopConfig::Json,
@@ -121,11 +128,16 @@ async fn keep_loop(session: Session, mode: Mode) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-async fn socket_loop(socket_path: impl AsRef<Path>, session: Session) -> io::Result<()> {
+async fn socket_loop(
+    socket_path: impl AsRef<Path>,
+    session: Session,
+    duration: Duration,
+    fail_if_socket_exists: bool,
+) -> io::Result<()> {
     // We need to form a connection with the actual server to forward requests
     // and responses between connections
     debug!("Connecting to {} {}", session.host, session.port);
-    let mut client = Client::tcp_connect(session).await?;
+    let mut client = Client::tcp_connect_timeout(session, duration).await?;
 
     // Get a copy of our client's broadcaster so we can have each connection
     // subscribe to it for new messages filtered by tenant
@@ -141,12 +153,18 @@ async fn socket_loop(socket_path: impl AsRef<Path>, session: Session) -> io::Res
                 "Forwarding request of type {} to server",
                 req.payload.as_ref()
             );
-            if let Err(x) = client.fire(req).await {
+            if let Err(x) = client.fire_timeout(req, duration).await {
                 error!("Client failed to send request: {:?}", x);
                 break;
             }
         }
     });
+
+    // Remove the socket file if it already exists
+    if fail_if_socket_exists && socket_path.as_ref().exists() {
+        debug!("Removing old unix socket instance");
+        tokio::fs::remove_file(socket_path.as_ref()).await?;
+    }
 
     // Continue to receive connections over the unix socket, store them in our
     // connection mapping

@@ -8,6 +8,7 @@ use crate::core::{
 };
 use log::*;
 use std::{
+    env,
     error::Error,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -51,7 +52,8 @@ pub(super) async fn process(
                 depth,
                 absolute,
                 canonicalize,
-            } => dir_read(path, depth, absolute, canonicalize).await,
+                include_root,
+            } => dir_read(path, depth, absolute, canonicalize, include_root).await,
             RequestPayload::DirCreate { path, all } => dir_create(path, all).await,
             RequestPayload::Remove { path, force } => remove(path, force).await,
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
@@ -63,6 +65,7 @@ pub(super) async fn process(
             RequestPayload::ProcKill { id } => proc_kill(state, id).await,
             RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestPayload::ProcList {} => proc_list(state).await,
+            RequestPayload::SystemInfo {} => system_info().await,
         }
     }
 
@@ -125,12 +128,14 @@ async fn dir_read(
     depth: usize,
     absolute: bool,
     canonicalize: bool,
+    include_root: bool,
 ) -> Result<ResponsePayload, Box<dyn Error>> {
     // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
     let root_path = tokio::fs::canonicalize(path).await?;
 
-    // Traverse, but don't include root directory in entries (hence min depth 1)
-    let dir = WalkDir::new(root_path.as_path()).min_depth(1);
+    // Traverse, but don't include root directory in entries (hence min depth 1), unless indicated
+    // to do so (min depth 0)
+    let dir = WalkDir::new(root_path.as_path()).min_depth(if include_root { 0 } else { 1 });
 
     // If depth > 0, will recursively traverse to specified max depth, otherwise
     // performs infinite traversal
@@ -140,9 +145,21 @@ async fn dir_read(
     let mut entries = Vec::new();
     let mut errors = Vec::new();
 
+    #[inline]
+    fn map_file_type(ft: std::fs::FileType) -> FileType {
+        if ft.is_dir() {
+            FileType::Dir
+        } else if ft.is_file() {
+            FileType::File
+        } else {
+            FileType::SymLink
+        }
+    }
+
     for entry in dir {
         match entry.map_err(data::Error::from) {
-            Ok(e) => {
+            // For entries within the root, we want to transform the path based on flags
+            Ok(e) if e.depth() > 0 => {
                 // Canonicalize the path if specified, otherwise just return
                 // the path as is
                 let mut path = if canonicalize {
@@ -171,16 +188,20 @@ async fn dir_read(
 
                 entries.push(DirEntry {
                     path,
-                    file_type: if e.file_type().is_dir() {
-                        FileType::Dir
-                    } else if e.file_type().is_file() {
-                        FileType::File
-                    } else {
-                        FileType::SymLink
-                    },
+                    file_type: map_file_type(e.file_type()),
                     depth: e.depth(),
                 });
             }
+
+            // For the root, we just want to echo back the entry as is
+            Ok(e) => {
+                entries.push(DirEntry {
+                    path: e.path().to_path_buf(),
+                    file_type: map_file_type(e.file_type()),
+                    depth: e.depth(),
+                });
+            }
+
             Err(x) => errors.push(x),
         }
     }
@@ -524,5 +545,15 @@ async fn proc_list(state: HState) -> Result<ResponsePayload, Box<dyn Error>> {
                 id: p.id,
             })
             .collect(),
+    })
+}
+
+async fn system_info() -> Result<ResponsePayload, Box<dyn Error>> {
+    Ok(ResponsePayload::SystemInfo {
+        family: env::consts::FAMILY.to_string(),
+        os: env::consts::OS.to_string(),
+        arch: env::consts::ARCH.to_string(),
+        current_dir: env::current_dir().unwrap_or_default(),
+        main_separator: std::path::MAIN_SEPARATOR,
     })
 }

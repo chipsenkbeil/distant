@@ -337,5 +337,21 @@ fn format_shell(res: Response) -> ResponseOut {
                 ResponseOut::StderrLine(format!("Proc {} failed", id))
             }
         }
+        ResponsePayload::SystemInfo {
+            family,
+            os,
+            arch,
+            current_dir,
+            main_separator,
+        } => ResponseOut::StdoutLine(format!(
+            concat!(
+                "Family: {:?}\n",
+                "Operating System: {:?}\n",
+                "Arch: {:?}\n",
+                "Cwd: {:?}\n",
+                "Path Sep: {:?}",
+            ),
+            family, os, arch, current_dir, main_separator,
+        )),
     }
 }

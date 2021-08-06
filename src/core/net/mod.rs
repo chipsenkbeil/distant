@@ -5,16 +5,19 @@ use crate::core::{
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, Response},
     session::Session,
+    utils,
 };
 use log::*;
 use std::{
     collections::HashMap,
+    convert,
     sync::{Arc, Mutex},
 };
 use tokio::{
     io,
     net::TcpStream,
     sync::{broadcast, oneshot},
+    time::Duration,
 };
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -53,6 +56,13 @@ impl Client<TcpStream> {
         );
         Self::inner_connect(transport).await
     }
+
+    /// Connect to a remote TCP session, timing out after duration has passed
+    pub async fn tcp_connect_timeout(session: Session, duration: Duration) -> io::Result<Self> {
+        utils::timeout(duration, Self::tcp_connect(session))
+            .await
+            .and_then(convert::identity)
+    }
 }
 
 #[cfg(unix)]
@@ -71,6 +81,17 @@ impl Client<tokio::net::UnixStream> {
                 .unwrap_or_else(|_| String::from("???"))
         );
         Self::inner_connect(transport).await
+    }
+
+    /// Connect to a proxy unix socket, timing out after duration has passed
+    pub async fn unix_connect_timeout(
+        path: impl AsRef<std::path::Path>,
+        auth_key: Option<Arc<orion::aead::SecretKey>>,
+        duration: Duration,
+    ) -> io::Result<Self> {
+        utils::timeout(duration, Self::unix_connect(path, auth_key))
+            .await
+            .and_then(convert::identity)
     }
 }
 
@@ -144,11 +165,35 @@ where
             .map_err(|x| TransportError::from(io::Error::new(io::ErrorKind::ConnectionAborted, x)))
     }
 
+    /// Sends a request and waits for a response, timing out after duration has passed
+    pub async fn send_timeout(
+        &mut self,
+        req: Request,
+        duration: Duration,
+    ) -> Result<Response, TransportError> {
+        utils::timeout(duration, self.send(req))
+            .await
+            .map_err(TransportError::from)
+            .and_then(convert::identity)
+    }
+
     /// Sends a request without waiting for a response
     ///
     /// Any response that would be received gets sent over the broadcast channel instead
     pub async fn fire(&mut self, req: Request) -> Result<(), TransportError> {
         self.t_write.send(req).await
+    }
+
+    /// Sends a request without waiting for a response, timing out after duration has passed
+    pub async fn fire_timeout(
+        &mut self,
+        req: Request,
+        duration: Duration,
+    ) -> Result<(), TransportError> {
+        utils::timeout(duration, self.fire(req))
+            .await
+            .map_err(TransportError::from)
+            .and_then(convert::identity)
     }
 
     /// Clones a new instance of the broadcaster used by the client

@@ -9,7 +9,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use log::*;
-use tokio::io;
+use tokio::{io, time::Duration};
 
 pub(crate) mod inner;
 
@@ -28,12 +28,15 @@ pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
     rt.block_on(async { run_async(cmd, opt).await })
 }
 
-async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> {
+async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
+    let timeout = Duration::from_millis(opt.timeout as u64);
+
     match cmd.session {
         SessionInput::Environment => {
             start(
                 cmd,
-                Client::tcp_connect(Session::from_environment()?).await?,
+                Client::tcp_connect_timeout(Session::from_environment()?, timeout).await?,
+                timeout,
             )
             .await
         }
@@ -41,22 +44,40 @@ async fn run_async(cmd: ActionSubcommand, _opt: CommonOpt) -> Result<(), Error> 
             let path = cmd.session_data.session_file.clone();
             start(
                 cmd,
-                Client::tcp_connect(SessionFile::load_from(path).await?.into()).await?,
+                Client::tcp_connect_timeout(SessionFile::load_from(path).await?.into(), timeout)
+                    .await?,
+                timeout,
             )
             .await
         }
-        SessionInput::Pipe => start(cmd, Client::tcp_connect(Session::from_stdin()?).await?).await,
+        SessionInput::Pipe => {
+            start(
+                cmd,
+                Client::tcp_connect_timeout(Session::from_stdin()?, timeout).await?,
+                timeout,
+            )
+            .await
+        }
         #[cfg(unix)]
         SessionInput::Socket => {
             let path = cmd.session_data.session_socket.clone();
-            start(cmd, Client::unix_connect(path, None).await?).await
+            start(
+                cmd,
+                Client::unix_connect_timeout(path, None, timeout).await?,
+                timeout,
+            )
+            .await
         }
         #[cfg(not(unix))]
         SessionInput::Socket => unreachable!(),
     }
 }
 
-async fn start<T>(cmd: ActionSubcommand, mut client: Client<T>) -> Result<(), Error>
+async fn start<T>(
+    cmd: ActionSubcommand,
+    mut client: Client<T>,
+    timeout: Duration,
+) -> Result<(), Error>
 where
     T: DataStream + 'static,
 {
@@ -78,7 +99,7 @@ where
         is_proc_req = req.payload.is_proc_run();
 
         debug!("Client sending request: {:?}", req);
-        let res = client.send(req).await?;
+        let res = client.send_timeout(req, timeout).await?;
 
         // Store the spawned process id for using in sending stdin (if we spawned a proc)
         proc_id = match &res.payload {

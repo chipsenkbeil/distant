@@ -1,7 +1,7 @@
 use crate::{
     cli::subcommand,
     core::{
-        constants::{SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR},
+        constants::{SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR, TIMEOUT_STR},
         data::RequestPayload,
     },
 };
@@ -45,13 +45,18 @@ pub struct CommonOpt {
     #[structopt(short, long, parse(from_occurrences), global = true)]
     pub verbose: u8,
 
-    /// Quiet mode
+    /// Quiet mode, suppresses all logging
     #[structopt(short, long, global = true)]
     pub quiet: bool,
 
     /// Log output to disk instead of stderr
     #[structopt(long, global = true)]
     pub log_file: Option<PathBuf>,
+
+    /// Represents the maximum time (in milliseconds) to wait for a network
+    /// request before timing out; a timeout of 0 implies waiting indefinitely
+    #[structopt(short, long, global = true, default_value = &TIMEOUT_STR)]
+    pub timeout: usize,
 }
 
 /// Contains options related sessions
@@ -320,6 +325,11 @@ pub struct LaunchSubcommand {
     /// Contains additional information related to sessions
     #[structopt(flatten)]
     pub session_data: SessionOpt,
+
+    /// If specified, launch will fail when attempting to bind to a unix socket that
+    /// already exists, rather than removing the old socket
+    #[structopt(long)]
+    pub fail_if_socket_exists: bool,
 
     /// Runs in background via daemon-mode (does nothing on windows); only applies
     /// when session is socket
