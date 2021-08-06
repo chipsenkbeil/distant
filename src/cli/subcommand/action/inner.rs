@@ -311,7 +311,7 @@ fn format_shell(res: Response) -> ResponseOut {
             modified,
         } => ResponseOut::StdoutLine(format!(
             concat!(
-                "Canonicalized Path: {:?}\n",
+                "{}",
                 "Type: {}\n",
                 "Len: {}\n",
                 "Readonly: {}\n",
@@ -319,7 +319,9 @@ fn format_shell(res: Response) -> ResponseOut {
                 "Last Accessed: {}\n",
                 "Last Modified: {}",
             ),
-            canonicalized_path.unwrap_or_default(),
+            canonicalized_path
+                .map(|p| format!("Canonicalized Path: {:?}\n", p))
+                .unwrap_or_default(),
             file_type.as_ref(),
             len,
             readonly,
