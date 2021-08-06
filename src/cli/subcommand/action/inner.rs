@@ -301,8 +301,17 @@ fn format_shell(res: Response) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         )),
-        ResponsePayload::Metadata { data } => ResponseOut::StdoutLine(format!(
+        ResponsePayload::Metadata {
+            canonicalized_path,
+            file_type,
+            len,
+            readonly,
+            accessed,
+            created,
+            modified,
+        } => ResponseOut::StdoutLine(format!(
             concat!(
+                "Canonicalized Path: {:?}\n",
                 "Type: {}\n",
                 "Len: {}\n",
                 "Readonly: {}\n",
@@ -310,12 +319,13 @@ fn format_shell(res: Response) -> ResponseOut {
                 "Last Accessed: {}\n",
                 "Last Modified: {}",
             ),
-            data.file_type.as_ref(),
-            data.len,
-            data.readonly,
-            data.created.unwrap_or_default(),
-            data.accessed.unwrap_or_default(),
-            data.modified.unwrap_or_default(),
+            canonicalized_path.unwrap_or_default(),
+            file_type.as_ref(),
+            len,
+            readonly,
+            created.unwrap_or_default(),
+            accessed.unwrap_or_default(),
+            modified.unwrap_or_default(),
         )),
         ResponsePayload::ProcEntries { entries } => ResponseOut::StdoutLine(format!(
             "{}",

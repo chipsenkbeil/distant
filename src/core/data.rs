@@ -170,6 +170,12 @@ pub enum RequestPayload {
     Metadata {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
+
+        /// Whether or not to include a canonicalized version of the path, meaning
+        /// returning the canonical, absolute form of a path with all
+        /// intermediate components normalized and symbolic links resolved
+        #[structopt(short, long)]
+        canonicalize: bool,
     },
 
     /// Runs a process on the remote machine
@@ -280,10 +286,32 @@ pub enum ResponsePayload {
         errors: Vec<Error>,
     },
 
-    /// Response to reading metadata
+    /// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
     Metadata {
-        /// Metadata associated with queried path
-        data: Metadata,
+        /// Canonicalized path to the file or directory, resolving symlinks, only included
+        /// if flagged during the request
+        canonicalized_path: Option<PathBuf>,
+
+        /// Represents the type of the entry as a file/dir/symlink
+        file_type: FileType,
+
+        /// Size of the file/directory/symlink in bytes
+        len: u64,
+
+        /// Whether or not the file/directory/symlink is marked as unwriteable
+        readonly: bool,
+
+        /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
+        /// can be optional as certain systems don't support this
+        accessed: Option<u128>,
+
+        /// Represents when (in milliseconds) the file/directory/symlink was created;
+        /// can be optional as certain systems don't support this
+        created: Option<u128>,
+
+        /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
+        /// can be optional as certain systems don't support this
+        modified: Option<u128>,
     },
 
     /// Response to starting a new process
@@ -364,32 +392,6 @@ pub struct DirEntry {
     /// Depth at which this entry was created relative to the root (0 being immediately within
     /// root)
     pub depth: usize,
-}
-
-/// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct Metadata {
-    /// Represents the type of the entry as a file/dir/symlink
-    pub file_type: FileType,
-
-    /// Size of the file/directory/symlink in bytes
-    pub len: u64,
-
-    /// Whether or not the file/directory/symlink is marked as unwriteable
-    pub readonly: bool,
-
-    /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
-    /// can be optional as certain systems don't support this
-    pub accessed: Option<u128>,
-
-    /// Represents when (in milliseconds) the file/directory/symlink was created;
-    /// can be optional as certain systems don't support this
-    pub created: Option<u128>,
-
-    /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
-    /// can be optional as certain systems don't support this
-    pub modified: Option<u128>,
 }
 
 /// Represents the type associated with a dir entry

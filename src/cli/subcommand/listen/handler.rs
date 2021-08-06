@@ -1,7 +1,7 @@
 use crate::core::{
     constants::MAX_PIPE_CHUNK_SIZE,
     data::{
-        self, DirEntry, FileType, Metadata, Request, RequestPayload, Response, ResponsePayload,
+        self, DirEntry, FileType, Request, RequestPayload, Response, ResponsePayload,
         RunningProcess,
     },
     state::{Process, ServerState},
@@ -58,7 +58,7 @@ pub(super) async fn process(
             RequestPayload::Remove { path, force } => remove(path, force).await,
             RequestPayload::Copy { src, dst } => copy(src, dst).await,
             RequestPayload::Rename { src, dst } => rename(src, dst).await,
-            RequestPayload::Metadata { path } => metadata(path).await,
+            RequestPayload::Metadata { path, canonicalize } => metadata(path, canonicalize).await,
             RequestPayload::ProcRun { cmd, args } => {
                 proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
             }
@@ -280,35 +280,39 @@ async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponsePayload, Box<dyn E
     Ok(ResponsePayload::Ok)
 }
 
-async fn metadata(path: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
-    let metadata = tokio::fs::metadata(path).await?;
+async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponsePayload, Box<dyn Error>> {
+    let metadata = tokio::fs::metadata(path.as_path()).await?;
+    let canonicalized_path = if canonicalize {
+        Some(tokio::fs::canonicalize(path).await?)
+    } else {
+        None
+    };
 
     Ok(ResponsePayload::Metadata {
-        data: Metadata {
-            accessed: metadata
-                .accessed()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
-            created: metadata
-                .created()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
-            modified: metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
-            len: metadata.len(),
-            readonly: metadata.permissions().readonly(),
-            file_type: if metadata.is_dir() {
-                FileType::Dir
-            } else if metadata.is_file() {
-                FileType::File
-            } else {
-                FileType::SymLink
-            },
+        canonicalized_path,
+        accessed: metadata
+            .accessed()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis()),
+        created: metadata
+            .created()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis()),
+        modified: metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis()),
+        len: metadata.len(),
+        readonly: metadata.permissions().readonly(),
+        file_type: if metadata.is_dir() {
+            FileType::Dir
+        } else if metadata.is_file() {
+            FileType::File
+        } else {
+            FileType::SymLink
         },
     })
 }
