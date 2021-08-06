@@ -17,6 +17,7 @@ use std::{marker::Unpin, path::Path, string::FromUtf8Error, sync::Arc};
 use tokio::{
     io::{self, AsyncRead, AsyncWrite},
     process::Command,
+    runtime::{Handle, Runtime},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::Duration,
 };
@@ -40,7 +41,7 @@ struct ConnState {
 }
 
 pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
-    let rt = tokio::runtime::Runtime::new()?;
+    let rt = Runtime::new()?;
     let session_output = cmd.session;
     let mode = cmd.mode;
     let is_daemon = cmd.daemon;
@@ -48,7 +49,8 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let session_file = cmd.session_data.session_file.clone();
     let session_socket = cmd.session_data.session_socket.clone();
     let fail_if_socket_exists = cmd.fail_if_socket_exists;
-    let timeout = Duration::from_millis(opt.timeout as u64);
+    let timeout = opt.to_timeout_duration();
+    let shutdown_after = cmd.to_shutdown_after_duration();
 
     let session = rt.block_on(async { spawn_remote_server(cmd, opt).await })?;
 
@@ -81,9 +83,16 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                     // NOTE: We need to create a runtime within the forked process as
                     //       tokio's runtime doesn't support being transferred from
                     //       parent to child in a fork
-                    let rt = tokio::runtime::Runtime::new()?;
+                    let rt = Runtime::new()?;
                     rt.block_on(async {
-                        socket_loop(session_socket, session, timeout, fail_if_socket_exists).await
+                        socket_loop(
+                            session_socket,
+                            session,
+                            timeout,
+                            fail_if_socket_exists,
+                            shutdown_after,
+                        )
+                        .await
                     })?
                 }
                 Ok(_) => {}
@@ -97,7 +106,14 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 session_socket
             );
             rt.block_on(async {
-                socket_loop(session_socket, session, timeout, fail_if_socket_exists).await
+                socket_loop(
+                    session_socket,
+                    session,
+                    timeout,
+                    fail_if_socket_exists,
+                    shutdown_after,
+                )
+                .await
             })?
         }
         #[cfg(not(unix))]
@@ -133,6 +149,7 @@ async fn socket_loop(
     session: Session,
     duration: Duration,
     fail_if_socket_exists: bool,
+    shutdown_after: Option<Duration>,
 ) -> io::Result<()> {
     // We need to form a connection with the actual server to forward requests
     // and responses between connections
@@ -171,44 +188,63 @@ async fn socket_loop(
     debug!("Binding to unix socket: {:?}", socket_path.as_ref());
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
-    while let Ok((conn, _)) = listener.accept().await {
-        // Create a unique id to associate with the connection since its address
-        // is not guaranteed to have an identifiable string
-        let conn_id: usize = rand::random();
+    let (ct, notify) = utils::new_shutdown_task(Handle::current(), shutdown_after);
 
-        // Establish a proper connection via a handshake, discarding the connection otherwise
-        let transport = match Transport::from_handshake(conn, None).await {
-            Ok(transport) => transport,
-            Err(x) => {
-                error!("<Client @ {:?}> Failed handshake: {}", conn_id, x);
-                continue;
+    loop {
+        tokio::select! {
+            result = listener.accept() => {match result {
+                Ok((conn, _)) => {
+                    // Create a unique id to associate with the connection since its address
+                    // is not guaranteed to have an identifiable string
+                    let conn_id: usize = rand::random();
+
+                    // Establish a proper connection via a handshake, discarding the connection otherwise
+                    let transport = match Transport::from_handshake(conn, None).await {
+                        Ok(transport) => transport,
+                        Err(x) => {
+                            error!("<Client @ {:?}> Failed handshake: {}", conn_id, x);
+                            continue;
+                        }
+                    };
+                    let (t_read, t_write) = transport.into_split();
+
+                    // Used to alert our response task of the connection's tenant name
+                    // based on the first
+                    let (tenant_tx, tenant_rx) = oneshot::channel();
+
+                    // Create a state we use to keep track of connection-specific data
+                    debug!("<Client @ {}> Initializing internal state", conn_id);
+                    let state = Arc::new(Mutex::new(ConnState::default()));
+
+                    // Spawn task to continually receive responses from the client that
+                    // may or may not be relevant to the connection, which will filter
+                    // by tenant and then along any response that matches
+                    let res_rx = broadcaster.subscribe();
+                    let state_2 = Arc::clone(&state);
+                    tokio::spawn(async move {
+                        handle_conn_outgoing(conn_id, state_2, t_write, tenant_rx, res_rx).await;
+                    });
+
+                    // Spawn task to continually read requests from connection and forward
+                    // them along to be sent via the client
+                    let req_tx = req_tx.clone();
+                    let ct_2 = Arc::clone(&ct);
+                    tokio::spawn(async move {
+                        ct_2.lock().await.increment();
+                        handle_conn_incoming(conn_id, state, t_read, tenant_tx, req_tx).await;
+                        ct_2.lock().await.decrement();
+                    });
+                }
+                Err(x) => {
+                    error!("Listener failed: {}", x);
+                    break;
+                }
+            }}
+            _ = notify.notified() => {
+                warn!("Reached shutdown timeout, so terminating");
+                break;
             }
-        };
-        let (t_read, t_write) = transport.into_split();
-
-        // Used to alert our response task of the connection's tenant name
-        // based on the first
-        let (tenant_tx, tenant_rx) = oneshot::channel();
-
-        // Create a state we use to keep track of connection-specific data
-        debug!("<Client @ {}> Initializing internal state", conn_id);
-        let state = Arc::new(Mutex::new(ConnState::default()));
-
-        // Spawn task to continually receive responses from the client that
-        // may or may not be relevant to the connection, which will filter
-        // by tenant and then along any response that matches
-        let res_rx = broadcaster.subscribe();
-        let state_2 = Arc::clone(&state);
-        tokio::spawn(async move {
-            handle_conn_outgoing(conn_id, state_2, t_write, tenant_rx, res_rx).await;
-        });
-
-        // Spawn task to continually read requests from connection and forward
-        // them along to be sent via the client
-        let req_tx = req_tx.clone();
-        tokio::spawn(async move {
-            handle_conn_incoming(conn_id, state, t_read, tenant_tx, req_tx).await;
-        });
+        }
     }
 
     Ok(())

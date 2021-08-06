@@ -29,7 +29,7 @@ pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
 }
 
 async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
-    let timeout = Duration::from_millis(opt.timeout as u64);
+    let timeout = opt.to_timeout_duration();
 
     match cmd.session {
         SessionInput::Environment => {

@@ -1,9 +1,16 @@
+use log::*;
 use std::{
     future::Future,
     ops::{Deref, DerefMut},
+    sync::Arc,
     time::Duration,
 };
-use tokio::{io, time};
+use tokio::{
+    io,
+    runtime::Handle,
+    sync::{Mutex, Notify},
+    time::{self, Instant},
+};
 
 // Generates a new tenant name
 pub fn new_tenant() -> String {
@@ -19,6 +26,85 @@ where
     time::timeout(d, f)
         .await
         .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
+}
+
+pub struct ConnTracker {
+    time: Instant,
+    cnt: usize,
+}
+
+impl ConnTracker {
+    pub fn new() -> Self {
+        Self {
+            time: Instant::now(),
+            cnt: 0,
+        }
+    }
+
+    pub fn time(&self) -> Instant {
+        self.time
+    }
+
+    pub fn increment(&mut self) {
+        self.time = Instant::now();
+        self.cnt += 1;
+    }
+
+    pub fn decrement(&mut self) {
+        if self.cnt > 0 {
+            self.time = Instant::now();
+            self.cnt -= 1;
+        }
+    }
+
+    pub fn has_exceeded_timeout(&self, duration: Duration) -> bool {
+        self.time.elapsed() > duration
+    }
+}
+
+/// Spawns a new task that continues to monitor the time since a
+/// connection on the server existed, shutting down the runtime
+/// if the time is exceeded
+pub fn new_shutdown_task(
+    handle: Handle,
+    duration: Option<Duration>,
+) -> (Arc<Mutex<ConnTracker>>, Arc<Notify>) {
+    let ct = Arc::new(Mutex::new(ConnTracker::new()));
+    let notify = Arc::new(Notify::new());
+
+    let ct_2 = Arc::clone(&ct);
+    let notify_2 = Arc::clone(&notify);
+    if let Some(duration) = duration {
+        handle.spawn(async move {
+            loop {
+                // Get the time we should wait based on when the last connection
+                // was dropped; this closes the gap in the case where we start
+                // sometime later than exactly duration since the last check
+                match ct_2.lock().await.time().checked_add(duration) {
+                    Some(next_time) => {
+                        // Wait until we've reached our desired duration since the
+                        // last connection was dropped
+                        time::sleep_until(next_time).await;
+
+                        // If we do have a connection at this point, don't exit
+                        if ct_2.lock().await.has_exceeded_timeout(duration) {
+                            continue;
+                        }
+
+                        // Otherwise, we now should exit, which we do by reporting
+                        notify_2.notify_one();
+                        break;
+                    }
+                    None => {
+                        error!("Shutdown check time forecast failed! Task is exiting!");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    (ct, notify)
 }
 
 /// Wraps a string to provide some friendly read and write methods

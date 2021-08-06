@@ -12,6 +12,7 @@ use std::{
     net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     str::FromStr,
+    time::Duration,
 };
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, IntoStaticStr, VariantNames};
@@ -53,10 +54,17 @@ pub struct CommonOpt {
     #[structopt(long, global = true)]
     pub log_file: Option<PathBuf>,
 
-    /// Represents the maximum time (in milliseconds) to wait for a network
+    /// Represents the maximum time (in seconds) to wait for a network
     /// request before timing out; a timeout of 0 implies waiting indefinitely
     #[structopt(short, long, global = true, default_value = &TIMEOUT_STR)]
-    pub timeout: usize,
+    pub timeout: f32,
+}
+
+impl CommonOpt {
+    /// Creates a new duration representing the timeout in seconds
+    pub fn to_timeout_duration(&self) -> Duration {
+        Duration::from_secs_f32(self.timeout)
+    }
 }
 
 /// Contains options related sessions
@@ -331,6 +339,20 @@ pub struct LaunchSubcommand {
     #[structopt(long)]
     pub fail_if_socket_exists: bool,
 
+    /// The time in seconds before shutting down the server if there are no active
+    /// connections. The countdown begins once all connections have closed and
+    /// stops when a new connection is made. In not specified, the server will not
+    /// shutdown at any point when there are no active connections.
+    ///
+    /// In the case of launch, this is only applicable when it is set to socket session
+    /// as this controls when the unix socket listener would shutdown, not when the
+    /// remote server it is connected to will shutdown.
+    ///
+    /// To configure the remote server's shutdown time, provide it as an argument
+    /// via `--extra-server-args`
+    #[structopt(long)]
+    pub shutdown_after: Option<f32>,
+
     /// Runs in background via daemon-mode (does nothing on windows); only applies
     /// when session is socket
     #[structopt(short, long)]
@@ -389,6 +411,16 @@ pub struct LaunchSubcommand {
     /// Host to use for sshing into the remote machine
     #[structopt(name = "HOST")]
     pub host: String,
+}
+
+impl LaunchSubcommand {
+    /// Creates a new duration representing the shutdown period in seconds
+    pub fn to_shutdown_after_duration(&self) -> Option<Duration> {
+        self.shutdown_after
+            .as_ref()
+            .copied()
+            .map(Duration::from_secs_f32)
+    }
 }
 
 /// Represents some range of ports
@@ -483,6 +515,13 @@ pub struct ListenSubcommand {
     #[structopt(long, default_value = "1000")]
     pub max_msg_capacity: u16,
 
+    /// The time in seconds before shutting down the server if there are no active
+    /// connections. The countdown begins once all connections have closed and
+    /// stops when a new connection is made. In not specified, the server will not
+    /// shutdown at any point when there are no active connections.
+    #[structopt(long)]
+    pub shutdown_after: Option<f32>,
+
     /// Changes the current working directory (cwd) to the specified directory
     #[structopt(long)]
     pub current_dir: Option<PathBuf>,
@@ -495,4 +534,14 @@ pub struct ListenSubcommand {
     /// Please note that this option does not affect the server-side port used by SSH
     #[structopt(short, long, value_name = "PORT[:PORT2]", default_value = "8080:8099")]
     pub port: PortRange,
+}
+
+impl ListenSubcommand {
+    /// Creates a new duration representing the shutdown period in seconds
+    pub fn to_shutdown_after_duration(&self) -> Option<Duration> {
+        self.shutdown_after
+            .as_ref()
+            .copied()
+            .map(Duration::from_secs_f32)
+    }
 }

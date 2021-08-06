@@ -5,6 +5,7 @@ use crate::{
         net::{Transport, TransportReadHalf, TransportWriteHalf},
         session::Session,
         state::ServerState,
+        utils,
     },
 };
 use derive_more::{Display, Error, From};
@@ -15,6 +16,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     io,
     net::{tcp, TcpListener},
+    runtime::Handle,
     sync::{mpsc, Mutex},
 };
 
@@ -54,6 +56,7 @@ pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
 async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> Result<(), Error> {
     let addr = cmd.host.to_ip_addr(cmd.use_ipv6)?;
     let socket_addrs = cmd.port.make_socket_addrs(addr);
+    let shutdown_after = cmd.to_shutdown_after_duration();
 
     // If specified, change the current working directory of this program
     if let Some(path) = cmd.current_dir.as_ref() {
@@ -89,37 +92,55 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 
     // Build our state for the server
     let state: Arc<Mutex<ServerState<SocketAddr>>> = Arc::new(Mutex::new(ServerState::default()));
+    let (ct, notify) = utils::new_shutdown_task(Handle::current(), shutdown_after);
 
     // Wait for a client connection, then spawn a new task to handle
     // receiving data from the client
-    while let Ok((client, addr)) = listener.accept().await {
-        // Establish a proper connection via a handshake, discarding the connection otherwise
-        let transport = match Transport::from_handshake(client, Some(Arc::clone(&key))).await {
-            Ok(transport) => transport,
-            Err(x) => {
-                error!("<Client @ {}> Failed handshake: {}", addr, x);
-                continue;
+    loop {
+        tokio::select! {
+            result = listener.accept() => {match result {
+                Ok((client, addr)) => {
+                    // Establish a proper connection via a handshake, discarding the connection otherwise
+                    let transport = match Transport::from_handshake(client, Some(Arc::clone(&key))).await {
+                        Ok(transport) => transport,
+                        Err(x) => {
+                            error!("<Client @ {}> Failed handshake: {}", addr, x);
+                            continue;
+                        }
+                    };
+
+                    // Split the transport into read and write halves so we can handle input
+                    // and output concurrently
+                    let (t_read, t_write) = transport.into_split();
+                    let (tx, rx) = mpsc::channel(cmd.max_msg_capacity as usize);
+                    let ct_2 = Arc::clone(&ct);
+
+                    // Spawn a new task that loops to handle requests from the client
+                    tokio::spawn({
+                        let f = request_loop(addr, Arc::clone(&state), t_read, tx);
+
+                        let state = Arc::clone(&state);
+                        async move {
+                            ct_2.lock().await.increment();
+                            f.await;
+                            state.lock().await.cleanup_client(addr).await;
+                            ct_2.lock().await.decrement();
+                        }
+                    });
+
+                    // Spawn a new task that loops to handle responses to the client
+                    tokio::spawn(async move { response_loop(addr, t_write, rx).await });
+                }
+                Err(x) => {
+                    error!("Listener failed: {}", x);
+                    break;
+                }
+            }}
+            _ = notify.notified() => {
+                warn!("Reached shutdown timeout, so terminating");
+                break;
             }
-        };
-
-        // Split the transport into read and write halves so we can handle input
-        // and output concurrently
-        let (t_read, t_write) = transport.into_split();
-        let (tx, rx) = mpsc::channel(cmd.max_msg_capacity as usize);
-
-        // Spawn a new task that loops to handle requests from the client
-        tokio::spawn({
-            let f = request_loop(addr, Arc::clone(&state), t_read, tx);
-
-            let state = Arc::clone(&state);
-            async move {
-                f.await;
-                state.lock().await.cleanup_client(addr).await;
-            }
-        });
-
-        // Spawn a new task that loops to handle responses to the client
-        tokio::spawn(async move { response_loop(addr, t_write, rx).await });
+        }
     }
 
     Ok(())
