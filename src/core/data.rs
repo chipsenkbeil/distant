@@ -128,6 +128,7 @@ pub enum RequestPayload {
     },
 
     /// Creates a directory on the remote machine
+    #[structopt(visible_aliases = &["mkdir"])]
     DirCreate {
         /// The path to the directory on the remote machine
         path: PathBuf,
@@ -138,6 +139,7 @@ pub enum RequestPayload {
     },
 
     /// Removes a file or directory on the remote machine
+    #[structopt(visible_aliases = &["rm"])]
     Remove {
         /// The path to the file or directory on the remote machine
         path: PathBuf,
@@ -149,6 +151,7 @@ pub enum RequestPayload {
     },
 
     /// Copies a file or directory on the remote machine
+    #[structopt(visible_aliases = &["cp"])]
     Copy {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -158,6 +161,7 @@ pub enum RequestPayload {
     },
 
     /// Moves/renames a file or directory on the remote machine
+    #[structopt(visible_aliases = &["mv"])]
     Rename {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -179,6 +183,7 @@ pub enum RequestPayload {
     },
 
     /// Runs a process on the remote machine
+    #[structopt(visible_aliases = &["run"])]
     ProcRun {
         /// Name of the command to run
         cmd: String,
@@ -188,6 +193,7 @@ pub enum RequestPayload {
     },
 
     /// Kills a process running on the remote machine
+    #[structopt(visible_aliases = &["kill"])]
     ProcKill {
         /// Id of the actively-running process
         id: usize,
