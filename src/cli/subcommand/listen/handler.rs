@@ -135,7 +135,9 @@ async fn dir_read(
 
     // Traverse, but don't include root directory in entries (hence min depth 1), unless indicated
     // to do so (min depth 0)
-    let dir = WalkDir::new(root_path.as_path()).min_depth(if include_root { 0 } else { 1 });
+    let dir = WalkDir::new(root_path.as_path())
+        .min_depth(if include_root { 0 } else { 1 })
+        .sort_by_file_name();
 
     // If depth > 0, will recursively traverse to specified max depth, otherwise
     // performs infinite traversal
