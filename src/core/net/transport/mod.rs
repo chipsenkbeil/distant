@@ -268,10 +268,8 @@ where
     pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
         // Serialize, encrypt, and then sign
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        trace!("Serializing data");
         let data = serde_cbor::to_vec(&data)?;
 
-        trace!("Encrypting data of len {}", data.len());
         let data = aead::seal(&self.crypt_key, &data).map_err(TransportError::EncryptError)?;
         let tag = self
             .auth_key
@@ -284,16 +282,13 @@ where
         // otherwise just send the encrypted data on its own
         let mut out: Vec<u8> = Vec::new();
         if let Some(tag) = tag {
-            trace!("Signing data of len {}", data.len());
             let tag_len = tag.unprotected_as_bytes().len() as u8;
 
-            trace!("Tag len {}", tag_len);
             out.push(tag_len);
             out.extend_from_slice(tag.unprotected_as_bytes());
         }
         out.extend(data);
 
-        trace!("Sending out data of len {}", out.len());
         self.conn.send(&out).await.map_err(TransportError::from)
     }
 }
@@ -324,7 +319,6 @@ where
         if let Some(data) = self.conn.next().await {
             let mut data = data?;
 
-            trace!("Received data of len {}", data.len());
             if data.is_empty() {
                 return Err(TransportError::from(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -335,8 +329,6 @@ where
             // Retrieve in form {TAG LEN}{TAG}{ENCRYPTED DATA}
             // with the tag len and tag being optional
             if let Some(auth_key) = self.auth_key.as_ref() {
-                trace!("Verifying signature on data of len {}", data.len());
-
                 // Parse the tag from the length, protecting against bad lengths
                 let tag_len = data[0];
                 if data.len() <= tag_len as usize {
@@ -346,7 +338,6 @@ where
                     )));
                 }
 
-                trace!("Tag len {}", tag_len);
                 let tag = Tag::from_slice(&data[1..=tag_len as usize])
                     .map_err(TransportError::AuthError)?;
 
@@ -359,10 +350,8 @@ where
                     .map_err(TransportError::AuthError)?;
             }
 
-            trace!("Decrypting data of len {}", data.len());
             let data = aead::open(&self.crypt_key, &data).map_err(TransportError::EncryptError)?;
 
-            trace!("Deserializing decrypted data of len {}", data.len());
             let data = serde_cbor::from_slice(&data)?;
             Ok(Some(data))
 
