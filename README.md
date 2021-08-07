@@ -16,7 +16,7 @@ a command to start a server and configure the local client to be able to
 talk to the server.
 
 - Asynchronous in nature, powered by [`tokio`](https://tokio.rs/)
-- Data is compressed to send across the wire via [`CBOR`](https://cbor.io/)
+- Data is serialized to send across the wire via [`CBOR`](https://cbor.io/)
 - Encryption & authentication are handled via [`orion`](https://crates.io/crates/orion)
     - [XChaCha20Poly1305](https://cryptopp.com/wiki/XChaCha20Poly1305) for an authenticated encryption scheme
     - [BLAKE2b-256](https://www.blake2.net/) in keyed mode for a second authentication
