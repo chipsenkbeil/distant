@@ -138,6 +138,7 @@ pub struct ActionSubcommand {
     /// Currently, there are two possible formats:
     ///
     /// 1. "json": printing out JSON for external program usage
+    ///
     /// 2. "shell": printing out human-readable results for interactive shell usage
     #[structopt(
         short,
@@ -370,11 +371,13 @@ pub struct LaunchSubcommand {
     )]
     pub mode: Mode,
 
-    /// Path to distant program to execute via ssh
+    /// Path to distant program on remote machine to execute via ssh;
+    /// by default, this program needs to be available within PATH as
+    /// specified when compiling ssh (not your login shell)
     #[structopt(long, default_value = "distant")]
     pub distant: String,
 
-    /// Path to ssh program to execute
+    /// Path to ssh program on local machine to execute
     #[structopt(long, default_value = "ssh")]
     pub ssh: String,
 
