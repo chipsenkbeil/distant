@@ -2,7 +2,7 @@ use crate::{
     cli::opt::Mode,
     core::{
         constants::MAX_PIPE_CHUNK_SIZE,
-        data::{Request, RequestPayload, Response, ResponsePayload},
+        data::{Request, RequestData, Response, ResponseData},
         net::{Client, DataStream},
         utils::StringBuf,
     },
@@ -114,13 +114,15 @@ where
 
                             // NOTE: We have to stick something in as the first argument as clap/structopt
                             //       expect the binary name as the first item in the iterator
-                            let payload_result = RequestPayload::from_iter_safe(
+                            let result = RequestData::from_iter_safe(
                                 std::iter::once("distant")
                                     .chain(data.trim().split(' ').filter(|s| !s.trim().is_empty())),
                             );
-                            match payload_result {
-                                Ok(payload) => {
-                                    match client.send(Request::new(tenant.as_str(), payload)).await
+                            match result {
+                                Ok(data) => {
+                                    match client
+                                        .send(Request::new(tenant.as_str(), vec![data]))
+                                        .await
                                     {
                                         Ok(res) => match format_response(Mode::Shell, res) {
                                             Ok(out) => out.print(),
@@ -142,7 +144,8 @@ where
                 // For non-interactive shell mode, all stdin is treated as a proc's stdin
                 LoopConfig::Proc { id } => {
                     debug!("Client sending stdin: {:?}", data);
-                    let req = Request::new(tenant.as_str(), RequestPayload::ProcStdin { id, data });
+                    let req =
+                        Request::new(tenant.as_str(), vec![RequestData::ProcStdin { id, data }]);
                     let result = client.send(req).await;
 
                     if let Err(x) = result {
@@ -161,7 +164,10 @@ where
                     "Response stream no longer available",
                 )
             })?;
-            let done = res.payload.is_proc_done() && config.is_proc();
+
+            // NOTE: If the loop is for a proxy process, we should assume that the payload
+            //       is all-or-nothing for the done check
+            let done = config.is_proc() && res.payload.iter().any(|x| x.is_proc_done());
 
             format_response(config.into(), res)?.print();
 
@@ -257,27 +263,40 @@ impl ResponseOut {
 }
 
 pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
+    let payload_cnt = res.payload.len();
+
     Ok(match mode {
         Mode::Json => ResponseOut::StdoutLine(format!(
             "{}",
             serde_json::to_string(&res)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
         )),
-        Mode::Shell => format_shell(res),
+
+        // NOTE: For shell, we assume a singular entry in the response's payload
+        Mode::Shell if payload_cnt != 1 => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Got {} entries in payload data, but shell expects exactly 1",
+                    payload_cnt
+                ),
+            ))
+        }
+        Mode::Shell => format_shell(res.payload.into_iter().next().unwrap()),
     })
 }
 
-fn format_shell(res: Response) -> ResponseOut {
-    match res.payload {
-        ResponsePayload::Ok => ResponseOut::None,
-        ResponsePayload::Error { description } => {
+fn format_shell(data: ResponseData) -> ResponseOut {
+    match data {
+        ResponseData::Ok => ResponseOut::None,
+        ResponseData::Error { description } => {
             ResponseOut::StderrLine(format!("Failed: '{}'.", description))
         }
-        ResponsePayload::Blob { data } => {
+        ResponseData::Blob { data } => {
             ResponseOut::StdoutLine(String::from_utf8_lossy(&data).to_string())
         }
-        ResponsePayload::Text { data } => ResponseOut::StdoutLine(data),
-        ResponsePayload::DirEntries { entries, .. } => ResponseOut::StdoutLine(format!(
+        ResponseData::Text { data } => ResponseOut::StdoutLine(data),
+        ResponseData::DirEntries { entries, .. } => ResponseOut::StdoutLine(format!(
             "{}",
             entries
                 .into_iter()
@@ -301,7 +320,7 @@ fn format_shell(res: Response) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         )),
-        ResponsePayload::Metadata {
+        ResponseData::Metadata {
             canonicalized_path,
             file_type,
             len,
@@ -329,7 +348,7 @@ fn format_shell(res: Response) -> ResponseOut {
             accessed.unwrap_or_default(),
             modified.unwrap_or_default(),
         )),
-        ResponsePayload::ProcEntries { entries } => ResponseOut::StdoutLine(format!(
+        ResponseData::ProcEntries { entries } => ResponseOut::StdoutLine(format!(
             "{}",
             entries
                 .into_iter()
@@ -337,10 +356,10 @@ fn format_shell(res: Response) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         )),
-        ResponsePayload::ProcStart { .. } => ResponseOut::None,
-        ResponsePayload::ProcStdout { data, .. } => ResponseOut::Stdout(data),
-        ResponsePayload::ProcStderr { data, .. } => ResponseOut::Stderr(data),
-        ResponsePayload::ProcDone { id, success, code } => {
+        ResponseData::ProcStart { .. } => ResponseOut::None,
+        ResponseData::ProcStdout { data, .. } => ResponseOut::Stdout(data),
+        ResponseData::ProcStderr { data, .. } => ResponseOut::Stderr(data),
+        ResponseData::ProcDone { id, success, code } => {
             if success {
                 ResponseOut::None
             } else if let Some(code) = code {
@@ -349,7 +368,7 @@ fn format_shell(res: Response) -> ResponseOut {
                 ResponseOut::StderrLine(format!("Proc {} failed", id))
             }
         }
-        ResponsePayload::SystemInfo {
+        ResponseData::SystemInfo {
             family,
             os,
             arch,

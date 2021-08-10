@@ -158,9 +158,10 @@ async fn request_loop(
         match transport.receive::<Request>().await {
             Ok(Some(req)) => {
                 debug!(
-                    "<Client @ {}> Received request of type {}",
+                    "<Client @ {}> Received request of type{} {}",
                     addr,
-                    req.payload.as_ref()
+                    if req.payload.len() > 1 { "s" } else { "" },
+                    req.to_payload_type_string()
                 );
 
                 if let Err(x) = handler::process(addr, Arc::clone(&state), req, tx.clone()).await {

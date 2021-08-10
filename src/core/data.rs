@@ -14,19 +14,28 @@ pub struct Request {
     /// A unique id associated with the request
     pub id: usize,
 
-    /// The main payload containing the type and data of the request
-    pub payload: RequestPayload,
+    /// The main payload containing a collection of data comprising one or more actions
+    pub payload: Vec<RequestData>,
 }
 
 impl Request {
     /// Creates a new request, generating a unique id for it
-    pub fn new(tenant: impl Into<String>, payload: RequestPayload) -> Self {
+    pub fn new(tenant: impl Into<String>, payload: Vec<RequestData>) -> Self {
         let id = rand::random();
         Self {
             tenant: tenant.into(),
             id,
             payload,
         }
+    }
+
+    /// Converts to a string representing the type (or types) contained in the payload
+    pub fn to_payload_type_string(&self) -> String {
+        self.payload
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>()
+            .join(",")
     }
 }
 
@@ -39,7 +48,7 @@ impl Request {
     content = "data"
 )]
 #[strum(serialize_all = "snake_case")]
-pub enum RequestPayload {
+pub enum RequestData {
     /// Reads a file from the specified path on the remote machine
     #[structopt(visible_aliases = &["cat"])]
     FileRead {
@@ -229,8 +238,8 @@ pub struct Response {
     /// (some responses are sent unprompted)
     pub origin_id: Option<usize>,
 
-    /// The main payload containing the type and data of the response
-    pub payload: ResponsePayload,
+    /// The main payload containing a collection of data comprising one or more results
+    pub payload: Vec<ResponseData>,
 }
 
 impl Response {
@@ -238,7 +247,7 @@ impl Response {
     pub fn new(
         tenant: impl Into<String>,
         origin_id: Option<usize>,
-        payload: ResponsePayload,
+        payload: Vec<ResponseData>,
     ) -> Self {
         let id = rand::random();
         Self {
@@ -247,6 +256,15 @@ impl Response {
             origin_id,
             payload,
         }
+    }
+
+    /// Converts to a string representing the type (or types) contained in the payload
+    pub fn to_payload_type_string(&self) -> String {
+        self.payload
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>()
+            .join(",")
     }
 }
 
@@ -259,7 +277,7 @@ impl Response {
     content = "data"
 )]
 #[strum(serialize_all = "snake_case")]
-pub enum ResponsePayload {
+pub enum ResponseData {
     /// General okay with no extra data, returned in cases like
     /// creating or removing a directory, copying a file, or renaming
     /// a file

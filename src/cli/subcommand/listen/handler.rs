@@ -1,11 +1,11 @@
 use crate::core::{
     constants::MAX_PIPE_CHUNK_SIZE,
     data::{
-        self, DirEntry, FileType, Request, RequestPayload, Response, ResponsePayload,
-        RunningProcess,
+        self, DirEntry, FileType, Request, RequestData, Response, ResponseData, RunningProcess,
     },
     state::{Process, ServerState},
 };
+use futures::future;
 use log::*;
 use std::{
     env,
@@ -34,93 +34,111 @@ pub(super) async fn process(
     tx: Reply,
 ) -> Result<(), mpsc::error::SendError<Response>> {
     async fn inner(
-        tenant: String,
+        tenant: Arc<String>,
         addr: SocketAddr,
         state: HState,
-        payload: RequestPayload,
+        data: RequestData,
         tx: Reply,
-    ) -> Result<ResponsePayload, Box<dyn std::error::Error>> {
-        match payload {
-            RequestPayload::FileRead { path } => file_read(path).await,
-            RequestPayload::FileReadText { path } => file_read_text(path).await,
-            RequestPayload::FileWrite { path, data } => file_write(path, data).await,
-            RequestPayload::FileWriteText { path, text } => file_write(path, text).await,
-            RequestPayload::FileAppend { path, data } => file_append(path, data).await,
-            RequestPayload::FileAppendText { path, text } => file_append(path, text).await,
-            RequestPayload::DirRead {
+    ) -> Result<ResponseData, Box<dyn std::error::Error>> {
+        match data {
+            RequestData::FileRead { path } => file_read(path).await,
+            RequestData::FileReadText { path } => file_read_text(path).await,
+            RequestData::FileWrite { path, data } => file_write(path, data).await,
+            RequestData::FileWriteText { path, text } => file_write(path, text).await,
+            RequestData::FileAppend { path, data } => file_append(path, data).await,
+            RequestData::FileAppendText { path, text } => file_append(path, text).await,
+            RequestData::DirRead {
                 path,
                 depth,
                 absolute,
                 canonicalize,
                 include_root,
             } => dir_read(path, depth, absolute, canonicalize, include_root).await,
-            RequestPayload::DirCreate { path, all } => dir_create(path, all).await,
-            RequestPayload::Remove { path, force } => remove(path, force).await,
-            RequestPayload::Copy { src, dst } => copy(src, dst).await,
-            RequestPayload::Rename { src, dst } => rename(src, dst).await,
-            RequestPayload::Metadata { path, canonicalize } => metadata(path, canonicalize).await,
-            RequestPayload::ProcRun { cmd, args } => {
+            RequestData::DirCreate { path, all } => dir_create(path, all).await,
+            RequestData::Remove { path, force } => remove(path, force).await,
+            RequestData::Copy { src, dst } => copy(src, dst).await,
+            RequestData::Rename { src, dst } => rename(src, dst).await,
+            RequestData::Metadata { path, canonicalize } => metadata(path, canonicalize).await,
+            RequestData::ProcRun { cmd, args } => {
                 proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
             }
-            RequestPayload::ProcKill { id } => proc_kill(state, id).await,
-            RequestPayload::ProcStdin { id, data } => proc_stdin(state, id, data).await,
-            RequestPayload::ProcList {} => proc_list(state).await,
-            RequestPayload::SystemInfo {} => system_info().await,
+            RequestData::ProcKill { id } => proc_kill(state, id).await,
+            RequestData::ProcStdin { id, data } => proc_stdin(state, id, data).await,
+            RequestData::ProcList {} => proc_list(state).await,
+            RequestData::SystemInfo {} => system_info().await,
         }
     }
 
-    let tenant = req.tenant.clone();
-    let res = Response::new(
-        req.tenant,
-        Some(req.id),
-        match inner(tenant, addr, state, req.payload, tx.clone()).await {
-            Ok(payload) => payload,
-            Err(x) => ResponsePayload::Error {
+    let tenant = Arc::new(req.tenant.clone());
+
+    // Build up a collection of tasks to run independently
+    let mut payload_tasks = Vec::new();
+    for data in req.payload {
+        let tenant_2 = Arc::clone(&tenant);
+        let state_2 = Arc::clone(&state);
+        let tx_2 = tx.clone();
+        payload_tasks.push(tokio::spawn(async move {
+            match inner(tenant_2, addr, state_2, data, tx_2).await {
+                Ok(data) => data,
+                Err(x) => ResponseData::Error {
+                    description: x.to_string(),
+                },
+            }
+        }));
+    }
+
+    // Collect the results of our tasks into the payload entries
+    let payload = future::join_all(payload_tasks)
+        .await
+        .into_iter()
+        .map(|x| match x {
+            Ok(x) => x,
+            Err(x) => ResponseData::Error {
                 description: x.to_string(),
             },
-        },
-    );
+        })
+        .collect();
+
+    let res = Response::new(req.tenant, Some(req.id), payload);
 
     debug!(
-        "<Client @ {}> Sending response of type {}",
+        "<Client @ {}> Sending response of type{} {}",
         addr,
-        res.payload.as_ref()
+        if res.payload.len() > 1 { "s" } else { "" },
+        res.to_payload_type_string()
     );
 
     // Send out our primary response from processing the request
     tx.send(res).await
 }
 
-async fn file_read(path: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
-    Ok(ResponsePayload::Blob {
+async fn file_read(path: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
+    Ok(ResponseData::Blob {
         data: tokio::fs::read(path).await?,
     })
 }
 
-async fn file_read_text(path: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
-    Ok(ResponsePayload::Text {
+async fn file_read_text(path: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
+    Ok(ResponseData::Text {
         data: tokio::fs::read_to_string(path).await?,
     })
 }
 
-async fn file_write(
-    path: PathBuf,
-    data: impl AsRef<[u8]>,
-) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<ResponseData, Box<dyn Error>> {
     tokio::fs::write(path, data).await?;
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
 async fn file_append(
     path: PathBuf,
     data: impl AsRef<[u8]>,
-) -> Result<ResponsePayload, Box<dyn Error>> {
+) -> Result<ResponseData, Box<dyn Error>> {
     let mut file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(path)
         .await?;
     file.write_all(data.as_ref()).await?;
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
 async fn dir_read(
@@ -129,7 +147,7 @@ async fn dir_read(
     absolute: bool,
     canonicalize: bool,
     include_root: bool,
-) -> Result<ResponsePayload, Box<dyn Error>> {
+) -> Result<ResponseData, Box<dyn Error>> {
     // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
     let root_path = tokio::fs::canonicalize(path).await?;
 
@@ -208,20 +226,20 @@ async fn dir_read(
         }
     }
 
-    Ok(ResponsePayload::DirEntries { entries, errors })
+    Ok(ResponseData::DirEntries { entries, errors })
 }
 
-async fn dir_create(path: PathBuf, all: bool) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn dir_create(path: PathBuf, all: bool) -> Result<ResponseData, Box<dyn Error>> {
     if all {
         tokio::fs::create_dir_all(path).await?;
     } else {
         tokio::fs::create_dir(path).await?;
     }
 
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
-async fn remove(path: PathBuf, force: bool) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, Box<dyn Error>> {
     let path_metadata = tokio::fs::metadata(path.as_path()).await?;
     if path_metadata.is_dir() {
         if force {
@@ -233,10 +251,10 @@ async fn remove(path: PathBuf, force: bool) -> Result<ResponsePayload, Box<dyn E
         tokio::fs::remove_file(path).await?;
     }
 
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
-async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
     let src_metadata = tokio::fs::metadata(src.as_path()).await?;
     if src_metadata.is_dir() {
         for entry in WalkDir::new(src.as_path())
@@ -273,16 +291,16 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponsePayload, Box<dyn Err
         tokio::fs::copy(src, dst).await?;
     }
 
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
-async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
     tokio::fs::rename(src, dst).await?;
 
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
-async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, Box<dyn Error>> {
     let metadata = tokio::fs::metadata(path.as_path()).await?;
     let canonicalized_path = if canonicalize {
         Some(tokio::fs::canonicalize(path).await?)
@@ -290,7 +308,7 @@ async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponsePayload, 
         None
     };
 
-    Ok(ResponsePayload::Metadata {
+    Ok(ResponseData::Metadata {
         canonicalized_path,
         accessed: metadata
             .accessed()
@@ -326,7 +344,7 @@ async fn proc_run(
     tx: Reply,
     cmd: String,
     args: Vec<String>,
-) -> Result<ResponsePayload, Box<dyn Error>> {
+) -> Result<ResponseData, Box<dyn Error>> {
     let id = rand::random();
 
     let mut child = Command::new(cmd.to_string())
@@ -349,12 +367,13 @@ async fn proc_run(
                         let res = Response::new(
                             tenant_2.as_str(),
                             None,
-                            ResponsePayload::ProcStdout { id, data },
+                            vec![ResponseData::ProcStdout { id, data }],
                         );
                         debug!(
-                            "<Client @ {}> Sending response of type {}",
+                            "<Client @ {}> Sending response of type{} {}",
                             addr,
-                            res.payload.as_ref()
+                            if res.payload.len() > 1 { "s" } else { "" },
+                            res.to_payload_type_string()
                         );
                         if let Err(_) = tx_2.send(res).await {
                             break;
@@ -384,12 +403,13 @@ async fn proc_run(
                         let res = Response::new(
                             tenant_2.as_str(),
                             None,
-                            ResponsePayload::ProcStderr { id, data },
+                            vec![ResponseData::ProcStderr { id, data }],
                         );
                         debug!(
-                            "<Client @ {}> Sending response of type {}",
+                            "<Client @ {}> Sending response of type{} {}",
                             addr,
-                            res.payload.as_ref()
+                            if res.payload.len() > 1 { "s" } else { "" },
+                            res.to_payload_type_string()
                         );
                         if let Err(_) = tx_2.send(res).await {
                             break;
@@ -439,25 +459,27 @@ async fn proc_run(
                         let res = Response::new(
                             tenant.as_str(),
                             None,
-                            ResponsePayload::ProcDone { id, success, code }
+                            vec![ResponseData::ProcDone { id, success, code }]
                         );
                         debug!(
-                            "<Client @ {}> Sending response of type {}",
+                            "<Client @ {}> Sending response of type{} {}",
                             addr,
-                            res.payload.as_ref()
+                            if res.payload.len() > 1 { "s" } else { "" },
+                            res.to_payload_type_string()
                         );
                         if let Err(_) = tx.send(res).await {
                             error!("Failed to send done for process {}!", id);
                         }
                     }
                     Err(x) => {
-                        let res = Response::new(tenant.as_str(), None, ResponsePayload::Error {
+                        let res = Response::new(tenant.as_str(), None, vec![ResponseData::Error {
                             description: x.to_string()
-                        });
+                        }]);
                         debug!(
-                            "<Client @ {}> Sending response of type {}",
+                            "<Client @ {}> Sending response of type{} {}",
                             addr,
-                            res.payload.as_ref()
+                            if res.payload.len() > 1 { "s" } else { "" },
+                            res.to_payload_type_string()
                         );
                         if let Err(_) = tx.send(res).await {
                             error!("Failed to send error for waiting on process {}!", id);
@@ -480,13 +502,14 @@ async fn proc_run(
                 }
 
 
-                let res = Response::new(tenant.as_str(), None, ResponsePayload::ProcDone {
+                let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
                     id, success: false, code: None
-                });
+                }]);
                 debug!(
-                    "<Client @ {}> Sending response of type {}",
+                    "<Client @ {}> Sending response of type{} {}",
                     addr,
-                    res.payload.as_ref()
+                    if res.payload.len() > 1 { "s" } else { "" },
+                    res.to_payload_type_string()
                 );
                 if let Err(_) = tx
                     .send(res)
@@ -508,10 +531,10 @@ async fn proc_run(
     };
     state.lock().await.push_process(addr, process);
 
-    Ok(ResponsePayload::ProcStart { id })
+    Ok(ResponseData::ProcStart { id })
 }
 
-async fn proc_kill(state: HState, id: usize) -> Result<ResponsePayload, Box<dyn Error>> {
+async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, Box<dyn Error>> {
     if let Some(process) = state.lock().await.processes.remove(&id) {
         process.kill_tx.send(()).map_err(|_| {
             io::Error::new(
@@ -521,25 +544,25 @@ async fn proc_kill(state: HState, id: usize) -> Result<ResponsePayload, Box<dyn 
         })?;
     }
 
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
 async fn proc_stdin(
     state: HState,
     id: usize,
     data: String,
-) -> Result<ResponsePayload, Box<dyn Error>> {
+) -> Result<ResponseData, Box<dyn Error>> {
     if let Some(process) = state.lock().await.processes.get(&id) {
         process.stdin_tx.send(data).await.map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "Unable to send stdin to process")
         })?;
     }
 
-    Ok(ResponsePayload::Ok)
+    Ok(ResponseData::Ok)
 }
 
-async fn proc_list(state: HState) -> Result<ResponsePayload, Box<dyn Error>> {
-    Ok(ResponsePayload::ProcEntries {
+async fn proc_list(state: HState) -> Result<ResponseData, Box<dyn Error>> {
+    Ok(ResponseData::ProcEntries {
         entries: state
             .lock()
             .await
@@ -554,8 +577,8 @@ async fn proc_list(state: HState) -> Result<ResponsePayload, Box<dyn Error>> {
     })
 }
 
-async fn system_info() -> Result<ResponsePayload, Box<dyn Error>> {
-    Ok(ResponsePayload::SystemInfo {
+async fn system_info() -> Result<ResponseData, Box<dyn Error>> {
+    Ok(ResponseData::SystemInfo {
         family: env::consts::FAMILY.to_string(),
         os: env::consts::OS.to_string(),
         arch: env::consts::ARCH.to_string(),

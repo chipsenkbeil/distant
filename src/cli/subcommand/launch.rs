@@ -2,7 +2,7 @@ use crate::{
     cli::opt::{CommonOpt, LaunchSubcommand, Mode, SessionOutput},
     core::{
         constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
-        data::{Request, RequestPayload, Response, ResponsePayload},
+        data::{Request, RequestData, Response, ResponseData},
         net::{Client, Transport, TransportReadHalf, TransportWriteHalf},
         session::{Session, SessionFile},
         utils,
@@ -167,8 +167,9 @@ async fn socket_loop(
     tokio::spawn(async move {
         while let Some(req) = req_rx.recv().await {
             debug!(
-                "Forwarding request of type {} to server",
-                req.payload.as_ref()
+                "Forwarding request of type{} {} to server",
+                if req.payload.len() > 1 { "s" } else { "" },
+                req.to_payload_type_string()
             );
             if let Err(x) = client.fire_timeout(req, duration).await {
                 error!("Client failed to send request: {:?}", x);
@@ -308,22 +309,22 @@ async fn handle_conn_incoming<T>(
     // beginning, we exit the function early via return.
     let tenant = tenant.unwrap();
 
-    // Perform cleanup if done
-    for id in state.lock().await.processes.as_slice() {
-        debug!("Cleaning conn {} :: killing process {}", conn_id, id);
-        if let Err(x) = req_tx
-            .send(Request::new(
-                tenant.clone(),
-                RequestPayload::ProcKill { id: *id },
-            ))
-            .await
-        {
-            error!(
-                "<Client @ {}> Failed to send kill signal for process {}: {}",
-                conn_id, id, x
-            );
-            break;
-        }
+    // Perform cleanup if done by sending a request to kill each running process
+    // debug!("Cleaning conn {} :: killing process {}", conn_id, id);
+    if let Err(x) = req_tx
+        .send(Request::new(
+            tenant.clone(),
+            state
+                .lock()
+                .await
+                .processes
+                .iter()
+                .map(|id| RequestData::ProcKill { id: *id })
+                .collect(),
+        ))
+        .await
+    {
+        error!("<Client @ {}> Failed to send kill signals: {}", conn_id, x);
     }
 }
 
@@ -347,19 +348,21 @@ async fn handle_conn_outgoing<T>(
                 // Forward along responses that are for our connection
                 Ok(res) if res.tenant == tenant => {
                     debug!(
-                        "Conn {} being sent response of type {}",
+                        "Conn {} being sent response of type{} {}",
                         conn_id,
-                        res.payload.as_ref()
+                        if res.payload.len() > 1 { "s" } else { "" },
+                        res.to_payload_type_string(),
                     );
 
                     // If a new process was started, we want to capture the id and
                     // associate it with the connection
-                    match &res.payload {
-                        ResponsePayload::ProcStart { id } => {
-                            debug!("Tracking proc {} for conn {}", id, conn_id);
-                            state.lock().await.processes.push(*id);
-                        }
-                        _ => {}
+                    let ids = res.payload.iter().filter_map(|x| match x {
+                        ResponseData::ProcStart { id } => Some(*id),
+                        _ => None,
+                    });
+                    for id in ids {
+                        debug!("Tracking proc {} for conn {}", id, conn_id);
+                        state.lock().await.processes.push(id);
                     }
 
                     if let Err(x) = writer.send(res).await {

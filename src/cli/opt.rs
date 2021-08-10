@@ -2,7 +2,7 @@ use crate::{
     cli::subcommand,
     core::{
         constants::{SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR, TIMEOUT_STR},
-        data::RequestPayload,
+        data::RequestData,
     },
 };
 use derive_more::{Display, Error, From, IsVariant};
@@ -168,7 +168,7 @@ pub struct ActionSubcommand {
 
     /// Operation to send over the wire if not in interactive mode
     #[structopt(subcommand)]
-    pub operation: Option<RequestPayload>,
+    pub operation: Option<RequestData>,
 }
 
 /// Represents options for binding a server to an IP address

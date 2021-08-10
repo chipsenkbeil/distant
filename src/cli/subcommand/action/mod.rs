@@ -1,7 +1,7 @@
 use crate::{
     cli::opt::{ActionSubcommand, CommonOpt, Mode, SessionInput},
     core::{
-        data::{Request, ResponsePayload},
+        data::{Request, ResponseData},
         net::{Client, DataStream, TransportError},
         session::{Session, SessionFile},
         utils,
@@ -94,18 +94,20 @@ where
 
     if let Some(req) = cmd
         .operation
-        .map(|payload| Request::new(tenant.as_str(), payload))
+        .map(|payload| Request::new(tenant.as_str(), vec![payload]))
     {
-        is_proc_req = req.payload.is_proc_run();
+        // NOTE: We know that there is a single payload entry, so it's all-or-nothing
+        is_proc_req = req.payload.iter().any(|x| x.is_proc_run());
 
         debug!("Client sending request: {:?}", req);
         let res = client.send_timeout(req, timeout).await?;
 
         // Store the spawned process id for using in sending stdin (if we spawned a proc)
-        proc_id = match &res.payload {
-            ResponsePayload::ProcStart { id } => *id,
-            _ => 0,
-        };
+        // NOTE: We can assume that there is a single payload entry in response to our single
+        //       entry in our request
+        if let Some(ResponseData::ProcStart { id }) = res.payload.first() {
+            proc_id = *id;
+        }
 
         inner::format_response(cmd.mode, res)?.print();
     }
