@@ -9,6 +9,8 @@
 
 Binary to connect with a remote machine to edit files and run programs.
 
+🚧 **(Alpha stage software) This program is in rapid development and may break or change frequently!** 🚧
+
 ## Details
 
 The `distant` binary supplies both a server and client component as well as
