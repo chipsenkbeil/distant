@@ -6,6 +6,7 @@ use crate::{
         session::{Session, SessionFile},
         utils,
     },
+    ExitCode, ExitCodeError,
 };
 use derive_more::{Display, Error, From};
 use log::*;
@@ -20,6 +21,16 @@ pub enum Error {
 
     #[display(fmt = "Non-interactive but no operation supplied")]
     MissingOperation,
+}
+
+impl ExitCodeError for Error {
+    fn to_exit_code(&self) -> ExitCode {
+        match self {
+            Self::IoError(x) => x.to_exit_code(),
+            Self::TransportError(x) => x.to_exit_code(),
+            Self::MissingOperation => ExitCode::Usage,
+        }
+    }
 }
 
 pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {

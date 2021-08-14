@@ -4,6 +4,7 @@ use crate::{
         constants::{SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR, TIMEOUT_STR},
         data::RequestData,
     },
+    ExitCodeError,
 };
 use derive_more::{Display, Error, From, IsVariant};
 use lazy_static::lazy_static;
@@ -95,7 +96,7 @@ pub enum Subcommand {
 
 impl Subcommand {
     /// Runs the subcommand, returning the result
-    pub fn run(self, opt: CommonOpt) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(self, opt: CommonOpt) -> Result<(), Box<dyn ExitCodeError>> {
         match self {
             Self::Action(cmd) => subcommand::action::run(cmd, opt)?,
             Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,

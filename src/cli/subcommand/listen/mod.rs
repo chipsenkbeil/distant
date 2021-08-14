@@ -7,6 +7,7 @@ use crate::{
         state::ServerState,
         utils,
     },
+    ExitCode, ExitCodeError,
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
@@ -27,6 +28,16 @@ pub enum Error {
     ConvertToIpAddrError(ConvertToIpAddrError),
     ForkError,
     IoError(io::Error),
+}
+
+impl ExitCodeError for Error {
+    fn to_exit_code(&self) -> ExitCode {
+        match self {
+            Self::ConvertToIpAddrError(_) => ExitCode::NoHost,
+            Self::ForkError => ExitCode::OsErr,
+            Self::IoError(x) => x.to_exit_code(),
+        }
+    }
 }
 
 pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {

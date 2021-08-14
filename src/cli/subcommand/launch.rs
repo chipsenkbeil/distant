@@ -7,12 +7,11 @@ use crate::{
         session::{Session, SessionFile},
         utils,
     },
+    ExitCode, ExitCodeError,
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
-use hex::FromHexError;
 use log::*;
-use orion::errors::UnknownCryptoError;
 use std::{marker::Unpin, path::Path, string::FromUtf8Error, sync::Arc};
 use tokio::{
     io::{self, AsyncRead, AsyncWrite},
@@ -28,10 +27,19 @@ pub enum Error {
     MissingSessionData,
 
     ForkError(#[error(not(source))] i32),
-    BadKey(UnknownCryptoError),
-    HexError(FromHexError),
     IoError(io::Error),
     Utf8Error(FromUtf8Error),
+}
+
+impl ExitCodeError for Error {
+    fn to_exit_code(&self) -> ExitCode {
+        match self {
+            Self::MissingSessionData => ExitCode::NoInput,
+            Self::ForkError(_) => ExitCode::OsErr,
+            Self::IoError(x) => x.to_exit_code(),
+            Self::Utf8Error(_) => ExitCode::DataErr,
+        }
+    }
 }
 
 /// Represents state associated with a connection
