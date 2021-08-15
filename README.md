@@ -55,7 +55,7 @@ distant launch my.example.com
 # After the session is established, you can perform different operations
 # on the remote machine via `distant action {command} [args]`
 distant action copy path/to/file new/path/to/file
-distant action proc-run -- echo 'Hello, this is from the other side'
+distant action run -- echo 'Hello, this is from the other side'
 ```
 
 ## License

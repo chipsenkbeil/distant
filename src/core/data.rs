@@ -1,4 +1,4 @@
-use derive_more::IsVariant;
+use derive_more::{Display, IsVariant};
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
 use structopt::StructOpt;
@@ -179,6 +179,12 @@ pub enum RequestData {
         dst: PathBuf,
     },
 
+    /// Checks whether the given path exists
+    Exists {
+        /// The path to the file or directory on the remote machine
+        path: PathBuf,
+    },
+
     /// Retrieves filesystem metadata for the specified path on the remote machine
     Metadata {
         /// The path to the file, directory, or symlink on the remote machine
@@ -284,10 +290,7 @@ pub enum ResponseData {
     Ok,
 
     /// General-purpose failure that occurred from some request
-    Error {
-        /// Details about the error
-        description: String,
-    },
+    Error(Error),
 
     /// Response containing some arbitrary, binary data
     Blob {
@@ -309,6 +312,9 @@ pub enum ResponseData {
         /// Errors encountered while scanning for entries
         errors: Vec<Error>,
     },
+
+    /// Response to checking if a path exists
+    Exists(bool),
 
     /// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
     Metadata {
@@ -425,7 +431,7 @@ pub struct DirEntry {
 pub enum FileType {
     Dir,
     File,
-    SymLink,
+    Symlink,
 }
 
 /// Represents information about a running process
@@ -444,12 +450,30 @@ pub struct RunningProcess {
     pub id: usize,
 }
 
+impl From<io::Error> for ResponseData {
+    fn from(x: io::Error) -> Self {
+        Self::Error(Error::from(x))
+    }
+}
+
+impl From<walkdir::Error> for ResponseData {
+    fn from(x: walkdir::Error) -> Self {
+        Self::Error(Error::from(x))
+    }
+}
+
+impl From<tokio::task::JoinError> for ResponseData {
+    fn from(x: tokio::task::JoinError) -> Self {
+        Self::Error(Error::from(x))
+    }
+}
+
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
     /// Label describing the kind of error
-    pub kind: String,
+    pub kind: ErrorKind,
 
     /// Description of the error itself
     pub description: String,
@@ -458,7 +482,7 @@ pub struct Error {
 impl From<io::Error> for Error {
     fn from(x: io::Error) -> Self {
         Self {
-            kind: format!("{:?}", x.kind()),
+            kind: ErrorKind::from(x.kind()),
             description: format!("{}", x),
         }
     }
@@ -470,9 +494,130 @@ impl From<walkdir::Error> for Error {
             x.into_io_error().map(Self::from).unwrap()
         } else {
             Self {
-                kind: String::from("Loop"),
+                kind: ErrorKind::Loop,
                 description: format!("{}", x),
             }
+        }
+    }
+}
+
+impl From<tokio::task::JoinError> for Error {
+    fn from(x: tokio::task::JoinError) -> Self {
+        Self {
+            kind: if x.is_cancelled() {
+                ErrorKind::TaskCancelled
+            } else if x.is_panic() {
+                ErrorKind::TaskPanicked
+            } else {
+                ErrorKind::Unknown
+            },
+            description: format!("{}", x),
+        }
+    }
+}
+
+/// All possible kinds of errors that can be returned
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ErrorKind {
+    /// An entity was not found, often a file
+    NotFound,
+
+    /// The operation lacked the necessary privileges to complete
+    PermissionDenied,
+
+    /// The connection was refused by the remote server
+    ConnectionRefused,
+
+    /// The connection was reset by the remote server
+    ConnectionReset,
+
+    /// The connection was aborted (terminated) by the remote server
+    ConnectionAborted,
+
+    /// The network operation failed because it was not connected yet
+    NotConnected,
+
+    /// A socket address could not be bound because the address is already in use elsewhere
+    AddrInUse,
+
+    /// A nonexistent interface was requested or the requested address was not local
+    AddrNotAvailable,
+
+    /// The operation failed because a pipe was closed
+    BrokenPipe,
+
+    /// An entity already exists, often a file
+    AlreadyExists,
+
+    /// The operation needs to block to complete, but the blocking operation was requested to not
+    /// occur
+    WouldBlock,
+
+    /// A parameter was incorrect
+    InvalidInput,
+
+    /// Data not valid for the operation were encountered
+    InvalidData,
+
+    /// The I/O operation's timeout expired, causing it to be cancelled
+    TimedOut,
+
+    /// An error returned when an operation could not be completed because a
+    /// call to `write` returned `Ok(0)`
+    WriteZero,
+
+    /// This operation was interrupted
+    Interrupted,
+
+    /// Any I/O error not part of this list
+    Other,
+
+    /// An error returned when an operation could not be completed because an "end of file" was
+    /// reached prematurely
+    UnexpectedEof,
+
+    /// This operation is unsupported on this platform
+    Unsupported,
+
+    /// When a loop is encountered when walking a directory
+    Loop,
+
+    /// When a task is cancelled
+    TaskCancelled,
+
+    /// When a task panics
+    TaskPanicked,
+
+    /// Catchall for an error that has no specific type
+    Unknown,
+}
+
+impl From<io::ErrorKind> for ErrorKind {
+    fn from(kind: io::ErrorKind) -> Self {
+        match kind {
+            io::ErrorKind::NotFound => Self::NotFound,
+            io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            io::ErrorKind::ConnectionRefused => Self::ConnectionRefused,
+            io::ErrorKind::ConnectionReset => Self::ConnectionReset,
+            io::ErrorKind::ConnectionAborted => Self::ConnectionAborted,
+            io::ErrorKind::NotConnected => Self::NotConnected,
+            io::ErrorKind::AddrInUse => Self::AddrInUse,
+            io::ErrorKind::AddrNotAvailable => Self::AddrNotAvailable,
+            io::ErrorKind::BrokenPipe => Self::BrokenPipe,
+            io::ErrorKind::AlreadyExists => Self::AlreadyExists,
+            io::ErrorKind::WouldBlock => Self::WouldBlock,
+            io::ErrorKind::InvalidInput => Self::InvalidInput,
+            io::ErrorKind::InvalidData => Self::InvalidData,
+            io::ErrorKind::TimedOut => Self::TimedOut,
+            io::ErrorKind::WriteZero => Self::WriteZero,
+            io::ErrorKind::Interrupted => Self::Interrupted,
+            io::ErrorKind::Other => Self::Other,
+            io::ErrorKind::UnexpectedEof => Self::UnexpectedEof,
+            io::ErrorKind::Unsupported => Self::Unsupported,
+
+            // This exists because io::ErrorKind is non_exhaustive
+            _ => Self::Unknown,
         }
     }
 }

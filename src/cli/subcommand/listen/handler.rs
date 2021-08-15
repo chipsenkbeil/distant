@@ -5,11 +5,11 @@ use crate::core::{
     },
     state::{Process, ServerState},
 };
+use derive_more::{Display, Error, From};
 use futures::future;
 use log::*;
 use std::{
     env,
-    error::Error,
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
@@ -26,6 +26,21 @@ use walkdir::WalkDir;
 pub type Reply = mpsc::Sender<Response>;
 type HState = Arc<Mutex<ServerState<SocketAddr>>>;
 
+#[derive(Debug, Display, Error, From)]
+pub enum ServerError {
+    IoError(io::Error),
+    WalkDirError(walkdir::Error),
+}
+
+impl From<ServerError> for ResponseData {
+    fn from(x: ServerError) -> Self {
+        match x {
+            ServerError::IoError(x) => Self::from(x),
+            ServerError::WalkDirError(x) => Self::from(x),
+        }
+    }
+}
+
 /// Processes the provided request, sending replies using the given sender
 pub(super) async fn process(
     addr: SocketAddr,
@@ -39,7 +54,7 @@ pub(super) async fn process(
         state: HState,
         data: RequestData,
         tx: Reply,
-    ) -> Result<ResponseData, Box<dyn std::error::Error>> {
+    ) -> Result<ResponseData, ServerError> {
         match data {
             RequestData::FileRead { path } => file_read(path).await,
             RequestData::FileReadText { path } => file_read_text(path).await,
@@ -58,6 +73,7 @@ pub(super) async fn process(
             RequestData::Remove { path, force } => remove(path, force).await,
             RequestData::Copy { src, dst } => copy(src, dst).await,
             RequestData::Rename { src, dst } => rename(src, dst).await,
+            RequestData::Exists { path } => exists(path).await,
             RequestData::Metadata { path, canonicalize } => metadata(path, canonicalize).await,
             RequestData::ProcRun { cmd, args } => {
                 proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
@@ -80,9 +96,7 @@ pub(super) async fn process(
         payload_tasks.push(tokio::spawn(async move {
             match inner(tenant_2, addr, state_2, data, tx_2).await {
                 Ok(data) => data,
-                Err(x) => ResponseData::Error {
-                    description: x.to_string(),
-                },
+                Err(x) => ResponseData::from(x),
             }
         }));
     }
@@ -93,9 +107,7 @@ pub(super) async fn process(
         .into_iter()
         .map(|x| match x {
             Ok(x) => x,
-            Err(x) => ResponseData::Error {
-                description: x.to_string(),
-            },
+            Err(x) => ResponseData::from(x),
         })
         .collect();
 
@@ -112,27 +124,24 @@ pub(super) async fn process(
     tx.send(res).await
 }
 
-async fn file_read(path: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
+async fn file_read(path: PathBuf) -> Result<ResponseData, ServerError> {
     Ok(ResponseData::Blob {
         data: tokio::fs::read(path).await?,
     })
 }
 
-async fn file_read_text(path: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
+async fn file_read_text(path: PathBuf) -> Result<ResponseData, ServerError> {
     Ok(ResponseData::Text {
         data: tokio::fs::read_to_string(path).await?,
     })
 }
 
-async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<ResponseData, Box<dyn Error>> {
+async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<ResponseData, ServerError> {
     tokio::fs::write(path, data).await?;
     Ok(ResponseData::Ok)
 }
 
-async fn file_append(
-    path: PathBuf,
-    data: impl AsRef<[u8]>,
-) -> Result<ResponseData, Box<dyn Error>> {
+async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<ResponseData, ServerError> {
     let mut file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(path)
@@ -147,7 +156,7 @@ async fn dir_read(
     absolute: bool,
     canonicalize: bool,
     include_root: bool,
-) -> Result<ResponseData, Box<dyn Error>> {
+) -> Result<ResponseData, ServerError> {
     // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
     let root_path = tokio::fs::canonicalize(path).await?;
 
@@ -172,7 +181,7 @@ async fn dir_read(
         } else if ft.is_file() {
             FileType::File
         } else {
-            FileType::SymLink
+            FileType::Symlink
         }
     }
 
@@ -229,7 +238,7 @@ async fn dir_read(
     Ok(ResponseData::DirEntries { entries, errors })
 }
 
-async fn dir_create(path: PathBuf, all: bool) -> Result<ResponseData, Box<dyn Error>> {
+async fn dir_create(path: PathBuf, all: bool) -> Result<ResponseData, ServerError> {
     if all {
         tokio::fs::create_dir_all(path).await?;
     } else {
@@ -239,7 +248,7 @@ async fn dir_create(path: PathBuf, all: bool) -> Result<ResponseData, Box<dyn Er
     Ok(ResponseData::Ok)
 }
 
-async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, Box<dyn Error>> {
+async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, ServerError> {
     let path_metadata = tokio::fs::metadata(path.as_path()).await?;
     if path_metadata.is_dir() {
         if force {
@@ -254,7 +263,7 @@ async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, Box<dyn Erro
     Ok(ResponseData::Ok)
 }
 
-async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
+async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
     let src_metadata = tokio::fs::metadata(src.as_path()).await?;
     if src_metadata.is_dir() {
         for entry in WalkDir::new(src.as_path())
@@ -294,13 +303,23 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, Box<dyn Error>
     Ok(ResponseData::Ok)
 }
 
-async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponseData, Box<dyn Error>> {
+async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
     tokio::fs::rename(src, dst).await?;
 
     Ok(ResponseData::Ok)
 }
 
-async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, Box<dyn Error>> {
+async fn exists(path: PathBuf) -> Result<ResponseData, ServerError> {
+    // Following experimental `std::fs::try_exists`, which checks the error kind of the
+    // metadata lookup to see if it is not found and filters accordingly
+    Ok(match tokio::fs::metadata(path.as_path()).await {
+        Ok(_) => ResponseData::Exists(true),
+        Err(x) if x.kind() == io::ErrorKind::NotFound => ResponseData::Exists(false),
+        Err(x) => return Err(ServerError::from(x)),
+    })
+}
+
+async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, ServerError> {
     let metadata = tokio::fs::metadata(path.as_path()).await?;
     let canonicalized_path = if canonicalize {
         Some(tokio::fs::canonicalize(path).await?)
@@ -332,7 +351,7 @@ async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, Box
         } else if metadata.is_file() {
             FileType::File
         } else {
-            FileType::SymLink
+            FileType::Symlink
         },
     })
 }
@@ -344,7 +363,7 @@ async fn proc_run(
     tx: Reply,
     cmd: String,
     args: Vec<String>,
-) -> Result<ResponseData, Box<dyn Error>> {
+) -> Result<ResponseData, ServerError> {
     let id = rand::random();
 
     let mut child = Command::new(cmd.to_string())
@@ -472,9 +491,7 @@ async fn proc_run(
                         }
                     }
                     Err(x) => {
-                        let res = Response::new(tenant.as_str(), None, vec![ResponseData::Error {
-                            description: x.to_string()
-                        }]);
+                        let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
                         debug!(
                             "<Client @ {}> Sending response of type{} {}",
                             addr,
@@ -534,7 +551,7 @@ async fn proc_run(
     Ok(ResponseData::ProcStart { id })
 }
 
-async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, Box<dyn Error>> {
+async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, ServerError> {
     if let Some(process) = state.lock().await.processes.remove(&id) {
         process.kill_tx.send(()).map_err(|_| {
             io::Error::new(
@@ -547,11 +564,7 @@ async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, Box<dyn Err
     Ok(ResponseData::Ok)
 }
 
-async fn proc_stdin(
-    state: HState,
-    id: usize,
-    data: String,
-) -> Result<ResponseData, Box<dyn Error>> {
+async fn proc_stdin(state: HState, id: usize, data: String) -> Result<ResponseData, ServerError> {
     if let Some(process) = state.lock().await.processes.get(&id) {
         process.stdin_tx.send(data).await.map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "Unable to send stdin to process")
@@ -561,7 +574,7 @@ async fn proc_stdin(
     Ok(ResponseData::Ok)
 }
 
-async fn proc_list(state: HState) -> Result<ResponseData, Box<dyn Error>> {
+async fn proc_list(state: HState) -> Result<ResponseData, ServerError> {
     Ok(ResponseData::ProcEntries {
         entries: state
             .lock()
@@ -577,7 +590,7 @@ async fn proc_list(state: HState) -> Result<ResponseData, Box<dyn Error>> {
     })
 }
 
-async fn system_info() -> Result<ResponseData, Box<dyn Error>> {
+async fn system_info() -> Result<ResponseData, ServerError> {
     Ok(ResponseData::SystemInfo {
         family: env::consts::FAMILY.to_string(),
         os: env::consts::OS.to_string(),

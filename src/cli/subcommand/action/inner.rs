@@ -2,7 +2,7 @@ use crate::{
     cli::opt::Mode,
     core::{
         constants::MAX_PIPE_CHUNK_SIZE,
-        data::{Request, RequestData, Response, ResponseData},
+        data::{Error, Request, RequestData, Response, ResponseData},
         net::{Client, DataStream},
         utils::StringBuf,
     },
@@ -289,8 +289,8 @@ pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
 fn format_shell(data: ResponseData) -> ResponseOut {
     match data {
         ResponseData::Ok => ResponseOut::None,
-        ResponseData::Error { description } => {
-            ResponseOut::StderrLine(format!("Failed: '{}'.", description))
+        ResponseData::Error(Error { kind, description }) => {
+            ResponseOut::StderrLine(format!("Failed ({}): '{}'.", kind, description))
         }
         ResponseData::Blob { data } => {
             ResponseOut::StdoutLine(String::from_utf8_lossy(&data).to_string())
@@ -320,6 +320,13 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         )),
+        ResponseData::Exists(exists) => {
+            if exists {
+                ResponseOut::StdoutLine("Does exist.".to_string())
+            } else {
+                ResponseOut::StdoutLine("Does not exist.".to_string())
+            }
+        }
         ResponseData::Metadata {
             canonicalized_path,
             file_type,
