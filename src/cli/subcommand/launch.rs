@@ -403,7 +403,7 @@ async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<S
         cmd.extra_server_args.unwrap_or_default(),
     );
     let ssh_command = format!(
-        "{} -o StrictHostKeyChecking=no ssh://{}@{}:{} {} {}",
+        "{} -o StrictHostKeyChecking=no ssh://{}@{}:{} {} '{}'",
         cmd.ssh,
         cmd.username,
         cmd.host.as_str(),
@@ -411,7 +411,12 @@ async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<S
         cmd.identity_file
             .map(|f| format!("-i {}", f.as_path().display()))
             .unwrap_or_default(),
-        distant_command.trim(),
+        if cmd.no_shell {
+            distant_command.trim().to_string()
+        } else {
+            // TODO: Do we need to try to escape single quotes here because of extra_server_args?
+            format!("echo {} | $SHELL -l", distant_command.trim())
+        },
     );
     let out = Command::new("sh")
         .arg("-c")

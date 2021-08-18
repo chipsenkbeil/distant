@@ -408,6 +408,10 @@ pub struct LaunchSubcommand {
     #[structopt(short, long)]
     pub identity_file: Option<PathBuf>,
 
+    /// If specified, will not launch distant using a login shell but instead execute it directly
+    #[structopt(long)]
+    pub no_shell: bool,
+
     /// Port to use for sshing into the remote machine
     #[structopt(short, long, default_value = "22")]
     pub port: u16,

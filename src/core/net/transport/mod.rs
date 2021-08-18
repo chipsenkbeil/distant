@@ -682,8 +682,13 @@ mod tests {
         let mut dst = dst.expect("dst stream failed handshake");
 
         src.send("some data").await.expect("Failed to send data");
+
+        // NOTE: This keeps going between auth and io error about tag length because of the
+        //       random data generated that can cause a different length to be perceived; so,
+        //       we have to check for both
         match dst.receive::<String>().await {
             Err(TransportError::AuthError(_)) => {}
+            Err(TransportError::IoError(x)) if matches!(x.kind(), io::ErrorKind::InvalidData) => {}
             x => panic!("Unexpected result: {:?}", x),
         }
     }
