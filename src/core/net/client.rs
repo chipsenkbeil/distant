@@ -225,3 +225,79 @@ where
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{
+        constants::TEST_BUFFER_SIZE,
+        data::{RequestData, ResponseData},
+    };
+    use crate::net::InmemoryStream;
+    use orion::aead::SecretKey;
+    use std::time::Duration;
+
+    const TEST_TENANT: &str = "test-tenant";
+
+    /// Makes a connected pair of transports with matching auth and crypt keys
+    pub fn make_transport_pair() -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
+        let auth_key = Arc::new(SecretKey::default());
+        let crypt_key = Arc::new(SecretKey::default());
+
+        let (a, b) = InmemoryStream::pair(TEST_BUFFER_SIZE);
+        let a = Transport::new(a, Some(Arc::clone(&auth_key)), Arc::clone(&crypt_key));
+        let b = Transport::new(b, Some(auth_key), crypt_key);
+        (a, b)
+    }
+
+    #[tokio::test]
+    async fn send_should_wait_until_response_received() {
+        let (t1, mut t2) = make_transport_pair();
+        let mut client = Client::inner_connect(t1).await.unwrap();
+
+        let req = Request::new(TEST_TENANT, vec![RequestData::ProcList {}]);
+        let res = Response::new(
+            TEST_TENANT,
+            Some(req.id),
+            vec![ResponseData::ProcEntries {
+                entries: Vec::new(),
+            }],
+        );
+
+        let (actual, _) = tokio::join!(client.send(req), t2.send(res.clone()));
+        match actual {
+            Ok(actual) => assert_eq!(actual, res),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_timeout_should_fail_if_response_not_received_in_time() {
+        let (t1, mut t2) = make_transport_pair();
+        let mut client = Client::inner_connect(t1).await.unwrap();
+
+        let req = Request::new(TEST_TENANT, vec![RequestData::ProcList {}]);
+        match client.send_timeout(req, Duration::from_millis(30)).await {
+            Err(TransportError::IoError(x)) => assert_eq!(x.kind(), io::ErrorKind::TimedOut),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+
+        let req = t2.receive::<Request>().await.unwrap().unwrap();
+        assert_eq!(req.tenant, TEST_TENANT);
+    }
+
+    #[tokio::test]
+    async fn fire_should_send_request_and_not_wait_for_response() {
+        let (t1, mut t2) = make_transport_pair();
+        let mut client = Client::inner_connect(t1).await.unwrap();
+
+        let req = Request::new(TEST_TENANT, vec![RequestData::ProcList {}]);
+        match client.fire(req).await {
+            Ok(_) => {}
+            x => panic!("Unexpected response: {:?}", x),
+        }
+
+        let req = t2.receive::<Request>().await.unwrap().unwrap();
+        assert_eq!(req.tenant, TEST_TENANT);
+    }
+}

@@ -1,5 +1,5 @@
 mod transport;
-pub use transport::{DataStream, Transport, TransportError, TransportReadHalf, TransportWriteHalf};
+pub use transport::*;
 
 mod client;
 pub use client::Client;

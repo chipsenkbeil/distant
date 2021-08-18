@@ -1,6 +1,7 @@
 mod cli;
 mod core;
 
+pub use self::core::{data, net};
 use log::error;
 
 /// Represents an error that can be converted into an exit code
