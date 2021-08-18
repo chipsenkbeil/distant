@@ -79,6 +79,88 @@ impl DataStream for net::UnixStream {
     }
 }
 
+/// Sends some data across the wire, waiting for it to completely send
+macro_rules! send {
+    ($conn:expr, $crypt_key:expr, $auth_key:expr, $data:expr) => {
+        async {
+            // Serialize, encrypt, and then sign
+            // NOTE: Cannot used packed implementation for now due to issues with deserialization
+            let data = serde_cbor::to_vec(&$data)?;
+
+            let data = aead::seal(&$crypt_key, &data).map_err(TransportError::EncryptError)?;
+            let tag = $auth_key
+                .as_ref()
+                .map(|key| auth::authenticate(key, &data))
+                .transpose()
+                .map_err(TransportError::AuthError)?;
+
+            // Send {TAG LEN}{TAG}{ENCRYPTED DATA} if we have an auth key,
+            // otherwise just send the encrypted data on its own
+            let mut out: Vec<u8> = Vec::new();
+            if let Some(tag) = tag {
+                let tag_len = tag.unprotected_as_bytes().len() as u8;
+
+                out.push(tag_len);
+                out.extend_from_slice(tag.unprotected_as_bytes());
+            }
+            out.extend(data);
+
+            $conn.send(&out).await.map_err(TransportError::from)
+        }
+    };
+}
+
+macro_rules! recv {
+    ($conn:expr, $crypt_key:expr, $auth_key:expr) => {
+        async {
+            // If data is received, we process like usual
+            if let Some(data) = $conn.next().await {
+                let mut data = data?;
+
+                if data.is_empty() {
+                    return Err(TransportError::from(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Received data is empty",
+                    )));
+                }
+
+                // Retrieve in form {TAG LEN}{TAG}{ENCRYPTED DATA}
+                // with the tag len and tag being optional
+                if let Some(auth_key) = $auth_key.as_ref() {
+                    // Parse the tag from the length, protecting against bad lengths
+                    let tag_len = data[0];
+                    if data.len() <= tag_len as usize {
+                        return Err(TransportError::from(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Tag len {} > Data len {}", tag_len, data.len()),
+                        )));
+                    }
+
+                    let tag = Tag::from_slice(&data[1..=tag_len as usize])
+                        .map_err(TransportError::AuthError)?;
+
+                    // Update data with the content after the tag by mutating
+                    // the current data to point to the return from split_off
+                    data = data.split_off(tag_len as usize + 1);
+
+                    // Validate signature, decrypt, and then deserialize
+                    auth::authenticate_verify(&tag, auth_key, &data)
+                        .map_err(TransportError::AuthError)?;
+                }
+
+                let data = aead::open(&$crypt_key, &data).map_err(TransportError::EncryptError)?;
+
+                let data = serde_cbor::from_slice(&data)?;
+                Ok(Some(data))
+
+            // Otherwise, if no data is received, this means that our socket has closed
+            } else {
+                Ok(None)
+            }
+        }
+    };
+}
+
 /// Represents a transport of data across the network
 pub struct Transport<T>
 where
@@ -132,6 +214,15 @@ where
                 "Stream ended before handshake completed",
             )
         })??;
+
+        // If the data we received is too small, return an error
+        if data.len() <= SALT_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Response had size smaller than expected",
+            ));
+        }
+
         let (salt_bytes, other_public_key_bytes) = data.split_at(SALT_LEN);
         let other_salt = Salt::from_slice(salt_bytes)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
@@ -174,12 +265,20 @@ where
             crypt_key,
         })
     }
-}
 
-impl<T> Transport<T>
-where
-    T: AsyncRead + AsyncWrite + DataStream + Unpin,
-{
+    /// Sends some data across the wire, waiting for it to completely send
+    #[allow(dead_code)]
+    pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
+        send!(self.conn, self.crypt_key, self.auth_key.as_ref(), data).await
+    }
+
+    /// Receives some data from out on the wire, waiting until it's available,
+    /// returning none if the transport is now closed
+    #[allow(dead_code)]
+    pub async fn receive<R: DeserializeOwned>(&mut self) -> Result<Option<R>, TransportError> {
+        recv!(self.conn, self.crypt_key, self.auth_key).await
+    }
+
     /// Splits transport into read and write halves
     pub fn into_split(self) -> (TransportReadHalf<T::Read>, TransportWriteHalf<T::Write>) {
         let crypt_key = self.crypt_key;
@@ -266,30 +365,7 @@ where
 {
     /// Sends some data across the wire, waiting for it to completely send
     pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
-        // Serialize, encrypt, and then sign
-        // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        let data = serde_cbor::to_vec(&data)?;
-
-        let data = aead::seal(&self.crypt_key, &data).map_err(TransportError::EncryptError)?;
-        let tag = self
-            .auth_key
-            .as_ref()
-            .map(|key| auth::authenticate(key, &data))
-            .transpose()
-            .map_err(TransportError::AuthError)?;
-
-        // Send {TAG LEN}{TAG}{ENCRYPTED DATA} if we have an auth key,
-        // otherwise just send the encrypted data on its own
-        let mut out: Vec<u8> = Vec::new();
-        if let Some(tag) = tag {
-            let tag_len = tag.unprotected_as_bytes().len() as u8;
-
-            out.push(tag_len);
-            out.extend_from_slice(tag.unprotected_as_bytes());
-        }
-        out.extend(data);
-
-        self.conn.send(&out).await.map_err(TransportError::from)
+        send!(self.conn, self.crypt_key, self.auth_key.as_ref(), data).await
     }
 }
 
@@ -315,49 +391,321 @@ where
     /// Receives some data from out on the wire, waiting until it's available,
     /// returning none if the transport is now closed
     pub async fn receive<R: DeserializeOwned>(&mut self) -> Result<Option<R>, TransportError> {
-        // If data is received, we process like usual
-        if let Some(data) = self.conn.next().await {
-            let mut data = data?;
+        recv!(self.conn, self.crypt_key, self.auth_key).await
+    }
+}
 
-            if data.is_empty() {
-                return Err(TransportError::from(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Received data is empty",
-                )));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use tokio::{io::ReadBuf, sync::mpsc};
+
+    pub const TEST_DATA_STREAM_CHANNEL_BUFFER_SIZE: usize = 100;
+
+    /// Represents a data stream comprised of two inmemory buffers of data
+    pub struct TestDataStream {
+        incoming: TestDataStreamReadHalf,
+        outgoing: TestDataStreamWriteHalf,
+    }
+
+    impl TestDataStream {
+        pub fn new(incoming: mpsc::Receiver<Vec<u8>>, outgoing: mpsc::Sender<Vec<u8>>) -> Self {
+            Self {
+                incoming: TestDataStreamReadHalf(incoming),
+                outgoing: TestDataStreamWriteHalf(outgoing),
             }
+        }
 
-            // Retrieve in form {TAG LEN}{TAG}{ENCRYPTED DATA}
-            // with the tag len and tag being optional
-            if let Some(auth_key) = self.auth_key.as_ref() {
-                // Parse the tag from the length, protecting against bad lengths
-                let tag_len = data[0];
-                if data.len() <= tag_len as usize {
-                    return Err(TransportError::from(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("Tag len {} > Data len {}", tag_len, data.len()),
-                    )));
+        /// Returns (incoming_tx, outgoing_rx, stream)
+        pub fn make() -> (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>, Self) {
+            let (incoming_tx, incoming_rx) = mpsc::channel(TEST_DATA_STREAM_CHANNEL_BUFFER_SIZE);
+            let (outgoing_tx, outgoing_rx) = mpsc::channel(TEST_DATA_STREAM_CHANNEL_BUFFER_SIZE);
+
+            (
+                incoming_tx,
+                outgoing_rx,
+                Self::new(incoming_rx, outgoing_tx),
+            )
+        }
+
+        /// Returns pair of streams that are connected such that one sends to the other and
+        /// vice versa
+        pub fn pair() -> (Self, Self) {
+            let (tx, rx, stream) = Self::make();
+            (stream, Self::new(rx, tx))
+        }
+    }
+
+    impl AsyncRead for TestDataStream {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.incoming).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for TestDataStream {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Pin::new(&mut self.outgoing).poll_write(cx, buf)
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.outgoing).poll_flush(cx)
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.outgoing).poll_shutdown(cx)
+        }
+    }
+
+    pub struct TestDataStreamReadHalf(mpsc::Receiver<Vec<u8>>);
+    impl AsyncRead for TestDataStreamReadHalf {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            self.0.poll_recv(cx).map(|x| match x {
+                Some(x) => {
+                    buf.put_slice(&x);
+                    Ok(())
                 }
+                None => Ok(()),
+            })
+        }
+    }
 
-                let tag = Tag::from_slice(&data[1..=tag_len as usize])
-                    .map_err(TransportError::AuthError)?;
-
-                // Update data with the content after the tag by mutating
-                // the current data to point to the return from split_off
-                data = data.split_off(tag_len as usize + 1);
-
-                // Validate signature, decrypt, and then deserialize
-                auth::authenticate_verify(&tag, auth_key, &data)
-                    .map_err(TransportError::AuthError)?;
+    pub struct TestDataStreamWriteHalf(mpsc::Sender<Vec<u8>>);
+    impl AsyncWrite for TestDataStreamWriteHalf {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            match self.0.try_send(buf.to_vec()) {
+                Ok(_) => Poll::Ready(Ok(buf.len())),
+                Err(_) => Poll::Ready(Ok(0)),
             }
+        }
 
-            let data = aead::open(&self.crypt_key, &data).map_err(TransportError::EncryptError)?;
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
 
-            let data = serde_cbor::from_slice(&data)?;
-            Ok(Some(data))
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.poll_flush(cx)
+        }
+    }
 
-        // Otherwise, if no data is received, this means that our socket has closed
-        } else {
-            Ok(None)
+    impl DataStream for TestDataStream {
+        type Read = TestDataStreamReadHalf;
+        type Write = TestDataStreamWriteHalf;
+
+        fn to_connection_tag(&self) -> String {
+            String::from("test-stream")
+        }
+
+        fn into_split(self) -> (Self::Read, Self::Write) {
+            (self.incoming, self.outgoing)
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_from_handshake_should_fail_if_connection_reached_eof() {
+        // Cause nothing left incoming to stream by _
+        let (_, mut rx, stream) = TestDataStream::make();
+        let result = Transport::from_handshake(stream, None).await;
+
+        // Verify that a salt and public key were sent out first
+        // 1. Frame includes an 8 byte size at beginning
+        // 2. Salt len + 256-bit (32 byte) public key + 1 byte tag (len) for pub key
+        let outgoing = rx.recv().await.unwrap();
+        assert_eq!(
+            outgoing.len(),
+            8 + SALT_LEN + 33,
+            "Unexpected outgoing data: {:?}",
+            outgoing
+        );
+
+        // Then confirm that failed because didn't receive anything back
+        match result {
+            Err(x) if x.kind() == io::ErrorKind::UnexpectedEof => {}
+            Err(x) => panic!("Unexpected error: {:?}", x),
+            Ok(_) => panic!("Unexpectedly succeeded!"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_from_handshake_should_fail_if_response_data_is_too_small() {
+        let (tx, _rx, stream) = TestDataStream::make();
+
+        // Need SALT + PUB KEY where salt has a defined size; so, at least 1 larger than salt
+        // would succeed, whereas we are providing exactly salt, which will fail
+        {
+            let mut frame = Vec::new();
+            frame.extend_from_slice(&(SALT_LEN as u64).to_be_bytes());
+            frame.extend_from_slice(Salt::generate(SALT_LEN).unwrap().as_ref());
+            tx.send(frame).await.unwrap();
+            drop(tx);
+        }
+
+        match Transport::from_handshake(stream, None).await {
+            Err(x) if x.kind() == io::ErrorKind::InvalidData => {}
+            Err(x) => panic!("Unexpected error: {:?}", x),
+            Ok(_) => panic!("Unexpectedly succeeded!"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_from_handshake_should_fail_if_bad_foreign_public_key_received() {
+        let (tx, _rx, stream) = TestDataStream::make();
+
+        // Send {SALT LEN}{SALT}{PUB KEY} where public key is bad;
+        // normally public key bytes would be {LEN}{KEY} where len is first byte;
+        // if the len does not match the rest of the message len, an error will be returned
+        {
+            let mut frame = Vec::new();
+            frame.extend_from_slice(&((SALT_LEN + 3) as u64).to_be_bytes());
+            frame.extend_from_slice(Salt::generate(SALT_LEN).unwrap().as_ref());
+            frame.extend_from_slice(&[1, 1, 2]);
+            tx.send(frame).await.unwrap();
+            drop(tx);
+        }
+
+        match Transport::from_handshake(stream, None).await {
+            Err(x) if x.kind() == io::ErrorKind::InvalidData => {
+                let source = x.into_inner().expect("Inner source missing");
+                assert_eq!(
+                    source.to_string(),
+                    "crypto error",
+                    "Unexpected source: {}",
+                    source
+                );
+            }
+            Err(x) => panic!("Unexpected error: {:?}", x),
+            Ok(_) => panic!("Unexpectedly succeeded!"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_should_be_able_to_send_encrypted_data_to_other_side_to_decrypt() {
+        let (src, dst) = TestDataStream::pair();
+
+        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
+        let (src, dst) = tokio::join!(
+            Transport::from_handshake(src, None),
+            Transport::from_handshake(dst, None)
+        );
+
+        let mut src = src.expect("src stream failed handshake");
+        let mut dst = dst.expect("dst stream failed handshake");
+
+        src.send("some data").await.expect("Failed to send data");
+        let data = dst
+            .receive::<String>()
+            .await
+            .expect("Failed to receive data")
+            .expect("Data missing");
+
+        assert_eq!(data, "some data");
+    }
+
+    #[tokio::test]
+    async fn transport_should_be_able_to_sign_and_validate_signature_if_auth_key_included() {
+        let (src, dst) = TestDataStream::pair();
+
+        let auth_key = Arc::new(SecretKey::default());
+
+        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
+        let (src, dst) = tokio::join!(
+            Transport::from_handshake(src, Some(Arc::clone(&auth_key))),
+            Transport::from_handshake(dst, Some(auth_key))
+        );
+
+        let mut src = src.expect("src stream failed handshake");
+        let mut dst = dst.expect("dst stream failed handshake");
+
+        src.send("some data").await.expect("Failed to send data");
+        let data = dst
+            .receive::<String>()
+            .await
+            .expect("Failed to receive data")
+            .expect("Data missing");
+
+        assert_eq!(data, "some data");
+    }
+
+    #[tokio::test]
+    async fn transport_receive_should_fail_if_auth_key_differs_from_other_end() {
+        let (src, dst) = TestDataStream::pair();
+
+        // Make two transports with different auth keys
+        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
+        let (src, dst) = tokio::join!(
+            Transport::from_handshake(src, Some(Arc::new(SecretKey::default()))),
+            Transport::from_handshake(dst, Some(Arc::new(SecretKey::default())))
+        );
+
+        let mut src = src.expect("src stream failed handshake");
+        let mut dst = dst.expect("dst stream failed handshake");
+
+        src.send("some data").await.expect("Failed to send data");
+        match dst.receive::<String>().await {
+            Err(TransportError::AuthError(_)) => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_receive_should_fail_if_has_auth_key_while_sender_did_not_use_one() {
+        let (src, dst) = TestDataStream::pair();
+
+        // Make two transports with different auth keys
+        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
+        let (src, dst) = tokio::join!(
+            Transport::from_handshake(dst, None),
+            Transport::from_handshake(src, Some(Arc::new(SecretKey::default())))
+        );
+
+        let mut src = src.expect("src stream failed handshake");
+        let mut dst = dst.expect("dst stream failed handshake");
+
+        src.send("some data").await.expect("Failed to send data");
+        match dst.receive::<String>().await {
+            Err(TransportError::AuthError(_)) => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_receive_should_fail_if_has_no_auth_key_while_sender_used_one() {
+        let (src, dst) = TestDataStream::pair();
+
+        // Make two transports with different auth keys
+        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
+        let (src, dst) = tokio::join!(
+            Transport::from_handshake(src, Some(Arc::new(SecretKey::default()))),
+            Transport::from_handshake(dst, None)
+        );
+
+        let mut src = src.expect("src stream failed handshake");
+        let mut dst = dst.expect("dst stream failed handshake");
+
+        src.send("some data").await.expect("Failed to send data");
+        match dst.receive::<String>().await {
+            Err(TransportError::EncryptError(_)) => {}
+            x => panic!("Unexpected result: {:?}", x),
         }
     }
 }
