@@ -1,11 +1,11 @@
-use crate::core::constants::SALT_LEN;
+use crate::core::{constants::SALT_LEN, net::SecretKey};
 use codec::DistantCodec;
 use derive_more::{Display, Error, From};
 use futures::SinkExt;
 use k256::{ecdh::EphemeralSecret, EncodedPoint, PublicKey};
 use log::*;
 use orion::{
-    aead::{self, SecretKey},
+    aead,
     auth::{self, Tag},
     errors::UnknownCryptoError,
     kdf::{self, Salt},
@@ -344,16 +344,48 @@ where
     }
 }
 
+/// Test utilities
+#[cfg(test)]
+pub mod test {
+    use super::*;
+
+    use crate::core::constants::test::BUFFER_SIZE;
+    use crate::net::InmemoryStream;
+    use orion::aead::SecretKey;
+
+    /// Makes a connected pair of transports with matching crypt keys and using the provided
+    /// auth keys
+    pub fn make_transport_pair_with_auth_keys(
+        ak1: Option<Arc<SecretKey>>,
+        ak2: Option<Arc<SecretKey>>,
+    ) -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
+        let crypt_key = Arc::new(SecretKey::default());
+
+        let (a, b) = InmemoryStream::pair(BUFFER_SIZE);
+        let a = Transport::new(a, ak1, Arc::clone(&crypt_key));
+        let b = Transport::new(b, ak2, crypt_key);
+        (a, b)
+    }
+
+    /// Makes a connected pair of transports with matching auth and crypt keys
+    pub fn make_transport_pair() -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
+        let auth_key = Arc::new(SecretKey::default());
+        make_transport_pair_with_auth_keys(Some(Arc::clone(&auth_key)), Some(auth_key))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::constants::TEST_BUFFER_SIZE;
+    use crate::core::constants::test::BUFFER_SIZE;
     use std::io;
+
+    use test::make_transport_pair_with_auth_keys;
 
     #[tokio::test]
     async fn transport_from_handshake_should_fail_if_connection_reached_eof() {
         // Cause nothing left incoming to stream by _
-        let (_, mut rx, stream) = InmemoryStream::make(TEST_BUFFER_SIZE);
+        let (_, mut rx, stream) = InmemoryStream::make(BUFFER_SIZE);
         let result = Transport::from_handshake(stream, None).await;
 
         // Verify that a salt and public key were sent out first
@@ -377,7 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn transport_from_handshake_should_fail_if_response_data_is_too_small() {
-        let (tx, _rx, stream) = InmemoryStream::make(TEST_BUFFER_SIZE);
+        let (tx, _rx, stream) = InmemoryStream::make(BUFFER_SIZE);
 
         // Need SALT + PUB KEY where salt has a defined size; so, at least 1 larger than salt
         // would succeed, whereas we are providing exactly salt, which will fail
@@ -398,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn transport_from_handshake_should_fail_if_bad_foreign_public_key_received() {
-        let (tx, _rx, stream) = InmemoryStream::make(TEST_BUFFER_SIZE);
+        let (tx, _rx, stream) = InmemoryStream::make(BUFFER_SIZE);
 
         // Send {SALT LEN}{SALT}{PUB KEY} where public key is bad;
         // normally public key bytes would be {LEN}{KEY} where len is first byte;
@@ -429,16 +461,8 @@ mod tests {
 
     #[tokio::test]
     async fn transport_should_be_able_to_send_encrypted_data_to_other_side_to_decrypt() {
-        let (src, dst) = InmemoryStream::pair(TEST_BUFFER_SIZE);
-
-        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
-        let (src, dst) = tokio::join!(
-            Transport::from_handshake(src, None),
-            Transport::from_handshake(dst, None)
-        );
-
-        let mut src = src.expect("src stream failed handshake");
-        let mut dst = dst.expect("dst stream failed handshake");
+        // Make two transports with no auth keys
+        let (mut src, mut dst) = make_transport_pair_with_auth_keys(None, None);
 
         src.send("some data").await.expect("Failed to send data");
         let data = dst
@@ -452,18 +476,11 @@ mod tests {
 
     #[tokio::test]
     async fn transport_should_be_able_to_sign_and_validate_signature_if_auth_key_included() {
-        let (src, dst) = InmemoryStream::pair(TEST_BUFFER_SIZE);
-
         let auth_key = Arc::new(SecretKey::default());
 
-        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
-        let (src, dst) = tokio::join!(
-            Transport::from_handshake(src, Some(Arc::clone(&auth_key))),
-            Transport::from_handshake(dst, Some(auth_key))
-        );
-
-        let mut src = src.expect("src stream failed handshake");
-        let mut dst = dst.expect("dst stream failed handshake");
+        // Make two transports with same auth keys
+        let (mut src, mut dst) =
+            make_transport_pair_with_auth_keys(Some(Arc::clone(&auth_key)), Some(auth_key));
 
         src.send("some data").await.expect("Failed to send data");
         let data = dst
@@ -477,17 +494,11 @@ mod tests {
 
     #[tokio::test]
     async fn transport_receive_should_fail_if_auth_key_differs_from_other_end() {
-        let (src, dst) = InmemoryStream::pair(TEST_BUFFER_SIZE);
-
         // Make two transports with different auth keys
-        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
-        let (src, dst) = tokio::join!(
-            Transport::from_handshake(src, Some(Arc::new(SecretKey::default()))),
-            Transport::from_handshake(dst, Some(Arc::new(SecretKey::default())))
+        let (mut src, mut dst) = make_transport_pair_with_auth_keys(
+            Some(Arc::new(SecretKey::default())),
+            Some(Arc::new(SecretKey::default())),
         );
-
-        let mut src = src.expect("src stream failed handshake");
-        let mut dst = dst.expect("dst stream failed handshake");
 
         src.send("some data").await.expect("Failed to send data");
         match dst.receive::<String>().await {
@@ -498,17 +509,9 @@ mod tests {
 
     #[tokio::test]
     async fn transport_receive_should_fail_if_has_auth_key_while_sender_did_not_use_one() {
-        let (src, dst) = InmemoryStream::pair(TEST_BUFFER_SIZE);
-
         // Make two transports with different auth keys
-        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
-        let (src, dst) = tokio::join!(
-            Transport::from_handshake(dst, None),
-            Transport::from_handshake(src, Some(Arc::new(SecretKey::default())))
-        );
-
-        let mut src = src.expect("src stream failed handshake");
-        let mut dst = dst.expect("dst stream failed handshake");
+        let (mut src, mut dst) =
+            make_transport_pair_with_auth_keys(None, Some(Arc::new(SecretKey::default())));
 
         src.send("some data").await.expect("Failed to send data");
 
@@ -524,17 +527,9 @@ mod tests {
 
     #[tokio::test]
     async fn transport_receive_should_fail_if_has_no_auth_key_while_sender_used_one() {
-        let (src, dst) = InmemoryStream::pair(TEST_BUFFER_SIZE);
-
         // Make two transports with different auth keys
-        // NOTE: This is slow during tests as it is an expensive process and we're doing it twice!
-        let (src, dst) = tokio::join!(
-            Transport::from_handshake(src, Some(Arc::new(SecretKey::default()))),
-            Transport::from_handshake(dst, None)
-        );
-
-        let mut src = src.expect("src stream failed handshake");
-        let mut dst = dst.expect("dst stream failed handshake");
+        let (mut src, mut dst) =
+            make_transport_pair_with_auth_keys(Some(Arc::new(SecretKey::default())), None);
 
         src.send("some data").await.expect("Failed to send data");
         match dst.receive::<String>().await {

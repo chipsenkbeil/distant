@@ -1,7 +1,8 @@
 use crate::{
     cli::opt::{ActionSubcommand, CommonOpt, Mode, SessionInput},
     core::{
-        data::{Request, ResponseData},
+        data::{Request, RequestData, ResponseData},
+        lsp::LspData,
         net::{Client, DataStream, TransportError},
         session::{Session, SessionFile},
         utils,
@@ -48,6 +49,7 @@ async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 cmd,
                 Client::tcp_connect_timeout(Session::from_environment()?, timeout).await?,
                 timeout,
+                None,
             )
             .await
         }
@@ -58,6 +60,7 @@ async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 Client::tcp_connect_timeout(SessionFile::load_from(path).await?.into(), timeout)
                     .await?,
                 timeout,
+                None,
             )
             .await
         }
@@ -66,6 +69,19 @@ async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 cmd,
                 Client::tcp_connect_timeout(Session::from_stdin()?, timeout).await?,
                 timeout,
+                None,
+            )
+            .await
+        }
+        SessionInput::Lsp => {
+            let mut data =
+                LspData::from_buf_reader(&mut std::io::stdin().lock()).map_err(io::Error::from)?;
+            let session = data.take_session().map_err(io::Error::from)?;
+            start(
+                cmd,
+                Client::tcp_connect_timeout(session, timeout).await?,
+                timeout,
+                Some(data),
             )
             .await
         }
@@ -76,11 +92,10 @@ async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 cmd,
                 Client::unix_connect_timeout(path, None, timeout).await?,
                 timeout,
+                None,
             )
             .await
         }
-        #[cfg(not(unix))]
-        SessionInput::Socket => unreachable!(),
     }
 }
 
@@ -88,6 +103,7 @@ async fn start<T>(
     cmd: ActionSubcommand,
     mut client: Client<T>,
     timeout: Duration,
+    lsp_data: Option<LspData>,
 ) -> Result<(), Error>
 where
     T: DataStream + 'static,
@@ -121,6 +137,26 @@ where
         }
 
         inner::format_response(cmd.mode, res)?.print();
+
+        // If we also parsed an LSP's initialize request for its session, we want to forward
+        // it along in the case of a process call
+        //
+        // TODO: Do we need to do this somewhere else to apply to all possible ways an LSP
+        //       could be started?
+        if let Some(data) = lsp_data {
+            client
+                .fire_timeout(
+                    Request::new(
+                        tenant.as_str(),
+                        vec![RequestData::ProcStdin {
+                            id: proc_id,
+                            data: data.to_string(),
+                        }],
+                    ),
+                    timeout,
+                )
+                .await?;
+        }
     }
 
     // If we are executing a process, we want to continue interacting via stdin and receiving

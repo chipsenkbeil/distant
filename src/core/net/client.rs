@@ -1,7 +1,7 @@
 use crate::core::{
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, Response},
-    net::{DataStream, Transport, TransportError, TransportWriteHalf},
+    net::{DataStream, SecretKey, Transport, TransportError, TransportWriteHalf},
     session::Session,
     utils,
 };
@@ -72,7 +72,7 @@ impl Client<tokio::net::UnixStream> {
     /// Connect to a proxy unix socket
     pub async fn unix_connect(
         path: impl AsRef<std::path::Path>,
-        auth_key: Option<Arc<orion::aead::SecretKey>>,
+        auth_key: Option<Arc<SecretKey>>,
     ) -> io::Result<Self> {
         let transport = Transport::<tokio::net::UnixStream>::connect(path, auth_key).await?;
         debug!(
@@ -88,7 +88,7 @@ impl Client<tokio::net::UnixStream> {
     /// Connect to a proxy unix socket, timing out after duration has passed
     pub async fn unix_connect_timeout(
         path: impl AsRef<std::path::Path>,
-        auth_key: Option<Arc<orion::aead::SecretKey>>,
+        auth_key: Option<Arc<SecretKey>>,
         duration: Duration,
     ) -> io::Result<Self> {
         utils::timeout(duration, Self::unix_connect(path, auth_key))
@@ -230,34 +230,20 @@ where
 mod tests {
     use super::*;
     use crate::core::{
-        constants::TEST_BUFFER_SIZE,
+        constants::test::TENANT,
         data::{RequestData, ResponseData},
+        net::transport::test::make_transport_pair,
     };
-    use crate::net::InmemoryStream;
-    use orion::aead::SecretKey;
     use std::time::Duration;
-
-    const TEST_TENANT: &str = "test-tenant";
-
-    /// Makes a connected pair of transports with matching auth and crypt keys
-    pub fn make_transport_pair() -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
-        let auth_key = Arc::new(SecretKey::default());
-        let crypt_key = Arc::new(SecretKey::default());
-
-        let (a, b) = InmemoryStream::pair(TEST_BUFFER_SIZE);
-        let a = Transport::new(a, Some(Arc::clone(&auth_key)), Arc::clone(&crypt_key));
-        let b = Transport::new(b, Some(auth_key), crypt_key);
-        (a, b)
-    }
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
         let (t1, mut t2) = make_transport_pair();
         let mut client = Client::inner_connect(t1).await.unwrap();
 
-        let req = Request::new(TEST_TENANT, vec![RequestData::ProcList {}]);
+        let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         let res = Response::new(
-            TEST_TENANT,
+            TENANT,
             Some(req.id),
             vec![ResponseData::ProcEntries {
                 entries: Vec::new(),
@@ -276,14 +262,14 @@ mod tests {
         let (t1, mut t2) = make_transport_pair();
         let mut client = Client::inner_connect(t1).await.unwrap();
 
-        let req = Request::new(TEST_TENANT, vec![RequestData::ProcList {}]);
+        let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         match client.send_timeout(req, Duration::from_millis(30)).await {
             Err(TransportError::IoError(x)) => assert_eq!(x.kind(), io::ErrorKind::TimedOut),
             x => panic!("Unexpected response: {:?}", x),
         }
 
         let req = t2.receive::<Request>().await.unwrap().unwrap();
-        assert_eq!(req.tenant, TEST_TENANT);
+        assert_eq!(req.tenant, TENANT);
     }
 
     #[tokio::test]
@@ -291,13 +277,13 @@ mod tests {
         let (t1, mut t2) = make_transport_pair();
         let mut client = Client::inner_connect(t1).await.unwrap();
 
-        let req = Request::new(TEST_TENANT, vec![RequestData::ProcList {}]);
+        let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         match client.fire(req).await {
             Ok(_) => {}
             x => panic!("Unexpected response: {:?}", x),
         }
 
         let req = t2.receive::<Request>().await.unwrap().unwrap();
-        assert_eq!(req.tenant, TEST_TENANT);
+        assert_eq!(req.tenant, TENANT);
     }
 }

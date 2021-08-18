@@ -17,9 +17,12 @@ pub const MAX_PIPE_CHUNK_SIZE: usize = 1024;
 /// Represents the length of the salt to use for encryption
 pub const SALT_LEN: usize = 16;
 
-/// Test-only constant for channel buffer size
+/// Test-only constants
 #[cfg(test)]
-pub const TEST_BUFFER_SIZE: usize = 100;
+pub mod test {
+    pub const BUFFER_SIZE: usize = 100;
+    pub const TENANT: &str = "test-tenant";
+}
 
 lazy_static::lazy_static! {
     pub static ref TIMEOUT_STR: String = TIMEOUT.to_string();

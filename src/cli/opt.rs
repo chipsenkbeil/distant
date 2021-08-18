@@ -301,6 +301,10 @@ pub enum SessionInput {
     /// in form of `DISTANT DATA <host> <port> <auth key>`
     Pipe,
 
+    /// Session is stored and retrieved from the initializeOptions of the initialize request
+    /// that is first sent for an LSP through
+    Lsp,
+
     /// Session isn't directly available but instead there is a process listening
     /// on a unix socket that will forward requests and responses
     #[cfg(unix)]
