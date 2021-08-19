@@ -78,14 +78,17 @@ pub enum ExitCode {
 /// Main entrypoint into the program
 pub fn run() {
     let opt = cli::opt::Opt::load();
-    init_logging(&opt.common);
+    let logger = init_logging(&opt.common);
     if let Err(x) = opt.subcommand.run(opt.common) {
-        error!("{}", x);
+        error!("Exiting due to error: {}", x);
+        logger.flush();
+        logger.shutdown();
+
         std::process::exit(x.to_i32());
     }
 }
 
-fn init_logging(opt: &cli::opt::CommonOpt) {
+fn init_logging(opt: &cli::opt::CommonOpt) -> flexi_logger::LoggerHandle {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
     let module = "distant";
 
@@ -116,5 +119,5 @@ fn init_logging(opt: &cli::opt::CommonOpt) {
         logger
     };
 
-    logger.start().expect("Failed to initialize logger");
+    logger.start().expect("Failed to initialize logger")
 }
