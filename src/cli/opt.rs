@@ -1,7 +1,10 @@
 use crate::{
     cli::subcommand,
     core::{
-        constants::{SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR, TIMEOUT_STR},
+        constants::{
+            SERVER_CONN_MSG_CAPACITY_STR, SESSION_FILE_PATH_STR, SESSION_SOCKET_PATH_STR,
+            TIMEOUT_STR,
+        },
         data::RequestData,
     },
     ExitCodeError,
@@ -107,7 +110,7 @@ impl Subcommand {
     }
 }
 
-/// Represents the communication medium used for the send command
+/// Represents the format for data communicated to & from the client
 #[derive(
     Copy,
     Clone,
@@ -121,7 +124,7 @@ impl Subcommand {
     EnumVariantNames,
 )]
 #[strum(serialize_all = "snake_case")]
-pub enum Mode {
+pub enum Format {
     /// Sends and receives data in JSON format
     Json,
 
@@ -145,10 +148,10 @@ pub struct ActionSubcommand {
         short,
         long,
         case_insensitive = true,
-        default_value = Mode::Shell.into(),
-        possible_values = Mode::VARIANTS
+        default_value = Format::Shell.into(),
+        possible_values = Format::VARIANTS
     )]
-    pub mode: Mode,
+    pub format: Format,
 
     /// Represents the medium for retrieving a session for use in performing the action
     #[structopt(
@@ -371,10 +374,10 @@ pub struct LaunchSubcommand {
         short,
         long,
         case_insensitive = true,
-        default_value = Mode::Shell.into(),
-        possible_values = Mode::VARIANTS
+        default_value = Format::Shell.into(),
+        possible_values = Format::VARIANTS
     )]
-    pub mode: Mode,
+    pub format: Format,
 
     /// Path to distant program on remote machine to execute via ssh;
     /// by default, this program needs to be available within PATH as
@@ -524,7 +527,7 @@ pub struct ListenSubcommand {
     pub use_ipv6: bool,
 
     /// Maximum capacity for concurrent message handled by the server
-    #[structopt(long, default_value = "1000")]
+    #[structopt(long, default_value = &SERVER_CONN_MSG_CAPACITY_STR)]
     pub max_msg_capacity: u16,
 
     /// The time in seconds before shutting down the server if there are no active

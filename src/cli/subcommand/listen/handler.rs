@@ -1,5 +1,5 @@
 use crate::core::{
-    constants::MAX_PIPE_CHUNK_SIZE,
+    constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
     data::{
         self, DirEntry, FileType, Request, RequestData, Response, ResponseData, RunningProcess,
     },
@@ -397,6 +397,11 @@ async fn proc_run(
                         if let Err(_) = tx_2.send(res).await {
                             break;
                         }
+
+                        // Pause to allow buffer to fill up a little bit, avoiding
+                        // spamming with a lot of smaller responses
+                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
+                            .await;
                     }
                     Err(x) => {
                         error!("Invalid data read from stdout pipe: {}", x);
@@ -433,6 +438,11 @@ async fn proc_run(
                         if let Err(_) = tx_2.send(res).await {
                             break;
                         }
+
+                        // Pause to allow buffer to fill up a little bit, avoiding
+                        // spamming with a lot of smaller responses
+                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
+                            .await;
                     }
                     Err(x) => {
                         error!("Invalid data read from stdout pipe: {}", x);

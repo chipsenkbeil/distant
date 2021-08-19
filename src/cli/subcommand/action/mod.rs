@@ -1,5 +1,5 @@
 use crate::{
-    cli::opt::{ActionSubcommand, CommonOpt, Mode, SessionInput},
+    cli::opt::{ActionSubcommand, CommonOpt, Format, SessionInput},
     core::{
         data::{Request, RequestData, ResponseData},
         lsp::LspData,
@@ -136,7 +136,7 @@ where
             proc_id = *id;
         }
 
-        inner::format_response(cmd.mode, res)?.print();
+        inner::format_response(cmd.format, res)?.print();
 
         // If we also parsed an LSP's initialize request for its session, we want to forward
         // it along in the case of a process call
@@ -164,10 +164,10 @@ where
     //
     // If we are interactive, we want to continue looping regardless
     if is_proc_req || cmd.interactive {
-        let config = match cmd.mode {
-            Mode::Json => inner::LoopConfig::Json,
-            Mode::Shell if cmd.interactive => inner::LoopConfig::Shell,
-            Mode::Shell => inner::LoopConfig::Proc { id: proc_id },
+        let config = match cmd.format {
+            Format::Json => inner::LoopConfig::Json,
+            Format::Shell if cmd.interactive => inner::LoopConfig::Shell,
+            Format::Shell => inner::LoopConfig::Proc { id: proc_id },
         };
         inner::interactive_loop(client, tenant, config).await?;
     }

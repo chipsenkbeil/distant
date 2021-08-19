@@ -1,5 +1,5 @@
 use crate::{
-    cli::opt::{CommonOpt, LaunchSubcommand, Mode, SessionOutput},
+    cli::opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
     core::{
         constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
         data::{Request, RequestData, Response, ResponseData},
@@ -51,7 +51,7 @@ struct ConnState {
 pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = Runtime::new()?;
     let session_output = cmd.session;
-    let mode = cmd.mode;
+    let format = cmd.format;
     let is_daemon = cmd.daemon;
 
     let session_file = cmd.session_data.session_file.clone();
@@ -70,7 +70,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
         }
         SessionOutput::Keep => {
             debug!("Entering interactive loop over stdin");
-            rt.block_on(async { keep_loop(session, mode, timeout).await })?
+            rt.block_on(async { keep_loop(session, format, timeout).await })?
         }
         SessionOutput::Pipe => {
             debug!("Piping session to stdout");
@@ -137,13 +137,13 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     Ok(())
 }
 
-async fn keep_loop(session: Session, mode: Mode, duration: Duration) -> io::Result<()> {
+async fn keep_loop(session: Session, format: Format, duration: Duration) -> io::Result<()> {
     use crate::cli::subcommand::action::inner;
     match Client::tcp_connect_timeout(session, duration).await {
         Ok(client) => {
-            let config = match mode {
-                Mode::Json => inner::LoopConfig::Json,
-                Mode::Shell => inner::LoopConfig::Shell,
+            let config = match format {
+                Format::Json => inner::LoopConfig::Json,
+                Format::Shell => inner::LoopConfig::Shell,
             };
             inner::interactive_loop(client, utils::new_tenant(), config).await
         }

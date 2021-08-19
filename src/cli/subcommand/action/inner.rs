@@ -1,5 +1,5 @@
 use crate::{
-    cli::opt::Mode,
+    cli::opt::Format,
     core::{
         constants::MAX_PIPE_CHUNK_SIZE,
         data::{Error, Request, RequestData, Response, ResponseData},
@@ -27,7 +27,7 @@ pub enum LoopConfig {
     Shell,
 }
 
-impl From<LoopConfig> for Mode {
+impl From<LoopConfig> for Format {
     fn from(config: LoopConfig) -> Self {
         match config {
             LoopConfig::Json => Self::Json,
@@ -59,7 +59,7 @@ where
 
         while let Some(data) = rx.recv().await {
             match config {
-                // Special exit condition for interactive mode
+                // Special exit condition for interactive format
                 _ if buf.trim() == "exit" => {
                     if let Err(_) = tx_stop.send(()) {
                         error!("Failed to close interactive loop!");
@@ -67,7 +67,7 @@ where
                     break;
                 }
 
-                // For json mode, all stdin is treated as individual requests
+                // For json format, all stdin is treated as individual requests
                 LoopConfig::Json => {
                     buf.push_str(&data);
                     let (lines, new_buf) = buf.into_full_lines();
@@ -81,7 +81,7 @@ where
                                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x));
                             match result {
                                 Ok(req) => match client.send(req).await {
-                                    Ok(res) => match format_response(Mode::Json, res) {
+                                    Ok(res) => match format_response(Format::Json, res) {
                                         Ok(out) => out.print(),
                                         Err(x) => error!("Failed to format response: {}", x),
                                     },
@@ -97,7 +97,7 @@ where
                     }
                 }
 
-                // For interactive shell mode, parse stdin as individual commands
+                // For interactive shell format, parse stdin as individual commands
                 LoopConfig::Shell => {
                     buf.push_str(&data);
                     let (lines, new_buf) = buf.into_full_lines();
@@ -124,7 +124,7 @@ where
                                         .send(Request::new(tenant.as_str(), vec![data]))
                                         .await
                                     {
-                                        Ok(res) => match format_response(Mode::Shell, res) {
+                                        Ok(res) => match format_response(Format::Shell, res) {
                                             Ok(out) => out.print(),
                                             Err(x) => error!("Failed to format response: {}", x),
                                         },
@@ -141,7 +141,7 @@ where
                     }
                 }
 
-                // For non-interactive shell mode, all stdin is treated as a proc's stdin
+                // For non-interactive shell format, all stdin is treated as a proc's stdin
                 LoopConfig::Proc { id } => {
                     debug!("Client sending stdin: {:?}", data);
                     let req =
@@ -158,12 +158,7 @@ where
 
     while let Err(TryRecvError::Empty) = rx_stop.try_recv() {
         if let Some(res) = stream.next().await {
-            let res = res.map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Response stream no longer available",
-                )
-            })?;
+            let res = res.map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))?;
 
             // NOTE: If the loop is for a proxy process, we should assume that the payload
             //       is all-or-nothing for the done check
@@ -262,18 +257,18 @@ impl ResponseOut {
     }
 }
 
-pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
+pub fn format_response(format: Format, res: Response) -> io::Result<ResponseOut> {
     let payload_cnt = res.payload.len();
 
-    Ok(match mode {
-        Mode::Json => ResponseOut::StdoutLine(format!(
+    Ok(match format {
+        Format::Json => ResponseOut::StdoutLine(format!(
             "{}",
             serde_json::to_string(&res)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
         )),
 
         // NOTE: For shell, we assume a singular entry in the response's payload
-        Mode::Shell if payload_cnt != 1 => {
+        Format::Shell if payload_cnt != 1 => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -282,7 +277,7 @@ pub fn format_response(mode: Mode, res: Response) -> io::Result<ResponseOut> {
                 ),
             ))
         }
-        Mode::Shell => format_shell(res.payload.into_iter().next().unwrap()),
+        Format::Shell => format_shell(res.payload.into_iter().next().unwrap()),
     })
 }
 
