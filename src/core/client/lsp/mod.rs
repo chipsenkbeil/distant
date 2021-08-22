@@ -21,6 +21,7 @@ impl RemoteLspProcess {
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
     pub async fn spawn<T>(
+        tenant: String,
         session: Session<T>,
         cmd: String,
         args: Vec<String>,
@@ -28,7 +29,7 @@ impl RemoteLspProcess {
     where
         T: DataStream + 'static,
     {
-        let mut inner = RemoteProcess::spawn(session, cmd, args).await?;
+        let mut inner = RemoteProcess::spawn(tenant, session, cmd, args).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);

@@ -1,4 +1,7 @@
+mod listener;
 mod transport;
+
+pub use listener::Listener;
 pub use transport::*;
 
 // Re-export commonly-used orion structs

@@ -68,7 +68,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     let server = DistantServer::bind(
         addr,
         cmd.port,
-        cmd.to_shutdown_after_duration(),
+        shutdown_after,
         cmd.max_msg_capacity as usize,
     )
     .await?;

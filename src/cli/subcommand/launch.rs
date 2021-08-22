@@ -1,27 +1,18 @@
 use crate::{
     cli::{
         opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
-        ExitCode, ExitCodeError,
+        CliSession, ExitCode, ExitCodeError,
     },
     core::{
-        constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
-        data::{Request, RequestData, Response, ResponseData},
-        net::{Client, Transport, TransportReadHalf, TransportWriteHalf},
-        session::{Session, SessionFile},
-        utils,
+        client::{self, Session, SessionInfo, SessionInfoFile},
+        server::RelayServer,
     },
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
 use log::*;
-use std::{marker::Unpin, path::Path, string::FromUtf8Error, sync::Arc};
-use tokio::{
-    io::{self, AsyncRead, AsyncWrite},
-    process::Command,
-    runtime::{Handle, Runtime},
-    sync::{broadcast, mpsc, oneshot, Mutex},
-    time::Duration,
-};
+use std::{path::Path, string::FromUtf8Error};
+use tokio::{io, process::Command, runtime::Runtime, time::Duration};
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
@@ -44,12 +35,6 @@ impl ExitCodeError for Error {
     }
 }
 
-/// Represents state associated with a connection
-#[derive(Default)]
-struct ConnState {
-    processes: Vec<usize>,
-}
-
 pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = Runtime::new()?;
     let session_output = cmd.session;
@@ -68,7 +53,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     match session_output {
         SessionOutput::File => {
             debug!("Outputting session to {:?}", session_file);
-            rt.block_on(async { SessionFile::new(session_file, session).save().await })?
+            rt.block_on(async { SessionInfoFile::new(session_file, session).save().await })?
         }
         SessionOutput::Keep => {
             debug!("Entering interactive loop over stdin");
@@ -139,54 +124,27 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     Ok(())
 }
 
-async fn keep_loop(session: Session, format: Format, duration: Duration) -> io::Result<()> {
-    use crate::cli::subcommand::action::inner;
-    match Client::tcp_connect_timeout(session, duration).await {
-        Ok(client) => {
-            let config = match format {
-                Format::Json => inner::LoopConfig::Json,
-                Format::Shell => inner::LoopConfig::Shell,
-            };
-            inner::interactive_loop(client, utils::new_tenant(), config).await
+async fn keep_loop(info: SessionInfo, format: Format, duration: Duration) -> io::Result<()> {
+    match Session::tcp_connect_timeout(info, duration).await {
+        Ok(session) => {
+            let cli_session = CliSession::new(client::new_tenant(), session, format);
+            cli_session.wait().await
         }
         Err(x) => Err(x),
     }
 }
 
-#[cfg(unix)]
 async fn socket_loop(
     socket_path: impl AsRef<Path>,
-    session: Session,
+    info: SessionInfo,
     duration: Duration,
     fail_if_socket_exists: bool,
     shutdown_after: Option<Duration>,
 ) -> io::Result<()> {
     // We need to form a connection with the actual server to forward requests
     // and responses between connections
-    debug!("Connecting to {} {}", session.host, session.port);
-    let mut client = Client::tcp_connect_timeout(session, duration).await?;
-
-    // Get a copy of our client's broadcaster so we can have each connection
-    // subscribe to it for new messages filtered by tenant
-    debug!("Acquiring client broadcaster");
-    let broadcaster = client.to_response_broadcaster();
-
-    // Spawn task to send to the server requests from connections
-    debug!("Spawning request forwarding task");
-    let (req_tx, mut req_rx) = mpsc::channel::<Request>(CLIENT_BROADCAST_CHANNEL_CAPACITY);
-    tokio::spawn(async move {
-        while let Some(req) = req_rx.recv().await {
-            debug!(
-                "Forwarding request of type{} {} to server",
-                if req.payload.len() > 1 { "s" } else { "" },
-                req.to_payload_type_string()
-            );
-            if let Err(x) = client.fire_timeout(req, duration).await {
-                error!("Client failed to send request: {:?}", x);
-                break;
-            }
-        }
-    });
+    debug!("Connecting to {} {}", info.host, info.port);
+    let session = Session::tcp_connect_timeout(info, duration).await?;
 
     // Remove the socket file if it already exists
     if !fail_if_socket_exists && socket_path.as_ref().exists() {
@@ -199,205 +157,17 @@ async fn socket_loop(
     debug!("Binding to unix socket: {:?}", socket_path.as_ref());
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
-    let (ct, notify) = utils::new_shutdown_task(Handle::current(), shutdown_after);
-
-    loop {
-        tokio::select! {
-            result = listener.accept() => {match result {
-                Ok((conn, _)) => {
-                    // Create a unique id to associate with the connection since its address
-                    // is not guaranteed to have an identifiable string
-                    let conn_id: usize = rand::random();
-
-                    // Establish a proper connection via a handshake, discarding the connection otherwise
-                    let transport = match Transport::from_handshake(conn, None).await {
-                        Ok(transport) => transport,
-                        Err(x) => {
-                            error!("<Client @ {:?}> Failed handshake: {}", conn_id, x);
-                            continue;
-                        }
-                    };
-                    let (t_read, t_write) = transport.into_split();
-
-                    // Used to alert our response task of the connection's tenant name
-                    // based on the first
-                    let (tenant_tx, tenant_rx) = oneshot::channel();
-
-                    // Create a state we use to keep track of connection-specific data
-                    debug!("<Client @ {}> Initializing internal state", conn_id);
-                    let state = Arc::new(Mutex::new(ConnState::default()));
-
-                    // Spawn task to continually receive responses from the client that
-                    // may or may not be relevant to the connection, which will filter
-                    // by tenant and then along any response that matches
-                    let res_rx = broadcaster.subscribe();
-                    let state_2 = Arc::clone(&state);
-                    tokio::spawn(async move {
-                        handle_conn_outgoing(conn_id, state_2, t_write, tenant_rx, res_rx).await;
-                    });
-
-                    // Spawn task to continually read requests from connection and forward
-                    // them along to be sent via the client
-                    let req_tx = req_tx.clone();
-                    let ct_2 = Arc::clone(&ct);
-                    tokio::spawn(async move {
-                        ct_2.lock().await.increment();
-                        handle_conn_incoming(conn_id, state, t_read, tenant_tx, req_tx).await;
-                        ct_2.lock().await.decrement();
-                        debug!("<Client @ {:?}> Disconnected", conn_id);
-                    });
-                }
-                Err(x) => {
-                    error!("Listener failed: {}", x);
-                    break;
-                }
-            }}
-            _ = notify.notified() => {
-                warn!("Reached shutdown timeout, so terminating");
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Conn::Request -> Client::Fire
-async fn handle_conn_incoming<T>(
-    conn_id: usize,
-    state: Arc<Mutex<ConnState>>,
-    mut reader: TransportReadHalf<T>,
-    tenant_tx: oneshot::Sender<String>,
-    req_tx: mpsc::Sender<Request>,
-) where
-    T: AsyncRead + Unpin,
-{
-    macro_rules! process_req {
-        ($on_success:expr; $done:expr) => {
-            match reader.receive::<Request>().await {
-                Ok(Some(req)) => {
-                    $on_success(&req);
-                    if let Err(x) = req_tx.send(req).await {
-                        error!(
-                            "Failed to pass along request received on unix socket: {:?}",
-                            x
-                        );
-                        $done;
-                    }
-                }
-                Ok(None) => $done,
-                Err(x) => {
-                    error!("Failed to receive request from unix stream: {:?}", x);
-                    $done;
-                }
-            }
-        };
-    }
-
-    let mut tenant = None;
-
-    // NOTE: Have to acquire our first request outside our loop since the oneshot
-    //       sender of the tenant's name is consuming
-    process_req!(
-        |req: &Request| {
-            tenant = Some(req.tenant.clone());
-            if let Err(x) = tenant_tx.send(req.tenant.clone()) {
-                error!("Failed to send along acquired tenant name: {:?}", x);
-                return;
-            }
-        };
-        return
-    );
-
-    // Loop and process all additional requests
-    loop {
-        process_req!(|_| {}; break);
-    }
-
-    // At this point, we have processed at least one request successfully
-    // and should have the tenant populated. If we had a failure at the
-    // beginning, we exit the function early via return.
-    let tenant = tenant.unwrap();
-
-    // Perform cleanup if done by sending a request to kill each running process
-    // debug!("Cleaning conn {} :: killing process {}", conn_id, id);
-    if let Err(x) = req_tx
-        .send(Request::new(
-            tenant.clone(),
-            state
-                .lock()
-                .await
-                .processes
-                .iter()
-                .map(|id| RequestData::ProcKill { id: *id })
-                .collect(),
-        ))
+    let server = RelayServer::initialize(session, listener, shutdown_after).await?;
+    server
+        .wait()
         .await
-    {
-        error!("<Client @ {}> Failed to send kill signals: {}", conn_id, x);
-    }
-}
-
-async fn handle_conn_outgoing<T>(
-    conn_id: usize,
-    state: Arc<Mutex<ConnState>>,
-    mut writer: TransportWriteHalf<T>,
-    tenant_rx: oneshot::Receiver<String>,
-    mut res_rx: broadcast::Receiver<Response>,
-) where
-    T: AsyncWrite + Unpin,
-{
-    // We wait for the tenant to be identified by the first request
-    // before processing responses to be sent back; this is easier
-    // to implement and yields the same result as we would be dropping
-    // all responses before we know the tenant
-    if let Ok(tenant) = tenant_rx.await {
-        debug!("Associated tenant {} with conn {}", tenant, conn_id);
-        loop {
-            match res_rx.recv().await {
-                // Forward along responses that are for our connection
-                Ok(res) if res.tenant == tenant => {
-                    debug!(
-                        "Conn {} being sent response of type{} {}",
-                        conn_id,
-                        if res.payload.len() > 1 { "s" } else { "" },
-                        res.to_payload_type_string(),
-                    );
-
-                    // If a new process was started, we want to capture the id and
-                    // associate it with the connection
-                    let ids = res.payload.iter().filter_map(|x| match x {
-                        ResponseData::ProcStart { id } => Some(*id),
-                        _ => None,
-                    });
-                    for id in ids {
-                        debug!("Tracking proc {} for conn {}", id, conn_id);
-                        state.lock().await.processes.push(id);
-                    }
-
-                    if let Err(x) = writer.send(res).await {
-                        error!("Failed to send response through unix connection: {}", x);
-                        break;
-                    }
-                }
-                // Skip responses that are not for our connection
-                Ok(_) => {}
-                Err(x) => {
-                    error!(
-                        "Conn {} failed to receive broadcast response: {}",
-                        conn_id, x
-                    );
-                    break;
-                }
-            }
-        }
-    }
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
 }
 
 /// Spawns a remote server that listens for requests
 ///
 /// Returns the session associated with the server
-async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<Session, Error> {
+async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<SessionInfo, Error> {
     let distant_command = format!(
         "{} listen --daemon --host {} {}",
         cmd.distant,
@@ -417,6 +187,7 @@ async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<S
             distant_command.trim().to_string()
         } else {
             // TODO: Do we need to try to escape single quotes here because of extra_server_args?
+            // TODO: Replace this with the ssh2 library shell exec once we integrate that
             format!("echo {} | $SHELL -l", distant_command.trim())
         },
     );
@@ -437,11 +208,11 @@ async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<S
     // Parse our output for the specific session line
     // NOTE: The host provided on this line isn't valid, so we fill it in with our actual host
     let out = String::from_utf8(out.stdout)?.trim().to_string();
-    let mut session = out
+    let mut info = out
         .lines()
-        .find_map(|line| line.parse::<Session>().ok())
+        .find_map(|line| line.parse::<SessionInfo>().ok())
         .ok_or(Error::MissingSessionData)?;
-    session.host = cmd.host;
+    info.host = cmd.host;
 
-    Ok(session)
+    Ok(info)
 }

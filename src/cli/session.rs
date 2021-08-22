@@ -1,57 +1,84 @@
 use crate::{
-    cli::{buf::StringBuf, Format, ResponseOut},
+    cli::{buf::StringBuf, stdin, Format, ResponseOut},
     core::{
         client::Session,
         constants::MAX_PIPE_CHUNK_SIZE,
-        data::{Request, Response},
+        data::{Request, RequestData, Response},
         net::DataStream,
     },
 };
 use log::*;
-use std::{
-    io::{self, BufReader, Read},
-    sync::Arc,
-    thread,
-};
-use tokio::sync::{mpsc, watch};
+use std::{io, thread};
+use structopt::StructOpt;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 /// Represents a wrapper around a session that provides CLI functionality such as reading from
 /// stdin and piping results back out to stdout
-pub struct CliSession<T>
-where
-    T: DataStream,
-{
-    inner: Session<T>,
+pub struct CliSession {
+    stdin_thread: thread::JoinHandle<()>,
+    req_task: JoinHandle<()>,
+    res_task: JoinHandle<io::Result<()>>,
 }
 
-impl<T> CliSession<T>
-where
-    T: DataStream,
-{
-    pub fn new(inner: Session<T>) -> Self {
-        Self { inner }
+impl CliSession {
+    pub fn new<T>(tenant: String, mut session: Session<T>, format: Format) -> Self
+    where
+        T: DataStream + 'static,
+    {
+        let (stdin_thread, stdin_rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
+
+        let (exit_tx, exit_rx) = mpsc::channel(1);
+        let stream = session.to_response_broadcast_stream();
+        let res_task =
+            tokio::spawn(async move { process_incoming_responses(stream, format, exit_rx).await });
+
+        let map_line = move |line: &str| match format {
+            Format::Json => serde_json::from_str(&line)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x)),
+            Format::Shell => {
+                let data = RequestData::from_iter_safe(
+                    std::iter::once("distant")
+                        .chain(line.trim().split(' ').filter(|s| !s.trim().is_empty())),
+                )
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x));
+
+                data.map(|x| Request::new(tenant.to_string(), vec![x]))
+            }
+        };
+        let req_task = tokio::spawn(async move {
+            process_outgoing_requests(session, stdin_rx, exit_tx, format, map_line).await
+        });
+
+        Self {
+            stdin_thread,
+            req_task,
+            res_task,
+        }
+    }
+
+    /// Wait for the cli session to terminate
+    pub async fn wait(self) -> io::Result<()> {
+        match tokio::try_join!(self.req_task, self.res_task) {
+            Ok((_, res)) => res,
+            Err(x) => Err(io::Error::new(io::ErrorKind::BrokenPipe, x)),
+        }
+    }
+
+    /// Aborts the cli session forcing its task handlers to abort underneath, which means that a
+    /// call to `wait` will return an error
+    pub async fn abort(&self) {
+        self.req_task.abort();
+        self.res_task.abort();
     }
 }
-
-// TODO TODO TODO:
-//
-// 1. Change watch to broadcast if going to use in both loops, otherwise just make
-//    it an mpsc otherwise
-// 2. Need to provide outgoing requests function with logic from inner.rs to create a request
-//    based on the format (json or shell), where json uses serde_json::from_str and shell
-//    uses Request::new(tenant.as_str(), vec![RequestData::from_iter_safe(...)])
-// 3. Need to add a wait method to block on the running tasks
-// 4. Need to add an abort method to abort the tasks
-// 5. Is there any way to deal with the blocking thread for stdin to kill it? This isn't a big
-//    deal as the shutdown would only be happening on client termination anyway, but still...
 
 /// Helper function that loops, processing incoming responses not tied to a request to be sent out
 /// over stdout/stderr
 async fn process_incoming_responses(
     mut stream: BroadcastStream<Response>,
     format: Format,
-    mut exit: watch::Receiver<bool>,
+    mut exit: mpsc::Receiver<()>,
 ) -> io::Result<()> {
     loop {
         tokio::select! {
@@ -62,7 +89,7 @@ async fn process_incoming_responses(
                     None => return Ok(()),
                 }
             }
-            _ = exit.changed() => {
+            _ = exit.recv() => {
                 return Ok(());
             }
         }
@@ -74,6 +101,7 @@ async fn process_incoming_responses(
 async fn process_outgoing_requests<T, F>(
     mut session: Session<T>,
     mut stdin_rx: mpsc::Receiver<String>,
+    exit_tx: mpsc::Sender<()>,
     format: Format,
     map_line: F,
 ) where
@@ -90,9 +118,16 @@ async fn process_outgoing_requests<T, F>(
 
         // For each complete line, parse into a request
         if let Some(lines) = lines {
-            for line in lines.lines() {
+            for line in lines.lines().map(|line| line.trim()) {
                 trace!("Processing line: {:?}", line);
-                if line.trim().is_empty() {
+                if line.is_empty() {
+                    continue;
+                } else if line == "exit" {
+                    debug!("Got exit request, so closing cli session");
+                    stdin_rx.close();
+                    if let Err(_) = exit_tx.send(()).await {
+                        error!("Failed to close cli session");
+                    }
                     continue;
                 }
 
@@ -113,43 +148,4 @@ async fn process_outgoing_requests<T, F>(
             }
         }
     }
-}
-
-/// Creates a new thread that performs stdin reads in a blocking fashion, returning
-/// a handle to the thread and a receiver that will be sent input as it becomes available
-fn spawn_stdin_reader() -> (thread::JoinHandle<()>, mpsc::Receiver<String>) {
-    let (tx, rx) = mpsc::channel(1);
-
-    // NOTE: Using blocking I/O per tokio's advice to read from stdin line-by-line and then
-    //       pass the results to a separate async handler to forward to the remote process
-    let handle = thread::spawn(move || {
-        let mut stdin = BufReader::new(io::stdin());
-
-        // Maximum chunk that we expect to read at any one time
-        let mut buf = [0; MAX_PIPE_CHUNK_SIZE];
-
-        loop {
-            match stdin.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    match String::from_utf8(buf[..n].to_vec()) {
-                        Ok(text) => {
-                            if let Err(x) = tx.blocking_send(text) {
-                                error!(
-                                    "Failed to pass along stdin to be sent to remote process: {}",
-                                    x
-                                );
-                            }
-                        }
-                        Err(x) => {
-                            error!("Input over stdin is invalid: {}", x);
-                        }
-                    }
-                    thread::yield_now();
-                }
-            }
-        }
-    });
-
-    (handle, rx)
 }

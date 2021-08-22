@@ -346,31 +346,25 @@ where
 
 /// Test utilities
 #[cfg(test)]
-pub mod test {
-    use super::*;
-
-    use crate::core::constants::test::BUFFER_SIZE;
-    use crate::net::InmemoryStream;
-    use orion::aead::SecretKey;
-
+impl Transport<InmemoryStream> {
     /// Makes a connected pair of transports with matching crypt keys and using the provided
     /// auth keys
-    pub fn make_transport_pair_with_auth_keys(
+    pub fn make_pair_with_auth_keys(
         ak1: Option<Arc<SecretKey>>,
         ak2: Option<Arc<SecretKey>>,
     ) -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
         let crypt_key = Arc::new(SecretKey::default());
 
-        let (a, b) = InmemoryStream::pair(BUFFER_SIZE);
+        let (a, b) = InmemoryStream::pair(crate::core::constants::test::BUFFER_SIZE);
         let a = Transport::new(a, ak1, Arc::clone(&crypt_key));
         let b = Transport::new(b, ak2, crypt_key);
         (a, b)
     }
 
     /// Makes a connected pair of transports with matching auth and crypt keys
-    pub fn make_transport_pair() -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
-        let auth_key = Arc::new(SecretKey::default());
-        make_transport_pair_with_auth_keys(Some(Arc::clone(&auth_key)), Some(auth_key))
+    /// using test buffer size
+    pub fn make_pair() -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
+        Self::pair(crate::core::constants::test::BUFFER_SIZE)
     }
 }
 
@@ -379,8 +373,6 @@ mod tests {
     use super::*;
     use crate::core::constants::test::BUFFER_SIZE;
     use std::io;
-
-    use test::make_transport_pair_with_auth_keys;
 
     #[tokio::test]
     async fn transport_from_handshake_should_fail_if_connection_reached_eof() {
@@ -462,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn transport_should_be_able_to_send_encrypted_data_to_other_side_to_decrypt() {
         // Make two transports with no auth keys
-        let (mut src, mut dst) = make_transport_pair_with_auth_keys(None, None);
+        let (mut src, mut dst) = Transport::make_pair_with_auth_keys(None, None);
 
         src.send("some data").await.expect("Failed to send data");
         let data = dst
@@ -480,7 +472,7 @@ mod tests {
 
         // Make two transports with same auth keys
         let (mut src, mut dst) =
-            make_transport_pair_with_auth_keys(Some(Arc::clone(&auth_key)), Some(auth_key));
+            Transport::make_pair_with_auth_keys(Some(Arc::clone(&auth_key)), Some(auth_key));
 
         src.send("some data").await.expect("Failed to send data");
         let data = dst
@@ -495,7 +487,7 @@ mod tests {
     #[tokio::test]
     async fn transport_receive_should_fail_if_auth_key_differs_from_other_end() {
         // Make two transports with different auth keys
-        let (mut src, mut dst) = make_transport_pair_with_auth_keys(
+        let (mut src, mut dst) = Transport::make_pair_with_auth_keys(
             Some(Arc::new(SecretKey::default())),
             Some(Arc::new(SecretKey::default())),
         );
@@ -511,7 +503,7 @@ mod tests {
     async fn transport_receive_should_fail_if_has_auth_key_while_sender_did_not_use_one() {
         // Make two transports with different auth keys
         let (mut src, mut dst) =
-            make_transport_pair_with_auth_keys(None, Some(Arc::new(SecretKey::default())));
+            Transport::make_pair_with_auth_keys(None, Some(Arc::new(SecretKey::default())));
 
         src.send("some data").await.expect("Failed to send data");
 
@@ -529,7 +521,7 @@ mod tests {
     async fn transport_receive_should_fail_if_has_no_auth_key_while_sender_used_one() {
         // Make two transports with different auth keys
         let (mut src, mut dst) =
-            make_transport_pair_with_auth_keys(Some(Arc::new(SecretKey::default())), None);
+            Transport::make_pair_with_auth_keys(Some(Arc::new(SecretKey::default())), None);
 
         src.send("some data").await.expect("Failed to send data");
         match dst.receive::<String>().await {

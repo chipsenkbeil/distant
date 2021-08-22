@@ -1,39 +1,37 @@
 mod handler;
-mod port;
 mod state;
-mod utils;
 
-pub use port::{PortRange, PortRangeParseError};
 use state::State;
 
 use crate::core::{
     data::{Request, Response},
     net::{SecretKey, Transport, TransportReadHalf, TransportWriteHalf},
+    server::{
+        utils::{ConnTracker, ShutdownTask},
+        PortRange,
+    },
 };
+use futures::future::OptionFuture;
 use log::*;
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
+use std::{net::IpAddr, sync::Arc};
 use tokio::{
     io,
     net::{tcp, TcpListener, TcpStream},
-    runtime::Handle,
-    sync::{mpsc, Mutex, Notify},
+    sync::{mpsc, Mutex},
     task::{JoinError, JoinHandle},
     time::Duration,
 };
 
 /// Represents a server that listens for requests, processes them, and sends responses
-pub struct Server {
+pub struct DistantServer {
     port: u16,
-    state: Arc<Mutex<State<SocketAddr>>>,
     auth_key: Arc<SecretKey>,
-    notify: Arc<Notify>,
     conn_task: JoinHandle<()>,
 }
 
-impl Server {
+impl DistantServer {
+    /// Bind to an IP address and port from the given range, taking an optional shutdown duration
+    /// that will shutdown the server if there is no active connection after duration
     pub async fn bind(
         addr: IpAddr,
         port: PortRange,
@@ -47,21 +45,19 @@ impl Server {
         debug!("Bound to port: {}", port);
 
         // Build our state for the server
-        let state: Arc<Mutex<State<SocketAddr>>> = Arc::new(Mutex::new(State::default()));
+        let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
         let auth_key = Arc::new(SecretKey::default());
-        let (ct, notify) = utils::new_shutdown_task(Handle::current(), shutdown_after);
+        let (shutdown, tracker) = ShutdownTask::maybe_initialize(shutdown_after);
 
         // Spawn our connection task
-        let state_2 = Arc::clone(&state);
         let auth_key_2 = Arc::clone(&auth_key);
-        let notify_2 = Arc::clone(&notify);
         let conn_task = tokio::spawn(async move {
             connection_loop(
                 listener,
-                state_2,
+                state,
                 auth_key_2,
-                ct,
-                notify_2,
+                tracker,
+                shutdown,
                 max_msg_capacity,
             )
             .await
@@ -69,9 +65,7 @@ impl Server {
 
         Ok(Self {
             port,
-            state,
             auth_key,
-            notify,
             conn_task,
         })
     }
@@ -90,33 +84,32 @@ impl Server {
     pub async fn wait(self) -> Result<(), JoinError> {
         self.conn_task.await
     }
-
-    /// Shutdown the server
-    pub fn shutdown(&self) {
-        self.notify.notify_one()
-    }
 }
 
 async fn connection_loop(
     listener: TcpListener,
-    state: Arc<Mutex<State<SocketAddr>>>,
+    state: Arc<Mutex<State>>,
     auth_key: Arc<SecretKey>,
-    tracker: Arc<Mutex<utils::ConnTracker>>,
-    notify: Arc<Notify>,
+    tracker: Option<Arc<Mutex<ConnTracker>>>,
+    shutdown: OptionFuture<ShutdownTask>,
     max_msg_capacity: usize,
 ) {
-    loop {
-        tokio::select! {
-            result = listener.accept() => {match result {
+    let inner = async move {
+        loop {
+            match listener.accept().await {
                 Ok((conn, addr)) => {
+                    let conn_id = rand::random();
+                    debug!("<Conn @ {}> Established against {}", conn_id, addr);
                     if let Err(x) = on_new_conn(
                         conn,
-                        addr,
+                        conn_id,
                         Arc::clone(&state),
                         Arc::clone(&auth_key),
-                        Arc::clone(&tracker),
-                        max_msg_capacity
-                    ).await {
+                        tracker.as_ref().map(Arc::clone),
+                        max_msg_capacity,
+                    )
+                    .await
+                    {
                         error!("<Conn @ {}> Failed handshake: {}", addr, x);
                     }
                 }
@@ -124,11 +117,14 @@ async fn connection_loop(
                     error!("Listener failed: {}", x);
                     break;
                 }
-            }}
-            _ = notify.notified() => {
-                warn!("Reached shutdown timeout, so terminating");
-                break;
             }
+        }
+    };
+
+    tokio::select! {
+        _ = inner => {}
+        _ = shutdown => {
+            warn!("Reached shutdown timeout, so terminating");
         }
     }
 }
@@ -137,10 +133,10 @@ async fn connection_loop(
 /// input and output, returning join handles for the input and output tasks respectively
 async fn on_new_conn(
     conn: TcpStream,
-    addr: SocketAddr,
-    state: Arc<Mutex<State<SocketAddr>>>,
+    conn_id: usize,
+    state: Arc<Mutex<State>>,
     auth_key: Arc<SecretKey>,
-    tracker: Arc<Mutex<utils::ConnTracker>>,
+    tracker: Option<Arc<Mutex<ConnTracker>>>,
     max_msg_capacity: usize,
 ) -> io::Result<(JoinHandle<()>, JoinHandle<()>)> {
     // Establish a proper connection via a handshake,
@@ -151,23 +147,26 @@ async fn on_new_conn(
     // and output concurrently
     let (t_read, t_write) = transport.into_split();
     let (tx, rx) = mpsc::channel(max_msg_capacity);
-    let ct_2 = Arc::clone(&tracker);
 
     // Spawn a new task that loops to handle requests from the client
     let req_task = tokio::spawn({
-        let f = request_loop(addr, Arc::clone(&state), t_read, tx);
+        let f = request_loop(conn_id, Arc::clone(&state), t_read, tx);
 
         let state = Arc::clone(&state);
         async move {
-            ct_2.lock().await.increment();
+            if let Some(ct) = tracker.as_ref() {
+                ct.lock().await.increment();
+            }
             f.await;
-            state.lock().await.cleanup_client(addr).await;
-            ct_2.lock().await.decrement();
+            state.lock().await.cleanup_connection(conn_id).await;
+            if let Some(ct) = tracker.as_ref() {
+                ct.lock().await.decrement();
+            }
         }
     });
 
     // Spawn a new task that loops to handle responses to the client
-    let res_task = tokio::spawn(async move { response_loop(addr, t_write, rx).await });
+    let res_task = tokio::spawn(async move { response_loop(conn_id, t_write, rx).await });
 
     Ok((req_task, res_task))
 }
@@ -175,8 +174,8 @@ async fn on_new_conn(
 /// Repeatedly reads in new requests, processes them, and sends their responses to the
 /// response loop
 async fn request_loop(
-    addr: SocketAddr,
-    state: Arc<Mutex<State<SocketAddr>>>,
+    conn_id: usize,
+    state: Arc<Mutex<State>>,
     mut transport: TransportReadHalf<tcp::OwnedReadHalf>,
     tx: mpsc::Sender<Response>,
 ) {
@@ -185,22 +184,23 @@ async fn request_loop(
             Ok(Some(req)) => {
                 debug!(
                     "<Conn @ {}> Received request of type{} {}",
-                    addr,
+                    conn_id,
                     if req.payload.len() > 1 { "s" } else { "" },
                     req.to_payload_type_string()
                 );
 
-                if let Err(x) = handler::process(addr, Arc::clone(&state), req, tx.clone()).await {
-                    error!("<Conn @ {}> {}", addr, x);
+                if let Err(x) = handler::process(conn_id, Arc::clone(&state), req, tx.clone()).await
+                {
+                    error!("<Conn @ {}> {}", conn_id, x);
                     break;
                 }
             }
             Ok(None) => {
-                info!("<Conn @ {}> Closed connection", addr);
+                info!("<Conn @ {}> Closed connection", conn_id);
                 break;
             }
             Err(x) => {
-                error!("<Conn @ {}> {}", addr, x);
+                error!("<Conn @ {}> {}", conn_id, x);
                 break;
             }
         }
@@ -209,13 +209,13 @@ async fn request_loop(
 
 /// Repeatedly sends responses out over the wire
 async fn response_loop(
-    addr: SocketAddr,
+    conn_id: usize,
     mut transport: TransportWriteHalf<tcp::OwnedWriteHalf>,
     mut rx: mpsc::Receiver<Response>,
 ) {
     while let Some(res) = rx.recv().await {
         if let Err(x) = transport.send(res).await {
-            error!("<Conn @ {}> {}", addr, x);
+            error!("<Conn @ {}> {}", conn_id, x);
             break;
         }
     }

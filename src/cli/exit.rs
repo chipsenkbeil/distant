@@ -1,38 +1,41 @@
-use crate::core::net::TransportError;
+use crate::core::{client::RemoteProcessError, net::TransportError};
 
 /// Exit codes following https://www.freebsd.org/cgi/man.cgi?query=sysexits&sektion=3
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ExitCode {
     /// EX_USAGE (64) - being used when arguments missing or bad arguments provided to CLI
-    Usage = 64,
+    Usage,
 
     /// EX_DATAERR (65) - being used when bad data received not in UTF-8 format or transport data
     /// is bad
-    DataErr = 65,
+    DataErr,
 
     /// EX_NOINPUT (66) - being used when not getting expected data from launch
-    NoInput = 66,
+    NoInput,
 
     /// EX_NOHOST (68) - being used when failed to resolve a host
-    NoHost = 68,
+    NoHost,
 
     /// EX_UNAVAILABLE (69) - being used when IO error encountered where connection is problem
-    Unavailable = 69,
+    Unavailable,
 
     /// EX_SOFTWARE (70) - being used for internal errors that can occur like joining a task
-    Software = 70,
+    Software,
 
     /// EX_OSERR (71) - being used when fork failed
-    OsErr = 71,
+    OsErr,
 
     /// EX_IOERR (74) - being used as catchall for IO errors
-    IoError = 74,
+    IoError,
 
     /// EX_TEMPFAIL (75) - being used when we get a timeout
-    TempFail = 75,
+    TempFail,
 
     /// EX_PROTOCOL (76) - being used as catchall for transport errors
-    Protocol = 76,
+    Protocol,
+
+    /// Custom exit code to pass back verbatim
+    Custom(i32),
 }
 
 /// Represents an error that can be converted into an exit code
@@ -40,7 +43,19 @@ pub trait ExitCodeError: std::error::Error {
     fn to_exit_code(&self) -> ExitCode;
 
     fn to_i32(&self) -> i32 {
-        self.to_exit_code() as i32
+        match self.to_exit_code() {
+            ExitCode::Usage => 64,
+            ExitCode::DataErr => 65,
+            ExitCode::NoInput => 66,
+            ExitCode::NoHost => 68,
+            ExitCode::Unavailable => 69,
+            ExitCode::Software => 70,
+            ExitCode::OsErr => 71,
+            ExitCode::IoError => 74,
+            ExitCode::TempFail => 75,
+            ExitCode::Protocol => 76,
+            ExitCode::Custom(x) => x,
+        }
     }
 }
 
@@ -64,6 +79,19 @@ impl ExitCodeError for TransportError {
         match self {
             TransportError::IoError(x) => x.to_exit_code(),
             _ => ExitCode::Protocol,
+        }
+    }
+}
+
+impl ExitCodeError for RemoteProcessError {
+    fn to_exit_code(&self) -> ExitCode {
+        match self {
+            Self::BadResponse => ExitCode::DataErr,
+            Self::ChannelDead => ExitCode::Unavailable,
+            Self::Overloaded => ExitCode::Software,
+            Self::TransportError(x) => x.to_exit_code(),
+            Self::UnexpectedEof => ExitCode::IoError,
+            Self::WaitFailed(_) => ExitCode::Software,
         }
     }
 }

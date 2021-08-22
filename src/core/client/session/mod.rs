@@ -50,7 +50,7 @@ where
 impl Session<InmemoryStream> {
     /// Creates a session around an inmemory transport
     pub async fn from_inmemory_transport(transport: Transport<InmemoryStream>) -> io::Result<Self> {
-        Self::inner_connect(transport).await
+        Self::initialize(transport).await
     }
 }
 
@@ -67,7 +67,7 @@ impl Session<TcpStream> {
                 .map(|x| x.to_string())
                 .unwrap_or_else(|_| String::from("???"))
         );
-        Self::inner_connect(transport).await
+        Self::initialize(transport).await
     }
 
     /// Connect to a remote TCP server, timing out after duration has passed
@@ -93,7 +93,7 @@ impl Session<tokio::net::UnixStream> {
                 .map(|x| format!("{:?}", x))
                 .unwrap_or_else(|_| String::from("???"))
         );
-        Self::inner_connect(transport).await
+        Self::initialize(transport).await
     }
 
     /// Connect to a proxy unix socket, timing out after duration has passed
@@ -112,8 +112,8 @@ impl<T> Session<T>
 where
     T: DataStream,
 {
-    /// Establishes a connection using the provided transport
-    async fn inner_connect(transport: Transport<T>) -> io::Result<Self> {
+    /// Initializes a session using the provided transport
+    pub async fn initialize(transport: Transport<T>) -> io::Result<Self> {
         let (mut t_read, t_write) = transport.into_split();
         let callbacks: Callbacks = Arc::new(Mutex::new(HashMap::new()));
         let (broadcast, init_broadcast_receiver) =
@@ -243,14 +243,13 @@ mod tests {
     use crate::core::{
         constants::test::TENANT,
         data::{RequestData, ResponseData},
-        net::test::make_transport_pair,
     };
     use std::time::Duration;
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
-        let (t1, mut t2) = make_transport_pair();
-        let mut session = Session::inner_connect(t1).await.unwrap();
+        let (t1, mut t2) = Transport::make_pair();
+        let mut session = Session::initialize(t1).await.unwrap();
 
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         let res = Response::new(
@@ -270,8 +269,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (t1, mut t2) = make_transport_pair();
-        let mut session = Session::inner_connect(t1).await.unwrap();
+        let (t1, mut t2) = Transport::make_pair();
+        let mut session = Session::initialize(t1).await.unwrap();
 
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         match session.send_timeout(req, Duration::from_millis(30)).await {
@@ -285,8 +284,8 @@ mod tests {
 
     #[tokio::test]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (t1, mut t2) = make_transport_pair();
-        let mut session = Session::inner_connect(t1).await.unwrap();
+        let (t1, mut t2) = Transport::make_pair();
+        let mut session = Session::initialize(t1).await.unwrap();
 
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         match session.fire(req).await {

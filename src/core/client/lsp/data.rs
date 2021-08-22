@@ -297,7 +297,7 @@ impl FromStr for LspHeader {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LspContent(Map<String, Value>);
 
-fn for_each_mut_string<F1, F2>(value: &mut Value, check: F1, mutate: F2)
+fn for_each_mut_string<F1, F2>(value: &mut Value, check: &F1, mutate: &mut F2)
 where
     F1: Fn(&String) -> bool,
     F2: FnMut(&mut String),
@@ -309,12 +309,15 @@ where
                 .for_each(|v| for_each_mut_string(v, check, mutate));
 
             // Mutate keys if necessary
-            for key in obj.keys() {
-                if check(key) {
-                    if let Some((key, value)) = obj.remove_entry(key) {
-                        mutate(&mut key);
-                        obj.insert(key, value);
-                    }
+            let keys: Vec<String> = obj
+                .keys()
+                .filter(|k| check(k))
+                .map(ToString::to_string)
+                .collect();
+            for key in keys {
+                if let Some((mut key, value)) = obj.remove_entry(&key) {
+                    mutate(&mut key);
+                    obj.insert(key, value);
                 }
             }
         }
@@ -328,7 +331,7 @@ where
 
 fn swap_prefix(obj: &mut Map<String, Value>, old: &str, new: &str) {
     let check = |s: &String| s.starts_with(old);
-    let mutate = |s: &mut String| {
+    let mut mutate = |s: &mut String| {
         if let Some(pos) = s.find(old) {
             s.replace_range(pos..old.len(), new);
         }
@@ -336,15 +339,18 @@ fn swap_prefix(obj: &mut Map<String, Value>, old: &str, new: &str) {
 
     // Mutate values
     obj.values_mut()
-        .for_each(|v| for_each_mut_string(v, check, mutate));
+        .for_each(|v| for_each_mut_string(v, &check, &mut mutate));
 
     // Mutate keys if necessary
-    for key in obj.keys() {
-        if check(key) {
-            if let Some((key, value)) = obj.remove_entry(key) {
-                mutate(&mut key);
-                obj.insert(key, value);
-            }
+    let keys: Vec<String> = obj
+        .keys()
+        .filter(|k| check(k))
+        .map(ToString::to_string)
+        .collect();
+    for key in keys {
+        if let Some((mut key, value)) = obj.remove_entry(&key) {
+            mutate(&mut key);
+            obj.insert(key, value);
         }
     }
 }
@@ -528,7 +534,11 @@ mod tests {
     fn data_from_buf_reader_should_fail_if_reach_eof_before_received_full_data() {
         // No line termination
         let err = LspData::from_buf_reader(&mut io::Cursor::new("Content-Length: 22")).unwrap_err();
-        assert!(matches!(err, LspDataParseError::UnexpectedEof), "{:?}", err);
+        assert!(
+            matches!(err, LspDataParseError::BadHeaderTermination),
+            "{:?}",
+            err
+        );
 
         // Header doesn't finish
         let err = LspData::from_buf_reader(&mut io::Cursor::new(concat!(
@@ -1100,7 +1110,7 @@ mod tests {
 
     #[test]
     fn content_convert_distant_scheme_to_local_should_convert_keys_and_values() {
-        let content = LspContent(make_obj!({
+        let mut content = LspContent(make_obj!({
             "distant://key1": "file://value1",
             "file://key2": "distant://value2",
             "key3": ["file://value3", "distant://value4"],

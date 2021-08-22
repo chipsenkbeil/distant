@@ -1,63 +1,46 @@
 use log::*;
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 
 /// Holds state related to multiple clients managed by a server
-pub struct State<ClientId>
-where
-    ClientId: Debug + Hash + PartialEq + Eq,
-{
+#[derive(Default)]
+pub struct State {
     /// Map of all processes running on the server
     pub processes: HashMap<usize, Process>,
 
     /// List of processes that will be killed when a client drops
-    client_processes: HashMap<ClientId, Vec<usize>>,
+    client_processes: HashMap<usize, Vec<usize>>,
 }
 
-impl<ClientId> State<ClientId>
-where
-    ClientId: Debug + Hash + PartialEq + Eq,
-{
+impl State {
     /// Pushes a new process associated with a client
-    pub fn push_process(&mut self, client_id: ClientId, process: Process) {
+    pub fn push_process(&mut self, conn_id: usize, process: Process) {
         self.client_processes
-            .entry(client_id)
+            .entry(conn_id)
             .or_insert(Vec::new())
             .push(process.id);
         self.processes.insert(process.id, process);
     }
 
-    /// Cleans up state associated with a particular client
-    pub async fn cleanup_client(&mut self, client_id: ClientId) {
-        debug!("<Client @ {:?}> Cleaning up state", client_id);
-        if let Some(ids) = self.client_processes.remove(&client_id) {
+    /// Cleans up state associated with a particular connection
+    pub async fn cleanup_connection(&mut self, conn_id: usize) {
+        debug!("<Conn @ {:?}> Cleaning up state", conn_id);
+        if let Some(ids) = self.client_processes.remove(&conn_id) {
             for id in ids {
                 if let Some(process) = self.processes.remove(&id) {
                     trace!(
-                        "<Client @ {:?}> Requesting proc {} be killed",
-                        client_id,
+                        "<Conn @ {:?}> Requesting proc {} be killed",
+                        conn_id,
                         process.id
                     );
                     if let Err(_) = process.kill_tx.send(()) {
                         error!(
-                            "Client {} failed to send process {} kill signal",
+                            "Conn {} failed to send process {} kill signal",
                             id, process.id
                         );
                     }
                 }
             }
-        }
-    }
-}
-
-impl<ClientId> Default for State<ClientId>
-where
-    ClientId: Debug + Hash + PartialEq + Eq,
-{
-    fn default() -> Self {
-        Self {
-            processes: HashMap::new(),
-            client_processes: HashMap::new(),
         }
     }
 }

@@ -1,7 +1,7 @@
 mod cli;
 mod core;
 
-pub use self::core::{data, net};
+pub use self::core::{client::*, data, net, server::*};
 use log::error;
 
 /// Main entrypoint into the program

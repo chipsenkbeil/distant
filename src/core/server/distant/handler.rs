@@ -3,14 +3,13 @@ use crate::core::{
     data::{
         self, DirEntry, FileType, Request, RequestData, Response, ResponseData, RunningProcess,
     },
-    server::state::{Process, State},
+    server::distant::state::{Process, State},
 };
 use derive_more::{Display, Error, From};
 use futures::future;
 use log::*;
 use std::{
     env,
-    net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -24,7 +23,7 @@ use tokio::{
 use walkdir::WalkDir;
 
 pub type Reply = mpsc::Sender<Response>;
-type HState = Arc<Mutex<State<SocketAddr>>>;
+type HState = Arc<Mutex<State>>;
 
 #[derive(Debug, Display, Error, From)]
 pub enum ServerError {
@@ -43,14 +42,14 @@ impl From<ServerError> for ResponseData {
 
 /// Processes the provided request, sending replies using the given sender
 pub(super) async fn process(
-    addr: SocketAddr,
+    conn_id: usize,
     state: HState,
     req: Request,
     tx: Reply,
 ) -> Result<(), mpsc::error::SendError<Response>> {
     async fn inner(
         tenant: Arc<String>,
-        addr: SocketAddr,
+        conn_id: usize,
         state: HState,
         data: RequestData,
         tx: Reply,
@@ -76,7 +75,7 @@ pub(super) async fn process(
             RequestData::Exists { path } => exists(path).await,
             RequestData::Metadata { path, canonicalize } => metadata(path, canonicalize).await,
             RequestData::ProcRun { cmd, args } => {
-                proc_run(tenant.to_string(), addr, state, tx, cmd, args).await
+                proc_run(tenant.to_string(), conn_id, state, tx, cmd, args).await
             }
             RequestData::ProcKill { id } => proc_kill(state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(state, id, data).await,
@@ -94,7 +93,7 @@ pub(super) async fn process(
         let state_2 = Arc::clone(&state);
         let tx_2 = tx.clone();
         payload_tasks.push(tokio::spawn(async move {
-            match inner(tenant_2, addr, state_2, data, tx_2).await {
+            match inner(tenant_2, conn_id, state_2, data, tx_2).await {
                 Ok(data) => data,
                 Err(x) => ResponseData::from(x),
             }
@@ -114,8 +113,8 @@ pub(super) async fn process(
     let res = Response::new(req.tenant, Some(req.id), payload);
 
     debug!(
-        "<Client @ {}> Sending response of type{} {}",
-        addr,
+        "<Conn @ {}> Sending response of type{} {}",
+        conn_id,
         if res.payload.len() > 1 { "s" } else { "" },
         res.to_payload_type_string()
     );
@@ -358,7 +357,7 @@ async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, Ser
 
 async fn proc_run(
     tenant: String,
-    addr: SocketAddr,
+    conn_id: usize,
     state: HState,
     tx: Reply,
     cmd: String,
@@ -389,8 +388,8 @@ async fn proc_run(
                             vec![ResponseData::ProcStdout { id, data }],
                         );
                         debug!(
-                            "<Client @ {}> Sending response of type{} {}",
-                            addr,
+                            "<Conn @ {}> Sending response of type{} {}",
+                            conn_id,
                             if res.payload.len() > 1 { "s" } else { "" },
                             res.to_payload_type_string()
                         );
@@ -430,8 +429,8 @@ async fn proc_run(
                             vec![ResponseData::ProcStderr { id, data }],
                         );
                         debug!(
-                            "<Client @ {}> Sending response of type{} {}",
-                            addr,
+                            "<Conn @ {}> Sending response of type{} {}",
+                            conn_id,
                             if res.payload.len() > 1 { "s" } else { "" },
                             res.to_payload_type_string()
                         );
@@ -491,8 +490,8 @@ async fn proc_run(
                             vec![ResponseData::ProcDone { id, success, code }]
                         );
                         debug!(
-                            "<Client @ {}> Sending response of type{} {}",
-                            addr,
+                            "<Conn @ {}> Sending response of type{} {}",
+                            conn_id,
                             if res.payload.len() > 1 { "s" } else { "" },
                             res.to_payload_type_string()
                         );
@@ -503,8 +502,8 @@ async fn proc_run(
                     Err(x) => {
                         let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
                         debug!(
-                            "<Client @ {}> Sending response of type{} {}",
-                            addr,
+                            "<Conn @ {}> Sending response of type{} {}",
+                            conn_id,
                             if res.payload.len() > 1 { "s" } else { "" },
                             res.to_payload_type_string()
                         );
@@ -533,8 +532,8 @@ async fn proc_run(
                     id, success: false, code: None
                 }]);
                 debug!(
-                    "<Client @ {}> Sending response of type{} {}",
-                    addr,
+                    "<Conn @ {}> Sending response of type{} {}",
+                    conn_id,
                     if res.payload.len() > 1 { "s" } else { "" },
                     res.to_payload_type_string()
                 );
@@ -556,7 +555,7 @@ async fn proc_run(
         stdin_tx,
         kill_tx,
     };
-    state.lock().await.push_process(addr, process);
+    state.lock().await.push_process(conn_id, process);
 
     Ok(ResponseData::ProcStart { id })
 }
@@ -608,4 +607,677 @@ async fn system_info() -> Result<ResponseData, ServerError> {
         current_dir: env::current_dir().unwrap_or_default(),
         main_separator: std::path::MAIN_SEPARATOR,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::io::Write;
+    use tempfile::{NamedTempFile, TempDir};
+
+    fn setup(
+        buffer: usize,
+    ) -> (
+        usize,
+        Arc<Mutex<State>>,
+        mpsc::Sender<Response>,
+        mpsc::Receiver<Response>,
+    ) {
+        let (tx, rx) = mpsc::channel(buffer);
+        (
+            rand::random(),
+            Arc::new(Mutex::new(State::default())),
+            tx,
+            rx,
+        )
+    }
+
+    /// Create a temporary path that does not exist
+    fn temppath() -> PathBuf {
+        // Deleted when dropped
+        NamedTempFile::new().unwrap().into_temp_path().to_path_buf()
+    }
+
+    #[tokio::test]
+    async fn file_read_should_send_error_if_fails_to_read_file() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a file and then delete it, keeping just its path
+        let path = temppath();
+
+        let req = Request::new("test-tenant", vec![RequestData::FileRead { path }]);
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn file_read_should_send_blob_with_file_contents() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary file and fill it with some contents
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"some file contents").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileRead {
+                path: file.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::Blob { data } => assert_eq!(data, b"some file contents"),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn file_read_text_should_send_error_if_fails_to_read_file() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a file and then delete it, keeping just its path
+        let path = temppath();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileReadText { path: path }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn file_read_text_should_send_text_with_file_contents() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary file and fill it with some contents
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"some file contents").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileReadText {
+                path: file.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::Text { data } => assert_eq!(data, "some file contents"),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn file_write_should_send_error_if_fails_to_write_file() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary path and add to it to ensure that there are
+        // extra components that don't exist to cause writing to fail
+        let path = temppath().join("some_file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileWrite {
+                path: path.clone(),
+                data: b"some text".to_vec(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we didn't actually create the file
+        assert!(!path.exists(), "File created unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn file_write_should_send_ok_when_successful() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Path should point to a file that does not exist, but all
+        // other components leading up to it do
+        let path = temppath();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileWrite {
+                path: path.clone(),
+                data: b"some text".to_vec(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we actually did create the file
+        // with the associated contents
+        assert!(path.exists(), "File not actually created");
+        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "some text");
+    }
+
+    #[tokio::test]
+    async fn file_write_text_should_send_error_if_fails_to_write_file() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary path and add to it to ensure that there are
+        // extra components that don't exist to cause writing to fail
+        let path = temppath().join("some_file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileWriteText {
+                path: path.clone(),
+                text: String::from("some text"),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we didn't actually create the file
+        assert!(!path.exists(), "File created unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn file_write_text_should_send_ok_when_successful() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Path should point to a file that does not exist, but all
+        // other components leading up to it do
+        let path = temppath();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileWriteText {
+                path: path.clone(),
+                text: String::from("some text"),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we actually did create the file
+        // with the associated contents
+        assert!(path.exists(), "File not actually created");
+        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "some text");
+    }
+
+    #[tokio::test]
+    async fn file_append_should_send_error_if_fails_to_create_file() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary path and add to it to ensure that there are
+        // extra components that don't exist to cause writing to fail
+        let path = temppath().join("some_file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileAppend {
+                path: path.to_path_buf(),
+                data: b"some extra contents".to_vec(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we didn't actually create the file
+        assert!(!path.exists(), "File created unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn file_append_should_send_ok_when_successful() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary file and fill it with some contents
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"some file contents").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileAppend {
+                path: file.path().to_path_buf(),
+                data: b"some extra contents".to_vec(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we actually did append to the file
+        assert_eq!(
+            tokio::fs::read_to_string(file.path()).await.unwrap(),
+            "some file contentssome extra contents"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_append_text_should_send_error_if_fails_to_create_file() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary path and add to it to ensure that there are
+        // extra components that don't exist to cause writing to fail
+        let path = temppath().join("some_file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileAppendText {
+                path: path.to_path_buf(),
+                text: String::from("some extra contents"),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we didn't actually create the file
+        assert!(!path.exists(), "File created unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn file_append_text_should_send_ok_when_successful() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create a temporary file and fill it with some contents
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"some file contents").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileAppendText {
+                path: file.path().to_path_buf(),
+                text: String::from("some extra contents"),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that we actually did append to the file
+        assert_eq!(
+            tokio::fs::read_to_string(file.path()).await.unwrap(),
+            "some file contentssome extra contents"
+        );
+    }
+
+    #[tokio::test]
+    async fn dir_read_should_send_error_if_directory_does_not_exist() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let path = temppath();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirRead {
+                path,
+                depth: 0,
+                absolute: false,
+                canonicalize: false,
+                include_root: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+    }
+
+    // /root/
+    // /root/file1
+    // /root/sub1/
+    // /root/sub1/file2
+    async fn setup_dir() -> TempDir {
+        let root_dir = TempDir::new().unwrap();
+        let file1 = root_dir.path().join("file1");
+        let sub1 = root_dir.path().join("sub1");
+        let file2 = sub1.join("file2");
+
+        tokio::fs::write(file1.as_path(), "").await.unwrap();
+        tokio::fs::create_dir(sub1.as_path()).await.unwrap();
+        tokio::fs::write(file2.as_path(), "").await.unwrap();
+
+        root_dir
+    }
+
+    #[tokio::test]
+    async fn dir_read_should_support_depth_limits() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create directory with some nested items
+        let root_dir = setup_dir().await;
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirRead {
+                path: root_dir.path().to_path_buf(),
+                depth: 1,
+                absolute: false,
+                canonicalize: false,
+                include_root: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::DirEntries { entries, .. } => {
+                assert_eq!(entries.len(), 2, "Wrong number of entries found");
+
+                assert_eq!(entries[0].file_type, FileType::File);
+                assert_eq!(entries[0].path, Path::new("file1"));
+                assert_eq!(entries[0].depth, 1);
+
+                assert_eq!(entries[1].file_type, FileType::Dir);
+                assert_eq!(entries[1].path, Path::new("sub1"));
+                assert_eq!(entries[1].depth, 1);
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn dir_read_should_support_unlimited_depth_using_zero() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create directory with some nested items
+        let root_dir = setup_dir().await;
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirRead {
+                path: root_dir.path().to_path_buf(),
+                depth: 0,
+                absolute: false,
+                canonicalize: false,
+                include_root: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::DirEntries { entries, .. } => {
+                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+
+                assert_eq!(entries[0].file_type, FileType::File);
+                assert_eq!(entries[0].path, Path::new("file1"));
+                assert_eq!(entries[0].depth, 1);
+
+                assert_eq!(entries[1].file_type, FileType::Dir);
+                assert_eq!(entries[1].path, Path::new("sub1"));
+                assert_eq!(entries[1].depth, 1);
+
+                assert_eq!(entries[2].file_type, FileType::File);
+                assert_eq!(entries[2].path, Path::new("sub1").join("file2"));
+                assert_eq!(entries[2].depth, 2);
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn dir_read_should_support_including_directory_in_returned_entries() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create directory with some nested items
+        let root_dir = setup_dir().await;
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirRead {
+                path: root_dir.path().to_path_buf(),
+                depth: 1,
+                absolute: false,
+                canonicalize: false,
+                include_root: true,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::DirEntries { entries, .. } => {
+                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+
+                // NOTE: Root entry is always absolute, resolved path
+                assert_eq!(entries[0].file_type, FileType::Dir);
+                assert_eq!(entries[0].path, root_dir.path().canonicalize().unwrap());
+                assert_eq!(entries[0].depth, 0);
+
+                assert_eq!(entries[1].file_type, FileType::File);
+                assert_eq!(entries[1].path, Path::new("file1"));
+                assert_eq!(entries[1].depth, 1);
+
+                assert_eq!(entries[2].file_type, FileType::Dir);
+                assert_eq!(entries[2].path, Path::new("sub1"));
+                assert_eq!(entries[2].depth, 1);
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn dir_read_should_support_returning_absolute_paths() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create directory with some nested items
+        let root_dir = setup_dir().await;
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirRead {
+                path: root_dir.path().to_path_buf(),
+                depth: 1,
+                absolute: true,
+                canonicalize: false,
+                include_root: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::DirEntries { entries, .. } => {
+                assert_eq!(entries.len(), 2, "Wrong number of entries found");
+                let root_path = root_dir.path().canonicalize().unwrap();
+
+                assert_eq!(entries[0].file_type, FileType::File);
+                assert_eq!(entries[0].path, root_path.join("file1"));
+                assert_eq!(entries[0].depth, 1);
+
+                assert_eq!(entries[1].file_type, FileType::Dir);
+                assert_eq!(entries[1].path, root_path.join("sub1"));
+                assert_eq!(entries[1].depth, 1);
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn dir_read_should_support_returning_canonicalized_paths() {
+        todo!("Figure out best way to support symlink tests");
+    }
+
+    #[tokio::test]
+    async fn dir_create_should_send_error_if_fails() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Make a path that has multiple non-existent components
+        // so the creation will fail
+        let root_dir = setup_dir().await;
+        let path = root_dir.path().join("nested").join("new-dir");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirCreate {
+                path: path.to_path_buf(),
+                all: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that the directory was not actually created
+        assert!(!path.exists(), "Path unexpectedly exists");
+    }
+
+    #[tokio::test]
+    async fn dir_create_should_send_ok_when_successful() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let root_dir = setup_dir().await;
+        let path = root_dir.path().join("new-dir");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirCreate {
+                path: path.to_path_buf(),
+                all: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that the directory was actually created
+        assert!(path.exists(), "Directory not created");
+    }
+
+    #[tokio::test]
+    async fn dir_create_should_support_creating_multiple_dir_components() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let root_dir = setup_dir().await;
+        let path = root_dir.path().join("nested").join("new-dir");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirCreate {
+                path: path.to_path_buf(),
+                all: true,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also verify that the directory was actually created
+        assert!(path.exists(), "Directory not created");
+    }
 }

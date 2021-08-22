@@ -1,5 +1,5 @@
 use crate::core::{
-    client::{utils, Session},
+    client::Session,
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, RequestData, Response, ResponseData},
     net::{DataStream, TransportError},
@@ -63,6 +63,7 @@ pub struct RemoteProcess {
 impl RemoteProcess {
     /// Spawns the specified process on the remote machine using the given session
     pub async fn spawn<T>(
+        tenant: String,
         mut session: Session<T>,
         cmd: String,
         args: Vec<String>,
@@ -70,8 +71,6 @@ impl RemoteProcess {
     where
         T: DataStream + 'static,
     {
-        let tenant = utils::new_tenant();
-
         // Submit our run request and wait for a response
         let res = session
             .send(Request::new(
@@ -127,7 +126,10 @@ impl RemoteProcess {
 
     /// Waits for the process to terminate, returning the success status and an optional exit code
     pub async fn wait(self) -> Result<(bool, Option<i32>), RemoteProcessError> {
-        self.res_task.await?
+        match tokio::try_join!(self.req_task, self.res_task) {
+            Ok((_, res)) => res,
+            Err(x) => Err(RemoteProcessError::from(x)),
+        }
     }
 
     /// Aborts the process by forcing its response task to shutdown, which means that a call
