@@ -1,5 +1,4 @@
-use super::{DataStream, Transport};
-use orion::aead::SecretKey;
+use super::{DataStream, SecretKey, Transport};
 use std::sync::Arc;
 use tokio::{
     io,

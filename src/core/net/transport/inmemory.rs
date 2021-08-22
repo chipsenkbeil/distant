@@ -70,7 +70,9 @@ impl AsyncWrite for InmemoryStream {
     }
 }
 
+/// Read portion of an inmemory channel
 pub struct InmemoryStreamReadHalf(mpsc::Receiver<Vec<u8>>);
+
 impl AsyncRead for InmemoryStreamReadHalf {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -87,7 +89,9 @@ impl AsyncRead for InmemoryStreamReadHalf {
     }
 }
 
+/// Write portion of an inmemory channel
 pub struct InmemoryStreamWriteHalf(mpsc::Sender<Vec<u8>>);
+
 impl AsyncWrite for InmemoryStreamWriteHalf {
     fn poll_write(
         self: Pin<&mut Self>,

@@ -10,84 +10,84 @@ use std::{
 use tokio::{io, net::lookup_host};
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Session {
+pub struct SessionInfo {
     pub host: String,
     pub port: u16,
     pub auth_key: SecretKey,
 }
 
 #[derive(Copy, Clone, Debug, Display, Error, PartialEq, Eq)]
-pub enum SessionParseError {
+pub enum SessionInfoParseError {
     #[display(fmt = "Prefix of string is invalid")]
     BadPrefix,
 
     #[display(fmt = "Bad hex key for session")]
-    BadSessionHexKey,
+    BadHexKey,
 
     #[display(fmt = "Invalid key for session")]
-    InvalidSessionKey,
+    InvalidKey,
 
     #[display(fmt = "Invalid port for session")]
-    InvalidSessionPort,
+    InvalidPort,
 
     #[display(fmt = "Missing address for session")]
-    MissingSessionAddr,
+    MissingAddr,
 
     #[display(fmt = "Missing key for session")]
-    MissingSessionKey,
+    MissingKey,
 
     #[display(fmt = "Missing port for session")]
-    MissingSessionPort,
+    MissingPort,
 }
 
-impl From<SessionParseError> for io::Error {
-    fn from(x: SessionParseError) -> Self {
+impl From<SessionInfoParseError> for io::Error {
+    fn from(x: SessionInfoParseError) -> Self {
         io::Error::new(io::ErrorKind::InvalidData, x)
     }
 }
 
-impl FromStr for Session {
-    type Err = SessionParseError;
+impl FromStr for SessionInfo {
+    type Err = SessionInfoParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut tokens = s.split(' ').take(5);
 
         // First, validate that we have the appropriate prefix
-        if tokens.next().ok_or(SessionParseError::BadPrefix)? != "DISTANT" {
-            return Err(SessionParseError::BadPrefix);
+        if tokens.next().ok_or(SessionInfoParseError::BadPrefix)? != "DISTANT" {
+            return Err(SessionInfoParseError::BadPrefix);
         }
-        if tokens.next().ok_or(SessionParseError::BadPrefix)? != "DATA" {
-            return Err(SessionParseError::BadPrefix);
+        if tokens.next().ok_or(SessionInfoParseError::BadPrefix)? != "DATA" {
+            return Err(SessionInfoParseError::BadPrefix);
         }
 
         // Second, load up the address without parsing it
         let host = tokens
             .next()
-            .ok_or(SessionParseError::MissingSessionAddr)?
+            .ok_or(SessionInfoParseError::MissingAddr)?
             .trim()
             .to_string();
 
         // Third, load up the port and parse it into a number
         let port = tokens
             .next()
-            .ok_or(SessionParseError::MissingSessionPort)?
+            .ok_or(SessionInfoParseError::MissingPort)?
             .trim()
             .parse::<u16>()
-            .map_err(|_| SessionParseError::InvalidSessionPort)?;
+            .map_err(|_| SessionInfoParseError::InvalidPort)?;
 
         // Fourth, load up the key and convert it back into a secret key from a hex slice
         let auth_key = SecretKey::from_slice(
             &hex::decode(
                 tokens
                     .next()
-                    .ok_or(SessionParseError::MissingSessionKey)?
+                    .ok_or(SessionInfoParseError::MissingKey)?
                     .trim(),
             )
-            .map_err(|_| SessionParseError::BadSessionHexKey)?,
+            .map_err(|_| SessionInfoParseError::BadHexKey)?,
         )
-        .map_err(|_| SessionParseError::InvalidSessionKey)?;
+        .map_err(|_| SessionInfoParseError::InvalidKey)?;
 
-        Ok(Session {
+        Ok(SessionInfo {
             host,
             port,
             auth_key,
@@ -95,7 +95,7 @@ impl FromStr for Session {
     }
 }
 
-impl Session {
+impl SessionInfo {
     /// Loads session from environment variables
     pub fn from_environment() -> io::Result<Self> {
         fn to_err(x: env::VarError) -> io::Error {
@@ -159,40 +159,40 @@ impl Session {
 }
 
 /// Provides operations related to working with a session that is disk-based
-pub struct SessionFile {
+pub struct SessionInfoFile {
     path: PathBuf,
-    session: Session,
+    session: SessionInfo,
 }
 
-impl AsRef<Path> for SessionFile {
+impl AsRef<Path> for SessionInfoFile {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
 }
 
-impl AsRef<Session> for SessionFile {
-    fn as_ref(&self) -> &Session {
+impl AsRef<SessionInfo> for SessionInfoFile {
+    fn as_ref(&self) -> &SessionInfo {
         self.as_session()
     }
 }
 
-impl Deref for SessionFile {
-    type Target = Session;
+impl Deref for SessionInfoFile {
+    type Target = SessionInfo;
 
     fn deref(&self) -> &Self::Target {
         &self.session
     }
 }
 
-impl From<SessionFile> for Session {
-    fn from(sf: SessionFile) -> Self {
+impl From<SessionInfoFile> for SessionInfo {
+    fn from(sf: SessionInfoFile) -> Self {
         sf.session
     }
 }
 
-impl SessionFile {
+impl SessionInfoFile {
     /// Creates a new inmemory pointer to a session and its file
-    pub fn new(path: impl Into<PathBuf>, session: Session) -> Self {
+    pub fn new(path: impl Into<PathBuf>, session: SessionInfo) -> Self {
         Self {
             path: path.into(),
             session,
@@ -205,7 +205,7 @@ impl SessionFile {
     }
 
     /// Returns a reference to the session
-    pub fn as_session(&self) -> &Session {
+    pub fn as_session(&self) -> &SessionInfo {
         &self.session
     }
 

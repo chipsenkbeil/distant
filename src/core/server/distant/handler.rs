@@ -3,7 +3,7 @@ use crate::core::{
     data::{
         self, DirEntry, FileType, Request, RequestData, Response, ResponseData, RunningProcess,
     },
-    state::{Process, ServerState},
+    server::state::{Process, State},
 };
 use derive_more::{Display, Error, From};
 use futures::future;
@@ -24,7 +24,7 @@ use tokio::{
 use walkdir::WalkDir;
 
 pub type Reply = mpsc::Sender<Response>;
-type HState = Arc<Mutex<ServerState<SocketAddr>>>;
+type HState = Arc<Mutex<State<SocketAddr>>>;
 
 #[derive(Debug, Display, Error, From)]
 pub enum ServerError {

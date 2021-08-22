@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash};
 use tokio::sync::{mpsc, oneshot};
 
 /// Holds state related to multiple clients managed by a server
-pub struct ServerState<ClientId>
+pub struct State<ClientId>
 where
     ClientId: Debug + Hash + PartialEq + Eq,
 {
@@ -14,7 +14,7 @@ where
     client_processes: HashMap<ClientId, Vec<usize>>,
 }
 
-impl<ClientId> ServerState<ClientId>
+impl<ClientId> State<ClientId>
 where
     ClientId: Debug + Hash + PartialEq + Eq,
 {
@@ -50,7 +50,7 @@ where
     }
 }
 
-impl<ClientId> Default for ServerState<ClientId>
+impl<ClientId> Default for State<ClientId>
 where
     ClientId: Debug + Hash + PartialEq + Eq,
 {

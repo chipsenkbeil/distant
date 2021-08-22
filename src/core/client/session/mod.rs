@@ -1,9 +1,8 @@
 use crate::core::{
+    client::utils,
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, Response},
-    net::{DataStream, SecretKey, Transport, TransportError, TransportWriteHalf},
-    session::Session,
-    utils,
+    net::{DataStream, InmemoryStream, SecretKey, Transport, TransportError, TransportWriteHalf},
 };
 use log::*;
 use std::{
@@ -20,14 +19,17 @@ use tokio::{
 };
 use tokio_stream::wrappers::BroadcastStream;
 
+mod info;
+pub use info::{SessionInfo, SessionInfoFile, SessionInfoParseError};
+
 type Callbacks = Arc<Mutex<HashMap<usize, oneshot::Sender<Response>>>>;
 
-/// Represents a client that can make requests against a server
-pub struct Client<T>
+/// Represents a session with a remote server that can be used to send requests & receive responses
+pub struct Session<T>
 where
     T: DataStream,
 {
-    /// Underlying transport used by client
+    /// Underlying transport used by session
     t_write: TransportWriteHalf<T::Write>,
 
     /// Collection of callbacks to be invoked upon receiving a response to a request
@@ -45,12 +47,21 @@ where
     response_task: JoinHandle<()>,
 }
 
-impl Client<TcpStream> {
-    /// Connect to a remote TCP session
-    pub async fn tcp_connect(session: Session) -> io::Result<Self> {
-        let transport = Transport::<TcpStream>::connect(session).await?;
+impl Session<InmemoryStream> {
+    /// Creates a session around an inmemory transport
+    pub async fn from_inmemory_transport(transport: Transport<InmemoryStream>) -> io::Result<Self> {
+        Self::inner_connect(transport).await
+    }
+}
+
+impl Session<TcpStream> {
+    /// Connect to a remote TCP server using the provided information
+    pub async fn tcp_connect(info: SessionInfo) -> io::Result<Self> {
+        let addr = info.to_socket_addr().await?;
+        let transport =
+            Transport::<TcpStream>::connect(addr, Some(Arc::new(info.auth_key))).await?;
         debug!(
-            "Client has connected to {}",
+            "Session has been established with {}",
             transport
                 .peer_addr()
                 .map(|x| x.to_string())
@@ -59,16 +70,16 @@ impl Client<TcpStream> {
         Self::inner_connect(transport).await
     }
 
-    /// Connect to a remote TCP session, timing out after duration has passed
-    pub async fn tcp_connect_timeout(session: Session, duration: Duration) -> io::Result<Self> {
-        utils::timeout(duration, Self::tcp_connect(session))
+    /// Connect to a remote TCP server, timing out after duration has passed
+    pub async fn tcp_connect_timeout(info: SessionInfo, duration: Duration) -> io::Result<Self> {
+        utils::timeout(duration, Self::tcp_connect(info))
             .await
             .and_then(convert::identity)
     }
 }
 
 #[cfg(unix)]
-impl Client<tokio::net::UnixStream> {
+impl Session<tokio::net::UnixStream> {
     /// Connect to a proxy unix socket
     pub async fn unix_connect(
         path: impl AsRef<std::path::Path>,
@@ -76,7 +87,7 @@ impl Client<tokio::net::UnixStream> {
     ) -> io::Result<Self> {
         let transport = Transport::<tokio::net::UnixStream>::connect(path, auth_key).await?;
         debug!(
-            "Client has connected to {}",
+            "Session has been established with {}",
             transport
                 .peer_addr()
                 .map(|x| format!("{:?}", x))
@@ -97,11 +108,11 @@ impl Client<tokio::net::UnixStream> {
     }
 }
 
-impl<T> Client<T>
+impl<T> Session<T>
 where
     T: DataStream,
 {
-    /// Establishes a connection using the provided session
+    /// Establishes a connection using the provided transport
     async fn inner_connect(transport: Transport<T>) -> io::Result<Self> {
         let (mut t_read, t_write) = transport.into_split();
         let callbacks: Callbacks = Arc::new(Mutex::new(HashMap::new()));
@@ -115,7 +126,7 @@ where
             loop {
                 match t_read.receive::<Response>().await {
                     Ok(Some(res)) => {
-                        trace!("Client got response: {:?}", res);
+                        trace!("Incoming response: {:?}", res);
                         let maybe_callback = res
                             .origin_id
                             .as_ref()
@@ -123,14 +134,14 @@ where
 
                         // If there is an origin to this response, trigger the callback
                         if let Some(tx) = maybe_callback {
-                            trace!("Client has callback! Triggering!");
+                            trace!("Callback exists for response! Triggering!");
                             if let Err(res) = tx.send(res) {
                                 error!("Failed to trigger callback for response {}", res.id);
                             }
 
                         // Otherwise, this goes into the junk draw of response handlers
                         } else {
-                            trace!("Client does not have callback! Broadcasting!");
+                            trace!("Callback missing for response! Broadcasting!");
                             if let Err(x) = broadcast_2.send(res) {
                                 error!("Failed to trigger broadcast: {}", x);
                             }
@@ -154,13 +165,13 @@ where
         })
     }
 
-    /// Waits for the client to terminate, which results when the receiving end of the network
-    /// connection is closed (or the client is shutdown)
+    /// Waits for the session to terminate, which results when the receiving end of the network
+    /// connection is closed (or the session is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {
         self.response_task.await
     }
 
-    /// Abort the client's current connection by forcing its response task to shutdown
+    /// Abort the session's current connection by forcing its response task to shutdown
     pub fn abort(&self) {
         self.response_task.abort()
     }
@@ -210,7 +221,7 @@ where
             .and_then(convert::identity)
     }
 
-    /// Clones a new instance of the broadcaster used by the client
+    /// Clones a new instance of the broadcaster used by the session
     pub fn to_response_broadcaster(&self) -> broadcast::Sender<Response> {
         self.broadcast.clone()
     }
@@ -232,14 +243,14 @@ mod tests {
     use crate::core::{
         constants::test::TENANT,
         data::{RequestData, ResponseData},
-        net::transport::test::make_transport_pair,
+        net::test::make_transport_pair,
     };
     use std::time::Duration;
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
         let (t1, mut t2) = make_transport_pair();
-        let mut client = Client::inner_connect(t1).await.unwrap();
+        let mut session = Session::inner_connect(t1).await.unwrap();
 
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         let res = Response::new(
@@ -250,7 +261,7 @@ mod tests {
             }],
         );
 
-        let (actual, _) = tokio::join!(client.send(req), t2.send(res.clone()));
+        let (actual, _) = tokio::join!(session.send(req), t2.send(res.clone()));
         match actual {
             Ok(actual) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
@@ -260,10 +271,10 @@ mod tests {
     #[tokio::test]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
         let (t1, mut t2) = make_transport_pair();
-        let mut client = Client::inner_connect(t1).await.unwrap();
+        let mut session = Session::inner_connect(t1).await.unwrap();
 
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
-        match client.send_timeout(req, Duration::from_millis(30)).await {
+        match session.send_timeout(req, Duration::from_millis(30)).await {
             Err(TransportError::IoError(x)) => assert_eq!(x.kind(), io::ErrorKind::TimedOut),
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -275,10 +286,10 @@ mod tests {
     #[tokio::test]
     async fn fire_should_send_request_and_not_wait_for_response() {
         let (t1, mut t2) = make_transport_pair();
-        let mut client = Client::inner_connect(t1).await.unwrap();
+        let mut session = Session::inner_connect(t1).await.unwrap();
 
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
-        match client.fire(req).await {
+        match session.fire(req).await {
             Ok(_) => {}
             x => panic!("Unexpected response: {:?}", x),
         }

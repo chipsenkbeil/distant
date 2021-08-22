@@ -1,4 +1,4 @@
-use crate::core::session::{Session, SessionParseError};
+use crate::core::client::{SessionInfo, SessionInfoParseError};
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -11,24 +11,24 @@ use std::{
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Display, Error, From)]
-pub enum LspSessionError {
+pub enum LspSessionInfoError {
     /// Encountered when attempting to create a session from a request that is not initialize
     NotInitializeRequest,
 
     /// Encountered if missing session parameters within an initialize request
-    MissingSessionParams,
+    MissingSessionInfoParams,
 
     /// Encountered if session parameters are not expected types
-    InvalidSessionParams,
+    InvalidSessionInfoParams,
 
     /// Encountered when failing to parse session
-    SessionParseError(SessionParseError),
+    SessionInfoParseError(SessionInfoParseError),
 }
 
-impl From<LspSessionError> for io::Error {
-    fn from(x: LspSessionError) -> Self {
+impl From<LspSessionInfoError> for io::Error {
+    fn from(x: LspSessionInfoError) -> Self {
         match x {
-            LspSessionError::SessionParseError(x) => x.into(),
+            LspSessionInfoError::SessionInfoParseError(x) => x.into(),
             x => io::Error::new(io::ErrorKind::InvalidData, x),
         }
     }
@@ -38,19 +38,19 @@ impl From<LspSessionError> for io::Error {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LspData {
     /// Header-portion of some data related to LSP
-    header: LspDataHeader,
+    header: LspHeader,
 
     /// Content-portion of some data related to LSP
-    content: LspDataContent,
+    content: LspContent,
 }
 
 #[derive(Debug, Display, Error, From)]
 pub enum LspDataParseError {
     /// When the received content is malformed
-    BadContent(LspDataContentParseError),
+    BadContent(LspContentParseError),
 
     /// When the received header is malformed
-    BadHeader(LspDataHeaderParseError),
+    BadHeader(LspHeaderParseError),
 
     /// When a header line is not terminated in \r\n
     BadHeaderTermination,
@@ -83,20 +83,29 @@ impl From<LspDataParseError> for io::Error {
 
 impl LspData {
     /// Returns a reference to the header part
-    pub fn header(&self) -> &LspDataHeader {
+    pub fn header(&self) -> &LspHeader {
         &self.header
+    }
+    /// Returns a mutable reference to the header part
+    pub fn mut_header(&mut self) -> &mut LspHeader {
+        &mut self.header
     }
 
     /// Returns a reference to the content part
-    pub fn content(&self) -> &LspDataContent {
+    pub fn content(&self) -> &LspContent {
         &self.content
     }
 
-    /// Creates a session by inspecting the content for session parameters, removing the session
-    /// parameters from the content. Will also adjust the content length header to match the
-    /// new size of the content.
-    pub fn take_session(&mut self) -> Result<Session, LspSessionError> {
-        match self.content.take_session() {
+    /// Returns a mutable reference to the content part
+    pub fn mut_content(&mut self) -> &mut LspContent {
+        &mut self.content
+    }
+
+    /// Creates a session's info by inspecting the content for session parameters, removing the
+    /// session parameters from the content. Will also adjust the content length header to match
+    /// the new size of the content.
+    pub fn take_session_info(&mut self) -> Result<SessionInfo, LspSessionInfoError> {
+        match self.content.take_session_info() {
             Ok(session) => {
                 self.header.content_length = self.content.to_string().len();
                 Ok(session)
@@ -107,7 +116,7 @@ impl LspData {
 
     /// Attempts to read incoming lsp data from a buffered reader.
     ///
-    /// Note that this is **blocking** while it waits on the header information!
+    /// Note that this is **blocking** while it waits on the header information (or EOF)!
     ///
     /// ```text
     /// Content-Length: ...\r\n
@@ -147,7 +156,7 @@ impl LspData {
         }
 
         // Parse the header content so we know how much more to read
-        let header = buf.parse::<LspDataHeader>()?;
+        let header = buf.parse::<LspHeader>()?;
 
         // Read remaining content
         let content = {
@@ -159,7 +168,7 @@ impl LspData {
                     LspDataParseError::IoError(x)
                 }
             })?;
-            String::from_utf8(buf)?.parse::<LspDataContent>()?
+            String::from_utf8(buf)?.parse::<LspContent>()?
         };
 
         Ok(Self { header, content })
@@ -206,7 +215,7 @@ impl FromStr for LspData {
 
 /// Represents the header for LSP data
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LspDataHeader {
+pub struct LspHeader {
     /// Length of content part in bytes
     pub content_length: usize,
 
@@ -215,7 +224,7 @@ pub struct LspDataHeader {
     pub content_type: Option<String>,
 }
 
-impl fmt::Display for LspDataHeader {
+impl fmt::Display for LspHeader {
     /// Outputs header in form
     ///
     /// ```text
@@ -235,20 +244,20 @@ impl fmt::Display for LspDataHeader {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Display, Error, From)]
-pub enum LspDataHeaderParseError {
+pub enum LspHeaderParseError {
     MissingContentLength,
     InvalidContentLength(std::num::ParseIntError),
     BadHeaderField,
 }
 
-impl From<LspDataHeaderParseError> for io::Error {
-    fn from(x: LspDataHeaderParseError) -> Self {
+impl From<LspHeaderParseError> for io::Error {
+    fn from(x: LspHeaderParseError) -> Self {
         io::Error::new(io::ErrorKind::InvalidData, x)
     }
 }
 
-impl FromStr for LspDataHeader {
-    type Err = LspDataHeaderParseError;
+impl FromStr for LspHeader {
+    type Err = LspHeaderParseError;
 
     /// Parses headers in the form of
     ///
@@ -267,10 +276,10 @@ impl FromStr for LspDataHeader {
                 match name {
                     "Content-Length" => content_length = Some(value.trim().parse()?),
                     "Content-Type" => content_type = Some(value.trim().to_string()),
-                    _ => return Err(LspDataHeaderParseError::BadHeaderField),
+                    _ => return Err(LspHeaderParseError::BadHeaderField),
                 }
             } else {
-                return Err(LspDataHeaderParseError::BadHeaderField);
+                return Err(LspHeaderParseError::BadHeaderField);
             }
         }
 
@@ -279,36 +288,102 @@ impl FromStr for LspDataHeader {
                 content_length,
                 content_type,
             }),
-            None => Err(LspDataHeaderParseError::MissingContentLength),
+            None => Err(LspHeaderParseError::MissingContentLength),
         }
     }
 }
 
 /// Represents the content for LSP data
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LspDataContent(Map<String, Value>);
+pub struct LspContent(Map<String, Value>);
 
-impl LspDataContent {
-    /// Creates a session by inspecting the content for session parameters, removing the session
-    /// parameters from the content
-    pub fn take_session(&mut self) -> Result<Session, LspSessionError> {
+fn for_each_mut_string<F1, F2>(value: &mut Value, check: F1, mutate: F2)
+where
+    F1: Fn(&String) -> bool,
+    F2: FnMut(&mut String),
+{
+    match value {
+        Value::Object(obj) => {
+            // Mutate values
+            obj.values_mut()
+                .for_each(|v| for_each_mut_string(v, check, mutate));
+
+            // Mutate keys if necessary
+            for key in obj.keys() {
+                if check(key) {
+                    if let Some((key, value)) = obj.remove_entry(key) {
+                        mutate(&mut key);
+                        obj.insert(key, value);
+                    }
+                }
+            }
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|v| for_each_mut_string(v, check, mutate)),
+        Value::String(s) => mutate(s),
+        _ => {}
+    }
+}
+
+fn swap_prefix(obj: &mut Map<String, Value>, old: &str, new: &str) {
+    let check = |s: &String| s.starts_with(old);
+    let mutate = |s: &mut String| {
+        if let Some(pos) = s.find(old) {
+            s.replace_range(pos..old.len(), new);
+        }
+    };
+
+    // Mutate values
+    obj.values_mut()
+        .for_each(|v| for_each_mut_string(v, check, mutate));
+
+    // Mutate keys if necessary
+    for key in obj.keys() {
+        if check(key) {
+            if let Some((key, value)) = obj.remove_entry(key) {
+                mutate(&mut key);
+                obj.insert(key, value);
+            }
+        }
+    }
+}
+
+impl LspContent {
+    /// Converts all URIs with `file://` as the scheme to `distant://` instead
+    pub fn convert_local_scheme_to_distant(&mut self) {
+        swap_prefix(&mut self.0, "file:", "distant:");
+    }
+
+    /// Converts all URIs with `distant://` as the scheme to `file://` instead
+    pub fn convert_distant_scheme_to_local(&mut self) {
+        swap_prefix(&mut self.0, "distant:", "file:");
+    }
+
+    /// Creates a session's info by inspecting the content for session parameters, removing the
+    /// session parameters from the content
+    pub fn take_session_info(&mut self) -> Result<SessionInfo, LspSessionInfoError> {
         // Verify that we're dealing with an initialize request
         match self.0.get("method") {
             Some(value) if value == "initialize" => {}
-            _ => return Err(LspSessionError::NotInitializeRequest),
+            _ => return Err(LspSessionInfoError::NotInitializeRequest),
         }
 
         // Attempt to grab the distant initialization options
         match self.strip_session_params() {
             Some((Some(host), Some(port), Some(auth_key))) => {
-                let host = host.as_str().ok_or(LspSessionError::InvalidSessionParams)?;
-                let port = port.as_u64().ok_or(LspSessionError::InvalidSessionParams)?;
+                let host = host
+                    .as_str()
+                    .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
+                let port = port
+                    .as_u64()
+                    .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
                 let auth_key = auth_key
                     .as_str()
-                    .ok_or(LspSessionError::InvalidSessionParams)?;
+                    .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
                 Ok(format!("DISTANT DATA {} {} {}", host, port, auth_key).parse()?)
             }
-            _ => Err(LspSessionError::MissingSessionParams),
+            _ => Err(LspSessionInfoError::MissingSessionInfoParams),
         }
     }
 
@@ -343,13 +418,13 @@ impl LspDataContent {
     }
 }
 
-impl AsRef<Map<String, Value>> for LspDataContent {
+impl AsRef<Map<String, Value>> for LspContent {
     fn as_ref(&self) -> &Map<String, Value> {
         &self.0
     }
 }
 
-impl Deref for LspDataContent {
+impl Deref for LspContent {
     type Target = Map<String, Value>;
 
     fn deref(&self) -> &Self::Target {
@@ -357,13 +432,13 @@ impl Deref for LspDataContent {
     }
 }
 
-impl DerefMut for LspDataContent {
+impl DerefMut for LspContent {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl fmt::Display for LspDataContent {
+impl fmt::Display for LspContent {
     /// Outputs content in JSON form
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -375,16 +450,16 @@ impl fmt::Display for LspDataContent {
 }
 
 #[derive(Debug, Display, Error, From)]
-pub struct LspDataContentParseError(serde_json::Error);
+pub struct LspContentParseError(serde_json::Error);
 
-impl From<LspDataContentParseError> for io::Error {
-    fn from(x: LspDataContentParseError) -> Self {
+impl From<LspContentParseError> for io::Error {
+    fn from(x: LspContentParseError) -> Self {
         io::Error::new(io::ErrorKind::InvalidData, x)
     }
 }
 
-impl FromStr for LspDataContent {
-    type Err = LspDataContentParseError;
+impl FromStr for LspContent {
+    type Err = LspContentParseError;
 
     /// Parses content in JSON form
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -409,11 +484,11 @@ mod tests {
     #[test]
     fn data_display_should_output_header_and_content() {
         let data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({"hello": "world"})),
+            content: LspContent(make_obj!({"hello": "world"})),
         };
 
         let output = data.to_string();
@@ -451,6 +526,10 @@ mod tests {
 
     #[test]
     fn data_from_buf_reader_should_fail_if_reach_eof_before_received_full_data() {
+        // No line termination
+        let err = LspData::from_buf_reader(&mut io::Cursor::new("Content-Length: 22")).unwrap_err();
+        assert!(matches!(err, LspDataParseError::UnexpectedEof), "{:?}", err);
+
         // Header doesn't finish
         let err = LspData::from_buf_reader(&mut io::Cursor::new(concat!(
             "Content-Length: 22\r\n",
@@ -534,13 +613,13 @@ mod tests {
     }
 
     #[test]
-    fn data_take_session_should_succeed_if_valid_session_found_in_params() {
+    fn data_take_session_info_should_succeed_if_valid_session_found_in_params() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -554,10 +633,10 @@ mod tests {
             })),
         };
 
-        let session = data.take_session().unwrap();
+        let info = data.take_session_info().unwrap();
         assert_eq!(
-            session,
-            Session {
+            info,
+            SessionInfo {
                 host: String::from("some.host"),
                 port: 22,
                 auth_key: SecretKey::from_slice(&hex::decode(b"abc123").unwrap()).unwrap(),
@@ -566,13 +645,13 @@ mod tests {
     }
 
     #[test]
-    fn data_take_session_should_remove_session_parameters_if_successful() {
+    fn data_take_session_info_should_remove_session_parameters_if_successful() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -586,7 +665,7 @@ mod tests {
             })),
         };
 
-        let _ = data.take_session().unwrap();
+        let _ = data.take_session_info().unwrap();
         assert_eq!(
             data.content.as_ref(),
             &make_obj!({
@@ -599,13 +678,13 @@ mod tests {
     }
 
     #[test]
-    fn data_take_session_should_adjust_content_length_based_on_new_content_byte_length() {
+    fn data_take_session_info_should_adjust_content_length_based_on_new_content_byte_length() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -619,18 +698,18 @@ mod tests {
             })),
         };
 
-        let _ = data.take_session().unwrap();
+        let _ = data.take_session_info().unwrap();
         assert_eq!(data.header.content_length, data.content.to_string().len());
     }
 
     #[test]
-    fn data_take_session_should_fail_if_path_incomplete_to_session_params() {
+    fn data_take_session_info_should_fail_if_path_incomplete_to_session_params() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {}
@@ -638,22 +717,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::MissingSessionParams),
+            matches!(err, LspSessionInfoError::MissingSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_missing_host_param() {
+    fn data_take_session_info_should_fail_if_missing_host_param() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -666,22 +745,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::MissingSessionParams),
+            matches!(err, LspSessionInfoError::MissingSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_host_param_is_invalid() {
+    fn data_take_session_info_should_fail_if_host_param_is_invalid() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -695,22 +774,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::InvalidSessionParams),
+            matches!(err, LspSessionInfoError::InvalidSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_missing_port_param() {
+    fn data_take_session_info_should_fail_if_missing_port_param() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -723,22 +802,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::MissingSessionParams),
+            matches!(err, LspSessionInfoError::MissingSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_port_param_is_invalid() {
+    fn data_take_session_info_should_fail_if_port_param_is_invalid() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -752,22 +831,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::InvalidSessionParams),
+            matches!(err, LspSessionInfoError::InvalidSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_missing_auth_key_param() {
+    fn data_take_session_info_should_fail_if_missing_auth_key_param() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -780,22 +859,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::MissingSessionParams),
+            matches!(err, LspSessionInfoError::MissingSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_auth_key_param_is_invalid() {
+    fn data_take_session_info_should_fail_if_auth_key_param_is_invalid() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "initialize",
                 "params": {
                     "initializationOptions": {
@@ -809,22 +888,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::InvalidSessionParams),
+            matches!(err, LspSessionInfoError::InvalidSessionInfoParams),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_missing_method_field() {
+    fn data_take_session_info_should_fail_if_missing_method_field() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "params": {
                     "initializationOptions": {
                         "distant": {
@@ -837,22 +916,22 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::NotInitializeRequest),
+            matches!(err, LspSessionInfoError::NotInitializeRequest),
             "{:?}",
             err
         );
     }
 
     #[test]
-    fn data_take_session_should_fail_if_method_field_is_not_initialize() {
+    fn data_take_session_info_should_fail_if_method_field_is_not_initialize() {
         let mut data = LspData {
-            header: LspDataHeader {
+            header: LspHeader {
                 content_length: 123456,
                 content_type: Some(String::from("some content type")),
             },
-            content: LspDataContent(make_obj!({
+            content: LspContent(make_obj!({
                 "method": "not initialize",
                 "params": {
                     "initializationOptions": {
@@ -866,9 +945,9 @@ mod tests {
             })),
         };
 
-        let err = data.take_session().unwrap_err();
+        let err = data.take_session_info().unwrap_err();
         assert!(
-            matches!(err, LspSessionError::NotInitializeRequest),
+            matches!(err, LspSessionInfoError::NotInitializeRequest),
             "{:?}",
             err
         );
@@ -877,10 +956,10 @@ mod tests {
     #[test]
     fn header_parse_should_fail_if_missing_content_length() {
         let err = "Content-Type: some type\r\n\r\n"
-            .parse::<LspDataHeader>()
+            .parse::<LspHeader>()
             .unwrap_err();
         assert!(
-            matches!(err, LspDataHeaderParseError::MissingContentLength),
+            matches!(err, LspHeaderParseError::MissingContentLength),
             "{:?}",
             err
         );
@@ -889,10 +968,10 @@ mod tests {
     #[test]
     fn header_parse_should_fail_if_content_length_invalid() {
         let err = "Content-Length: -1\r\n\r\n"
-            .parse::<LspDataHeader>()
+            .parse::<LspHeader>()
             .unwrap_err();
         assert!(
-            matches!(err, LspDataHeaderParseError::InvalidContentLength(_)),
+            matches!(err, LspHeaderParseError::InvalidContentLength(_)),
             "{:?}",
             err
         );
@@ -901,10 +980,10 @@ mod tests {
     #[test]
     fn header_parse_should_fail_if_receive_an_unexpected_header_field() {
         let err = "Content-Length: 123\r\nUnknown-Field: abc\r\n\r\n"
-            .parse::<LspDataHeader>()
+            .parse::<LspHeader>()
             .unwrap_err();
         assert!(
-            matches!(err, LspDataHeaderParseError::BadHeaderField),
+            matches!(err, LspHeaderParseError::BadHeaderField),
             "{:?}",
             err
         );
@@ -912,9 +991,7 @@ mod tests {
 
     #[test]
     fn header_parse_should_succeed_if_given_valid_content_length() {
-        let header = "Content-Length: 123\r\n\r\n"
-            .parse::<LspDataHeader>()
-            .unwrap();
+        let header = "Content-Length: 123\r\n\r\n".parse::<LspHeader>().unwrap();
         assert_eq!(header.content_length, 123);
         assert_eq!(header.content_type, None);
     }
@@ -923,14 +1000,14 @@ mod tests {
     fn header_parse_should_support_optional_content_type() {
         // Regular type
         let header = "Content-Length: 123\r\nContent-Type: some content type\r\n\r\n"
-            .parse::<LspDataHeader>()
+            .parse::<LspHeader>()
             .unwrap();
         assert_eq!(header.content_length, 123);
         assert_eq!(header.content_type.as_deref(), Some("some content type"));
 
         // Type with colons
         let header = "Content-Length: 123\r\nContent-Type: some:content:type\r\n\r\n"
-            .parse::<LspDataHeader>()
+            .parse::<LspHeader>()
             .unwrap();
         assert_eq!(header.content_length, 123);
         assert_eq!(header.content_type.as_deref(), Some("some:content:type"));
@@ -939,14 +1016,14 @@ mod tests {
     #[test]
     fn header_display_should_output_header_fields_with_appropriate_line_terminations() {
         // Without content type
-        let header = LspDataHeader {
+        let header = LspHeader {
             content_length: 123,
             content_type: None,
         };
         assert_eq!(header.to_string(), "Content-Length: 123\r\n\r\n");
 
         // With content type
-        let header = LspDataHeader {
+        let header = LspHeader {
             content_length: 123,
             content_type: Some(String::from("some type")),
         };
@@ -958,21 +1035,111 @@ mod tests {
 
     #[test]
     fn content_parse_should_succeed_if_valid_json() {
-        let content = "{\"hello\": \"world\"}".parse::<LspDataContent>().unwrap();
+        let content = "{\"hello\": \"world\"}".parse::<LspContent>().unwrap();
         assert_eq!(content.as_ref(), &make_obj!({"hello": "world"}));
     }
 
     #[test]
     fn content_parse_should_fail_if_invalid_json() {
         assert!(
-            "not json".parse::<LspDataContent>().is_err(),
+            "not json".parse::<LspContent>().is_err(),
             "Unexpectedly succeeded"
         );
     }
 
     #[test]
     fn content_display_should_output_content_as_json() {
-        let content = LspDataContent(make_obj!({"hello": "world"}));
+        let content = LspContent(make_obj!({"hello": "world"}));
         assert_eq!(content.to_string(), "{\n  \"hello\": \"world\"\n}");
+    }
+
+    #[test]
+    fn content_convert_local_scheme_to_distant_should_convert_keys_and_values() {
+        let mut content = LspContent(make_obj!({
+            "distant://key1": "file://value1",
+            "file://key2": "distant://value2",
+            "key3": ["file://value3", "distant://value4"],
+            "key4": {
+                "distant://key5": "file://value5",
+                "file://key6": "distant://value6",
+                "key7": [
+                    {
+                        "distant://key8": "file://value8",
+                        "file://key9": "distant://value9",
+                    }
+                ]
+            },
+            "key10": null,
+            "key11": 123,
+            "key12": true,
+        }));
+
+        content.convert_local_scheme_to_distant();
+        assert_eq!(
+            content.0,
+            make_obj!({
+                "distant://key1": "distant://value1",
+                "distant://key2": "distant://value2",
+                "key3": ["distant://value3", "distant://value4"],
+                "key4": {
+                    "distant://key5": "distant://value5",
+                    "distant://key6": "distant://value6",
+                    "key7": [
+                        {
+                            "distant://key8": "distant://value8",
+                            "distant://key9": "distant://value9",
+                        }
+                    ]
+                },
+                "key10": null,
+                "key11": 123,
+                "key12": true,
+            })
+        );
+    }
+
+    #[test]
+    fn content_convert_distant_scheme_to_local_should_convert_keys_and_values() {
+        let content = LspContent(make_obj!({
+            "distant://key1": "file://value1",
+            "file://key2": "distant://value2",
+            "key3": ["file://value3", "distant://value4"],
+            "key4": {
+                "distant://key5": "file://value5",
+                "file://key6": "distant://value6",
+                "key7": [
+                    {
+                        "distant://key8": "file://value8",
+                        "file://key9": "distant://value9",
+                    }
+                ]
+            },
+            "key10": null,
+            "key11": 123,
+            "key12": true,
+        }));
+
+        content.convert_distant_scheme_to_local();
+        assert_eq!(
+            content.0,
+            make_obj!({
+                "file://key1": "file://value1",
+                "file://key2": "file://value2",
+                "key3": ["file://value3", "file://value4"],
+                "key4": {
+                    "file://key5": "file://value5",
+                    "file://key6": "file://value6",
+                    "key7": [
+                        {
+                            "file://key8": "file://value8",
+                            "file://key9": "file://value9",
+                        }
+                    ]
+                },
+                "key10": null,
+                "key11": 123,
+                "key12": true,
+            })
+        );
     }
 }

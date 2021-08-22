@@ -1,5 +1,8 @@
 use crate::{
-    cli::opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
+    cli::{
+        opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
+        ExitCode, ExitCodeError,
+    },
     core::{
         constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
         data::{Request, RequestData, Response, ResponseData},
@@ -7,7 +10,6 @@ use crate::{
         session::{Session, SessionFile},
         utils,
     },
-    ExitCode, ExitCodeError,
 };
 use derive_more::{Display, Error, From};
 use fork::{daemon, Fork};
