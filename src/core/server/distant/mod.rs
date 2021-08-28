@@ -5,7 +5,7 @@ use state::State;
 
 use crate::core::{
     data::{Request, Response},
-    net::{SecretKey, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{DataStream, Listener, SecretKey, Transport, TransportReadHalf, TransportWriteHalf},
     server::{
         utils::{ConnTracker, ShutdownTask},
         PortRange,
@@ -14,8 +14,8 @@ use crate::core::{
 use log::*;
 use std::{net::IpAddr, sync::Arc};
 use tokio::{
-    io,
-    net::{tcp, TcpListener, TcpStream},
+    io::{self, AsyncRead, AsyncWrite},
+    net::TcpListener,
     sync::{mpsc, Mutex},
     task::{JoinError, JoinHandle},
     time::Duration,
@@ -43,6 +43,25 @@ impl DistantServer {
         let port = listener.local_addr()?.port();
         debug!("Bound to port: {}", port);
 
+        Ok(Self::initialize(
+            listener,
+            port,
+            shutdown_after,
+            max_msg_capacity,
+        ))
+    }
+
+    /// Initialize a distant server using the provided listener
+    pub fn initialize<T, L>(
+        listener: L,
+        port: u16,
+        shutdown_after: Option<Duration>,
+        max_msg_capacity: usize,
+    ) -> Self
+    where
+        T: DataStream + Send + 'static,
+        L: Listener<Conn = T> + 'static,
+    {
         // Build our state for the server
         let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
         let auth_key = Arc::new(SecretKey::default());
@@ -62,11 +81,11 @@ impl DistantServer {
             .await
         });
 
-        Ok(Self {
+        Self {
             port,
             auth_key,
             conn_task,
-        })
+        }
     }
 
     /// Returns the port this server is bound to
@@ -83,22 +102,34 @@ impl DistantServer {
     pub async fn wait(self) -> Result<(), JoinError> {
         self.conn_task.await
     }
+
+    /// Aborts the server by aborting the internal task handling new connections
+    pub fn abort(&self) {
+        self.conn_task.abort();
+    }
 }
 
-async fn connection_loop(
-    listener: TcpListener,
+async fn connection_loop<T, L>(
+    listener: L,
     state: Arc<Mutex<State>>,
     auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     shutdown: Option<ShutdownTask>,
     max_msg_capacity: usize,
-) {
+) where
+    T: DataStream,
+    L: Listener<Conn = T>,
+{
     let inner = async move {
         loop {
             match listener.accept().await {
-                Ok((conn, addr)) => {
+                Ok(conn) => {
                     let conn_id = rand::random();
-                    debug!("<Conn @ {}> Established against {}", conn_id, addr);
+                    debug!(
+                        "<Conn @ {}> Established against {}",
+                        conn_id,
+                        conn.to_connection_tag()
+                    );
                     if let Err(x) = on_new_conn(
                         conn,
                         conn_id,
@@ -109,7 +140,7 @@ async fn connection_loop(
                     )
                     .await
                     {
-                        error!("<Conn @ {}> Failed handshake: {}", addr, x);
+                        error!("<Conn @ {}> Failed handshake: {}", conn_id, x);
                     }
                 }
                 Err(x) => {
@@ -133,14 +164,17 @@ async fn connection_loop(
 
 /// Processes a new connection, performing a handshake, and then spawning two tasks to handle
 /// input and output, returning join handles for the input and output tasks respectively
-async fn on_new_conn(
-    conn: TcpStream,
+async fn on_new_conn<T>(
+    conn: T,
     conn_id: usize,
     state: Arc<Mutex<State>>,
     auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     max_msg_capacity: usize,
-) -> io::Result<(JoinHandle<()>, JoinHandle<()>)> {
+) -> io::Result<(JoinHandle<()>, JoinHandle<()>)>
+where
+    T: DataStream,
+{
     // Establish a proper connection via a handshake,
     // discarding the connection otherwise
     let transport = Transport::from_handshake(conn, Some(auth_key)).await?;
@@ -175,12 +209,14 @@ async fn on_new_conn(
 
 /// Repeatedly reads in new requests, processes them, and sends their responses to the
 /// response loop
-async fn request_loop(
+async fn request_loop<T>(
     conn_id: usize,
     state: Arc<Mutex<State>>,
-    mut transport: TransportReadHalf<tcp::OwnedReadHalf>,
+    mut transport: TransportReadHalf<T>,
     tx: mpsc::Sender<Response>,
-) {
+) where
+    T: AsyncRead + Send + Unpin + 'static,
+{
     loop {
         match transport.receive::<Request>().await {
             Ok(Some(req)) => {
@@ -210,15 +246,52 @@ async fn request_loop(
 }
 
 /// Repeatedly sends responses out over the wire
-async fn response_loop(
+async fn response_loop<T>(
     conn_id: usize,
-    mut transport: TransportWriteHalf<tcp::OwnedWriteHalf>,
+    mut transport: TransportWriteHalf<T>,
     mut rx: mpsc::Receiver<Response>,
-) {
+) where
+    T: AsyncWrite + Send + Unpin + 'static,
+{
     while let Some(res) = rx.recv().await {
         if let Err(x) = transport.send(res).await {
             error!("<Conn @ {}> {}", conn_id, x);
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_should_return_ok_when_all_inner_tasks_complete() {
+        todo!();
+    }
+
+    #[test]
+    fn wait_should_return_error_when_server_aborted() {
+        todo!();
+    }
+
+    #[test]
+    fn abort_should_abort_inner_tasks_and_all_connections() {
+        todo!();
+    }
+
+    #[test]
+    fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
+        todo!();
+    }
+
+    #[test]
+    fn server_shutdown_should_abort_all_connections() {
+        todo!();
+    }
+
+    #[test]
+    fn server_should_execute_requests_and_return_responses() {
+        todo!();
     }
 }

@@ -129,6 +129,7 @@ impl RelayServer {
         })
     }
 
+    /// Waits for the server to terminate
     pub async fn wait(self) -> Result<(), JoinError> {
         match tokio::try_join!(self.accept_task, self.broadcast_task, self.forward_task) {
             Ok(_) => Ok(()),
@@ -136,6 +137,7 @@ impl RelayServer {
         }
     }
 
+    /// Aborts the server by aborting the internal tasks and current connections
     pub async fn abort(&self) {
         self.accept_task.abort();
         self.broadcast_task.abort();
