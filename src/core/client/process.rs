@@ -273,3 +273,73 @@ async fn process_incoming_responses(
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_should_return_bad_response_if_payload_size_unexpected() {
+        todo!();
+    }
+
+    #[test]
+    fn spawn_should_return_bad_response_if_did_not_get_a_indicator_that_process_started() {
+        todo!();
+    }
+
+    #[test]
+    fn id_should_return_randomly_generated_process_id() {
+        todo!();
+    }
+
+    #[test]
+    fn wait_should_wait_for_internal_tasks_to_complete_and_return_process_exit_information() {
+        todo!();
+    }
+
+    #[test]
+    fn wait_should_return_error_if_internal_tasks_fail() {
+        todo!();
+    }
+
+    #[test]
+    fn abort_should_abort_internal_tasks() {
+        todo!();
+    }
+
+    #[test]
+    fn kill_should_return_error_if_internal_tasks_already_completed() {
+        todo!();
+    }
+
+    #[test]
+    fn kill_should_send_proc_kill_request_and_then_cause_stdin_forwarding_to_close() {
+        todo!();
+    }
+
+    #[test]
+    fn stdin_should_be_forwarded_from_receiver_field() {
+        todo!();
+    }
+
+    #[test]
+    fn stdout_should_be_forwarded_to_receiver_field() {
+        todo!();
+    }
+
+    #[test]
+    fn stderr_should_be_forwarded_to_receiver_field() {
+        todo!();
+    }
+
+    #[test]
+    fn receiving_done_response_should_terminate_internal_tasks() {
+        todo!();
+    }
+
+    #[test]
+    fn receiving_done_response_should_result_in_wait_returning_exit_information() {
+        todo!();
+    }
+}

@@ -201,3 +201,91 @@ impl RemoteLspStderr {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stdin_write_should_only_send_out_complete_lsp_messages() {
+        todo!();
+    }
+
+    #[test]
+    fn stdin_write_should_support_buffering_output_until_a_complete_lsp_message_is_composed() {
+        // TODO: This tests that we can send part of a message and then the rest later to
+        //       verify that this doesn't block async tasks from continuing
+        todo!();
+    }
+
+    #[test]
+    fn stdin_write_should_only_consume_a_complete_lsp_message_even_if_more_is_written() {
+        todo!();
+    }
+
+    #[test]
+    fn stdin_write_should_support_sending_out_multiple_lsp_messages_if_all_received_at_once() {
+        todo!();
+    }
+
+    #[test]
+    fn stdin_write_should_convert_content_with_distant_scheme_to_file_scheme() {
+        todo!();
+    }
+
+    #[test]
+    fn stdout_read_should_yield_lsp_messages_as_strings() {
+        todo!();
+    }
+
+    #[test]
+    fn stdout_read_should_only_yield_complete_lsp_messages() {
+        // TODO: This tests that we can get an incomplete message from an inner read
+        //       and then get the rest of the message (maybe in parts) from a later read
+        //       to verify that this doesn't block async tasks from continuing
+        todo!();
+    }
+
+    #[test]
+    fn stdout_read_should_only_consume_a_complete_lsp_message_even_if_more_output_is_available() {
+        todo!();
+    }
+
+    #[test]
+    fn stdout_read_should_support_yielding_multiple_lsp_messages_if_all_received_at_once() {
+        todo!();
+    }
+
+    #[test]
+    fn stdout_read_should_convert_content_with_file_scheme_to_distant_scheme() {
+        todo!();
+    }
+
+    #[test]
+    fn stderr_read_should_yield_lsp_messages_as_strings() {
+        todo!();
+    }
+
+    #[test]
+    fn stderr_read_should_only_yield_complete_lsp_messages() {
+        // TODO: This tests that we can get an incomplete message from an inner read
+        //       and then get the rest of the message (maybe in parts) from a later read
+        //       to verify that this doesn't block async tasks from continuing
+        todo!();
+    }
+
+    #[test]
+    fn stderr_read_should_only_consume_a_complete_lsp_message_even_if_more_output_is_available() {
+        todo!();
+    }
+
+    #[test]
+    fn stderr_read_should_support_yielding_multiple_lsp_messages_if_all_received_at_once() {
+        todo!();
+    }
+
+    #[test]
+    fn stderr_read_should_convert_content_with_file_scheme_to_distant_scheme() {
+        todo!();
+    }
+}
