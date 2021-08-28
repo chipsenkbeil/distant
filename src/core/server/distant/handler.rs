@@ -457,7 +457,7 @@ async fn proc_run(
     // Spawn a task that sends stdin to the process
     let mut stdin = child.stdin.take().unwrap();
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1);
-    tokio::spawn(async move {
+    let stdin_task = tokio::spawn(async move {
         while let Some(line) = stdin_rx.recv().await {
             if let Err(x) = stdin.write_all(line.as_bytes()).await {
                 error!("Failed to send stdin to process {}: {}", id, x);
@@ -469,9 +469,13 @@ async fn proc_run(
     // Spawn a task that waits on the process to exit but can also
     // kill the process when triggered
     let (kill_tx, kill_rx) = oneshot::channel();
-    tokio::spawn(async move {
+    let wait_task = tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
+                if let Err(x) = stdin_task.await {
+                    error!("Join on stdin task failed: {}", x);
+                }
+
                 if let Err(x) = stderr_task.await {
                     error!("Join on stderr task failed: {}", x);
                 }
@@ -554,6 +558,7 @@ async fn proc_run(
         id,
         stdin_tx,
         kill_tx,
+        wait_task,
     };
     state.lock().await.push_process(conn_id, process);
 
@@ -1279,5 +1284,156 @@ mod tests {
 
         // Also verify that the directory was actually created
         assert!(path.exists(), "Directory not created");
+    }
+
+    #[tokio::test]
+    async fn remove_should_send_error_on_failure() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn remove_should_support_deleting_a_directory() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn remove_should_delete_nonempty_directory_if_force_is_true() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn remove_should_support_deleting_a_single_file() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn copy_should_send_error_on_failure() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn copy_should_support_copying_an_entire_directory() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn copy_should_support_copying_a_single_file() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn rename_should_send_error_on_failure() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn rename_should_support_renaming_an_entire_directory() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn rename_should_support_renaming_a_single_file() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn exists_should_send_error_on_failure() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn exists_should_send_true_if_path_exists() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn exists_should_send_false_if_path_does_not_exist() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn metadata_should_send_error_on_failure() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn metadata_should_send_back_metadata_on_file_if_exists() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn metadata_should_send_back_metadata_on_dir_if_exists() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn metadata_should_include_canonicalized_path_if_flag_specified() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_run_should_send_error_on_failure() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_run_should_send_back_proc_start_on_success() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_run_should_send_back_stdout_periodically_when_available() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_run_should_send_back_stderr_periodically_when_available() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_run_should_send_back_done_when_proc_finishes() {
+        // Make sure to verify that process also removed from state
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_run_should_send_back_done_when_killed() {
+        // Make sure to verify that process also removed from state
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_kill_should_send_error_on_failure() {
+        // Can verify that if the process is not running, will fail
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_kill_should_send_ok_on_success() {
+        // Verify that we trigger sending done
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_stdin_should_send_error_on_failure() {
+        // Can verify that if the process is not running, will fail
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_stdin_should_send_ok_on_success() {
+        // Verify that we trigger sending stdin to process
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn proc_list_should_send_proc_entry_list() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn system_info_should_send_system_info_based_on_binary() {
+        todo!();
     }
 }

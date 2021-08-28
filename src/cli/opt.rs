@@ -95,6 +95,9 @@ pub enum Subcommand {
 
     /// Begins listening for incoming requests
     Listen(ListenSubcommand),
+
+    /// Specialized treatment of running a remote LSP process
+    Lsp(LspSubcommand),
 }
 
 impl Subcommand {
@@ -104,6 +107,7 @@ impl Subcommand {
             Self::Action(cmd) => subcommand::action::run(cmd, opt)?,
             Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,
             Self::Listen(cmd) => subcommand::listen::run(cmd, opt)?,
+            Self::Lsp(cmd) => subcommand::lsp::run(cmd, opt)?,
         }
 
         Ok(())
@@ -498,4 +502,43 @@ impl ListenSubcommand {
             .copied()
             .map(Duration::from_secs_f32)
     }
+}
+
+/// Represents subcommand to execute some LSP server on a remote machine
+#[derive(Debug, StructOpt)]
+#[structopt(verbatim_doc_comment)]
+pub struct LspSubcommand {
+    /// Represents the format that results should be returned
+    ///
+    /// Currently, there are two possible formats:
+    ///
+    /// 1. "json": printing out JSON for external program usage
+    ///
+    /// 2. "shell": printing out human-readable results for interactive shell usage
+    #[structopt(
+        short,
+        long,
+        case_insensitive = true,
+        default_value = Format::Shell.into(),
+        possible_values = Format::VARIANTS
+    )]
+    pub format: Format,
+
+    /// Represents the medium for retrieving a session to use when running a remote LSP server
+    #[structopt(
+        long,
+        default_value = SessionInput::default().into(),
+        possible_values = SessionInput::VARIANTS
+    )]
+    pub session: SessionInput,
+
+    /// Contains additional information related to sessions
+    #[structopt(flatten)]
+    pub session_data: SessionOpt,
+
+    /// Command to run on the remote machine that represents an LSP server
+    pub cmd: String,
+
+    /// Additional arguments to supply to the remote machine
+    pub args: Vec<String>,
 }

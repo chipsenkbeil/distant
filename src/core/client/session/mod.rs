@@ -13,11 +13,10 @@ use std::{
 use tokio::{
     io,
     net::TcpStream,
-    sync::{broadcast, oneshot},
+    sync::{mpsc, oneshot},
     task::{JoinError, JoinHandle},
     time::Duration,
 };
-use tokio_stream::wrappers::BroadcastStream;
 
 mod info;
 pub use info::{SessionInfo, SessionInfoFile, SessionInfoParseError};
@@ -35,16 +34,11 @@ where
     /// Collection of callbacks to be invoked upon receiving a response to a request
     callbacks: Callbacks,
 
-    /// Callback to trigger when a response is received without an origin or with an origin
-    /// not found in the list of callbacks
-    broadcast: broadcast::Sender<Response>,
-
-    /// Represents an initial receiver for broadcasted responses that can capture responses
-    /// prior to a stream being established and consumed
-    init_broadcast_receiver: Option<broadcast::Receiver<Response>>,
-
     /// Contains the task that is running to receive responses from a server
     response_task: JoinHandle<()>,
+
+    /// Represents the receiver for broadcasted responses (ones with no callback)
+    pub broadcast: Option<mpsc::Receiver<Response>>,
 }
 
 impl Session<InmemoryStream> {
@@ -116,12 +110,10 @@ where
     pub async fn initialize(transport: Transport<T>) -> io::Result<Self> {
         let (mut t_read, t_write) = transport.into_split();
         let callbacks: Callbacks = Arc::new(Mutex::new(HashMap::new()));
-        let (broadcast, init_broadcast_receiver) =
-            broadcast::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
+        let (broadcast_tx, broadcast_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
 
         // Start a task that continually checks for responses and triggers callbacks
         let callbacks_2 = Arc::clone(&callbacks);
-        let broadcast_2 = broadcast.clone();
         let response_task = tokio::spawn(async move {
             loop {
                 match t_read.receive::<Response>().await {
@@ -142,7 +134,7 @@ where
                         // Otherwise, this goes into the junk draw of response handlers
                         } else {
                             trace!("Callback missing for response! Broadcasting!");
-                            if let Err(x) = broadcast_2.send(res) {
+                            if let Err(x) = broadcast_tx.send(res).await {
                                 error!("Failed to trigger broadcast: {}", x);
                             }
                         }
@@ -159,8 +151,7 @@ where
         Ok(Self {
             t_write,
             callbacks,
-            broadcast,
-            init_broadcast_receiver: Some(init_broadcast_receiver),
+            broadcast: Some(broadcast_rx),
             response_task,
         })
     }
@@ -219,21 +210,6 @@ where
             .await
             .map_err(TransportError::from)
             .and_then(convert::identity)
-    }
-
-    /// Clones a new instance of the broadcaster used by the session
-    pub fn to_response_broadcaster(&self) -> broadcast::Sender<Response> {
-        self.broadcast.clone()
-    }
-
-    /// Creates and returns a new stream of responses that are received that do not match the
-    /// response to a `send` request
-    pub fn to_response_broadcast_stream(&mut self) -> BroadcastStream<Response> {
-        BroadcastStream::new(
-            self.init_broadcast_receiver
-                .take()
-                .unwrap_or_else(|| self.broadcast.subscribe()),
-        )
     }
 }
 

@@ -11,7 +11,6 @@ use log::*;
 use std::{io, thread};
 use structopt::StructOpt;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 /// Represents a wrapper around a session that provides CLI functionality such as reading from
 /// stdin and piping results back out to stdout
@@ -29,9 +28,11 @@ impl CliSession {
         let (stdin_thread, stdin_rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
 
         let (exit_tx, exit_rx) = mpsc::channel(1);
-        let stream = session.to_response_broadcast_stream();
+        let broadcast = session.broadcast.take().unwrap();
         let res_task =
-            tokio::spawn(async move { process_incoming_responses(stream, format, exit_rx).await });
+            tokio::spawn(
+                async move { process_incoming_responses(broadcast, format, exit_rx).await },
+            );
 
         let map_line = move |line: &str| match format {
             Format::Json => serde_json::from_str(&line)
@@ -76,16 +77,15 @@ impl CliSession {
 /// Helper function that loops, processing incoming responses not tied to a request to be sent out
 /// over stdout/stderr
 async fn process_incoming_responses(
-    mut stream: BroadcastStream<Response>,
+    mut broadcast: mpsc::Receiver<Response>,
     format: Format,
     mut exit: mpsc::Receiver<()>,
 ) -> io::Result<()> {
     loop {
         tokio::select! {
-            res = stream.next() => {
+            res = broadcast.recv() => {
                 match res {
-                    Some(Ok(res)) => ResponseOut::new(format, res)?.print(),
-                    Some(Err(x)) => return Err(io::Error::new(io::ErrorKind::BrokenPipe, x)),
+                    Some(res) => ResponseOut::new(format, res)?.print(),
                     None => return Ok(()),
                 }
             }

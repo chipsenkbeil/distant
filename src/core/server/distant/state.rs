@@ -1,6 +1,14 @@
 use log::*;
-use std::collections::HashMap;
-use tokio::sync::{mpsc, oneshot};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::{JoinError, JoinHandle},
+};
 
 /// Holds state related to multiple clients managed by a server
 #[derive(Default)]
@@ -62,4 +70,22 @@ pub struct Process {
 
     /// Transport channel to report that the process should be killed
     pub kill_tx: oneshot::Sender<()>,
+
+    /// Task used to wait on the process to complete or be killed
+    pub wait_task: JoinHandle<()>,
+}
+
+impl Process {
+    pub async fn kill_and_wait(self) -> Result<(), JoinError> {
+        let _ = self.kill_tx.send(());
+        self.wait_task.await
+    }
+}
+
+impl Future for Process {
+    type Output = Result<(), JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.wait_task).poll(cx)
+    }
 }

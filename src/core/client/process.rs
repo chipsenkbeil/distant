@@ -10,7 +10,6 @@ use tokio::{
     sync::mpsc,
     task::{JoinError, JoinHandle},
 };
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 #[derive(Debug, Display, Error, From)]
 pub enum RemoteProcessError {
@@ -19,10 +18,6 @@ pub enum RemoteProcessError {
 
     /// When attempting to relay stdout/stderr over channels, but the channels fail
     ChannelDead,
-
-    /// When process is unable to read stdout/stderr from the server
-    /// fast enough, resulting in dropped data
-    Overloaded,
 
     /// When the communication over the wire has issues
     TransportError(TransportError),
@@ -97,9 +92,9 @@ impl RemoteProcess {
 
         // Now we spawn a task to handle future responses that are async
         // such as ProcStdout, ProcStderr, and ProcDone
-        let stream = session.to_response_broadcast_stream();
+        let broadcast = session.broadcast.take().unwrap();
         let res_task = tokio::spawn(async move {
-            process_incoming_responses(id, stream, stdout_tx, stderr_tx).await
+            process_incoming_responses(id, broadcast, stdout_tx, stderr_tx).await
         });
 
         // Spawn a task that takes stdin from our channel and forwards it to the remote process
@@ -234,53 +229,45 @@ where
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
 async fn process_incoming_responses(
     proc_id: usize,
-    mut stream: BroadcastStream<Response>,
+    mut broadcast: mpsc::Receiver<Response>,
     stdout_tx: mpsc::Sender<String>,
     stderr_tx: mpsc::Sender<String>,
 ) -> Result<(bool, Option<i32>), RemoteProcessError> {
     let mut result = Err(RemoteProcessError::UnexpectedEof);
 
-    while let Some(res) = stream.next().await {
-        match res {
-            Ok(res) => {
-                // Check if any of the payload data is the termination
-                let exit_status = res.payload.iter().find_map(|data| match data {
-                    ResponseData::ProcDone { id, success, code } if *id == proc_id => {
-                        Some((*success, *code))
-                    }
-                    _ => None,
-                });
+    while let Some(res) = broadcast.recv().await {
+        // Check if any of the payload data is the termination
+        let exit_status = res.payload.iter().find_map(|data| match data {
+            ResponseData::ProcDone { id, success, code } if *id == proc_id => {
+                Some((*success, *code))
+            }
+            _ => None,
+        });
 
-                // Next, check for stdout/stderr and send them along our channels
-                // TODO: What should we do about unexpected data? For now, just ignore
-                for data in res.payload {
-                    match data {
-                        ResponseData::ProcStdout { id, data } if id == proc_id => {
-                            if let Err(_) = stdout_tx.send(data).await {
-                                result = Err(RemoteProcessError::ChannelDead);
-                                break;
-                            }
-                        }
-                        ResponseData::ProcStderr { id, data } if id == proc_id => {
-                            if let Err(_) = stderr_tx.send(data).await {
-                                result = Err(RemoteProcessError::ChannelDead);
-                                break;
-                            }
-                        }
-                        _ => {}
+        // Next, check for stdout/stderr and send them along our channels
+        // TODO: What should we do about unexpected data? For now, just ignore
+        for data in res.payload {
+            match data {
+                ResponseData::ProcStdout { id, data } if id == proc_id => {
+                    if let Err(_) = stdout_tx.send(data).await {
+                        result = Err(RemoteProcessError::ChannelDead);
+                        break;
                     }
                 }
-
-                // If we got a termination, then exit accordingly
-                if let Some((success, code)) = exit_status {
-                    result = Ok((success, code));
-                    break;
+                ResponseData::ProcStderr { id, data } if id == proc_id => {
+                    if let Err(_) = stderr_tx.send(data).await {
+                        result = Err(RemoteProcessError::ChannelDead);
+                        break;
+                    }
                 }
+                _ => {}
             }
-            Err(_) => {
-                result = Err(RemoteProcessError::Overloaded);
-                break;
-            }
+        }
+
+        // If we got a termination, then exit accordingly
+        if let Some((success, code)) = exit_status {
+            result = Ok((success, code));
+            break;
         }
     }
 

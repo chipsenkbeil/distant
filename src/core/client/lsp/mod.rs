@@ -41,6 +41,11 @@ impl RemoteLspProcess {
             stderr,
         })
     }
+
+    /// Waits for the process to terminate, returning the success status and an optional exit code
+    pub async fn wait(self) -> Result<(bool, Option<i32>), RemoteProcessError> {
+        self.inner.wait().await
+    }
 }
 
 impl Deref for RemoteLspProcess {

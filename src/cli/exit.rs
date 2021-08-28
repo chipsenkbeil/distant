@@ -88,7 +88,6 @@ impl ExitCodeError for RemoteProcessError {
         match self {
             Self::BadResponse => ExitCode::DataErr,
             Self::ChannelDead => ExitCode::Unavailable,
-            Self::Overloaded => ExitCode::Software,
             Self::TransportError(x) => x.to_exit_code(),
             Self::UnexpectedEof => ExitCode::IoError,
             Self::WaitFailed(_) => ExitCode::Software,

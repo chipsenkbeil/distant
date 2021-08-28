@@ -46,3 +46,26 @@ impl Listener for tokio::net::UnixListener {
         Box::pin(accept(self))
     }
 }
+
+#[cfg(test)]
+impl<T: DataStream + Send + Sync> Listener for tokio::sync::Mutex<tokio::sync::mpsc::Receiver<T>> {
+    type Conn = T;
+
+    fn accept<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<Self::Conn>> + Send + 'a>>
+    where
+        Self: Sync + 'a,
+    {
+        async fn accept<T>(
+            _self: &tokio::sync::Mutex<tokio::sync::mpsc::Receiver<T>>,
+        ) -> io::Result<T> {
+            _self
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+
+        Box::pin(accept(self))
+    }
+}

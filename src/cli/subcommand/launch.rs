@@ -157,7 +157,7 @@ async fn socket_loop(
     debug!("Binding to unix socket: {:?}", socket_path.as_ref());
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
-    let server = RelayServer::initialize(session, listener, shutdown_after).await?;
+    let server = RelayServer::initialize(session, listener, shutdown_after)?;
     server
         .wait()
         .await
