@@ -231,7 +231,6 @@ dependencies = [
  "strum",
  "tempfile",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "walkdir",
  "whoami",
@@ -1129,18 +1128,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b2f3f698253f03119ac0102beaa64f67a67e08074d03a22d18784104543727f"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]

@@ -2,6 +2,7 @@ use crate::core::{constants::SALT_LEN, net::SecretKey};
 use codec::DistantCodec;
 use derive_more::{Display, Error, From};
 use futures::SinkExt;
+use futures::StreamExt;
 use k256::{ecdh::EphemeralSecret, EncodedPoint, PublicKey};
 use log::*;
 use orion::{
@@ -14,7 +15,6 @@ use orion::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::{marker::Unpin, sync::Arc};
 use tokio::io::{self, AsyncRead, AsyncWrite};
-use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, FramedRead, FramedWrite};
 
 mod codec;
