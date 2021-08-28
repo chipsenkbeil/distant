@@ -11,7 +11,6 @@ use crate::core::{
         PortRange,
     },
 };
-use futures::future::OptionFuture;
 use log::*;
 use std::{net::IpAddr, sync::Arc};
 use tokio::{
@@ -91,7 +90,7 @@ async fn connection_loop(
     state: Arc<Mutex<State>>,
     auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
-    shutdown: OptionFuture<ShutdownTask>,
+    shutdown: Option<ShutdownTask>,
     max_msg_capacity: usize,
 ) {
     let inner = async move {
@@ -121,11 +120,14 @@ async fn connection_loop(
         }
     };
 
-    tokio::select! {
-        _ = inner => {}
-        _ = shutdown => {
-            warn!("Reached shutdown timeout, so terminating");
-        }
+    match shutdown {
+        Some(shutdown) => tokio::select! {
+            _ = inner => {}
+            _ = shutdown => {
+                warn!("Reached shutdown timeout, so terminating");
+            }
+        },
+        None => inner.await,
     }
 }
 

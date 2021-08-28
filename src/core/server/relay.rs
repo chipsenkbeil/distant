@@ -110,11 +110,14 @@ impl RelayServer {
                 }
             };
 
-            tokio::select! {
-                _ = inner => {}
-                _ = shutdown => {
-                    warn!("Reached shutdown timeout, so terminating");
-                }
+            match shutdown {
+                Some(shutdown) => tokio::select! {
+                    _ = inner => {}
+                    _ = shutdown => {
+                        warn!("Reached shutdown timeout, so terminating");
+                    }
+                },
+                None => inner.await,
             }
         });
 

@@ -1,4 +1,3 @@
-use futures::future::OptionFuture;
 use log::*;
 use std::{
     future::Future,
@@ -29,19 +28,17 @@ impl Future for ShutdownTask {
 
 impl ShutdownTask {
     /// Given an optional timeout, will either create the shutdown task or not,
-    /// returning an optional future for the completion of the shutdown task
-    /// alongside an optional connection tracker
+    /// returning an optional shutdown task alongside an optional connection tracker
     pub fn maybe_initialize(
         duration: Option<Duration>,
-    ) -> (OptionFuture<ShutdownTask>, Option<Arc<Mutex<ConnTracker>>>) {
+    ) -> (Option<ShutdownTask>, Option<Arc<Mutex<ConnTracker>>>) {
         match duration {
             Some(duration) => {
                 let task = Self::initialize(duration);
                 let tracker = task.tracker();
-                let task: OptionFuture<_> = Some(task).into();
-                (task, Some(tracker))
+                (Some(task), Some(tracker))
             }
-            None => (None.into(), None),
+            None => (None, None),
         }
     }
 
