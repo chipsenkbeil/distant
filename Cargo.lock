@@ -213,10 +213,27 @@ name = "distant"
 version = "0.13.0"
 dependencies = [
  "assert_cmd",
- "bytes",
  "derive_more",
+ "distant-core",
  "flexi_logger",
  "fork",
+ "lazy_static",
+ "log",
+ "rand",
+ "serde_json",
+ "structopt",
+ "strum",
+ "tempfile",
+ "tokio",
+ "whoami",
+]
+
+[[package]]
+name = "distant-core"
+version = "0.13.0"
+dependencies = [
+ "bytes",
+ "derive_more",
  "futures",
  "hex",
  "k256",
@@ -233,7 +250,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "walkdir",
- "whoami",
 ]
 
 [[package]]

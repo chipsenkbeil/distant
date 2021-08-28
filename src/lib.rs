@@ -1,12 +1,19 @@
-mod cli;
-mod core;
+mod buf;
+mod constants;
+mod exit;
+mod link;
+mod opt;
+mod output;
+mod session;
+mod stdin;
+mod subcommand;
+mod utils;
 
-pub use self::core::{client::*, data, net, server::*};
 use log::error;
 
 /// Main entrypoint into the program
 pub fn run() {
-    let opt = cli::Opt::load();
+    let opt = opt::Opt::load();
     let logger = init_logging(&opt.common);
     if let Err(x) = opt.subcommand.run(opt.common) {
         error!("Exiting due to error: {}", x);
@@ -17,7 +24,7 @@ pub fn run() {
     }
 }
 
-fn init_logging(opt: &cli::CommonOpt) -> flexi_logger::LoggerHandle {
+fn init_logging(opt: &opt::CommonOpt) -> flexi_logger::LoggerHandle {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
     let module = "distant";
 
