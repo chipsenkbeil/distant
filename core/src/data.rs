@@ -3,6 +3,16 @@ use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
 use strum::AsRefStr;
 
+/// Type alias for a vec of bytes
+///
+/// NOTE: This only exists to support properly parsing a Vec<u8> from an entire string
+///       with structopt rather than trying to parse a string as a singular u8
+pub type ByteVec = Vec<u8>;
+
+fn parse_byte_vec(src: &str) -> ByteVec {
+    src.as_bytes().to_vec()
+}
+
 /// Represents the request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -70,7 +80,8 @@ pub enum RequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        data: Vec<u8>,
+        #[cfg_attr(feature = "structopt", structopt(parse(from_str = parse_byte_vec)))]
+        data: ByteVec,
     },
 
     /// Writes a file using text instead of bytes, creating it if it does not exist,
@@ -89,7 +100,8 @@ pub enum RequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        data: Vec<u8>,
+        #[cfg_attr(feature = "structopt", structopt(parse(from_str = parse_byte_vec)))]
+        data: ByteVec,
     },
 
     /// Appends text to a file, creating it if it does not exist, on the remote machine

@@ -11,7 +11,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bytes = "1.0.1"
+bytes = "1.1.0"
 derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error", "is_variant"] }
 futures = "0.3.16"
 hex = "0.4.3"

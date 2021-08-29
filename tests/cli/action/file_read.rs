@@ -1,10 +1,13 @@
-use crate::cli::{fixtures::*, utils::FAILURE_LINE};
+use crate::cli::{
+    fixtures::*,
+    utils::{random_tenant, FAILURE_LINE},
+};
 use assert_cmd::Command;
 use assert_fs::prelude::*;
 use distant::ExitCode;
 use distant_core::{
     data::{Error, ErrorKind},
-    Response, ResponseData,
+    Request, RequestData, Response, ResponseData,
 };
 use rstest::*;
 
@@ -35,10 +38,19 @@ fn should_support_json_output(mut action_cmd: Command) {
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
 
-    // distant action --format json file-read {path}
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::FileRead {
+            path: file.to_path_buf(),
+        }],
+    };
+
+    // distant action --format json --interactive
     let cmd = action_cmd
         .args(&["--format", "json"])
-        .args(&["file-read", file.to_str().unwrap()])
+        .arg("--interactive")
+        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
         .assert()
         .success()
         .stderr("");
@@ -71,12 +83,21 @@ fn should_support_json_output_for_error(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
 
-    // distant action --format json file-read {path}
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::FileRead {
+            path: file.to_path_buf(),
+        }],
+    };
+
+    // distant action --format json --interactive
     let cmd = action_cmd
         .args(&["--format", "json"])
-        .args(&["file-read", file.to_str().unwrap()])
+        .arg("--interactive")
+        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
         .assert()
-        .code(ExitCode::Software.to_i32())
+        .success()
         .stderr("");
 
     let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
