@@ -265,6 +265,10 @@ async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, ServerError>
 async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
     let src_metadata = tokio::fs::metadata(src.as_path()).await?;
     if src_metadata.is_dir() {
+        // Create the destination directory first, regardless of if anything
+        // is in the source directory
+        tokio::fs::create_dir_all(dst.as_path()).await?;
+
         for entry in WalkDir::new(src.as_path())
             .min_depth(1)
             .follow_links(false)
@@ -1313,6 +1317,16 @@ mod tests {
 
     #[tokio::test]
     async fn copy_should_support_copying_an_entire_directory() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn copy_should_support_copying_an_empty_directory() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn copy_should_support_copying_a_directory_that_only_contains_directories() {
         todo!();
     }
 

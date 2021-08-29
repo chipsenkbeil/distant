@@ -33,6 +33,20 @@ fn should_print_out_file_contents(mut action_cmd: Command) {
 }
 
 #[rstest]
+fn yield_an_error_when_fails(mut action_cmd: Command) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("missing-file");
+
+    // distant action file-read {path}
+    action_cmd
+        .args(&["file-read", file.to_str().unwrap()])
+        .assert()
+        .code(ExitCode::Software.to_i32())
+        .stdout("")
+        .stderr(FAILURE_LINE.clone());
+}
+
+#[rstest]
 fn should_support_json_output(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -62,20 +76,6 @@ fn should_support_json_output(mut action_cmd: Command) {
             data: FILE_CONTENTS.as_bytes().to_vec()
         }
     );
-}
-
-#[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("missing-file");
-
-    // distant action file-read {path}
-    action_cmd
-        .args(&["file-read", file.to_str().unwrap()])
-        .assert()
-        .code(ExitCode::Software.to_i32())
-        .stdout("")
-        .stderr(FAILURE_LINE.clone());
 }
 
 #[rstest]

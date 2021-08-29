@@ -46,6 +46,28 @@ fn should_report_ok_when_done(mut action_cmd: Command) {
 }
 
 #[rstest]
+fn yield_an_error_when_fails(mut action_cmd: Command) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("missing-dir").child("missing-file");
+
+    // distant action file-append-text {path} -- {contents}
+    action_cmd
+        .args(&[
+            "file-append-text",
+            file.to_str().unwrap(),
+            "--",
+            APPENDED_FILE_CONTENTS,
+        ])
+        .assert()
+        .code(ExitCode::Software.to_i32())
+        .stdout("")
+        .stderr(FAILURE_LINE.clone());
+
+    // Because we're talking to a local server, we can verify locally
+    file.assert(predicates::path::missing());
+}
+
+#[rstest]
 fn should_support_json_output(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -78,28 +100,6 @@ fn should_support_json_output(mut action_cmd: Command) {
 
     // Because we're talking to a local server, we can verify locally
     file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
-}
-
-#[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("missing-dir").child("missing-file");
-
-    // distant action file-append-text {path} -- {contents}
-    action_cmd
-        .args(&[
-            "file-append-text",
-            file.to_str().unwrap(),
-            "--",
-            APPENDED_FILE_CONTENTS,
-        ])
-        .assert()
-        .code(ExitCode::Software.to_i32())
-        .stdout("")
-        .stderr(FAILURE_LINE.clone());
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(predicates::path::missing());
 }
 
 #[rstest]
