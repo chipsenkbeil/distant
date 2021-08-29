@@ -7,14 +7,12 @@ use distant_core::{
 use rstest::*;
 
 #[rstest]
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn should_print_out_file_contents(#[future] ctx: DistantServerCtx) {
+fn should_print_out_file_contents(ctx: DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some\ntext\ncontent").unwrap();
 
-    ctx.await
-        .new_cmd("action")
+    ctx.new_cmd("action")
         .args(&["file-read", file.to_str().unwrap()])
         .assert()
         .success()
@@ -23,14 +21,12 @@ async fn should_print_out_file_contents(#[future] ctx: DistantServerCtx) {
 }
 
 #[rstest]
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn should_support_json_output(#[future] ctx: DistantServerCtx) {
+fn should_support_json_output(ctx: DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some\ntext\ncontent").unwrap();
 
     let cmd = ctx
-        .await
         .new_cmd("action")
         .args(&["--format", "json"])
         .args(&["file-read", file.to_str().unwrap()])
@@ -48,13 +44,11 @@ async fn should_support_json_output(#[future] ctx: DistantServerCtx) {
 }
 
 #[rstest]
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn yield_an_error_when_fails(#[future] ctx: DistantServerCtx) {
+fn yield_an_error_when_fails(ctx: DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
 
     let cmd = ctx
-        .await
         .new_cmd("action")
         .args(&["--format", "json"])
         .args(&["file-read", file.to_str().unwrap()])
