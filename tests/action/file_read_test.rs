@@ -7,11 +7,12 @@ use distant_core::{
 use rstest::*;
 
 #[rstest]
-fn should_print_out_file_contents(ctx: DistantServerCtx) {
+fn should_print_out_file_contents(ctx: &'_ DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some\ntext\ncontent").unwrap();
 
+    // distant action file-read {path}
     ctx.new_cmd("action")
         .args(&["file-read", file.to_str().unwrap()])
         .assert()
@@ -21,11 +22,12 @@ fn should_print_out_file_contents(ctx: DistantServerCtx) {
 }
 
 #[rstest]
-fn should_support_json_output(ctx: DistantServerCtx) {
+fn should_support_json_output(ctx: &'_ DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some\ntext\ncontent").unwrap();
 
+    // distant action --format json file-read {path}
     let cmd = ctx
         .new_cmd("action")
         .args(&["--format", "json"])
@@ -44,10 +46,11 @@ fn should_support_json_output(ctx: DistantServerCtx) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(ctx: DistantServerCtx) {
+fn yield_an_error_when_fails(ctx: &'_ DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
 
+    // distant action --format json file-read {path}
     let cmd = ctx
         .new_cmd("action")
         .args(&["--format", "json"])
