@@ -1,4 +1,4 @@
-use crate::{fixtures::*, utils::FAILURE_LINE};
+use crate::cli::{fixtures::*, utils::FAILURE_LINE};
 use assert_cmd::Command;
 use assert_fs::prelude::*;
 use distant::ExitCode;
@@ -8,18 +8,24 @@ use distant_core::{
 };
 use rstest::*;
 
+const FILE_CONTENTS: &str = r#"
+some text
+on multiple lines
+that is a file's contents
+"#;
+
 #[rstest]
 fn should_print_out_file_contents(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
-    file.write_str("some\ntext\ncontent").unwrap();
+    file.write_str(FILE_CONTENTS).unwrap();
 
     // distant action file-read {path}
     action_cmd
         .args(&["file-read", file.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("some\ntext\ncontent\n")
+        .stdout(format!("{}\n", FILE_CONTENTS))
         .stderr("");
 }
 
@@ -27,7 +33,7 @@ fn should_print_out_file_contents(mut action_cmd: Command) {
 fn should_support_json_output(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
-    file.write_str("some\ntext\ncontent").unwrap();
+    file.write_str(FILE_CONTENTS).unwrap();
 
     // distant action --format json file-read {path}
     let cmd = action_cmd
@@ -41,7 +47,7 @@ fn should_support_json_output(mut action_cmd: Command) {
     assert_eq!(
         res.payload[0],
         ResponseData::Blob {
-            data: b"some\ntext\ncontent".to_vec()
+            data: FILE_CONTENTS.as_bytes().to_vec()
         }
     );
 }
