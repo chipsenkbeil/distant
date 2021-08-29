@@ -19,7 +19,8 @@ pub enum ExitCode {
     /// EX_UNAVAILABLE (69) - being used when IO error encountered where connection is problem
     Unavailable,
 
-    /// EX_SOFTWARE (70) - being used for internal errors that can occur like joining a task
+    /// EX_SOFTWARE (70) - being used for when an action fails as well as for internal errors that
+    /// can occur like joining a task
     Software,
 
     /// EX_OSERR (71) - being used when fork failed
@@ -38,24 +39,44 @@ pub enum ExitCode {
     Custom(i32),
 }
 
+impl ExitCode {
+    /// Convert into numeric exit code
+    pub fn to_i32(&self) -> i32 {
+        match *self {
+            Self::Usage => 64,
+            Self::DataErr => 65,
+            Self::NoInput => 66,
+            Self::NoHost => 68,
+            Self::Unavailable => 69,
+            Self::Software => 70,
+            Self::OsErr => 71,
+            Self::IoError => 74,
+            Self::TempFail => 75,
+            Self::Protocol => 76,
+            Self::Custom(x) => x,
+        }
+    }
+}
+
+impl From<ExitCode> for i32 {
+    fn from(code: ExitCode) -> Self {
+        code.to_i32()
+    }
+}
+
 /// Represents an error that can be converted into an exit code
 pub trait ExitCodeError: std::error::Error {
     fn to_exit_code(&self) -> ExitCode;
 
+    /// Indicates if the error message associated with this exit code error
+    /// should be printed, or if this is just used to reflect the exit code
+    /// when the process exits
+    fn is_silent(&self) -> bool {
+        false
+    }
+
     fn to_i32(&self) -> i32 {
-        match self.to_exit_code() {
-            ExitCode::Usage => 64,
-            ExitCode::DataErr => 65,
-            ExitCode::NoInput => 66,
-            ExitCode::NoHost => 68,
-            ExitCode::Unavailable => 69,
-            ExitCode::Software => 70,
-            ExitCode::OsErr => 71,
-            ExitCode::IoError => 74,
-            ExitCode::TempFail => 75,
-            ExitCode::Protocol => 76,
-            ExitCode::Custom(x) => x,
-        }
+        self.to_exit_code().to_i32()
     }
 }
 

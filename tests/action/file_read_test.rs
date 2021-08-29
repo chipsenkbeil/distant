@@ -1,5 +1,7 @@
-use crate::fixtures::*;
+use crate::{fixtures::*, utils::FAILURE_LINE};
+use assert_cmd::Command;
 use assert_fs::prelude::*;
+use distant::ExitCode;
 use distant_core::{
     data::{Error, ErrorKind},
     Response, ResponseData,
@@ -7,13 +9,13 @@ use distant_core::{
 use rstest::*;
 
 #[rstest]
-fn should_print_out_file_contents(ctx: &'_ DistantServerCtx) {
+fn should_print_out_file_contents(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some\ntext\ncontent").unwrap();
 
     // distant action file-read {path}
-    ctx.new_cmd("action")
+    action_cmd
         .args(&["file-read", file.to_str().unwrap()])
         .assert()
         .success()
@@ -22,14 +24,13 @@ fn should_print_out_file_contents(ctx: &'_ DistantServerCtx) {
 }
 
 #[rstest]
-fn should_support_json_output(ctx: &'_ DistantServerCtx) {
+fn should_support_json_output(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some\ntext\ncontent").unwrap();
 
     // distant action --format json file-read {path}
-    let cmd = ctx
-        .new_cmd("action")
+    let cmd = action_cmd
         .args(&["--format", "json"])
         .args(&["file-read", file.to_str().unwrap()])
         .assert()
@@ -46,17 +47,30 @@ fn should_support_json_output(ctx: &'_ DistantServerCtx) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(ctx: &'_ DistantServerCtx) {
+fn yield_an_error_when_fails(mut action_cmd: Command) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("missing-file");
+
+    // distant action file-read {path}
+    action_cmd
+        .args(&["file-read", file.to_str().unwrap()])
+        .assert()
+        .code(ExitCode::Software.to_i32())
+        .stdout("")
+        .stderr(FAILURE_LINE.clone());
+}
+
+#[rstest]
+fn should_support_json_output_for_error(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
 
     // distant action --format json file-read {path}
-    let cmd = ctx
-        .new_cmd("action")
+    let cmd = action_cmd
         .args(&["--format", "json"])
         .args(&["file-read", file.to_str().unwrap()])
         .assert()
-        .success()
+        .code(ExitCode::Software.to_i32())
         .stderr("");
 
     let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();

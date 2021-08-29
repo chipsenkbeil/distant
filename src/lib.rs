@@ -11,12 +11,16 @@ mod utils;
 
 use log::error;
 
+pub use exit::{ExitCode, ExitCodeError};
+
 /// Main entrypoint into the program
 pub fn run() {
     let opt = opt::Opt::load();
     let logger = init_logging(&opt.common);
     if let Err(x) = opt.subcommand.run(opt.common) {
-        error!("Exiting due to error: {}", x);
+        if !x.is_silent() {
+            error!("Exiting due to error: {}", x);
+        }
         logger.flush();
         logger.shutdown();
 

@@ -20,16 +20,22 @@ pub enum Error {
     IoError(io::Error),
     #[display(fmt = "Non-interactive but no operation supplied")]
     MissingOperation,
+    OperationFailed,
     RemoteProcessError(RemoteProcessError),
     TransportError(TransportError),
 }
 
 impl ExitCodeError for Error {
+    fn is_silent(&self) -> bool {
+        matches!(self, Self::OperationFailed)
+    }
+
     fn to_exit_code(&self) -> ExitCode {
         match self {
             Self::BadProcessExit(x) => ExitCode::Custom(*x),
             Self::IoError(x) => x.to_exit_code(),
             Self::MissingOperation => ExitCode::Usage,
+            Self::OperationFailed => ExitCode::Software,
             Self::RemoteProcessError(x) => x.to_exit_code(),
             Self::TransportError(x) => x.to_exit_code(),
         }
@@ -155,8 +161,18 @@ where
             let res = session
                 .send_timeout(Request::new(utils::new_tenant(), vec![data]), timeout)
                 .await?;
+
+            // If we have an error as our payload, then we want to reflect that in our
+            // exit code
+            let is_err = res.payload.iter().any(|d| d.is_error());
+
             ResponseOut::new(cmd.format, res)?.print();
-            Ok(())
+
+            if is_err {
+                Err(Error::OperationFailed)
+            } else {
+                Ok(())
+            }
         }
 
         // Interactive mode will send an optional first request and then continue

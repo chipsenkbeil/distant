@@ -1,11 +1,8 @@
 use assert_cmd::Command;
 use distant_core::*;
 use rstest::*;
-use std::{ffi::OsStr, net::SocketAddr, thread, time::Duration};
+use std::{ffi::OsStr, net::SocketAddr, thread};
 use tokio::{runtime::Runtime, sync::mpsc};
-
-/// Timeout to wait for a command to complete
-const TIMEOUT_SECS: u64 = 10;
 
 /// Context for some listening distant server
 pub struct DistantServerCtx {
@@ -60,19 +57,11 @@ impl DistantServerCtx {
     /// configured with an environment that can talk to a remote distant server
     pub fn new_cmd(&self, subcommand: impl AsRef<OsStr>) -> Command {
         let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
-
-        println!("DISTANT_HOST = {}", self.addr.ip());
-        println!("DISTANT_PORT = {}", self.addr.port());
-        println!("DISTANT_AUTH_KEY = {}", self.auth_key);
-
-        // NOTE: We define a command that has a timeout of 10s because the handshake
-        //       involved in a non-release test can take several seconds
         cmd.arg(subcommand)
             .args(&["--session", "environment"])
             .env("DISTANT_HOST", self.addr.ip().to_string())
             .env("DISTANT_PORT", self.addr.port().to_string())
-            .env("DISTANT_AUTH_KEY", self.auth_key.as_str())
-            .timeout(Duration::from_secs(TIMEOUT_SECS));
+            .env("DISTANT_AUTH_KEY", self.auth_key.as_str());
         cmd
     }
 }
@@ -86,9 +75,19 @@ impl Drop for DistantServerCtx {
 
 #[fixture]
 pub fn ctx() -> &'static DistantServerCtx {
-    &DISTANT_SERVER_CTX
+    lazy_static::lazy_static! {
+        static ref CTX: DistantServerCtx = DistantServerCtx::initialize();
+    }
+
+    &CTX
 }
 
-lazy_static::lazy_static! {
-    static ref DISTANT_SERVER_CTX: DistantServerCtx = DistantServerCtx::initialize();
+#[fixture]
+pub fn action_cmd(ctx: &'_ DistantServerCtx) -> Command {
+    ctx.new_cmd("action")
+}
+
+#[fixture]
+pub fn lsp_cmd(ctx: &'_ DistantServerCtx) -> Command {
+    ctx.new_cmd("lsp")
 }
