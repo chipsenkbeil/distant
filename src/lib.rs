@@ -26,23 +26,28 @@ pub fn run() {
 
 fn init_logging(opt: &opt::CommonOpt) -> flexi_logger::LoggerHandle {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
-    let module = "distant";
+    let modules = &["distant", "distant_core"];
 
     // Disable logging for everything but our binary, which is based on verbosity
     let mut builder = LogSpecification::builder();
-    builder.default(LevelFilter::Off).module(
-        module,
-        match opt.verbose {
-            0 => LevelFilter::Warn,
-            1 => LevelFilter::Info,
-            2 => LevelFilter::Debug,
-            _ => LevelFilter::Trace,
-        },
-    );
+    builder.default(LevelFilter::Off);
 
-    // If quiet, we suppress all output
-    if opt.quiet {
-        builder.module(module, LevelFilter::Off);
+    // For each module, configure logging
+    for module in modules {
+        builder.module(
+            module,
+            match opt.verbose {
+                0 => LevelFilter::Warn,
+                1 => LevelFilter::Info,
+                2 => LevelFilter::Debug,
+                _ => LevelFilter::Trace,
+            },
+        );
+
+        // If quiet, we suppress all output
+        if opt.quiet {
+            builder.module(module, LevelFilter::Off);
+        }
     }
 
     // Create our logger, but don't initialize yet
