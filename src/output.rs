@@ -103,9 +103,9 @@ fn format_shell(data: ResponseData) -> ResponseOut {
         )),
         ResponseData::Exists(exists) => {
             if exists {
-                ResponseOut::StdoutLine("Does exist.".to_string())
+                ResponseOut::StdoutLine("true".to_string())
             } else {
-                ResponseOut::StdoutLine("Does not exist.".to_string())
+                ResponseOut::StdoutLine("false".to_string())
             }
         }
         ResponseData::Metadata {
