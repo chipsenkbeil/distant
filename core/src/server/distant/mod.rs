@@ -171,10 +171,15 @@ async fn on_new_conn<T>(
     auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     max_msg_capacity: usize,
-) -> io::Result<(JoinHandle<()>, JoinHandle<()>)>
+) -> io::Result<JoinHandle<()>>
 where
     T: DataStream,
 {
+    // Update our tracker to reflect the new connection
+    if let Some(ct) = tracker.as_ref() {
+        ct.lock().await.increment();
+    }
+
     // Establish a proper connection via a handshake,
     // discarding the connection otherwise
     let transport = Transport::from_handshake(conn, Some(auth_key)).await?;
@@ -185,26 +190,27 @@ where
     let (tx, rx) = mpsc::channel(max_msg_capacity);
 
     // Spawn a new task that loops to handle requests from the client
-    let req_task = tokio::spawn({
-        let f = request_loop(conn_id, Arc::clone(&state), t_read, tx);
-
-        let state = Arc::clone(&state);
-        async move {
-            if let Some(ct) = tracker.as_ref() {
-                ct.lock().await.increment();
-            }
-            f.await;
-            state.lock().await.cleanup_connection(conn_id).await;
-            if let Some(ct) = tracker.as_ref() {
-                ct.lock().await.decrement();
-            }
-        }
+    let state_2 = Arc::clone(&state);
+    let req_task = tokio::spawn(async move {
+        request_loop(conn_id, state_2, t_read, tx).await;
     });
 
     // Spawn a new task that loops to handle responses to the client
     let res_task = tokio::spawn(async move { response_loop(conn_id, t_write, rx).await });
 
-    Ok((req_task, res_task))
+    // Spawn cleanup task that waits on our req & res tasks to complete
+    let cleanup_task = tokio::spawn(async move {
+        // Wait for both receiving and sending tasks to complete before marking
+        // the connection as complete
+        let _ = tokio::join!(req_task, res_task);
+
+        state.lock().await.cleanup_connection(conn_id).await;
+        if let Some(ct) = tracker.as_ref() {
+            ct.lock().await.decrement();
+        }
+    });
+
+    Ok(cleanup_task)
 }
 
 /// Repeatedly reads in new requests, processes them, and sends their responses to the
@@ -234,7 +240,7 @@ async fn request_loop<T>(
                 }
             }
             Ok(None) => {
-                info!("<Conn @ {}> Closed connection", conn_id);
+                info!("<Conn @ {}> Input from connection closed", conn_id);
                 break;
             }
             Err(x) => {
@@ -243,6 +249,10 @@ async fn request_loop<T>(
             }
         }
     }
+
+    // Properly close off any associated process' stdin given that we can't get new
+    // requests to send more stdin to them
+    state.lock().await.close_stdin_for_connection(conn_id);
 }
 
 /// Repeatedly sends responses out over the wire

@@ -30,6 +30,24 @@ impl State {
         self.processes.insert(process.id, process);
     }
 
+    /// Closes stdin for all processes associated with the connection
+    pub fn close_stdin_for_connection(&mut self, conn_id: usize) {
+        debug!("<Conn @ {:?}> Closing stdin to all processes", conn_id);
+        if let Some(ids) = self.client_processes.get(&conn_id) {
+            for id in ids {
+                if let Some(process) = self.processes.get_mut(&id) {
+                    trace!(
+                        "<Conn @ {:?}> Closing stdin for proc {}",
+                        conn_id,
+                        process.id
+                    );
+
+                    process.close_stdin();
+                }
+            }
+        }
+    }
+
     /// Cleans up state associated with a particular connection
     pub async fn cleanup_connection(&mut self, conn_id: usize) {
         debug!("<Conn @ {:?}> Cleaning up state", conn_id);

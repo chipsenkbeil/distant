@@ -154,6 +154,7 @@ struct Conn {
     id: usize,
     req_task: JoinHandle<()>,
     res_task: JoinHandle<()>,
+    cleanup_task: JoinHandle<()>,
     res_tx: mpsc::Sender<Response>,
     state: Arc<Mutex<ConnState>>,
 }
@@ -193,24 +194,35 @@ impl Conn {
         debug!("<Conn @ {}> Initializing internal state", id);
         let state = Arc::new(Mutex::new(ConnState::default()));
 
+        // Mark that we have a new connection
+        if let Some(ct) = ct.as_ref() {
+            ct.lock().await.increment();
+        }
+
         // Spawn task to continually receive responses from the session that
         // may or may not be relevant to the connection, which will filter
         // by tenant and then along any response that matches
         let (res_tx, res_rx) = mpsc::channel::<Response>(CLIENT_BROADCAST_CHANNEL_CAPACITY);
+        let (res_task_tx, res_task_rx) = oneshot::channel();
         let state_2 = Arc::clone(&state);
         let res_task = tokio::spawn(async move {
             handle_conn_outgoing(id, state_2, t_write, tenant_rx, res_rx).await;
+            let _ = res_task_tx.send(());
         });
 
         // Spawn task to continually read requests from connection and forward
         // them along to be sent via the session
         let req_tx = req_tx.clone();
+        let (req_task_tx, req_task_rx) = oneshot::channel();
         let state_2 = Arc::clone(&state);
         let req_task = tokio::spawn(async move {
-            if let Some(ct) = ct.as_ref() {
-                ct.lock().await.increment();
-            }
             handle_conn_incoming(id, state_2, t_read, tenant_tx, req_tx).await;
+            let _ = req_task_tx.send(());
+        });
+
+        let cleanup_task = tokio::spawn(async move {
+            let _ = tokio::join!(req_task_rx, res_task_rx);
+
             if let Some(ct) = ct.as_ref() {
                 ct.lock().await.decrement();
             }
@@ -221,6 +233,7 @@ impl Conn {
             id,
             req_task,
             res_task,
+            cleanup_task,
             res_tx,
             state,
         })
@@ -233,6 +246,8 @@ impl Conn {
 
     /// Aborts the connection from the server side
     pub fn abort(&self) {
+        // NOTE: We don't abort the cleanup task as that needs to actually happen
+        //       and will even if these tasks are aborted
         self.req_task.abort();
         self.res_task.abort();
     }

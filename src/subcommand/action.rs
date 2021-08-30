@@ -122,8 +122,6 @@ async fn start<T>(
 where
     T: DataStream + 'static,
 {
-    // TODO: Because lsp is being handled in a separate action, we should fail if we get
-    //       a session type of lsp for a regular action
     match (cmd.interactive, cmd.operation) {
         // ProcRun request is specially handled and we ignore interactive as
         // the stdin will be used for sending ProcStdin to remote process

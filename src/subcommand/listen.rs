@@ -53,7 +53,6 @@ pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> Result<(), Error> {
     let addr = cmd.host.to_ip_addr(cmd.use_ipv6)?;
-    let socket_addrs = cmd.port.make_socket_addrs(addr);
     let shutdown_after = cmd.to_shutdown_after_duration();
 
     // If specified, change the current working directory of this program
