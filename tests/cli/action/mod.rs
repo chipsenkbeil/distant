@@ -8,5 +8,6 @@ mod file_read;
 mod file_read_text;
 mod file_write;
 mod file_write_text;
+mod metadata;
 mod remove;
 mod rename;
