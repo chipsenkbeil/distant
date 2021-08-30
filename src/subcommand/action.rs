@@ -27,7 +27,10 @@ pub enum Error {
 
 impl ExitCodeError for Error {
     fn is_silent(&self) -> bool {
-        matches!(self, Self::OperationFailed)
+        match self {
+            Self::BadProcessExit(_) | Self::OperationFailed => true,
+            _ => false,
+        }
     }
 
     fn to_exit_code(&self) -> ExitCode {

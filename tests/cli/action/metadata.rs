@@ -24,7 +24,7 @@ fn should_output_metadata_for_file(mut action_cmd: Command) {
     let file = temp.child("file");
     file.write_str(FILE_CONTENTS).unwrap();
 
-    // distant action metdata {path}
+    // distant action metadata {path}
     action_cmd
         .args(&["metadata", file.to_str().unwrap()])
         .assert()
@@ -70,7 +70,7 @@ fn should_support_including_a_canonicalized_path(mut action_cmd: Command) {
     let file = temp.child("file");
     file.touch().unwrap();
 
-    // distant action metdata --canonicalize {path}
+    // distant action metadata --canonicalize {path}
     action_cmd
         .args(&["metadata", "--canonicalize", file.to_str().unwrap()])
         .assert()
