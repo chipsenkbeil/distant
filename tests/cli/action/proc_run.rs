@@ -81,9 +81,9 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
     action_cmd
         .args(&["proc-run", "--"])
         .arg(EXIT_CODE_SH.to_str().unwrap())
-        .arg("3")
+        .arg("99")
         .assert()
-        .code(3)
+        .code(99)
         .stdout("")
         .stderr("");
 }

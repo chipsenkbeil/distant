@@ -3,6 +3,9 @@ use distant_core::*;
 use rstest::*;
 use std::{ffi::OsStr, net::SocketAddr, thread};
 use tokio::{runtime::Runtime, sync::mpsc};
+use crate::cli::utils;
+
+const LOG_PATH: &'static str = "/tmp/distant.server.log";
 
 /// Context for some listening distant server
 pub struct DistantServerCtx {
@@ -26,6 +29,7 @@ impl DistantServerCtx {
         thread::spawn(move || match Runtime::new() {
             Ok(rt) => {
                 rt.block_on(async move {
+                    let logger = utils::init_logging(LOG_PATH);
                     let server = DistantServer::bind(ip_addr, "0".parse().unwrap(), None, 100)
                         .await
                         .unwrap();
@@ -36,6 +40,8 @@ impl DistantServerCtx {
                         .unwrap();
 
                     let _ = done_rx.recv().await;
+                    logger.flush();
+                    logger.shutdown();
                 });
             }
             Err(x) => {
@@ -59,6 +65,7 @@ impl DistantServerCtx {
         let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
         cmd.arg(subcommand)
             .args(&["--session", "environment"])
+            .args(&["-vvv", "--log-file", "/tmp/distant.client.log"])
             .env("DISTANT_HOST", self.addr.ip().to_string())
             .env("DISTANT_PORT", self.addr.port().to_string())
             .env("DISTANT_AUTH_KEY", self.auth_key.as_str());

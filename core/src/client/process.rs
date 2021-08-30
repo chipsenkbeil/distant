@@ -90,15 +90,19 @@ impl RemoteProcess {
         let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
         let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
 
+        // Used to terminate request task, either explicitly by the process or internally
+        // by the response task when it terminates
+        let (kill_tx, kill_rx) = mpsc::channel(1);
+
         // Now we spawn a task to handle future responses that are async
         // such as ProcStdout, ProcStderr, and ProcDone
+        let kill_tx_2 = kill_tx.clone();
         let broadcast = session.broadcast.take().unwrap();
         let res_task = tokio::spawn(async move {
-            process_incoming_responses(id, broadcast, stdout_tx, stderr_tx).await
+            process_incoming_responses(id, broadcast, stdout_tx, stderr_tx, kill_tx_2).await
         });
 
         // Spawn a task that takes stdin from our channel and forwards it to the remote process
-        let (kill_tx, kill_rx) = mpsc::channel(1);
         let req_task = tokio::spawn(async move {
             process_outgoing_requests(tenant, id, session, stdin_rx, kill_rx).await
         });
@@ -232,6 +236,7 @@ async fn process_incoming_responses(
     mut broadcast: mpsc::Receiver<Response>,
     stdout_tx: mpsc::Sender<String>,
     stderr_tx: mpsc::Sender<String>,
+    kill_tx: mpsc::Sender<()>,
 ) -> Result<(bool, Option<i32>), RemoteProcessError> {
     let mut result = Err(RemoteProcessError::UnexpectedEof);
 
@@ -267,6 +272,10 @@ async fn process_incoming_responses(
         // If we got a termination, then exit accordingly
         if let Some((success, code)) = exit_status {
             result = Ok((success, code));
+
+            // Flag that the other task should conclude
+            let _ = kill_tx.try_send(());
+
             break;
         }
     }

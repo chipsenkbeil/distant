@@ -476,9 +476,9 @@ async fn proc_run(
     let wait_task = tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
-                if let Err(x) = stdin_task.await {
-                    error!("Join on stdin task failed: {}", x);
-                }
+                // Force stdin task to abort if it hasn't exited as there is no
+                // point to sending any more stdin
+                stdin_task.abort();
 
                 if let Err(x) = stderr_task.await {
                     error!("Join on stderr task failed: {}", x);
@@ -527,6 +527,10 @@ async fn proc_run(
                     error!("Unable to kill process {}: {}", id, x);
                 }
 
+                // Force stdin task to abort if it hasn't exited as there is no
+                // point to sending any more stdin
+                stdin_task.abort();
+
                 if let Err(x) = stderr_task.await {
                     error!("Join on stderr task failed: {}", x);
                 }
@@ -560,7 +564,7 @@ async fn proc_run(
         cmd,
         args,
         id,
-        stdin_tx,
+        stdin_tx: Some(stdin_tx),
         kill_tx,
         wait_task,
     };
@@ -584,9 +588,12 @@ async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, ServerError
 
 async fn proc_stdin(state: HState, id: usize, data: String) -> Result<ResponseData, ServerError> {
     if let Some(process) = state.lock().await.processes.get(&id) {
-        process.stdin_tx.send(data).await.map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "Unable to send stdin to process")
-        })?;
+        if !process.send_stdin(data).await {
+            return Err(ServerError::IoError(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Unable to send stdin to process",
+            )));
+        }
     }
 
     Ok(ResponseData::Ok)

@@ -66,7 +66,7 @@ pub struct Process {
 
     /// Transport channel to send new input to the stdin of the process,
     /// one line at a time
-    pub stdin_tx: mpsc::Sender<String>,
+    pub stdin_tx: Option<mpsc::Sender<String>>,
 
     /// Transport channel to report that the process should be killed
     pub kill_tx: oneshot::Sender<()>,
@@ -76,6 +76,20 @@ pub struct Process {
 }
 
 impl Process {
+    pub async fn send_stdin(&self, input: impl Into<String>) -> bool {
+        if let Some(stdin) = self.stdin_tx.as_ref() {
+            if stdin.send(input.into()).await.is_ok() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn close_stdin(&mut self) {
+        self.stdin_tx.take();
+    }
+
     pub async fn kill_and_wait(self) -> Result<(), JoinError> {
         let _ = self.kill_tx.send(());
         self.wait_task.await

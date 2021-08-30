@@ -169,6 +169,8 @@ where
 
     /// Sends a request and waits for a response
     pub async fn send(&mut self, req: Request) -> Result<Response, TransportError> {
+        trace!("Sending request: {:?}", req);
+
         // First, add a callback that will trigger when we get the response for this request
         let (tx, rx) = oneshot::channel();
         self.callbacks.lock().unwrap().insert(req.id, tx);
@@ -197,6 +199,7 @@ where
     ///
     /// Any response that would be received gets sent over the broadcast channel instead
     pub async fn fire(&mut self, req: Request) -> Result<(), TransportError> {
+        trace!("Firing off request: {:?}", req);
         self.t_write.send(req).await
     }
 
