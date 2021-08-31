@@ -1002,6 +1002,7 @@ mod tests {
 
     // /root/
     // /root/file1
+    // /root/link1 -> /root/sub1/file2
     // /root/sub1/
     // /root/sub1/file2
     async fn setup_dir() -> assert_fs::TempDir {
@@ -1010,7 +1011,12 @@ mod tests {
 
         let sub1 = root_dir.child("sub1");
         sub1.create_dir_all().unwrap();
-        sub1.child("file2").touch().unwrap();
+
+        let file2 = sub1.child("file2");
+        file2.touch().unwrap();
+
+        let link1 = root_dir.child("link1");
+        link1.symlink_to_file(file2.path()).unwrap();
 
         root_dir
     }
@@ -1039,15 +1045,19 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
             ResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 2, "Wrong number of entries found");
+                assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
                 assert_eq!(entries[0].file_type, FileType::File);
                 assert_eq!(entries[0].path, Path::new("file1"));
                 assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::Dir);
-                assert_eq!(entries[1].path, Path::new("sub1"));
+                assert_eq!(entries[1].file_type, FileType::Symlink);
+                assert_eq!(entries[1].path, Path::new("link1"));
                 assert_eq!(entries[1].depth, 1);
+
+                assert_eq!(entries[2].file_type, FileType::Dir);
+                assert_eq!(entries[2].path, Path::new("sub1"));
+                assert_eq!(entries[2].depth, 1);
             }
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -1077,19 +1087,23 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
             ResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+                assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
                 assert_eq!(entries[0].file_type, FileType::File);
                 assert_eq!(entries[0].path, Path::new("file1"));
                 assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::Dir);
-                assert_eq!(entries[1].path, Path::new("sub1"));
+                assert_eq!(entries[1].file_type, FileType::Symlink);
+                assert_eq!(entries[1].path, Path::new("link1"));
                 assert_eq!(entries[1].depth, 1);
 
-                assert_eq!(entries[2].file_type, FileType::File);
-                assert_eq!(entries[2].path, Path::new("sub1").join("file2"));
-                assert_eq!(entries[2].depth, 2);
+                assert_eq!(entries[2].file_type, FileType::Dir);
+                assert_eq!(entries[2].path, Path::new("sub1"));
+                assert_eq!(entries[2].depth, 1);
+
+                assert_eq!(entries[3].file_type, FileType::File);
+                assert_eq!(entries[3].path, Path::new("sub1").join("file2"));
+                assert_eq!(entries[3].depth, 2);
             }
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -1119,7 +1133,7 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
             ResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+                assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
                 // NOTE: Root entry is always absolute, resolved path
                 assert_eq!(entries[0].file_type, FileType::Dir);
@@ -1130,9 +1144,13 @@ mod tests {
                 assert_eq!(entries[1].path, Path::new("file1"));
                 assert_eq!(entries[1].depth, 1);
 
-                assert_eq!(entries[2].file_type, FileType::Dir);
-                assert_eq!(entries[2].path, Path::new("sub1"));
+                assert_eq!(entries[2].file_type, FileType::Symlink);
+                assert_eq!(entries[2].path, Path::new("link1"));
                 assert_eq!(entries[2].depth, 1);
+
+                assert_eq!(entries[3].file_type, FileType::Dir);
+                assert_eq!(entries[3].path, Path::new("sub1"));
+                assert_eq!(entries[3].depth, 1);
             }
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -1162,25 +1180,66 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
             ResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 2, "Wrong number of entries found");
+                assert_eq!(entries.len(), 3, "Wrong number of entries found");
                 let root_path = root_dir.path().canonicalize().unwrap();
 
                 assert_eq!(entries[0].file_type, FileType::File);
                 assert_eq!(entries[0].path, root_path.join("file1"));
                 assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::Dir);
-                assert_eq!(entries[1].path, root_path.join("sub1"));
+                assert_eq!(entries[1].file_type, FileType::Symlink);
+                assert_eq!(entries[1].path, root_path.join("link1"));
                 assert_eq!(entries[1].depth, 1);
+
+                assert_eq!(entries[2].file_type, FileType::Dir);
+                assert_eq!(entries[2].path, root_path.join("sub1"));
+                assert_eq!(entries[2].depth, 1);
             }
             x => panic!("Unexpected response: {:?}", x),
         }
     }
 
     #[tokio::test]
-    #[ignore]
     async fn dir_read_should_support_returning_canonicalized_paths() {
-        todo!("Figure out best way to support symlink tests");
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Create directory with some nested items
+        let root_dir = setup_dir().await;
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::DirRead {
+                path: root_dir.path().to_path_buf(),
+                depth: 1,
+                absolute: false,
+                canonicalize: true,
+                include_root: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::DirEntries { entries, .. } => {
+                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+
+                assert_eq!(entries[0].file_type, FileType::File);
+                assert_eq!(entries[0].path, Path::new("file1"));
+                assert_eq!(entries[0].depth, 1);
+
+                // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
+                assert_eq!(entries[1].file_type, FileType::Symlink);
+                assert_eq!(entries[1].path, Path::new("sub1").join("file2"));
+                assert_eq!(entries[1].depth, 1);
+
+                assert_eq!(entries[2].file_type, FileType::Dir);
+                assert_eq!(entries[2].path, Path::new("sub1"));
+                assert_eq!(entries[2].depth, 1);
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
     }
 
     #[tokio::test]
