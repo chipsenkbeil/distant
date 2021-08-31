@@ -608,9 +608,8 @@ async fn system_info() -> Result<ResponseData, ServerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::io::Write;
-    use tempfile::{NamedTempFile, TempDir};
+    use assert_fs::prelude::*;
+    use predicates::prelude::*;
 
     fn setup(
         buffer: usize,
@@ -629,18 +628,12 @@ mod tests {
         )
     }
 
-    /// Create a temporary path that does not exist
-    fn temppath() -> PathBuf {
-        // Deleted when dropped
-        NamedTempFile::new().unwrap().into_temp_path().to_path_buf()
-    }
-
     #[tokio::test]
     async fn file_read_should_send_error_if_fails_to_read_file() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
-        // Create a file and then delete it, keeping just its path
-        let path = temppath();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let path = temp.child("missing-file").path().to_path_buf();
 
         let req = Request::new("test-tenant", vec![RequestData::FileRead { path }]);
 
@@ -659,9 +652,9 @@ mod tests {
     async fn file_read_should_send_blob_with_file_contents() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
-        // Create a temporary file and fill it with some contents
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"some file contents").unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+        file.write_str("some file contents").unwrap();
 
         let req = Request::new(
             "test-tenant",
@@ -684,8 +677,8 @@ mod tests {
     async fn file_read_text_should_send_error_if_fails_to_read_file() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
-        // Create a file and then delete it, keeping just its path
-        let path = temppath();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let path = temp.child("missing-file").path().to_path_buf();
 
         let req = Request::new(
             "test-tenant",
@@ -707,9 +700,9 @@ mod tests {
     async fn file_read_text_should_send_text_with_file_contents() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
-        // Create a temporary file and fill it with some contents
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"some file contents").unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+        file.write_str("some file contents").unwrap();
 
         let req = Request::new(
             "test-tenant",
@@ -734,12 +727,13 @@ mod tests {
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
-        let path = temppath().join("some_file");
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("dir").child("test-file");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::FileWrite {
-                path: path.clone(),
+                path: file.path().to_path_buf(),
                 data: b"some text".to_vec(),
             }],
         );
@@ -755,7 +749,7 @@ mod tests {
         );
 
         // Also verify that we didn't actually create the file
-        assert!(!path.exists(), "File created unexpectedly");
+        file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
@@ -764,12 +758,13 @@ mod tests {
 
         // Path should point to a file that does not exist, but all
         // other components leading up to it do
-        let path = temppath();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::FileWrite {
-                path: path.clone(),
+                path: file.path().to_path_buf(),
                 data: b"some text".to_vec(),
             }],
         );
@@ -786,8 +781,7 @@ mod tests {
 
         // Also verify that we actually did create the file
         // with the associated contents
-        assert!(path.exists(), "File not actually created");
-        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "some text");
+        file.assert("some text");
     }
 
     #[tokio::test]
@@ -796,12 +790,13 @@ mod tests {
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
-        let path = temppath().join("some_file");
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("dir").child("test-file");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::FileWriteText {
-                path: path.clone(),
+                path: file.path().to_path_buf(),
                 text: String::from("some text"),
             }],
         );
@@ -817,7 +812,7 @@ mod tests {
         );
 
         // Also verify that we didn't actually create the file
-        assert!(!path.exists(), "File created unexpectedly");
+        file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
@@ -826,12 +821,13 @@ mod tests {
 
         // Path should point to a file that does not exist, but all
         // other components leading up to it do
-        let path = temppath();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::FileWriteText {
-                path: path.clone(),
+                path: file.path().to_path_buf(),
                 text: String::from("some text"),
             }],
         );
@@ -848,8 +844,7 @@ mod tests {
 
         // Also verify that we actually did create the file
         // with the associated contents
-        assert!(path.exists(), "File not actually created");
-        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "some text");
+        file.assert("some text");
     }
 
     #[tokio::test]
@@ -858,12 +853,13 @@ mod tests {
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
-        let path = temppath().join("some_file");
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("dir").child("test-file");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::FileAppend {
-                path: path.to_path_buf(),
+                path: file.path().to_path_buf(),
                 data: b"some extra contents".to_vec(),
             }],
         );
@@ -879,7 +875,7 @@ mod tests {
         );
 
         // Also verify that we didn't actually create the file
-        assert!(!path.exists(), "File created unexpectedly");
+        file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
@@ -887,8 +883,9 @@ mod tests {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Create a temporary file and fill it with some contents
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"some file contents").unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+        file.write_str("some file contents").unwrap();
 
         let req = Request::new(
             "test-tenant",
@@ -909,10 +906,7 @@ mod tests {
         );
 
         // Also verify that we actually did append to the file
-        assert_eq!(
-            tokio::fs::read_to_string(file.path()).await.unwrap(),
-            "some file contentssome extra contents"
-        );
+        file.assert("some file contentssome extra contents");
     }
 
     #[tokio::test]
@@ -921,12 +915,13 @@ mod tests {
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
-        let path = temppath().join("some_file");
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("dir").child("test-file");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::FileAppendText {
-                path: path.to_path_buf(),
+                path: file.path().to_path_buf(),
                 text: String::from("some extra contents"),
             }],
         );
@@ -942,7 +937,7 @@ mod tests {
         );
 
         // Also verify that we didn't actually create the file
-        assert!(!path.exists(), "File created unexpectedly");
+        file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
@@ -950,8 +945,9 @@ mod tests {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Create a temporary file and fill it with some contents
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"some file contents").unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+        file.write_str("some file contents").unwrap();
 
         let req = Request::new(
             "test-tenant",
@@ -972,21 +968,20 @@ mod tests {
         );
 
         // Also verify that we actually did append to the file
-        assert_eq!(
-            tokio::fs::read_to_string(file.path()).await.unwrap(),
-            "some file contentssome extra contents"
-        );
+        file.assert("some file contentssome extra contents");
     }
 
     #[tokio::test]
     async fn dir_read_should_send_error_if_directory_does_not_exist() {
         let (conn_id, state, tx, mut rx) = setup(1);
-        let path = temppath();
+
+        let temp = assert_fs::TempDir::new().unwrap();
+        let dir = temp.child("test-dir");
 
         let req = Request::new(
             "test-tenant",
             vec![RequestData::DirRead {
-                path,
+                path: dir.path().to_path_buf(),
                 depth: 0,
                 absolute: false,
                 canonicalize: false,
@@ -1009,15 +1004,13 @@ mod tests {
     // /root/file1
     // /root/sub1/
     // /root/sub1/file2
-    async fn setup_dir() -> TempDir {
-        let root_dir = TempDir::new().unwrap();
-        let file1 = root_dir.path().join("file1");
-        let sub1 = root_dir.path().join("sub1");
-        let file2 = sub1.join("file2");
+    async fn setup_dir() -> assert_fs::TempDir {
+        let root_dir = assert_fs::TempDir::new().unwrap();
+        root_dir.child("file1").touch().unwrap();
 
-        tokio::fs::write(file1.as_path(), "").await.unwrap();
-        tokio::fs::create_dir(sub1.as_path()).await.unwrap();
-        tokio::fs::write(file2.as_path(), "").await.unwrap();
+        let sub1 = root_dir.child("sub1");
+        sub1.create_dir_all().unwrap();
+        sub1.child("file2").touch().unwrap();
 
         root_dir
     }
