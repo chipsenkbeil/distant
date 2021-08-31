@@ -135,7 +135,7 @@ impl ConnTracker {
 }
 
 #[cfg(test)]
-mod tsets {
+mod tests {
     use super::*;
     use std::thread;
 

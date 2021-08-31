@@ -12,8 +12,8 @@ use rstest::*;
 use std::path::PathBuf;
 
 lazy_static::lazy_static! {
-    static ref SCRIPT_DIR: PathBuf =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts").join("test");
+    static ref ROOT_DIR: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    static ref SCRIPT_DIR: PathBuf = ROOT_DIR.join("scripts").join("test");
 
     static ref ECHO_ARGS_TO_STDOUT_SH: PathBuf = SCRIPT_DIR.join("echo_args_to_stdout.sh");
     static ref ECHO_ARGS_TO_STDERR_SH: PathBuf = SCRIPT_DIR.join("echo_args_to_stderr.sh");

@@ -10,24 +10,34 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
-/// Holds state related to multiple clients managed by a server
+/// Holds state related to multiple connections managed by a server
 #[derive(Default)]
 pub struct State {
     /// Map of all processes running on the server
     pub processes: HashMap<usize, Process>,
 
-    /// List of processes that will be killed when a client drops
+    /// List of processes that will be killed when a connection drops
     client_processes: HashMap<usize, Vec<usize>>,
 }
 
 impl State {
-    /// Pushes a new process associated with a client
+    /// Pushes a new process associated with a connection
     pub fn push_process(&mut self, conn_id: usize, process: Process) {
         self.client_processes
             .entry(conn_id)
             .or_insert(Vec::new())
             .push(process.id);
         self.processes.insert(process.id, process);
+    }
+
+    /// Removes a process associated with a connection
+    pub fn remove_process(&mut self, conn_id: usize, proc_id: usize) {
+        self.client_processes.entry(conn_id).and_modify(|v| {
+            if let Some(pos) = v.iter().position(|x| *x == proc_id) {
+                v.remove(pos);
+            }
+        });
+        self.processes.remove(&proc_id);
     }
 
     /// Closes stdin for all processes associated with the connection

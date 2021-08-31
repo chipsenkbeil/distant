@@ -266,7 +266,9 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
             .min_depth(1)
             .follow_links(false)
             .into_iter()
-            .filter_entry(|e| e.file_type().is_file() || e.path_is_symlink())
+            .filter_entry(|e| {
+                e.file_type().is_file() || e.file_type().is_dir() || e.path_is_symlink()
+            })
         {
             let entry = entry?;
 
@@ -288,9 +290,16 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
             // Create the destination directory for the file when copying
             tokio::fs::create_dir_all(dst_parent_dir.as_path()).await?;
 
-            // Perform copying from entry to destination
-            let dst_file = dst_parent_dir.join(local_src_file_name);
-            tokio::fs::copy(entry.path(), dst_file).await?;
+            // Perform copying from entry to destination (if a file/symlink)
+            if !entry.file_type().is_dir() {
+                let dst_file = dst_parent_dir.join(local_src_file_name);
+                tokio::fs::copy(entry.path(), dst_file).await?;
+
+            // Otherwise, if a directory, create it
+            } else {
+                let dst_dir = dst_parent_dir.join(local_src_file_name);
+                tokio::fs::create_dir(dst_dir).await?;
+            }
         }
     } else {
         tokio::fs::copy(src, dst).await?;
@@ -316,7 +325,7 @@ async fn exists(path: PathBuf) -> Result<ResponseData, ServerError> {
 }
 
 async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, ServerError> {
-    let metadata = tokio::fs::metadata(path.as_path()).await?;
+    let metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
     let canonicalized_path = if canonicalize {
         Some(tokio::fs::canonicalize(path).await?)
     } else {
@@ -458,6 +467,7 @@ async fn proc_run(
 
     // Spawn a task that waits on the process to exit but can also
     // kill the process when triggered
+    let state_2 = Arc::clone(&state);
     let (kill_tx, kill_rx) = oneshot::channel();
     let wait_task = tokio::spawn(async move {
         tokio::select! {
@@ -475,6 +485,8 @@ async fn proc_run(
                 if let Err(x) = stdout_task.await {
                     error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
                 }
+
+                state_2.lock().await.remove_process(conn_id, id);
 
                 match status {
                     Ok(status) => {
@@ -525,6 +537,7 @@ async fn proc_run(
                     error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
                 }
 
+                state_2.lock().await.remove_process(conn_id, id);
 
                 let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
                     id, success: false, code: None
@@ -555,28 +568,28 @@ async fn proc_run(
 
 async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, ServerError> {
     if let Some(process) = state.lock().await.processes.remove(&id) {
-        process.kill_tx.send(()).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Unable to send kill signal to process",
-            )
-        })?;
+        if process.kill_tx.send(()).is_ok() {
+            return Ok(ResponseData::Ok);
+        }
     }
 
-    Ok(ResponseData::Ok)
+    Err(ServerError::IoError(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        "Unable to send kill signal to process",
+    )))
 }
 
 async fn proc_stdin(state: HState, id: usize, data: String) -> Result<ResponseData, ServerError> {
     if let Some(process) = state.lock().await.processes.get(&id) {
-        if !process.send_stdin(data).await {
-            return Err(ServerError::IoError(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Unable to send stdin to process",
-            )));
+        if process.send_stdin(data).await {
+            return Ok(ResponseData::Ok);
         }
     }
 
-    Ok(ResponseData::Ok)
+    Err(ServerError::IoError(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        "Unable to send stdin to process",
+    )))
 }
 
 async fn proc_list(state: HState) -> Result<ResponseData, ServerError> {
@@ -610,6 +623,26 @@ mod tests {
     use super::*;
     use assert_fs::prelude::*;
     use predicates::prelude::*;
+    use std::time::Duration;
+
+    lazy_static::lazy_static! {
+        // TODO: This is a workaround to get the workspace root directory from within a specific
+        //       workspace member as there is no environment variable to support this.
+        //
+        //       See https://github.com/rust-lang/cargo/issues/3946
+        static ref ROOT_DIR: PathBuf = {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize().unwrap()
+        };
+        static ref SCRIPT_DIR: PathBuf = ROOT_DIR.join("scripts").join("test");
+
+        static ref ECHO_ARGS_TO_STDOUT_SH: PathBuf = SCRIPT_DIR.join("echo_args_to_stdout.sh");
+        static ref ECHO_ARGS_TO_STDERR_SH: PathBuf = SCRIPT_DIR.join("echo_args_to_stderr.sh");
+        static ref ECHO_STDIN_TO_STDOUT_SH: PathBuf = SCRIPT_DIR.join("echo_stdin_to_stdout.sh");
+        static ref EXIT_CODE_SH: PathBuf = SCRIPT_DIR.join("exit_code.sh");
+        static ref SLEEP_SH: PathBuf = SCRIPT_DIR.join("sleep.sh");
+
+        static ref DOES_NOT_EXIST_BIN: PathBuf = SCRIPT_DIR.join("does_not_exist_bin");
+    }
 
     fn setup(
         buffer: usize,
@@ -905,6 +938,9 @@ mod tests {
             res.payload[0]
         );
 
+        // Yield to allow chance to finish appending to file
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
         // Also verify that we actually did append to the file
         file.assert("some file contentssome extra contents");
     }
@@ -966,6 +1002,9 @@ mod tests {
             "Unexpected response: {:?}",
             res.payload[0]
         );
+
+        // Yield to allow chance to finish appending to file
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Also verify that we actually did append to the file
         file.assert("some file contentssome extra contents");
@@ -1331,162 +1370,1104 @@ mod tests {
 
     #[tokio::test]
     async fn remove_should_send_error_on_failure() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("missing-file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Remove {
+                path: file.path().to_path_buf(),
+                force: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also, verify that path does not exist
+        file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
     async fn remove_should_support_deleting_a_directory() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let dir = temp.child("dir");
+        dir.create_dir_all().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Remove {
+                path: dir.path().to_path_buf(),
+                force: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also, verify that path does not exist
+        dir.assert(predicate::path::missing());
     }
 
     #[tokio::test]
     async fn remove_should_delete_nonempty_directory_if_force_is_true() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let dir = temp.child("dir");
+        dir.create_dir_all().unwrap();
+        dir.child("file").touch().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Remove {
+                path: dir.path().to_path_buf(),
+                force: true,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also, verify that path does not exist
+        dir.assert(predicate::path::missing());
     }
 
     #[tokio::test]
     async fn remove_should_support_deleting_a_single_file() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("some-file");
+        file.touch().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Remove {
+                path: file.path().to_path_buf(),
+                force: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also, verify that path does not exist
+        file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
     async fn copy_should_send_error_on_failure() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let src = temp.child("src");
+        let dst = temp.child("dst");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Copy {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also, verify that destination does not exist
+        dst.assert(predicate::path::missing());
     }
 
     #[tokio::test]
     async fn copy_should_support_copying_an_entire_directory() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let src = temp.child("src");
+        src.create_dir_all().unwrap();
+        let src_file = src.child("file");
+        src_file.write_str("some contents").unwrap();
+
+        let dst = temp.child("dst");
+        let dst_file = dst.child("file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Copy {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Verify that we have source and destination directories and associated contents
+        src.assert(predicate::path::is_dir());
+        src_file.assert(predicate::path::is_file());
+        dst.assert(predicate::path::is_dir());
+        dst_file.assert(predicate::path::eq_file(src_file.path()));
     }
 
     #[tokio::test]
     async fn copy_should_support_copying_an_empty_directory() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let src = temp.child("src");
+        src.create_dir_all().unwrap();
+        let dst = temp.child("dst");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Copy {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Verify that we still have source and destination directories
+        src.assert(predicate::path::is_dir());
+        dst.assert(predicate::path::is_dir());
     }
 
     #[tokio::test]
     async fn copy_should_support_copying_a_directory_that_only_contains_directories() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let src = temp.child("src");
+        src.create_dir_all().unwrap();
+        let src_dir = src.child("dir");
+        src_dir.create_dir_all().unwrap();
+
+        let dst = temp.child("dst");
+        let dst_dir = dst.child("dir");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Copy {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Verify that we have source and destination directories and associated contents
+        src.assert(predicate::path::is_dir().name("src"));
+        src_dir.assert(predicate::path::is_dir().name("src/dir"));
+        dst.assert(predicate::path::is_dir().name("dst"));
+        dst_dir.assert(predicate::path::is_dir().name("dst/dir"));
     }
 
     #[tokio::test]
     async fn copy_should_support_copying_a_single_file() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let src = temp.child("src");
+        src.write_str("some text").unwrap();
+        let dst = temp.child("dst");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Copy {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Verify that we still have source and that destination has source's contents
+        src.assert(predicate::path::is_file());
+        dst.assert(predicate::path::eq_file(src.path()));
     }
 
     #[tokio::test]
     async fn rename_should_send_error_on_failure() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let src = temp.child("src");
+        let dst = temp.child("dst");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Rename {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Also, verify that destination does not exist
+        dst.assert(predicate::path::missing());
     }
 
     #[tokio::test]
     async fn rename_should_support_renaming_an_entire_directory() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let src = temp.child("src");
+        src.create_dir_all().unwrap();
+        let src_file = src.child("file");
+        src_file.write_str("some contents").unwrap();
+
+        let dst = temp.child("dst");
+        let dst_file = dst.child("file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Rename {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Verify that we moved the contents
+        src.assert(predicate::path::missing());
+        src_file.assert(predicate::path::missing());
+        dst.assert(predicate::path::is_dir());
+        dst_file.assert("some contents");
     }
 
     #[tokio::test]
     async fn rename_should_support_renaming_a_single_file() {
-        todo!();
-    }
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let src = temp.child("src");
+        src.write_str("some text").unwrap();
+        let dst = temp.child("dst");
 
-    #[tokio::test]
-    async fn exists_should_send_error_on_failure() {
-        todo!();
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Rename {
+                src: src.path().to_path_buf(),
+                dst: dst.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Verify that we moved the file
+        src.assert(predicate::path::missing());
+        dst.assert("some text");
     }
 
     #[tokio::test]
     async fn exists_should_send_true_if_path_exists() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.touch().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Exists {
+                path: file.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert_eq!(res.payload[0], ResponseData::Exists(true));
     }
 
     #[tokio::test]
     async fn exists_should_send_false_if_path_does_not_exist() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Exists {
+                path: file.path().to_path_buf(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert_eq!(res.payload[0], ResponseData::Exists(false));
     }
 
     #[tokio::test]
     async fn metadata_should_send_error_on_failure() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: file.path().to_path_buf(),
+                canonicalize: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
     async fn metadata_should_send_back_metadata_on_file_if_exists() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: file.path().to_path_buf(),
+                canonicalize: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(
+                res.payload[0],
+                ResponseData::Metadata {
+                    canonicalized_path: None,
+                    file_type: FileType::File,
+                    len: 9,
+                    readonly: false,
+                    ..
+                }
+            ),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
     async fn metadata_should_send_back_metadata_on_dir_if_exists() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let dir = temp.child("dir");
+        dir.create_dir_all().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: dir.path().to_path_buf(),
+                canonicalize: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(
+                res.payload[0],
+                ResponseData::Metadata {
+                    canonicalized_path: None,
+                    file_type: FileType::Dir,
+                    readonly: false,
+                    ..
+                }
+            ),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn metadata_should_send_back_metadata_on_symlink_if_exists() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let symlink = temp.child("link");
+        symlink.symlink_to_file(file.path()).unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: symlink.path().to_path_buf(),
+                canonicalize: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(
+                res.payload[0],
+                ResponseData::Metadata {
+                    canonicalized_path: None,
+                    file_type: FileType::Symlink,
+                    readonly: false,
+                    ..
+                }
+            ),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
     async fn metadata_should_include_canonicalized_path_if_flag_specified() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let symlink = temp.child("link");
+        symlink.symlink_to_file(file.path()).unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: symlink.path().to_path_buf(),
+                canonicalize: true,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::Metadata {
+                canonicalized_path: Some(path),
+                file_type: FileType::Symlink,
+                readonly: false,
+                ..
+            } => assert_eq!(
+                path,
+                &file.path().canonicalize().unwrap(),
+                "Symlink canonicalized path does not match referenced file"
+            ),
+            x => panic!("Unexpected response: {:?}", x),
+        }
     }
 
     #[tokio::test]
     async fn proc_run_should_send_error_on_failure() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
+                args: Vec::new(),
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(&res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
     async fn proc_run_should_send_back_proc_start_on_success() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
+                args: Vec::new(),
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
     async fn proc_run_should_send_back_stdout_periodically_when_available() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Run a program that echoes to stdout
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
+                args: vec![String::from("some stdout")],
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Gather two additional responses:
+        //
+        // 1. An indirect response for stdout
+        // 2. An indirect response that is proc completing
+        //
+        // Note that order is not a guarantee, so we have to check that
+        // we get one of each type of response
+        let res1 = rx.recv().await.expect("Missing first response");
+        let res2 = rx.recv().await.expect("Missing second response");
+
+        let mut got_stdout = false;
+        let mut got_done = false;
+
+        let mut check_res = |res: &Response| {
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            match &res.payload[0] {
+                ResponseData::ProcStdout { data, .. } => {
+                    assert_eq!(data, "some stdout", "Got wrong stdout");
+                    got_stdout = true;
+                }
+                ResponseData::ProcDone { success, .. } => {
+                    assert!(success, "Process should have completed successfully");
+                    got_done = true;
+                }
+                x => panic!("Unexpected response: {:?}", x),
+            }
+        };
+
+        check_res(&res1);
+        check_res(&res2);
+        assert!(got_stdout, "Missing stdout response");
+        assert!(got_done, "Missing done response");
     }
 
     #[tokio::test]
     async fn proc_run_should_send_back_stderr_periodically_when_available() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Run a program that echoes to stderr
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
+                args: vec![String::from("some stderr")],
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Gather two additional responses:
+        //
+        // 1. An indirect response for stderr
+        // 2. An indirect response that is proc completing
+        //
+        // Note that order is not a guarantee, so we have to check that
+        // we get one of each type of response
+        let res1 = rx.recv().await.expect("Missing first response");
+        let res2 = rx.recv().await.expect("Missing second response");
+
+        let mut got_stderr = false;
+        let mut got_done = false;
+
+        let mut check_res = |res: &Response| {
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            match &res.payload[0] {
+                ResponseData::ProcStderr { data, .. } => {
+                    assert_eq!(data, "some stderr", "Got wrong stderr");
+                    got_stderr = true;
+                }
+                ResponseData::ProcDone { success, .. } => {
+                    assert!(success, "Process should have completed successfully");
+                    got_done = true;
+                }
+                x => panic!("Unexpected response: {:?}", x),
+            }
+        };
+
+        check_res(&res1);
+        check_res(&res2);
+        assert!(got_stderr, "Missing stderr response");
+        assert!(got_done, "Missing done response");
     }
 
     #[tokio::test]
-    async fn proc_run_should_send_back_done_when_proc_finishes() {
-        // Make sure to verify that process also removed from state
-        todo!();
+    async fn proc_run_should_clear_process_from_state_when_done() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Run a program that ends after a little bit
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: SLEEP_SH.to_str().unwrap().to_string(),
+                args: vec![String::from("0.1")],
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        let id = match &res.payload[0] {
+            ResponseData::ProcStart { id } => *id,
+            x => panic!("Unexpected response: {:?}", x),
+        };
+
+        // Verify that the state has the process
+        assert!(
+            state.lock().await.processes.contains_key(&id),
+            "Process {} not in state",
+            id
+        );
+
+        // Wait for process to finish
+        let _ = rx.recv().await.unwrap();
+
+        // Verify that the state was cleared
+        assert!(
+            !state.lock().await.processes.contains_key(&id),
+            "Process {} still in state",
+            id
+        );
     }
 
     #[tokio::test]
-    async fn proc_run_should_send_back_done_when_killed() {
-        // Make sure to verify that process also removed from state
-        todo!();
+    async fn proc_run_should_clear_process_from_state_when_killed() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Run a program that ends slowly
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: SLEEP_SH.to_str().unwrap().to_string(),
+                args: vec![String::from("1")],
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        let id = match &res.payload[0] {
+            ResponseData::ProcStart { id } => *id,
+            x => panic!("Unexpected response: {:?}", x),
+        };
+
+        // Verify that the state has the process
+        assert!(
+            state.lock().await.processes.contains_key(&id),
+            "Process {} not in state",
+            id
+        );
+
+        // Send kill signal
+        let req = Request::new("test-tenant", vec![RequestData::ProcKill { id }]);
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        // Wait for two responses, a kill confirmation and the done
+        let _ = rx.recv().await.unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        // Verify that the state was cleared
+        assert!(
+            !state.lock().await.processes.contains_key(&id),
+            "Process {} still in state",
+            id
+        );
     }
 
     #[tokio::test]
     async fn proc_kill_should_send_error_on_failure() {
-        // Can verify that if the process is not running, will fail
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Send kill to a non-existent process
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcKill { id: 0xDEADBEEF }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
+        // Verify that we get an error
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
-    async fn proc_kill_should_send_ok_on_success() {
-        // Verify that we trigger sending done
-        todo!();
+    async fn proc_kill_should_send_ok_and_done_responses_on_success() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // First, run a program that sits around (sleep for 1 second)
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: SLEEP_SH.to_str().unwrap().to_string(),
+                args: vec![String::from("1")],
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
+        // Second, grab the id of the started process
+        let id = match &res.payload[0] {
+            ResponseData::ProcStart { id } => *id,
+            x => panic!("Unexpected response: {:?}", x),
+        };
+
+        // Third, send kill for process
+        let req = Request::new("test-tenant", vec![RequestData::ProcKill { id }]);
+
+        // NOTE: We cannot let the state get dropped as it results in killing
+        //       the child process automatically; so, we clone another reference here
+        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
+        // Fourth, gather two responses:
+        //
+        // 1. A direct response saying that received (ok)
+        // 2. An indirect response that is proc completing
+        //
+        // Note that order is not a guarantee, so we have to check that
+        // we get one of each type of response
+        let res1 = rx.recv().await.expect("Missing first response");
+        let res2 = rx.recv().await.expect("Missing second response");
+
+        let mut got_ok = false;
+        let mut got_done = false;
+
+        let mut check_res = |res: &Response| {
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            match &res.payload[0] {
+                ResponseData::Ok => got_ok = true,
+                ResponseData::ProcDone { success, .. } => {
+                    assert!(!success, "Process should not have completed successfully");
+                    got_done = true;
+                }
+                x => panic!("Unexpected response: {:?}", x),
+            }
+        };
+
+        check_res(&res1);
+        check_res(&res2);
+        assert!(got_ok, "Missing ok response");
+        assert!(got_done, "Missing done response");
     }
 
     #[tokio::test]
     async fn proc_stdin_should_send_error_on_failure() {
-        // Can verify that if the process is not running, will fail
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Send stdin to a non-existent process
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcStdin {
+                id: 0xDEADBEEF,
+                data: String::from("some input"),
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
+        // Verify that we get an error
+        assert!(
+            matches!(res.payload[0], ResponseData::Error(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
-    async fn proc_stdin_should_send_ok_on_success() {
-        // Verify that we trigger sending stdin to process
-        todo!();
+    async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // First, run a program that listens for stdin
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcRun {
+                cmd: ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string(),
+                args: Vec::new(),
+            }],
+        );
+
+        process(conn_id, Arc::clone(&state), req, tx.clone())
+            .await
+            .unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
+        // Second, grab the id of the started process
+        let id = match &res.payload[0] {
+            ResponseData::ProcStart { id } => *id,
+            x => panic!("Unexpected response: {:?}", x),
+        };
+
+        // Third, send stdin to the remote process
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::ProcStdin {
+                id,
+                data: String::from("hello world\n"),
+            }],
+        );
+
+        // NOTE: We cannot let the state get dropped as it results in killing
+        //       the child process; so, we clone another reference here
+        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
+        // Fourth, gather two responses:
+        //
+        // 1. A direct response to processing the stdin
+        // 2. An indirect response that is stdout from echoing our stdin
+        //
+        // Note that order is not a guarantee, so we have to check that
+        // we get one of each type of response
+        let res1 = rx.recv().await.expect("Missing first response");
+        let res2 = rx.recv().await.expect("Missing second response");
+
+        let mut got_ok = false;
+        let mut got_stdout = false;
+
+        let mut check_res = |res: &Response| {
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            match &res.payload[0] {
+                ResponseData::Ok => got_ok = true,
+                ResponseData::ProcStdout { data, .. } => {
+                    assert_eq!(data, "hello world\n", "Mirrored data didn't match");
+                    got_stdout = true;
+                }
+                x => panic!("Unexpected response: {:?}", x),
+            }
+        };
+
+        check_res(&res1);
+        check_res(&res2);
+        assert!(got_ok, "Missing ok response");
+        assert!(got_stdout, "Missing mirrored stdin response");
     }
 
     #[tokio::test]
     async fn proc_list_should_send_proc_entry_list() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Run a process and get the list that includes that process
+        // at the same time (using sleep of 1 second)
+        let req = Request::new(
+            "test-tenant",
+            vec![
+                RequestData::ProcRun {
+                    cmd: SLEEP_SH.to_str().unwrap().to_string(),
+                    args: vec![String::from("1")],
+                },
+                RequestData::ProcList {},
+            ],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 2, "Wrong payload size");
+
+        // Grab the id of the started process
+        let id = match &res.payload[0] {
+            ResponseData::ProcStart { id } => *id,
+            x => panic!("Unexpected response: {:?}", x),
+        };
+
+        // Verify our process shows up in our entry list
+        assert_eq!(
+            res.payload[1],
+            ResponseData::ProcEntries {
+                entries: vec![RunningProcess {
+                    cmd: SLEEP_SH.to_str().unwrap().to_string(),
+                    args: vec![String::from("1")],
+                    id,
+                }],
+            },
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]
     async fn system_info_should_send_system_info_based_on_binary() {
-        todo!();
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert_eq!(
+            res.payload[0],
+            ResponseData::SystemInfo {
+                family: env::consts::FAMILY.to_string(),
+                os: env::consts::OS.to_string(),
+                arch: env::consts::ARCH.to_string(),
+                current_dir: env::current_dir().unwrap_or_default(),
+                main_separator: std::path::MAIN_SEPARATOR,
+            },
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 }
