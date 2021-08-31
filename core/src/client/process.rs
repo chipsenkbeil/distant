@@ -5,6 +5,7 @@ use crate::{
     net::{DataStream, TransportError},
 };
 use derive_more::{Display, Error, From};
+use log::*;
 use tokio::{
     io,
     sync::mpsc,
@@ -200,7 +201,7 @@ async fn process_outgoing_requests<T>(
 where
     T: DataStream,
 {
-    loop {
+    let result = loop {
         tokio::select! {
             data = stdin_rx.recv() => {
                 match data {
@@ -227,7 +228,10 @@ where
                 }
             }
         }
-    }
+    };
+
+    trace!("Process outgoing channel closed");
+    result
 }
 
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
@@ -280,6 +284,7 @@ async fn process_incoming_responses(
         }
     }
 
+    trace!("Process incoming channel closed");
     result
 }
 

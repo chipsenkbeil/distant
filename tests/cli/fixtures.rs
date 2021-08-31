@@ -1,11 +1,11 @@
+use crate::cli::utils;
 use assert_cmd::Command;
 use distant_core::*;
 use rstest::*;
 use std::{ffi::OsStr, net::SocketAddr, thread};
 use tokio::{runtime::Runtime, sync::mpsc};
-use crate::cli::utils;
 
-const LOG_PATH: &'static str = "/tmp/distant.server.log";
+const LOG_PATH: &'static str = "/tmp/test.distant.server.log";
 
 /// Context for some listening distant server
 pub struct DistantServerCtx {
@@ -65,7 +65,6 @@ impl DistantServerCtx {
         let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
         cmd.arg(subcommand)
             .args(&["--session", "environment"])
-            .args(&["-vvv", "--log-file", "/tmp/distant.client.log"])
             .env("DISTANT_HOST", self.addr.ip().to_string())
             .env("DISTANT_PORT", self.addr.port().to_string())
             .env("DISTANT_AUTH_KEY", self.auth_key.as_str());

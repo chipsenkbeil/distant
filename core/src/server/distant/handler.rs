@@ -112,13 +112,6 @@ pub(super) async fn process(
 
     let res = Response::new(req.tenant, Some(req.id), payload);
 
-    debug!(
-        "<Conn @ {}> Sending response of type{} {}",
-        conn_id,
-        if res.payload.len() > 1 { "s" } else { "" },
-        res.to_payload_type_string()
-    );
-
     // Send out our primary response from processing the request
     tx.send(res).await
 }
@@ -391,13 +384,8 @@ async fn proc_run(
                             None,
                             vec![ResponseData::ProcStdout { id, data }],
                         );
-                        debug!(
-                            "<Conn @ {}> Sending response of type{} {}",
-                            conn_id,
-                            if res.payload.len() > 1 { "s" } else { "" },
-                            res.to_payload_type_string()
-                        );
                         if let Err(_) = tx_2.send(res).await {
+                            error!("<Conn @ {}> Stdout channel closed", conn_id);
                             break;
                         }
 
@@ -432,13 +420,8 @@ async fn proc_run(
                             None,
                             vec![ResponseData::ProcStderr { id, data }],
                         );
-                        debug!(
-                            "<Conn @ {}> Sending response of type{} {}",
-                            conn_id,
-                            if res.payload.len() > 1 { "s" } else { "" },
-                            res.to_payload_type_string()
-                        );
                         if let Err(_) = tx_2.send(res).await {
+                            error!("<Conn @ {}> Stderr channel closed", conn_id);
                             break;
                         }
 
@@ -464,7 +447,10 @@ async fn proc_run(
     let stdin_task = tokio::spawn(async move {
         while let Some(line) = stdin_rx.recv().await {
             if let Err(x) = stdin.write_all(line.as_bytes()).await {
-                error!("Failed to send stdin to process {}: {}", id, x);
+                error!(
+                    "<Conn @ {}> Failed to send stdin to process {}: {}",
+                    conn_id, id, x
+                );
                 break;
             }
         }
@@ -476,16 +462,18 @@ async fn proc_run(
     let wait_task = tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
+                debug!("<Conn @ {}> Process {} done", conn_id, id);
+
                 // Force stdin task to abort if it hasn't exited as there is no
                 // point to sending any more stdin
                 stdin_task.abort();
 
                 if let Err(x) = stderr_task.await {
-                    error!("Join on stderr task failed: {}", x);
+                    error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
                 }
 
                 if let Err(x) = stdout_task.await {
-                    error!("Join on stdout task failed: {}", x);
+                    error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
                 }
 
                 match status {
@@ -497,34 +485,32 @@ async fn proc_run(
                             None,
                             vec![ResponseData::ProcDone { id, success, code }]
                         );
-                        debug!(
-                            "<Conn @ {}> Sending response of type{} {}",
-                            conn_id,
-                            if res.payload.len() > 1 { "s" } else { "" },
-                            res.to_payload_type_string()
-                        );
                         if let Err(_) = tx.send(res).await {
-                            error!("Failed to send done for process {}!", id);
+                            error!(
+                                "<Conn @ {}> Failed to send done for process {}!",
+                                conn_id,
+                                id,
+                            );
                         }
                     }
                     Err(x) => {
                         let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
-                        debug!(
-                            "<Conn @ {}> Sending response of type{} {}",
-                            conn_id,
-                            if res.payload.len() > 1 { "s" } else { "" },
-                            res.to_payload_type_string()
-                        );
                         if let Err(_) = tx.send(res).await {
-                            error!("Failed to send error for waiting on process {}!", id);
+                            error!(
+                                "<Conn @ {}> Failed to send error for waiting on process {}!",
+                                conn_id,
+                                id,
+                            );
                         }
                     }
                 }
 
             },
             _ = kill_rx => {
+                debug!("<Conn @ {}> Process {} killed", conn_id, id);
+
                 if let Err(x) = child.kill().await {
-                    error!("Unable to kill process {}: {}", id, x);
+                    error!("<Conn @ {}> Unable to kill process {}: {}", conn_id, id, x);
                 }
 
                 // Force stdin task to abort if it hasn't exited as there is no
@@ -532,28 +518,22 @@ async fn proc_run(
                 stdin_task.abort();
 
                 if let Err(x) = stderr_task.await {
-                    error!("Join on stderr task failed: {}", x);
+                    error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
                 }
 
                 if let Err(x) = stdout_task.await {
-                    error!("Join on stdout task failed: {}", x);
+                    error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
                 }
 
 
                 let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
                     id, success: false, code: None
                 }]);
-                debug!(
-                    "<Conn @ {}> Sending response of type{} {}",
-                    conn_id,
-                    if res.payload.len() > 1 { "s" } else { "" },
-                    res.to_payload_type_string()
-                );
                 if let Err(_) = tx
                     .send(res)
                     .await
                 {
-                    error!("Failed to send done for process {}!", id);
+                    error!("<Conn @ {}> Failed to send done for process {}!", conn_id, id);
                 }
             }
         }

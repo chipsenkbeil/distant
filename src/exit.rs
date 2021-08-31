@@ -105,6 +105,10 @@ impl ExitCodeError for TransportError {
 }
 
 impl ExitCodeError for RemoteProcessError {
+    fn is_silent(&self) -> bool {
+        matches!(self, Self::BadResponse)
+    }
+
     fn to_exit_code(&self) -> ExitCode {
         match self {
             Self::BadResponse => ExitCode::DataErr,

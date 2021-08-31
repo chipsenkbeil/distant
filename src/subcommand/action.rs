@@ -29,6 +29,7 @@ impl ExitCodeError for Error {
     fn is_silent(&self) -> bool {
         match self {
             Self::BadProcessExit(_) | Self::OperationFailed => true,
+            Self::RemoteProcessError(x) => x.is_silent(),
             _ => false,
         }
     }

@@ -139,7 +139,10 @@ where
                             }
                         }
                     }
-                    Ok(None) => break,
+                    Ok(None) => {
+                        debug!("Session closing response task as transport read-half closed!");
+                        break;
+                    }
                     Err(x) => {
                         error!("{}", x);
                         break;

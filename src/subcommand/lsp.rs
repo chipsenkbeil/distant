@@ -20,6 +20,13 @@ pub enum Error {
 }
 
 impl ExitCodeError for Error {
+    fn is_silent(&self) -> bool {
+        match self {
+            Self::RemoteProcessError(x) => x.is_silent(),
+            _ => false,
+        }
+    }
+
     fn to_exit_code(&self) -> ExitCode {
         match self {
             Self::BadProcessExit(x) => ExitCode::Custom(*x),

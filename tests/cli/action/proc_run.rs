@@ -76,7 +76,7 @@ fn should_forward_stdin_to_remote_process(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
     // distant action proc-run {cmd} [args]
     action_cmd
         .args(&["proc-run", "--"])
@@ -84,6 +84,18 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
         .arg("99")
         .assert()
         .code(99)
+        .stdout("")
+        .stderr("");
+}
+
+#[rstest]
+fn yield_an_error_when_fails(mut action_cmd: Command) {
+    // distant action proc-run {cmd} [args]
+    action_cmd
+        .args(&["proc-run", "--"])
+        .arg(DOES_NOT_EXIST_BIN.to_str().unwrap())
+        .assert()
+        .code(ExitCode::DataErr.to_i32())
         .stdout("")
         .stderr("");
 }

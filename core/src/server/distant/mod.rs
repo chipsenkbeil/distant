@@ -240,7 +240,7 @@ async fn request_loop<T>(
                 }
             }
             Ok(None) => {
-                info!("<Conn @ {}> Input from connection closed", conn_id);
+                trace!("<Conn @ {}> Input from connection closed", conn_id);
                 break;
             }
             Err(x) => {
@@ -264,11 +264,20 @@ async fn response_loop<T>(
     T: AsyncWrite + Send + Unpin + 'static,
 {
     while let Some(res) = rx.recv().await {
+        debug!(
+            "<Conn @ {}> Sending response of type{} {}",
+            conn_id,
+            if res.payload.len() > 1 { "s" } else { "" },
+            res.to_payload_type_string()
+        );
+
         if let Err(x) = transport.send(res).await {
             error!("<Conn @ {}> {}", conn_id, x);
             break;
         }
     }
+
+    trace!("<Conn @ {}> Output to connection closed", conn_id);
 }
 
 #[cfg(test)]
