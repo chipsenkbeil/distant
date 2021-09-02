@@ -1,10 +1,11 @@
 use crate::{
     client::Session,
-    constants::{CLIENT_BROADCAST_CHANNEL_CAPACITY, CONN_HANDSHAKE_TIMEOUT_MILLIS},
+    constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, RequestData, Response, ResponseData},
-    net::{DataStream, Listener, ListenerCtx, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{DataStream, Transport, TransportReadHalf, TransportWriteHalf},
     server::utils::{ConnTracker, ShutdownTask},
 };
+use futures::stream::{Stream, StreamExt};
 use log::*;
 use std::{collections::HashMap, marker::Unpin, sync::Arc};
 use tokio::{
@@ -24,15 +25,15 @@ pub struct RelayServer {
 }
 
 impl RelayServer {
-    pub fn initialize<T1, T2, L>(
+    pub fn initialize<T1, T2, S>(
         mut session: Session<T1>,
-        listener: L,
+        mut stream: S,
         shutdown_after: Option<Duration>,
     ) -> io::Result<Self>
     where
         T1: DataStream + 'static,
         T2: DataStream + Send + 'static,
-        L: Listener<Conn = T2> + 'static,
+        S: Stream<Item = Transport<T2>> + Send + Unpin + 'static,
     {
         let conns: Arc<Mutex<HashMap<usize, Conn>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -84,38 +85,27 @@ impl RelayServer {
         let conns_2 = Arc::clone(&conns);
         let accept_task = tokio::spawn(async move {
             let inner = async move {
-                let ctx = ListenerCtx {
-                    auth_key: None,
-                    timeout: Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS),
-                };
                 loop {
-                    match listener.accept(&ctx).await {
-                        Ok(transport_f) => tokio::spawn(async move {
-                            match transport_f.await {
-                                Ok(transport) => {
-                                    let result = Conn::initialize(
-                                        transport,
-                                        req_tx.clone(),
-                                        tracker.as_ref().map(Arc::clone),
-                                    )
-                                    .await;
+                    match stream.next().await {
+                        Some(transport) => {
+                            let result = Conn::initialize(
+                                transport,
+                                req_tx.clone(),
+                                tracker.as_ref().map(Arc::clone),
+                            )
+                            .await;
 
-                                    match result {
-                                        Ok(conn) => {
-                                            conns_2.lock().await.insert(conn.id(), conn);
-                                        }
-                                        Err(x) => {
-                                            error!("Failed to initialize connection: {}", x);
-                                        }
-                                    };
+                            match result {
+                                Ok(conn) => {
+                                    conns_2.lock().await.insert(conn.id(), conn);
                                 }
                                 Err(x) => {
-                                    error!("Connection handshake timed out: {}", x);
+                                    error!("Failed to initialize connection: {}", x);
                                 }
-                            }
-                        }),
-                        Err(x) => {
-                            debug!("Listener has closed: {}", x);
+                            };
+                        }
+                        None => {
+                            info!("Listener shutting down");
                             break;
                         }
                     };
@@ -391,84 +381,33 @@ async fn handle_conn_outgoing<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::{InmemoryStream, SecretKey};
-    use serde::{de::DeserializeOwned, Serialize};
-    use std::{marker::PhantomData, time::Duration};
+    use crate::net::InmemoryStream;
+    use std::{pin::Pin, time::Duration};
 
-    async fn timeout<F: std::future::Future<Output = T>, T>(f: F) -> T {
-        tokio::select! {
-            res = f => {
-                res
-            }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
-                panic!("Time elapsed waiting on future");
-            }
-        }
+    fn make_session() -> (Transport<InmemoryStream>, Session<InmemoryStream>) {
+        let (t1, t2) = Transport::make_pair();
+        (t1, Session::initialize(t2).unwrap())
     }
 
-    /// Sends data to stream as if it is arriving from the outside
-    struct Incoming<T: Serialize>(mpsc::Sender<Vec<u8>>, PhantomData<T>);
-    impl<T: Serialize> Incoming<T> {
-        pub fn new(tx: mpsc::Sender<Vec<u8>>) -> Self {
-            Self(tx, PhantomData)
-        }
-
-        pub async fn send(&self, data: T) {
-            self.0
-                .send(serde_cbor::to_vec(&data).expect("Failed to encode data"))
-                .await
-                .expect("Failed to send data")
-        }
-    }
-
-    /// Receives data from the stream as if it is being sent to the outside
-    struct Outgoing<T: DeserializeOwned>(mpsc::Receiver<Vec<u8>>, PhantomData<T>);
-    impl<T: DeserializeOwned> Outgoing<T> {
-        pub fn new(rx: mpsc::Receiver<Vec<u8>>) -> Self {
-            Self(rx, PhantomData)
-        }
-
-        pub async fn recv(&mut self) -> Option<T> {
-            self.0
-                .recv()
-                .await
-                .map(|data| serde_cbor::from_slice(&data).expect("Failed to decode data"))
-        }
-    }
-
-    fn make_client_stream() -> (Incoming<Response>, Outgoing<Request>, InmemoryStream) {
-        let (tx, rx, stream) = InmemoryStream::make(1);
-        (Incoming::new(tx), Outgoing::new(rx), stream)
-    }
-
-    fn make_server_stream() -> (Incoming<Request>, Outgoing<Response>, InmemoryStream) {
-        let (tx, rx, stream) = InmemoryStream::make(1);
-        (Incoming::new(tx), Outgoing::new(rx), stream)
-    }
-
-    fn make_client_transport() -> (
-        Incoming<Response>,
-        Outgoing<Request>,
-        Transport<InmemoryStream>,
+    fn make_transport_stream() -> (
+        mpsc::Sender<Transport<InmemoryStream>>,
+        Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,
     ) {
-        let (tx, rx, stream) = make_client_stream();
-        let transport = Transport::new(stream, None, Arc::new(SecretKey::default()));
-        (tx, rx, transport)
+        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream>>(1);
+        let stream = futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(move |transport| (transport, rx))
+        });
+        (tx, Box::pin(stream))
     }
 
     #[tokio::test]
     async fn wait_should_return_ok_when_all_inner_tasks_complete() {
-        let (res_tx, req_rx, transport) = make_client_transport();
-        let session = Session::initialize(transport).unwrap();
-
-        let (tx, rx) = mpsc::channel::<InmemoryStream>(1);
-        let listener = Mutex::new(rx);
-
-        let server = RelayServer::initialize(session, listener, None).unwrap();
+        let (transport, session) = make_session();
+        let (tx, stream) = make_transport_stream();
+        let server = RelayServer::initialize(session, stream, None).unwrap();
 
         // Conclude all server tasks by closing out the listener & session
-        drop(res_tx);
-        drop(req_rx);
+        drop(transport);
         drop(tx);
 
         let result = server.wait().await;
@@ -477,13 +416,9 @@ mod tests {
 
     #[tokio::test]
     async fn wait_should_return_error_when_server_aborted() {
-        let (_res_tx, _req_rx, transport) = make_client_transport();
-        let session = Session::initialize(transport).unwrap();
-
-        let (_tx, rx) = mpsc::channel::<InmemoryStream>(1);
-        let listener = Mutex::new(rx);
-
-        let server = RelayServer::initialize(session, listener, None).unwrap();
+        let (_transport, session) = make_session();
+        let (_tx, stream) = make_transport_stream();
+        let server = RelayServer::initialize(session, stream, None).unwrap();
         server.abort().await;
 
         match server.wait().await {
@@ -494,17 +429,14 @@ mod tests {
 
     #[tokio::test]
     async fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
-        let (_res_tx, _req_rx, transport) = make_client_transport();
-        let session = Session::initialize(transport).unwrap();
-
-        let (_tx, rx) = mpsc::channel::<InmemoryStream>(1);
-        let listener = Mutex::new(rx);
-
+        let (_transport, session) = make_session();
+        let (_tx, stream) = make_transport_stream();
         let server =
-            RelayServer::initialize(session, listener, Some(Duration::from_millis(50))).unwrap();
+            RelayServer::initialize(session, stream, Some(Duration::from_millis(50))).unwrap();
 
         // TODO: Hanging due to broadcast and/or forward tasks not completed
-        let result = timeout(server.wait()).await;
+        panic!();
+        let result = server.wait().await;
         assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 }

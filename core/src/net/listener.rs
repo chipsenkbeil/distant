@@ -1,62 +1,145 @@
 use super::{DataStream, SecretKey, Transport};
+use futures::stream::Stream;
+use log::*;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::{
     io,
     net::{TcpListener, TcpStream},
+    sync::mpsc,
     task::JoinHandle,
 };
 
-pub type AcceptFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
-
-/// Represents a type that has a listen interface for receiving raw streams
-pub trait Listener: Send + Sync {
-    type Output;
-
-    fn accept<'a>(&'a self) -> AcceptFuture<'a, Self::Output>
-    where
-        Self: Sync + 'a;
-}
-
-//
-// TODO: CHIP CHIP CHIP --
-//
-// Create a wrapper type instead of a trait directly on TcpStream and UnixStream
-//
-// 1. If accept() finishes, a new task is spawned to perform the handshake and
-//    the join handle is added to a queue
-// 2. On each loop, if the queue is not empty, a futures::future::select_all is run
-//    alongside a tokio::select! with accept() to see if a new connection is received
-//    or one of the existing handshakes finishes
-//
-//    https://docs.rs/futures/0.3.17/futures/future/fn.select_all.html
-//
-// Implement From<TcpStream> and From<UnixStream> ??? If we do, then the parent accept()
-// would still need to be passed a context. That might be fine. We can also make it simple
-// where an owned context is passed to avoid lifetime challenges
-
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ListenerCtx {
+pub struct TransportListenerCtx {
     pub auth_key: Option<Arc<SecretKey>>,
     pub timeout: Duration,
 }
 
-pub struct TransportListener<T, L>
+/// Represents a [`Stream`] consisting of newly-connected [`DataStream`] instances that
+/// have been wrapped in [`Transport`]
+pub struct TransportListener<T>
 where
     T: DataStream,
-    L: Listener<Output = T>,
 {
-    inner: L,
-    queue: Vec<JoinHandle<io::Result<Transport<T>>>>,
+    listen_task: JoinHandle<()>,
+    accept_task: JoinHandle<()>,
+    rx: mpsc::Receiver<Transport<T>>,
 }
 
-impl<T, L> TransportListener<T, L>
+impl<T> TransportListener<T>
 where
-    T: DataStream,
-    L: Listener<Conn = T>,
+    T: DataStream + Send + 'static,
 {
-    pub fn new(inner: L) -> Self {}
+    pub fn initialize<L>(listener: L, ctx: TransportListenerCtx) -> Self
+    where
+        L: Listener<Output = T> + 'static,
+    {
+        let (stream_tx, mut stream_rx) = mpsc::channel::<T>(1);
+        let listen_task = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok(stream) => {
+                        if stream_tx.send(stream).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(x) => {
+                        error!("Listener failed to accept stream: {}", x);
+                        break;
+                    }
+                }
+            }
+        });
 
-    pub async fn accept(&self) -> io::Result<Transport<T>> {}
+        let TransportListenerCtx { auth_key, timeout } = ctx;
+        let (tx, rx) = mpsc::channel::<Transport<T>>(1);
+        let accept_task = tokio::spawn(async move {
+            let mut queue: Vec<JoinHandle<Transport<T>>> = Vec::new();
+
+            // 1. If queue is empty, wait for a stream_rx input and add it to the queue
+            // 2. If queue is not empty, perform a select between a select on the queue
+            //    and stream_rx; if the queue returns a transport that is not an error,
+            //    then we send it using tx
+            loop {
+                // If queue is empty, we wait for a stream to come in and queue up the handshake
+                if queue.is_empty() {
+                    match stream_rx.recv().await {
+                        Some(stream) => {
+                            let auth_key = auth_key.as_ref().cloned();
+                            queue.push(tokio::spawn(async move {
+                                do_handshake(stream, auth_key, timeout).await.unwrap()
+                            }));
+                        }
+                        None => break,
+                    }
+
+                // Otherwise, we want to select across our queue and a new connection
+                } else {
+                    tokio::select! {
+                        output = futures::future::select_all(queue.drain(..)) => {
+                            let (res, _, remaining) = output;
+                            queue.extend(remaining);
+                            match res {
+                                Ok(transport) => {
+                                    if let Err(x) = tx.send(transport).await {
+                                        error!("Failed to pass along transport: {}", x);
+                                    }
+                                }
+                                Err(x) => {
+                                    error!("Failed to stand up transport: {}", x);
+                                }
+                            }
+                        }
+                        res = stream_rx.recv() => {
+                            match res {
+                                Some(stream) => {
+                                    let auth_key = auth_key.as_ref().cloned();
+                                    queue.push(tokio::spawn(async move {
+                                        do_handshake(stream, auth_key, timeout)
+                                            .await
+                                            .unwrap()
+                                    }));
+                                }
+                                None => break,
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Clean up our queue by aborting all remaining tasks
+            for task in queue {
+                task.abort();
+            }
+        });
+
+        Self {
+            listen_task,
+            accept_task,
+            rx,
+        }
+    }
+
+    pub fn abort(&self) {
+        self.listen_task.abort();
+        self.accept_task.abort();
+    }
+
+    /// Waits for the next fully-initialized transport for an incoming stream to be available,
+    /// returning none if no longer accepting new connections
+    pub async fn accept(&mut self) -> Option<Transport<T>> {
+        self.rx.recv().await
+    }
+
+    /// Converts into a stream of transport-wrapped connections
+    pub fn into_stream(self) -> impl Stream<Item = Transport<T>> {
+        futures::stream::unfold(self, |mut _self| async move {
+            _self
+                .accept()
+                .await
+                .map(move |transport| (transport, _self))
+        })
+    }
 }
 
 async fn do_handshake<T>(
@@ -75,6 +158,17 @@ where
             Err(io::Error::from(io::ErrorKind::TimedOut))
         }
     }
+}
+
+pub type AcceptFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
+
+/// Represents a type that has a listen interface for receiving raw streams
+pub trait Listener: Send + Sync {
+    type Output;
+
+    fn accept<'a>(&'a self) -> AcceptFuture<'a, Self::Output>
+    where
+        Self: Sync + 'a;
 }
 
 impl Listener for TcpListener {
@@ -131,42 +225,6 @@ where
                 .recv()
                 .await
                 .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
-        }
-
-        Box::pin(accept(self))
-    }
-}
-
-#[cfg(test)]
-impl<T> Listener for tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Transport<T>>>
-where
-    T: DataStream + Send + Sync + 'static,
-{
-    type Output = T;
-
-    fn accept<'a>(&'a self) -> AcceptFuture<'a, Self::Output>
-    where
-        Self: Sync + 'a,
-    {
-        async fn accept<'a, T>(
-            _self: &'a tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Transport<T>>>,
-        ) -> io::Result<Transport<T>>
-        where
-            T: DataStream + Send + Sync + 'static,
-        {
-            _self.lock().await
-            let res = tokio::select! {
-                res = lock.recv() => {
-                    res.ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
-                }
-                _ = tokio::time::sleep(timeout) => {
-                    Err(io::Error::from(io::ErrorKind::TimedOut))
-                }
-            };
-
-            let res = res?;
-
-            Ok(Box::pin(async move { Ok(res) }))
         }
 
         Box::pin(accept(self))

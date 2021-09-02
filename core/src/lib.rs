@@ -11,7 +11,8 @@ mod constants;
 mod net;
 pub use net::{
     DataStream, InmemoryStream, InmemoryStreamReadHalf, InmemoryStreamWriteHalf, Listener,
-    SecretKey, Transport, TransportError, TransportReadHalf, TransportWriteHalf,
+    SecretKey, Transport, TransportError, TransportListener, TransportListenerCtx,
+    TransportReadHalf, TransportWriteHalf,
 };
 
 pub mod data;
