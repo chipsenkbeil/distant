@@ -3,7 +3,7 @@ use crate::{
     opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
 };
 use derive_more::{Display, Error, From};
-use distant_core::DistantServer;
+use distant_core::{DistantServer, DistantServerOptions};
 use fork::{daemon, Fork};
 use log::*;
 use tokio::{io, task::JoinError};
@@ -62,18 +62,20 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     }
 
     // Bind & start our server
-    let server = DistantServer::bind(
+    let (server, port) = DistantServer::bind(
         addr,
         cmd.port,
-        shutdown_after,
-        cmd.max_msg_capacity as usize,
+        DistantServerOptions {
+            shutdown_after,
+            max_msg_capacity: cmd.max_msg_capacity as usize,
+        },
     )
     .await?;
 
     // Print information about port, key, etc.
     println!(
         "DISTANT DATA -- {} {}",
-        server.port(),
+        port,
         server.to_unprotected_hex_auth_key()
     );
 

@@ -30,12 +30,16 @@ impl DistantServerCtx {
             Ok(rt) => {
                 rt.block_on(async move {
                     let logger = utils::init_logging(LOG_PATH);
-                    let server = DistantServer::bind(ip_addr, "0".parse().unwrap(), None, 100)
+                    let opts = DistantServerOptions {
+                        shutdown_after: None,
+                        max_msg_capacity: 100,
+                    };
+                    let (server, port) = DistantServer::bind(ip_addr, "0".parse().unwrap(), opts)
                         .await
                         .unwrap();
 
                     started_tx
-                        .send(Ok((server.port(), server.to_unprotected_hex_auth_key())))
+                        .send(Ok((port, server.to_unprotected_hex_auth_key())))
                         .await
                         .unwrap();
 

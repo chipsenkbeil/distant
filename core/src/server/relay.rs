@@ -1,8 +1,8 @@
 use crate::{
     client::Session,
-    constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
+    constants::{CLIENT_BROADCAST_CHANNEL_CAPACITY, CONN_HANDSHAKE_TIMEOUT_MILLIS},
     data::{Request, RequestData, Response, ResponseData},
-    net::{DataStream, Listener, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{DataStream, Listener, ListenerCtx, Transport, TransportReadHalf, TransportWriteHalf},
     server::utils::{ConnTracker, ShutdownTask},
 };
 use log::*;
@@ -84,29 +84,41 @@ impl RelayServer {
         let conns_2 = Arc::clone(&conns);
         let accept_task = tokio::spawn(async move {
             let inner = async move {
+                let ctx = ListenerCtx {
+                    auth_key: None,
+                    timeout: Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS),
+                };
                 loop {
-                    match listener.accept().await {
-                        Ok(stream) => {
-                            let result = Conn::initialize(
-                                stream,
-                                req_tx.clone(),
-                                tracker.as_ref().map(Arc::clone),
-                            )
-                            .await;
+                    match listener.accept(&ctx).await {
+                        Ok(transport_f) => tokio::spawn(async move {
+                            match transport_f.await {
+                                Ok(transport) => {
+                                    let result = Conn::initialize(
+                                        transport,
+                                        req_tx.clone(),
+                                        tracker.as_ref().map(Arc::clone),
+                                    )
+                                    .await;
 
-                            match result {
-                                Ok(conn) => conns_2.lock().await.insert(conn.id(), conn),
-                                Err(x) => {
-                                    error!("Failed to initialize connection: {}", x);
-                                    continue;
+                                    match result {
+                                        Ok(conn) => {
+                                            conns_2.lock().await.insert(conn.id(), conn);
+                                        }
+                                        Err(x) => {
+                                            error!("Failed to initialize connection: {}", x);
+                                        }
+                                    };
                                 }
-                            };
-                        }
+                                Err(x) => {
+                                    error!("Connection handshake timed out: {}", x);
+                                }
+                            }
+                        }),
                         Err(x) => {
                             debug!("Listener has closed: {}", x);
                             break;
                         }
-                    }
+                    };
                 }
             };
 
@@ -154,7 +166,7 @@ struct Conn {
     id: usize,
     req_task: JoinHandle<()>,
     res_task: JoinHandle<()>,
-    cleanup_task: JoinHandle<()>,
+    _cleanup_task: JoinHandle<()>,
     res_tx: mpsc::Sender<Response>,
     state: Arc<Mutex<ConnState>>,
 }
@@ -168,7 +180,7 @@ struct ConnState {
 
 impl Conn {
     pub async fn initialize<T>(
-        stream: T,
+        transport: Transport<T>,
         req_tx: mpsc::Sender<Request>,
         ct: Option<Arc<Mutex<ConnTracker>>>,
     ) -> io::Result<Self>
@@ -179,11 +191,6 @@ impl Conn {
         // is not guaranteed to have an identifiable string
         let id: usize = rand::random();
 
-        // Establish a proper connection via a handshake, discarding the connection otherwise
-        let transport = Transport::from_handshake(stream, None).await.map_err(|x| {
-            error!("<Conn @ {}> Failed handshake: {}", id, x);
-            io::Error::new(io::ErrorKind::Other, x)
-        })?;
         let (t_read, t_write) = transport.into_split();
 
         // Used to alert our response task of the connection's tenant name
@@ -220,7 +227,7 @@ impl Conn {
             let _ = req_task_tx.send(());
         });
 
-        let cleanup_task = tokio::spawn(async move {
+        let _cleanup_task = tokio::spawn(async move {
             let _ = tokio::join!(req_task_rx, res_task_rx);
 
             if let Some(ct) = ct.as_ref() {
@@ -233,7 +240,7 @@ impl Conn {
             id,
             req_task,
             res_task,
-            cleanup_task,
+            _cleanup_task,
             res_tx,
             state,
         })
@@ -384,49 +391,120 @@ async fn handle_conn_outgoing<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::{InmemoryStream, SecretKey};
+    use serde::{de::DeserializeOwned, Serialize};
+    use std::{marker::PhantomData, time::Duration};
 
-    #[test]
-    fn wait_should_return_ok_when_all_inner_tasks_complete() {
-        todo!();
+    async fn timeout<F: std::future::Future<Output = T>, T>(f: F) -> T {
+        tokio::select! {
+            res = f => {
+                res
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                panic!("Time elapsed waiting on future");
+            }
+        }
     }
 
-    #[test]
-    fn wait_should_return_error_when_server_aborted() {
-        todo!();
+    /// Sends data to stream as if it is arriving from the outside
+    struct Incoming<T: Serialize>(mpsc::Sender<Vec<u8>>, PhantomData<T>);
+    impl<T: Serialize> Incoming<T> {
+        pub fn new(tx: mpsc::Sender<Vec<u8>>) -> Self {
+            Self(tx, PhantomData)
+        }
+
+        pub async fn send(&self, data: T) {
+            self.0
+                .send(serde_cbor::to_vec(&data).expect("Failed to encode data"))
+                .await
+                .expect("Failed to send data")
+        }
     }
 
-    #[test]
-    fn abort_should_abort_inner_tasks_and_all_connections() {
-        todo!();
+    /// Receives data from the stream as if it is being sent to the outside
+    struct Outgoing<T: DeserializeOwned>(mpsc::Receiver<Vec<u8>>, PhantomData<T>);
+    impl<T: DeserializeOwned> Outgoing<T> {
+        pub fn new(rx: mpsc::Receiver<Vec<u8>>) -> Self {
+            Self(rx, PhantomData)
+        }
+
+        pub async fn recv(&mut self) -> Option<T> {
+            self.0
+                .recv()
+                .await
+                .map(|data| serde_cbor::from_slice(&data).expect("Failed to decode data"))
+        }
     }
 
-    #[test]
-    fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
-        todo!();
+    fn make_client_stream() -> (Incoming<Response>, Outgoing<Request>, InmemoryStream) {
+        let (tx, rx, stream) = InmemoryStream::make(1);
+        (Incoming::new(tx), Outgoing::new(rx), stream)
     }
 
-    #[test]
-    fn server_shutdown_should_abort_all_connections() {
-        todo!();
+    fn make_server_stream() -> (Incoming<Request>, Outgoing<Response>, InmemoryStream) {
+        let (tx, rx, stream) = InmemoryStream::make(1);
+        (Incoming::new(tx), Outgoing::new(rx), stream)
     }
 
-    #[test]
-    fn server_should_forward_connection_requests_to_session() {
-        todo!();
+    fn make_client_transport() -> (
+        Incoming<Response>,
+        Outgoing<Request>,
+        Transport<InmemoryStream>,
+    ) {
+        let (tx, rx, stream) = make_client_stream();
+        let transport = Transport::new(stream, None, Arc::new(SecretKey::default()));
+        (tx, rx, transport)
     }
 
-    #[test]
-    fn server_should_forward_session_responses_to_connection_with_matching_tenant() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_ok_when_all_inner_tasks_complete() {
+        let (res_tx, req_rx, transport) = make_client_transport();
+        let session = Session::initialize(transport).unwrap();
+
+        let (tx, rx) = mpsc::channel::<InmemoryStream>(1);
+        let listener = Mutex::new(rx);
+
+        let server = RelayServer::initialize(session, listener, None).unwrap();
+
+        // Conclude all server tasks by closing out the listener & session
+        drop(res_tx);
+        drop(req_rx);
+        drop(tx);
+
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 
-    #[test]
-    fn connection_abort_should_abort_inner_tasks() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_error_when_server_aborted() {
+        let (_res_tx, _req_rx, transport) = make_client_transport();
+        let session = Session::initialize(transport).unwrap();
+
+        let (_tx, rx) = mpsc::channel::<InmemoryStream>(1);
+        let listener = Mutex::new(rx);
+
+        let server = RelayServer::initialize(session, listener, None).unwrap();
+        server.abort().await;
+
+        match server.wait().await {
+            Err(x) if x.is_cancelled() => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
-    #[test]
-    fn connection_abort_should_send_process_kill_requests_through_session() {
-        todo!();
+    #[tokio::test]
+    async fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
+        let (_res_tx, _req_rx, transport) = make_client_transport();
+        let session = Session::initialize(transport).unwrap();
+
+        let (_tx, rx) = mpsc::channel::<InmemoryStream>(1);
+        let listener = Mutex::new(rx);
+
+        let server =
+            RelayServer::initialize(session, listener, Some(Duration::from_millis(50))).unwrap();
+
+        // TODO: Hanging due to broadcast and/or forward tasks not completed
+        let result = timeout(server.wait()).await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 }

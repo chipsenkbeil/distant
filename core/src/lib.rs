@@ -18,4 +18,4 @@ pub mod data;
 pub use data::{Request, RequestData, Response, ResponseData};
 
 mod server;
-pub use server::{DistantServer, PortRange, RelayServer};
+pub use server::{DistantServer, DistantServerOptions, PortRange, RelayServer};

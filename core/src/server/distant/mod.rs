@@ -4,8 +4,12 @@ mod state;
 use state::State;
 
 use crate::{
+    constants::CONN_HANDSHAKE_TIMEOUT_MILLIS,
     data::{Request, Response},
-    net::{DataStream, Listener, SecretKey, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{
+        DataStream, Listener, ListenerCtx, SecretKey, Transport, TransportReadHalf,
+        TransportWriteHalf,
+    },
     server::{
         utils::{ConnTracker, ShutdownTask},
         PortRange,
@@ -23,9 +27,23 @@ use tokio::{
 
 /// Represents a server that listens for requests, processes them, and sends responses
 pub struct DistantServer {
-    port: u16,
     auth_key: Arc<SecretKey>,
     conn_task: JoinHandle<()>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistantServerOptions {
+    pub shutdown_after: Option<Duration>,
+    pub max_msg_capacity: usize,
+}
+
+impl Default for DistantServerOptions {
+    fn default() -> Self {
+        Self {
+            shutdown_after: None,
+            max_msg_capacity: 1,
+        }
+    }
 }
 
 impl DistantServer {
@@ -34,30 +52,19 @@ impl DistantServer {
     pub async fn bind(
         addr: IpAddr,
         port: PortRange,
-        shutdown_after: Option<Duration>,
-        max_msg_capacity: usize,
-    ) -> io::Result<Self> {
+        opts: DistantServerOptions,
+    ) -> io::Result<(Self, u16)> {
         debug!("Binding to {} in range {}", addr, port);
         let listener = TcpListener::bind(port.make_socket_addrs(addr).as_slice()).await?;
 
         let port = listener.local_addr()?.port();
         debug!("Bound to port: {}", port);
 
-        Ok(Self::initialize(
-            listener,
-            port,
-            shutdown_after,
-            max_msg_capacity,
-        ))
+        Ok((Self::initialize(listener, opts), port))
     }
 
     /// Initialize a distant server using the provided listener
-    pub fn initialize<T, L>(
-        listener: L,
-        port: u16,
-        shutdown_after: Option<Duration>,
-        max_msg_capacity: usize,
-    ) -> Self
+    pub fn initialize<T, L>(listener: L, opts: DistantServerOptions) -> Self
     where
         T: DataStream + Send + 'static,
         L: Listener<Conn = T> + 'static,
@@ -65,7 +72,7 @@ impl DistantServer {
         // Build our state for the server
         let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
         let auth_key = Arc::new(SecretKey::default());
-        let (shutdown, tracker) = ShutdownTask::maybe_initialize(shutdown_after);
+        let (shutdown, tracker) = ShutdownTask::maybe_initialize(opts.shutdown_after);
 
         // Spawn our connection task
         let auth_key_2 = Arc::clone(&auth_key);
@@ -76,21 +83,15 @@ impl DistantServer {
                 auth_key_2,
                 tracker,
                 shutdown,
-                max_msg_capacity,
+                opts.max_msg_capacity,
             )
             .await
         });
 
         Self {
-            port,
             auth_key,
             conn_task,
         }
-    }
-
-    /// Returns the port this server is bound to
-    pub fn port(&self) -> u16 {
-        self.port
     }
 
     /// Returns a string representing the auth key as hex
@@ -117,37 +118,47 @@ async fn connection_loop<T, L>(
     shutdown: Option<ShutdownTask>,
     max_msg_capacity: usize,
 ) where
-    T: DataStream,
-    L: Listener<Conn = T>,
+    T: DataStream + Send + 'static,
+    L: Listener<Conn = T> + 'static,
 {
     let inner = async move {
+        let ctx = ListenerCtx {
+            auth_key: Some(auth_key),
+            timeout: Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS),
+        };
         loop {
-            match listener.accept().await {
-                Ok(conn) => {
-                    let conn_id = rand::random();
-                    debug!(
-                        "<Conn @ {}> Established against {}",
-                        conn_id,
-                        conn.to_connection_tag()
-                    );
-                    if let Err(x) = on_new_conn(
-                        conn,
-                        conn_id,
-                        Arc::clone(&state),
-                        Arc::clone(&auth_key),
-                        tracker.as_ref().map(Arc::clone),
-                        max_msg_capacity,
-                    )
-                    .await
-                    {
-                        error!("<Conn @ {}> Failed handshake: {}", conn_id, x);
+            match listener.accept(&ctx).await {
+                Ok(conn_f) => tokio::spawn(async move {
+                    match conn_f.await {
+                        Ok(conn) => {
+                            let conn_id = rand::random();
+                            debug!(
+                                "<Conn @ {}> Established against {}",
+                                conn_id,
+                                conn.to_connection_tag()
+                            );
+                            if let Err(x) = on_new_conn(
+                                conn,
+                                conn_id,
+                                Arc::clone(&state),
+                                tracker.as_ref().map(Arc::clone),
+                                max_msg_capacity,
+                            )
+                            .await
+                            {
+                                error!("<Conn @ {}> Failed handshake: {}", conn_id, x);
+                            }
+                        }
+                        Err(x) => {
+                            error!("Connection handshake timed out: {}", x);
+                        }
                     }
-                }
+                }),
                 Err(x) => {
                     error!("Listener failed: {}", x);
                     break;
                 }
-            }
+            };
         }
     };
 
@@ -165,10 +176,9 @@ async fn connection_loop<T, L>(
 /// Processes a new connection, performing a handshake, and then spawning two tasks to handle
 /// input and output, returning join handles for the input and output tasks respectively
 async fn on_new_conn<T>(
-    conn: T,
+    transport: Transport<T>,
     conn_id: usize,
     state: Arc<Mutex<State>>,
-    auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     max_msg_capacity: usize,
 ) -> io::Result<JoinHandle<()>>
@@ -179,10 +189,6 @@ where
     if let Some(ct) = tracker.as_ref() {
         ct.lock().await.increment();
     }
-
-    // Establish a proper connection via a handshake,
-    // discarding the connection otherwise
-    let transport = Transport::from_handshake(conn, Some(auth_key)).await?;
 
     // Split the transport into read and write halves so we can handle input
     // and output concurrently
@@ -283,34 +289,50 @@ async fn response_loop<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::InmemoryStream;
 
-    #[test]
-    fn wait_should_return_ok_when_all_inner_tasks_complete() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_ok_when_all_inner_tasks_complete() {
+        let (tx, rx) = mpsc::channel::<InmemoryStream>(1);
+        let listener = Mutex::new(rx);
+
+        let server = DistantServer::initialize(listener, Default::default());
+
+        // Conclude all server tasks by closing out the listener
+        drop(tx);
+
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 
-    #[test]
-    fn wait_should_return_error_when_server_aborted() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_error_when_server_aborted() {
+        let (_tx, rx) = mpsc::channel::<InmemoryStream>(1);
+        let listener = Mutex::new(rx);
+
+        let server = DistantServer::initialize(listener, Default::default());
+        server.abort();
+
+        match server.wait().await {
+            Err(x) if x.is_cancelled() => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
-    #[test]
-    fn abort_should_abort_inner_tasks_and_all_connections() {
-        todo!();
-    }
+    #[tokio::test]
+    async fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
+        let (_tx, rx) = mpsc::channel::<InmemoryStream>(1);
+        let listener = Mutex::new(rx);
 
-    #[test]
-    fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
-        todo!();
-    }
+        let server = DistantServer::initialize(
+            listener,
+            DistantServerOptions {
+                shutdown_after: Some(Duration::from_millis(50)),
+                max_msg_capacity: 1,
+            },
+        );
 
-    #[test]
-    fn server_shutdown_should_abort_all_connections() {
-        todo!();
-    }
-
-    #[test]
-    fn server_should_execute_requests_and_return_responses() {
-        todo!();
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 }

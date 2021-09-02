@@ -264,6 +264,11 @@ where
         recv!(self.conn, self.crypt_key, self.auth_key).await
     }
 
+    /// Returns a textual description of the transport's underlying connection
+    pub fn to_connection_tag(&self) -> String {
+        self.conn.get_ref().to_connection_tag()
+    }
+
     /// Splits transport into read and write halves
     pub fn into_split(self) -> (TransportReadHalf<T::Read>, TransportWriteHalf<T::Write>) {
         let crypt_key = self.crypt_key;

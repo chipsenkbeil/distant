@@ -10,6 +10,7 @@ use tokio::{
 };
 
 /// Represents a data stream comprised of two inmemory channels
+#[derive(Debug)]
 pub struct InmemoryStream {
     incoming: InmemoryStreamReadHalf,
     outgoing: InmemoryStreamWriteHalf,
@@ -72,6 +73,7 @@ impl AsyncWrite for InmemoryStream {
 }
 
 /// Read portion of an inmemory channel
+#[derive(Debug)]
 pub struct InmemoryStreamReadHalf(mpsc::Receiver<Vec<u8>>);
 
 impl AsyncRead for InmemoryStreamReadHalf {
@@ -91,6 +93,7 @@ impl AsyncRead for InmemoryStreamReadHalf {
 }
 
 /// Write portion of an inmemory channel
+#[derive(Debug)]
 pub struct InmemoryStreamWriteHalf(mpsc::Sender<Vec<u8>>);
 
 impl AsyncWrite for InmemoryStreamWriteHalf {
