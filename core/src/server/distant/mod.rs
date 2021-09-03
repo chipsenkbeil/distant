@@ -65,7 +65,7 @@ impl DistantServer {
             listener,
             TransportListenerCtx {
                 auth_key,
-                timeout: Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS),
+                timeout: Some(Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS)),
             },
         )
         .into_stream();
@@ -269,7 +269,10 @@ async fn response_loop<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::InmemoryStream;
+    use crate::{
+        data::{RequestData, ResponseData},
+        net::InmemoryStream,
+    };
     use std::pin::Pin;
 
     fn make_transport_stream() -> (
@@ -313,16 +316,28 @@ mod tests {
     async fn server_should_receive_requests_and_send_responses_to_appropriate_connections() {
         let (tx, stream) = make_transport_stream();
 
-        let server = DistantServer::initialize(
-            stream,
-            DistantServerOptions {
-                shutdown_after: Some(Duration::from_millis(50)),
-                max_msg_capacity: 1,
-            },
-        );
+        let _server = DistantServer::initialize(stream, Default::default());
 
-        let result = server.wait().await;
-        assert!(result.is_ok(), "Unexpected result: {:?}", result);
+        // Send over a "connection"
+        let (mut t1, t2) = Transport::make_pair();
+        tx.send(t2).await.unwrap();
+
+        // Send a request
+        t1.send(Request::new(
+            "test-tenant",
+            vec![RequestData::SystemInfo {}],
+        ))
+        .await
+        .unwrap();
+
+        // Get a response
+        let res = t1.receive::<Response>().await.unwrap().unwrap();
+        assert!(res.payload.len() == 1, "Unexpected payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::SystemInfo { .. }),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]

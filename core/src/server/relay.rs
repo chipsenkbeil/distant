@@ -41,8 +41,21 @@ impl RelayServer {
         let conns_2 = Arc::clone(&conns);
         debug!("Spawning response broadcast task");
         let mut broadcast = session.broadcast.take().unwrap();
+        let (shutdown_broadcast_tx, mut shutdown_broadcast_rx) = mpsc::channel::<()>(1);
         let broadcast_task = tokio::spawn(async move {
-            while let Some(res) = broadcast.recv().await {
+            loop {
+                let res = tokio::select! {
+                    maybe_res = broadcast.recv() => {
+                        match maybe_res {
+                            Some(res) => res,
+                            None => break,
+                        }
+                    }
+                    _ = shutdown_broadcast_rx.recv() => {
+                        break;
+                    }
+                };
+
                 // Search for all connections with a tenant that matches the response's tenant
                 for conn in conns_2.lock().await.values_mut() {
                     if conn.state.lock().await.tenant.as_deref() == Some(res.tenant.as_str()) {
@@ -67,8 +80,21 @@ impl RelayServer {
         // Spawn task to send to the server requests from connections
         debug!("Spawning request forwarding task");
         let (req_tx, mut req_rx) = mpsc::channel::<Request>(CLIENT_BROADCAST_CHANNEL_CAPACITY);
+        let (shutdown_forward_tx, mut shutdown_forward_rx) = mpsc::channel::<()>(1);
         let forward_task = tokio::spawn(async move {
-            while let Some(req) = req_rx.recv().await {
+            loop {
+                let req = tokio::select! {
+                    maybe_req = req_rx.recv() => {
+                        match maybe_req {
+                            Some(req) => req,
+                            None => break,
+                        }
+                    }
+                    _ = shutdown_forward_rx.recv() => {
+                        break;
+                    }
+                };
+
                 debug!(
                     "Forwarding request of type{} {} to server",
                     if req.payload.len() > 1 { "s" } else { "" },
@@ -121,6 +147,11 @@ impl RelayServer {
                 },
                 None => inner.await,
             }
+
+            // Doesn't matter if we send or drop these as long as they persist until this
+            // task is completed, so just drop
+            drop(shutdown_broadcast_tx);
+            drop(shutdown_forward_tx);
         });
 
         Ok(Self {
@@ -428,14 +459,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_should_forward_requests_using_session() {
+        let (mut transport, session) = make_session();
+        let (tx, stream) = make_transport_stream();
+        let _server = RelayServer::initialize(session, stream, None).unwrap();
+
+        // Send over a "connection"
+        let (mut t1, t2) = Transport::make_pair();
+        tx.send(t2).await.unwrap();
+
+        // Send a request
+        let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
+        t1.send(req.clone()).await.unwrap();
+
+        // Verify the request is forwarded out via session
+        let outbound_req = transport.receive().await.unwrap().unwrap();
+        assert_eq!(req, outbound_req);
+    }
+
+    #[tokio::test]
+    async fn server_should_send_back_response_with_tenant_matching_connection() {
+        let (mut transport, session) = make_session();
+        let (tx, stream) = make_transport_stream();
+        let _server = RelayServer::initialize(session, stream, None).unwrap();
+
+        // Send over a "connection"
+        let (mut t1, t2) = Transport::make_pair();
+        tx.send(t2).await.unwrap();
+
+        // Send over a second "connection"
+        let (mut t2, t3) = Transport::make_pair();
+        tx.send(t3).await.unwrap();
+
+        // Send a request to mark the tenant of the first connection
+        t1.send(Request::new(
+            "test-tenant-1",
+            vec![RequestData::SystemInfo {}],
+        ))
+        .await
+        .unwrap();
+
+        // Send a request to mark the tenant of the second connection
+        t2.send(Request::new(
+            "test-tenant-2",
+            vec![RequestData::SystemInfo {}],
+        ))
+        .await
+        .unwrap();
+
+        // Clear out the transport channel (outbound of session)
+        // NOTE: Because our test stream uses a buffer size of 1, we have to clear out the
+        //       outbound data from the earlier requests before we can send back a response
+        let _ = transport.receive::<Request>().await.unwrap().unwrap();
+        let _ = transport.receive::<Request>().await.unwrap().unwrap();
+
+        // Send a response back to a singular connection based on the tenant
+        let res = Response::new("test-tenant-2", None, vec![ResponseData::Ok]);
+        transport.send(res.clone()).await.unwrap();
+
+        // Verify that response is only received by a singular connection
+        let inbound_res = t2.receive().await.unwrap().unwrap();
+        assert_eq!(res, inbound_res);
+
+        let no_inbound = tokio::select! {
+            _ = t1.receive::<Response>() => {false}
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {true}
+        };
+        assert!(no_inbound, "Unexpectedly got response for wrong connection");
+    }
+
+    #[tokio::test]
     async fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
         let (_transport, session) = make_session();
         let (_tx, stream) = make_transport_stream();
         let server =
             RelayServer::initialize(session, stream, Some(Duration::from_millis(50))).unwrap();
 
-        // TODO: Hanging due to broadcast and/or forward tasks not completed
-        panic!();
         let result = server.wait().await;
         assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }

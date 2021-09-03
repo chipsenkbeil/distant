@@ -12,7 +12,7 @@ mod net;
 pub use net::{
     DataStream, InmemoryStream, InmemoryStreamReadHalf, InmemoryStreamWriteHalf, Listener,
     SecretKey, Transport, TransportError, TransportListener, TransportListenerCtx,
-    TransportReadHalf, TransportWriteHalf,
+    TransportReadHalf, TransportWriteHalf, UnprotectedToHexKey,
 };
 
 pub mod data;

@@ -3,9 +3,10 @@ use crate::{
     opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
 };
 use derive_more::{Display, Error, From};
-use distant_core::{DistantServer, DistantServerOptions};
+use distant_core::{DistantServer, DistantServerOptions, SecretKey, UnprotectedToHexKey};
 use fork::{daemon, Fork};
 use log::*;
+use std::sync::Arc;
 use tokio::{io, task::JoinError};
 
 #[derive(Debug, Display, Error, From)]
@@ -62,9 +63,11 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     }
 
     // Bind & start our server
+    let auth_key = Arc::new(SecretKey::default());
     let (server, port) = DistantServer::bind(
         addr,
         cmd.port,
+        Some(Arc::clone(&auth_key)),
         DistantServerOptions {
             shutdown_after,
             max_msg_capacity: cmd.max_msg_capacity as usize,
@@ -76,7 +79,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     println!(
         "DISTANT DATA -- {} {}",
         port,
-        server.to_unprotected_hex_auth_key()
+        auth_key.unprotected_to_hex_key()
     );
 
     // For the child, we want to fully disconnect it from pipes, which we do now

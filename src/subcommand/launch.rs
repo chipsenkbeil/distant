@@ -160,7 +160,7 @@ async fn socket_loop(
         listener,
         TransportListenerCtx {
             auth_key: None,
-            timeout: duration,
+            timeout: Some(duration),
         },
     )
     .into_stream();

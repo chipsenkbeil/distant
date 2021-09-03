@@ -16,8 +16,8 @@ pub const READ_PAUSE_MILLIS: u64 = 50;
 pub const SALT_LEN: usize = 16;
 
 /// Represents time in milliseconds a connection has to perform a handshake (on server side)
-/// before the server discards the connection (1 minute)
-pub const CONN_HANDSHAKE_TIMEOUT_MILLIS: u64 = 60000;
+/// before the server discards the connection (5 minutes)
+pub const CONN_HANDSHAKE_TIMEOUT_MILLIS: u64 = 300000;
 
 /// Test-only constants
 #[cfg(test)]

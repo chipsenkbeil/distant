@@ -140,6 +140,7 @@ macro_rules! recv {
 }
 
 /// Represents a transport of data across the network
+#[derive(Debug)]
 pub struct Transport<T>
 where
     T: DataStream,

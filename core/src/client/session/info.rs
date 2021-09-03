@@ -1,5 +1,5 @@
+use crate::net::{SecretKey, UnprotectedToHexKey};
 use derive_more::{Display, Error};
-use orion::aead::SecretKey;
 use std::{
     env,
     net::{IpAddr, SocketAddr},
@@ -141,11 +141,6 @@ impl SessionInfo {
         Ok(SocketAddr::from((addr, self.port)))
     }
 
-    /// Returns a string representing the auth key as hex
-    pub fn to_unprotected_hex_auth_key(&self) -> String {
-        hex::encode(self.auth_key.unprotected_as_bytes())
-    }
-
     /// Converts to unprotected string that exposes the auth key in the form of
     /// `DISTANT DATA <host> <port> <auth key>`
     pub fn to_unprotected_string(&self) -> String {
@@ -153,7 +148,7 @@ impl SessionInfo {
             "DISTANT DATA {} {} {}",
             self.host,
             self.port,
-            self.to_unprotected_hex_auth_key()
+            self.auth_key.unprotected_to_hex_key()
         )
     }
 }

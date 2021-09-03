@@ -9,10 +9,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TransportListenerCtx {
     pub auth_key: Option<Arc<SecretKey>>,
-    pub timeout: Duration,
+    pub timeout: Option<Duration>,
 }
 
 /// Represents a [`Stream`] consisting of newly-connected [`DataStream`] instances that
@@ -40,6 +40,7 @@ where
                 match listener.accept().await {
                     Ok(stream) => {
                         if stream_tx.send(stream).await.is_err() {
+                            error!("Listener failed to pass along stream");
                             break;
                         }
                     }
@@ -54,62 +55,24 @@ where
         let TransportListenerCtx { auth_key, timeout } = ctx;
         let (tx, rx) = mpsc::channel::<Transport<T>>(1);
         let accept_task = tokio::spawn(async move {
-            let mut queue: Vec<JoinHandle<Transport<T>>> = Vec::new();
-
-            // 1. If queue is empty, wait for a stream_rx input and add it to the queue
-            // 2. If queue is not empty, perform a select between a select on the queue
-            //    and stream_rx; if the queue returns a transport that is not an error,
-            //    then we send it using tx
-            loop {
-                // If queue is empty, we wait for a stream to come in and queue up the handshake
-                if queue.is_empty() {
-                    match stream_rx.recv().await {
-                        Some(stream) => {
-                            let auth_key = auth_key.as_ref().cloned();
-                            queue.push(tokio::spawn(async move {
-                                do_handshake(stream, auth_key, timeout).await.unwrap()
-                            }));
-                        }
-                        None => break,
-                    }
-
-                // Otherwise, we want to select across our queue and a new connection
-                } else {
-                    tokio::select! {
-                        output = futures::future::select_all(queue.drain(..)) => {
-                            let (res, _, remaining) = output;
-                            queue.extend(remaining);
-                            match res {
-                                Ok(transport) => {
-                                    if let Err(x) = tx.send(transport).await {
-                                        error!("Failed to pass along transport: {}", x);
-                                    }
-                                }
-                                Err(x) => {
-                                    error!("Failed to stand up transport: {}", x);
-                                }
+            // Check if we have a new connection. If so, spawn a task for it
+            while let Some(stream) = stream_rx.recv().await {
+                let auth_key = auth_key.as_ref().cloned();
+                let tx_2 = tx.clone();
+                tokio::spawn(async move {
+                    match do_handshake(stream, auth_key, timeout).await {
+                        Ok(transport) => {
+                            if let Err(x) = tx_2.send(transport).await {
+                                error!("Failed to forward transport: {}", x);
+                                panic!("{}", x);
                             }
                         }
-                        res = stream_rx.recv() => {
-                            match res {
-                                Some(stream) => {
-                                    let auth_key = auth_key.as_ref().cloned();
-                                    queue.push(tokio::spawn(async move {
-                                        do_handshake(stream, auth_key, timeout)
-                                            .await
-                                            .unwrap()
-                                    }));
-                                }
-                                None => break,
-                            }
+                        Err(x) => {
+                            error!("Transport handshake failed: {}", x);
+                            panic!("{}", x);
                         }
                     }
-                }
-            }
-
-            // Clean up our queue by aborting all remaining tasks
-            for task in queue {
-                task.abort();
+                });
             }
         });
 
@@ -145,18 +108,22 @@ where
 async fn do_handshake<T>(
     stream: T,
     auth_key: Option<Arc<SecretKey>>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> io::Result<Transport<T>>
 where
     T: DataStream,
 {
-    tokio::select! {
-        res = Transport::from_handshake(stream, auth_key) => {
-            res
+    if let Some(timeout) = timeout {
+        tokio::select! {
+            res = Transport::from_handshake(stream, auth_key) => {
+                res
+            }
+            _ = tokio::time::sleep(timeout) => {
+                Err(io::Error::from(io::ErrorKind::TimedOut))
+            }
         }
-        _ = tokio::time::sleep(timeout) => {
-            Err(io::Error::from(io::ErrorKind::TimedOut))
-        }
+    } else {
+        Transport::from_handshake(stream, auth_key).await
     }
 }
 
