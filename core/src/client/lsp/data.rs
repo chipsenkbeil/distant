@@ -101,13 +101,18 @@ impl LspData {
         &mut self.content
     }
 
+    /// Updates the header content length based on the current content
+    pub fn refresh_content_length(&mut self) {
+        self.header.content_length = self.content.to_string().len();
+    }
+
     /// Creates a session's info by inspecting the content for session parameters, removing the
     /// session parameters from the content. Will also adjust the content length header to match
     /// the new size of the content.
     pub fn take_session_info(&mut self) -> Result<SessionInfo, LspSessionInfoError> {
         match self.content.take_session_info() {
             Ok(session) => {
-                self.header.content_length = self.content.to_string().len();
+                self.refresh_content_length();
                 Ok(session)
             }
             Err(x) => Err(x),
