@@ -2,9 +2,10 @@ use crate::{
     client::Session,
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, RequestData, Response, ResponseData},
-    net::{DataStream, Listener, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{DataStream, Transport, TransportReadHalf, TransportWriteHalf},
     server::utils::{ConnTracker, ShutdownTask},
 };
+use futures::stream::{Stream, StreamExt};
 use log::*;
 use std::{collections::HashMap, marker::Unpin, sync::Arc};
 use tokio::{
@@ -24,15 +25,15 @@ pub struct RelayServer {
 }
 
 impl RelayServer {
-    pub fn initialize<T1, T2, L>(
+    pub fn initialize<T1, T2, S>(
         mut session: Session<T1>,
-        listener: L,
+        mut stream: S,
         shutdown_after: Option<Duration>,
     ) -> io::Result<Self>
     where
         T1: DataStream + 'static,
         T2: DataStream + Send + 'static,
-        L: Listener<Conn = T2> + 'static,
+        S: Stream<Item = Transport<T2>> + Send + Unpin + 'static,
     {
         let conns: Arc<Mutex<HashMap<usize, Conn>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -40,8 +41,21 @@ impl RelayServer {
         let conns_2 = Arc::clone(&conns);
         debug!("Spawning response broadcast task");
         let mut broadcast = session.broadcast.take().unwrap();
+        let (shutdown_broadcast_tx, mut shutdown_broadcast_rx) = mpsc::channel::<()>(1);
         let broadcast_task = tokio::spawn(async move {
-            while let Some(res) = broadcast.recv().await {
+            loop {
+                let res = tokio::select! {
+                    maybe_res = broadcast.recv() => {
+                        match maybe_res {
+                            Some(res) => res,
+                            None => break,
+                        }
+                    }
+                    _ = shutdown_broadcast_rx.recv() => {
+                        break;
+                    }
+                };
+
                 // Search for all connections with a tenant that matches the response's tenant
                 for conn in conns_2.lock().await.values_mut() {
                     if conn.state.lock().await.tenant.as_deref() == Some(res.tenant.as_str()) {
@@ -66,8 +80,21 @@ impl RelayServer {
         // Spawn task to send to the server requests from connections
         debug!("Spawning request forwarding task");
         let (req_tx, mut req_rx) = mpsc::channel::<Request>(CLIENT_BROADCAST_CHANNEL_CAPACITY);
+        let (shutdown_forward_tx, mut shutdown_forward_rx) = mpsc::channel::<()>(1);
         let forward_task = tokio::spawn(async move {
-            while let Some(req) = req_rx.recv().await {
+            loop {
+                let req = tokio::select! {
+                    maybe_req = req_rx.recv() => {
+                        match maybe_req {
+                            Some(req) => req,
+                            None => break,
+                        }
+                    }
+                    _ = shutdown_forward_rx.recv() => {
+                        break;
+                    }
+                };
+
                 debug!(
                     "Forwarding request of type{} {} to server",
                     if req.payload.len() > 1 { "s" } else { "" },
@@ -85,28 +112,29 @@ impl RelayServer {
         let accept_task = tokio::spawn(async move {
             let inner = async move {
                 loop {
-                    match listener.accept().await {
-                        Ok(stream) => {
+                    match stream.next().await {
+                        Some(transport) => {
                             let result = Conn::initialize(
-                                stream,
+                                transport,
                                 req_tx.clone(),
                                 tracker.as_ref().map(Arc::clone),
                             )
                             .await;
 
                             match result {
-                                Ok(conn) => conns_2.lock().await.insert(conn.id(), conn),
+                                Ok(conn) => {
+                                    conns_2.lock().await.insert(conn.id(), conn);
+                                }
                                 Err(x) => {
                                     error!("Failed to initialize connection: {}", x);
-                                    continue;
                                 }
                             };
                         }
-                        Err(x) => {
-                            debug!("Listener has closed: {}", x);
+                        None => {
+                            info!("Listener shutting down");
                             break;
                         }
-                    }
+                    };
                 }
             };
 
@@ -119,6 +147,11 @@ impl RelayServer {
                 },
                 None => inner.await,
             }
+
+            // Doesn't matter if we send or drop these as long as they persist until this
+            // task is completed, so just drop
+            drop(shutdown_broadcast_tx);
+            drop(shutdown_forward_tx);
         });
 
         Ok(Self {
@@ -154,7 +187,7 @@ struct Conn {
     id: usize,
     req_task: JoinHandle<()>,
     res_task: JoinHandle<()>,
-    cleanup_task: JoinHandle<()>,
+    _cleanup_task: JoinHandle<()>,
     res_tx: mpsc::Sender<Response>,
     state: Arc<Mutex<ConnState>>,
 }
@@ -168,7 +201,7 @@ struct ConnState {
 
 impl Conn {
     pub async fn initialize<T>(
-        stream: T,
+        transport: Transport<T>,
         req_tx: mpsc::Sender<Request>,
         ct: Option<Arc<Mutex<ConnTracker>>>,
     ) -> io::Result<Self>
@@ -179,11 +212,6 @@ impl Conn {
         // is not guaranteed to have an identifiable string
         let id: usize = rand::random();
 
-        // Establish a proper connection via a handshake, discarding the connection otherwise
-        let transport = Transport::from_handshake(stream, None).await.map_err(|x| {
-            error!("<Conn @ {}> Failed handshake: {}", id, x);
-            io::Error::new(io::ErrorKind::Other, x)
-        })?;
         let (t_read, t_write) = transport.into_split();
 
         // Used to alert our response task of the connection's tenant name
@@ -220,7 +248,7 @@ impl Conn {
             let _ = req_task_tx.send(());
         });
 
-        let cleanup_task = tokio::spawn(async move {
+        let _cleanup_task = tokio::spawn(async move {
             let _ = tokio::join!(req_task_rx, res_task_rx);
 
             if let Some(ct) = ct.as_ref() {
@@ -233,7 +261,7 @@ impl Conn {
             id,
             req_task,
             res_task,
-            cleanup_task,
+            _cleanup_task,
             res_tx,
             state,
         })
@@ -384,49 +412,130 @@ async fn handle_conn_outgoing<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::InmemoryStream;
+    use std::{pin::Pin, time::Duration};
 
-    #[test]
-    fn wait_should_return_ok_when_all_inner_tasks_complete() {
-        todo!();
+    fn make_session() -> (Transport<InmemoryStream>, Session<InmemoryStream>) {
+        let (t1, t2) = Transport::make_pair();
+        (t1, Session::initialize(t2).unwrap())
     }
 
-    #[test]
-    fn wait_should_return_error_when_server_aborted() {
-        todo!();
+    fn make_transport_stream() -> (
+        mpsc::Sender<Transport<InmemoryStream>>,
+        Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,
+    ) {
+        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream>>(1);
+        let stream = futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(move |transport| (transport, rx))
+        });
+        (tx, Box::pin(stream))
     }
 
-    #[test]
-    fn abort_should_abort_inner_tasks_and_all_connections() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_ok_when_all_inner_tasks_complete() {
+        let (transport, session) = make_session();
+        let (tx, stream) = make_transport_stream();
+        let server = RelayServer::initialize(session, stream, None).unwrap();
+
+        // Conclude all server tasks by closing out the listener & session
+        drop(transport);
+        drop(tx);
+
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 
-    #[test]
-    fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_error_when_server_aborted() {
+        let (_transport, session) = make_session();
+        let (_tx, stream) = make_transport_stream();
+        let server = RelayServer::initialize(session, stream, None).unwrap();
+        server.abort().await;
+
+        match server.wait().await {
+            Err(x) if x.is_cancelled() => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
-    #[test]
-    fn server_shutdown_should_abort_all_connections() {
-        todo!();
+    #[tokio::test]
+    async fn server_should_forward_requests_using_session() {
+        let (mut transport, session) = make_session();
+        let (tx, stream) = make_transport_stream();
+        let _server = RelayServer::initialize(session, stream, None).unwrap();
+
+        // Send over a "connection"
+        let (mut t1, t2) = Transport::make_pair();
+        tx.send(t2).await.unwrap();
+
+        // Send a request
+        let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
+        t1.send(req.clone()).await.unwrap();
+
+        // Verify the request is forwarded out via session
+        let outbound_req = transport.receive().await.unwrap().unwrap();
+        assert_eq!(req, outbound_req);
     }
 
-    #[test]
-    fn server_should_forward_connection_requests_to_session() {
-        todo!();
+    #[tokio::test]
+    async fn server_should_send_back_response_with_tenant_matching_connection() {
+        let (mut transport, session) = make_session();
+        let (tx, stream) = make_transport_stream();
+        let _server = RelayServer::initialize(session, stream, None).unwrap();
+
+        // Send over a "connection"
+        let (mut t1, t2) = Transport::make_pair();
+        tx.send(t2).await.unwrap();
+
+        // Send over a second "connection"
+        let (mut t2, t3) = Transport::make_pair();
+        tx.send(t3).await.unwrap();
+
+        // Send a request to mark the tenant of the first connection
+        t1.send(Request::new(
+            "test-tenant-1",
+            vec![RequestData::SystemInfo {}],
+        ))
+        .await
+        .unwrap();
+
+        // Send a request to mark the tenant of the second connection
+        t2.send(Request::new(
+            "test-tenant-2",
+            vec![RequestData::SystemInfo {}],
+        ))
+        .await
+        .unwrap();
+
+        // Clear out the transport channel (outbound of session)
+        // NOTE: Because our test stream uses a buffer size of 1, we have to clear out the
+        //       outbound data from the earlier requests before we can send back a response
+        let _ = transport.receive::<Request>().await.unwrap().unwrap();
+        let _ = transport.receive::<Request>().await.unwrap().unwrap();
+
+        // Send a response back to a singular connection based on the tenant
+        let res = Response::new("test-tenant-2", None, vec![ResponseData::Ok]);
+        transport.send(res.clone()).await.unwrap();
+
+        // Verify that response is only received by a singular connection
+        let inbound_res = t2.receive().await.unwrap().unwrap();
+        assert_eq!(res, inbound_res);
+
+        let no_inbound = tokio::select! {
+            _ = t1.receive::<Response>() => {false}
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {true}
+        };
+        assert!(no_inbound, "Unexpectedly got response for wrong connection");
     }
 
-    #[test]
-    fn server_should_forward_session_responses_to_connection_with_matching_tenant() {
-        todo!();
-    }
+    #[tokio::test]
+    async fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
+        let (_transport, session) = make_session();
+        let (_tx, stream) = make_transport_stream();
+        let server =
+            RelayServer::initialize(session, stream, Some(Duration::from_millis(50))).unwrap();
 
-    #[test]
-    fn connection_abort_should_abort_inner_tasks() {
-        todo!();
-    }
-
-    #[test]
-    fn connection_abort_should_send_process_kill_requests_through_session() {
-        todo!();
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 }

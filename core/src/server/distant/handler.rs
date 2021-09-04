@@ -73,7 +73,11 @@ pub(super) async fn process(
             RequestData::Copy { src, dst } => copy(src, dst).await,
             RequestData::Rename { src, dst } => rename(src, dst).await,
             RequestData::Exists { path } => exists(path).await,
-            RequestData::Metadata { path, canonicalize } => metadata(path, canonicalize).await,
+            RequestData::Metadata {
+                path,
+                canonicalize,
+                resolve_file_type,
+            } => metadata(path, canonicalize, resolve_file_type).await,
             RequestData::ProcRun { cmd, args } => {
                 proc_run(tenant.to_string(), conn_id, state, tx, cmd, args).await
             }
@@ -324,12 +328,24 @@ async fn exists(path: PathBuf) -> Result<ResponseData, ServerError> {
     })
 }
 
-async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, ServerError> {
+async fn metadata(
+    path: PathBuf,
+    canonicalize: bool,
+    resolve_file_type: bool,
+) -> Result<ResponseData, ServerError> {
     let metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
     let canonicalized_path = if canonicalize {
-        Some(tokio::fs::canonicalize(path).await?)
+        Some(tokio::fs::canonicalize(path.as_path()).await?)
     } else {
         None
+    };
+
+    // If asking for resolved file type and current type is symlink, then we want to refresh
+    // our metadata to get the filetype for the resolved link
+    let file_type = if resolve_file_type && metadata.file_type().is_symlink() {
+        tokio::fs::metadata(path).await?.file_type()
+    } else {
+        metadata.file_type()
     };
 
     Ok(ResponseData::Metadata {
@@ -351,9 +367,9 @@ async fn metadata(path: PathBuf, canonicalize: bool) -> Result<ResponseData, Ser
             .map(|d| d.as_millis()),
         len: metadata.len(),
         readonly: metadata.permissions().readonly(),
-        file_type: if metadata.is_dir() {
+        file_type: if file_type.is_dir() {
             FileType::Dir
-        } else if metadata.is_file() {
+        } else if file_type.is_file() {
             FileType::File
         } else {
             FileType::Symlink
@@ -1801,6 +1817,7 @@ mod tests {
             vec![RequestData::Metadata {
                 path: file.path().to_path_buf(),
                 canonicalize: false,
+                resolve_file_type: false,
             }],
         );
 
@@ -1827,6 +1844,7 @@ mod tests {
             vec![RequestData::Metadata {
                 path: file.path().to_path_buf(),
                 canonicalize: false,
+                resolve_file_type: false,
             }],
         );
 
@@ -1862,6 +1880,7 @@ mod tests {
             vec![RequestData::Metadata {
                 path: dir.path().to_path_buf(),
                 canonicalize: false,
+                resolve_file_type: false,
             }],
         );
 
@@ -1899,6 +1918,7 @@ mod tests {
             vec![RequestData::Metadata {
                 path: symlink.path().to_path_buf(),
                 canonicalize: false,
+                resolve_file_type: false,
             }],
         );
 
@@ -1936,6 +1956,7 @@ mod tests {
             vec![RequestData::Metadata {
                 path: symlink.path().to_path_buf(),
                 canonicalize: true,
+                resolve_file_type: false,
             }],
         );
 
@@ -1954,6 +1975,38 @@ mod tests {
                 &file.path().canonicalize().unwrap(),
                 "Symlink canonicalized path does not match referenced file"
             ),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let symlink = temp.child("link");
+        symlink.symlink_to_file(file.path()).unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: symlink.path().to_path_buf(),
+                canonicalize: false,
+                resolve_file_type: true,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        match &res.payload[0] {
+            ResponseData::Metadata {
+                file_type: FileType::File,
+                ..
+            } => {}
             x => panic!("Unexpected response: {:?}", x),
         }
     }

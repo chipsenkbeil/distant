@@ -207,6 +207,10 @@ pub enum RequestData {
         /// intermediate components normalized and symbolic links resolved
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         canonicalize: bool,
+
+        /// Whether or not to follow symlinks to determine absolute file type (dir/file)
+        #[cfg_attr(feature = "structopt", structopt(long))]
+        resolve_file_type: bool,
     },
 
     /// Runs a process on the remote machine

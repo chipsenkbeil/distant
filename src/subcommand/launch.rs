@@ -5,7 +5,9 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{RelayServer, Session, SessionInfo, SessionInfoFile};
+use distant_core::{
+    RelayServer, Session, SessionInfo, SessionInfoFile, TransportListener, TransportListenerCtx,
+};
 use fork::{daemon, Fork};
 use log::*;
 use std::{path::Path, string::FromUtf8Error};
@@ -154,7 +156,16 @@ async fn socket_loop(
     debug!("Binding to unix socket: {:?}", socket_path.as_ref());
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
-    let server = RelayServer::initialize(session, listener, shutdown_after)?;
+    let stream = TransportListener::initialize(
+        listener,
+        TransportListenerCtx {
+            auth_key: None,
+            timeout: Some(duration),
+        },
+    )
+    .into_stream();
+
+    let server = RelayServer::initialize(session, Box::pin(stream), shutdown_after)?;
     server
         .wait()
         .await

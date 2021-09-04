@@ -140,6 +140,7 @@ macro_rules! recv {
 }
 
 /// Represents a transport of data across the network
+#[derive(Debug)]
 pub struct Transport<T>
 where
     T: DataStream,
@@ -262,6 +263,11 @@ where
     /// returning none if the transport is now closed
     pub async fn receive<R: DeserializeOwned>(&mut self) -> Result<Option<R>, TransportError> {
         recv!(self.conn, self.crypt_key, self.auth_key).await
+    }
+
+    /// Returns a textual description of the transport's underlying connection
+    pub fn to_connection_tag(&self) -> String {
+        self.conn.get_ref().to_connection_tag()
     }
 
     /// Splits transport into read and write halves

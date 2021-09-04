@@ -2,7 +2,7 @@ use crate::cli::utils;
 use assert_cmd::Command;
 use distant_core::*;
 use rstest::*;
-use std::{ffi::OsStr, net::SocketAddr, thread};
+use std::{ffi::OsStr, net::SocketAddr, sync::Arc, thread};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 const LOG_PATH: &'static str = "/tmp/test.distant.server.log";
@@ -30,14 +30,18 @@ impl DistantServerCtx {
             Ok(rt) => {
                 rt.block_on(async move {
                     let logger = utils::init_logging(LOG_PATH);
-                    let server = DistantServer::bind(ip_addr, "0".parse().unwrap(), None, 100)
-                        .await
-                        .unwrap();
+                    let opts = DistantServerOptions {
+                        shutdown_after: None,
+                        max_msg_capacity: 100,
+                    };
+                    let auth_key = Arc::new(SecretKey::default());
+                    let auth_key_hex_str = auth_key.unprotected_to_hex_key();
+                    let (_server, port) =
+                        DistantServer::bind(ip_addr, "0".parse().unwrap(), Some(auth_key), opts)
+                            .await
+                            .unwrap();
 
-                    started_tx
-                        .send(Ok((server.port(), server.to_unprotected_hex_auth_key())))
-                        .await
-                        .unwrap();
+                    started_tx.send(Ok((port, auth_key_hex_str))).await.unwrap();
 
                     let _ = done_rx.recv().await;
                     logger.flush();

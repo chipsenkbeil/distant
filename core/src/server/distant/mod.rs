@@ -4,13 +4,18 @@ mod state;
 use state::State;
 
 use crate::{
+    constants::CONN_HANDSHAKE_TIMEOUT_MILLIS,
     data::{Request, Response},
-    net::{DataStream, Listener, SecretKey, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{
+        DataStream, SecretKey, Transport, TransportListener, TransportListenerCtx,
+        TransportReadHalf, TransportWriteHalf,
+    },
     server::{
         utils::{ConnTracker, ShutdownTask},
         PortRange,
     },
 };
+use futures::stream::{Stream, StreamExt};
 use log::*;
 use std::{net::IpAddr, sync::Arc};
 use tokio::{
@@ -23,9 +28,22 @@ use tokio::{
 
 /// Represents a server that listens for requests, processes them, and sends responses
 pub struct DistantServer {
-    port: u16,
-    auth_key: Arc<SecretKey>,
     conn_task: JoinHandle<()>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistantServerOptions {
+    pub shutdown_after: Option<Duration>,
+    pub max_msg_capacity: usize,
+}
+
+impl Default for DistantServerOptions {
+    fn default() -> Self {
+        Self {
+            shutdown_after: None,
+            max_msg_capacity: 1,
+        }
+    }
 }
 
 impl DistantServer {
@@ -34,68 +52,43 @@ impl DistantServer {
     pub async fn bind(
         addr: IpAddr,
         port: PortRange,
-        shutdown_after: Option<Duration>,
-        max_msg_capacity: usize,
-    ) -> io::Result<Self> {
+        auth_key: Option<Arc<SecretKey>>,
+        opts: DistantServerOptions,
+    ) -> io::Result<(Self, u16)> {
         debug!("Binding to {} in range {}", addr, port);
         let listener = TcpListener::bind(port.make_socket_addrs(addr).as_slice()).await?;
 
         let port = listener.local_addr()?.port();
         debug!("Bound to port: {}", port);
 
-        Ok(Self::initialize(
+        let stream = TransportListener::initialize(
             listener,
-            port,
-            shutdown_after,
-            max_msg_capacity,
-        ))
+            TransportListenerCtx {
+                auth_key,
+                timeout: Some(Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS)),
+            },
+        )
+        .into_stream();
+
+        Ok((Self::initialize(Box::pin(stream), opts), port))
     }
 
     /// Initialize a distant server using the provided listener
-    pub fn initialize<T, L>(
-        listener: L,
-        port: u16,
-        shutdown_after: Option<Duration>,
-        max_msg_capacity: usize,
-    ) -> Self
+    pub fn initialize<T, S>(stream: S, opts: DistantServerOptions) -> Self
     where
         T: DataStream + Send + 'static,
-        L: Listener<Conn = T> + 'static,
+        S: Stream<Item = Transport<T>> + Send + Unpin + 'static,
     {
         // Build our state for the server
         let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
-        let auth_key = Arc::new(SecretKey::default());
-        let (shutdown, tracker) = ShutdownTask::maybe_initialize(shutdown_after);
+        let (shutdown, tracker) = ShutdownTask::maybe_initialize(opts.shutdown_after);
 
         // Spawn our connection task
-        let auth_key_2 = Arc::clone(&auth_key);
         let conn_task = tokio::spawn(async move {
-            connection_loop(
-                listener,
-                state,
-                auth_key_2,
-                tracker,
-                shutdown,
-                max_msg_capacity,
-            )
-            .await
+            connection_loop(stream, state, tracker, shutdown, opts.max_msg_capacity).await
         });
 
-        Self {
-            port,
-            auth_key,
-            conn_task,
-        }
-    }
-
-    /// Returns the port this server is bound to
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    /// Returns a string representing the auth key as hex
-    pub fn to_unprotected_hex_auth_key(&self) -> String {
-        hex::encode(self.auth_key.unprotected_as_bytes())
+        Self { conn_task }
     }
 
     /// Waits for the server to terminate
@@ -109,32 +102,30 @@ impl DistantServer {
     }
 }
 
-async fn connection_loop<T, L>(
-    listener: L,
+async fn connection_loop<T, S>(
+    mut stream: S,
     state: Arc<Mutex<State>>,
-    auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     shutdown: Option<ShutdownTask>,
     max_msg_capacity: usize,
 ) where
-    T: DataStream,
-    L: Listener<Conn = T>,
+    T: DataStream + Send + 'static,
+    S: Stream<Item = Transport<T>> + Send + Unpin + 'static,
 {
     let inner = async move {
         loop {
-            match listener.accept().await {
-                Ok(conn) => {
+            match stream.next().await {
+                Some(transport) => {
                     let conn_id = rand::random();
                     debug!(
                         "<Conn @ {}> Established against {}",
                         conn_id,
-                        conn.to_connection_tag()
+                        transport.to_connection_tag()
                     );
                     if let Err(x) = on_new_conn(
-                        conn,
+                        transport,
                         conn_id,
                         Arc::clone(&state),
-                        Arc::clone(&auth_key),
                         tracker.as_ref().map(Arc::clone),
                         max_msg_capacity,
                     )
@@ -143,11 +134,11 @@ async fn connection_loop<T, L>(
                         error!("<Conn @ {}> Failed handshake: {}", conn_id, x);
                     }
                 }
-                Err(x) => {
-                    error!("Listener failed: {}", x);
+                None => {
+                    info!("Listener shutting down");
                     break;
                 }
-            }
+            };
         }
     };
 
@@ -165,10 +156,9 @@ async fn connection_loop<T, L>(
 /// Processes a new connection, performing a handshake, and then spawning two tasks to handle
 /// input and output, returning join handles for the input and output tasks respectively
 async fn on_new_conn<T>(
-    conn: T,
+    transport: Transport<T>,
     conn_id: usize,
     state: Arc<Mutex<State>>,
-    auth_key: Arc<SecretKey>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     max_msg_capacity: usize,
 ) -> io::Result<JoinHandle<()>>
@@ -179,10 +169,6 @@ where
     if let Some(ct) = tracker.as_ref() {
         ct.lock().await.increment();
     }
-
-    // Establish a proper connection via a handshake,
-    // discarding the connection otherwise
-    let transport = Transport::from_handshake(conn, Some(auth_key)).await?;
 
     // Split the transport into read and write halves so we can handle input
     // and output concurrently
@@ -283,34 +269,90 @@ async fn response_loop<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        data::{RequestData, ResponseData},
+        net::InmemoryStream,
+    };
+    use std::pin::Pin;
 
-    #[test]
-    fn wait_should_return_ok_when_all_inner_tasks_complete() {
-        todo!();
+    fn make_transport_stream() -> (
+        mpsc::Sender<Transport<InmemoryStream>>,
+        Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,
+    ) {
+        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream>>(1);
+        let stream = futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(move |transport| (transport, rx))
+        });
+        (tx, Box::pin(stream))
     }
 
-    #[test]
-    fn wait_should_return_error_when_server_aborted() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_ok_when_all_inner_tasks_complete() {
+        let (tx, stream) = make_transport_stream();
+
+        let server = DistantServer::initialize(stream, Default::default());
+
+        // Conclude all server tasks by closing out the listener
+        drop(tx);
+
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 
-    #[test]
-    fn abort_should_abort_inner_tasks_and_all_connections() {
-        todo!();
+    #[tokio::test]
+    async fn wait_should_return_error_when_server_aborted() {
+        let (_tx, stream) = make_transport_stream();
+
+        let server = DistantServer::initialize(stream, Default::default());
+        server.abort();
+
+        match server.wait().await {
+            Err(x) if x.is_cancelled() => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
-    #[test]
-    fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
-        todo!();
+    #[tokio::test]
+    async fn server_should_receive_requests_and_send_responses_to_appropriate_connections() {
+        let (tx, stream) = make_transport_stream();
+
+        let _server = DistantServer::initialize(stream, Default::default());
+
+        // Send over a "connection"
+        let (mut t1, t2) = Transport::make_pair();
+        tx.send(t2).await.unwrap();
+
+        // Send a request
+        t1.send(Request::new(
+            "test-tenant",
+            vec![RequestData::SystemInfo {}],
+        ))
+        .await
+        .unwrap();
+
+        // Get a response
+        let res = t1.receive::<Response>().await.unwrap().unwrap();
+        assert!(res.payload.len() == 1, "Unexpected payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::SystemInfo { .. }),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
-    #[test]
-    fn server_shutdown_should_abort_all_connections() {
-        todo!();
-    }
+    #[tokio::test]
+    async fn server_should_shutdown_if_no_connections_after_shutdown_duration() {
+        let (_tx, stream) = make_transport_stream();
 
-    #[test]
-    fn server_should_execute_requests_and_return_responses() {
-        todo!();
+        let server = DistantServer::initialize(
+            stream,
+            DistantServerOptions {
+                shutdown_after: Some(Duration::from_millis(50)),
+                max_msg_capacity: 1,
+            },
+        );
+
+        let result = server.wait().await;
+        assert!(result.is_ok(), "Unexpected result: {:?}", result);
     }
 }
