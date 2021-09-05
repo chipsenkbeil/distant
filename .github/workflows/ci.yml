@@ -1,10 +1,16 @@
-on: [push]
+name: CI
 
-name: Core CI
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
   test-core:
-    name: Test Rust ${{ matrix.rust }} on ${{ matrix.os }}
+    name: "[distant-core] Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -22,16 +28,18 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: hecrj/setup-rust-action@v1
+      - name: Install Rust ${{ matrix.rust }}
+        uses: actions-rs/toolchain@v1
         with:
-          rust-version: ${{ matrix.rust }}
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo test --verbose -p distant-core
       - run: cargo test --verbose --all-features -p distant-core
 
   test-cli:
-    name: Test Rust ${{ matrix.rust }} on ${{ matrix.os }}
+    name: "[distant] Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,7 +47,6 @@ jobs:
         include:
           - { rust: stable, os: ubuntu-latest }
           - { rust: stable, os: macos-latest }
-          - { rust: stable, os: windows-latest }
     steps:
       - uses: actions/checkout@v2
       - uses: actions/cache@v2
@@ -49,9 +56,12 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: hecrj/setup-rust-action@v1
+      - name: Install Rust ${{ matrix.rust }}
+        uses: actions-rs/toolchain@v1
         with:
-          rust-version: ${{ matrix.rust }}
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo test --verbose
@@ -70,8 +80,11 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: hecrj/setup-rust-action@v1
+      - name: Install Rust (clippy)
+        uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
+          toolchain: stable
           components: clippy
       - name: Check Cargo availability
         run: cargo --version
@@ -90,8 +103,11 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: hecrj/setup-rust-action@v1
+      - name: Install Rust (rustfmt)
+        uses: actions-rs/toolchain@v1
         with:
+          profile: minimal
+          toolchain: stable
           components: rustfmt
       - name: Check Cargo availability
         run: cargo --version
