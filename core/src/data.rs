@@ -9,6 +9,7 @@ use strum::AsRefStr;
 ///       with structopt rather than trying to parse a string as a singular u8
 pub type ByteVec = Vec<u8>;
 
+#[cfg(feature = "structopt")]
 fn parse_byte_vec(src: &str) -> ByteVec {
     src.as_bytes().to_vec()
 }
