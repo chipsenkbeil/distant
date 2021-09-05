@@ -45,7 +45,7 @@ impl State {
         debug!("<Conn @ {:?}> Closing stdin to all processes", conn_id);
         if let Some(ids) = self.client_processes.get(&conn_id) {
             for id in ids {
-                if let Some(process) = self.processes.get_mut(&id) {
+                if let Some(process) = self.processes.get_mut(id) {
                     trace!(
                         "<Conn @ {:?}> Closing stdin for proc {}",
                         conn_id,

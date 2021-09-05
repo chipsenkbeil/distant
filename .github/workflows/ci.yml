@@ -29,6 +29,8 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
+      - uses: Vampire/setup-wsl@v1
+        if: ${{ matrix.os == 'windows-latest' }}
       - run: cargo test --verbose -p distant-core
       - run: cargo test --verbose --all-features -p distant-core
 
@@ -41,6 +43,7 @@ jobs:
         include:
           - { rust: stable, os: ubuntu-latest }
           - { rust: stable, os: macos-latest }
+          - { rust: stable, os: windows-latest }
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust ${{ matrix.rust }}
@@ -52,6 +55,8 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
+      - uses: Vampire/setup-wsl@v1
+        if: ${{ matrix.os == 'windows-latest' }}
       - run: cargo test --verbose
 
   clippy:
