@@ -197,21 +197,20 @@ pub enum ConvertToIpAddrError {
 impl BindAddress {
     /// Converts address into valid IP; in the case of "any", will leverage the
     /// `use_ipv6` flag to determine if binding should use ipv4 or ipv6
-    pub fn to_ip_addr(&self, use_ipv6: bool) -> Result<IpAddr, ConvertToIpAddrError> {
+    pub fn to_ip_addr(self, use_ipv6: bool) -> Result<IpAddr, ConvertToIpAddrError> {
         match self {
             Self::Ssh => {
                 let ssh_connection = env::var("SSH_CONNECTION")?;
                 let ip_str = ssh_connection
                     .split(' ')
-                    .skip(2)
-                    .next()
+                    .nth(2)
                     .ok_or(ConvertToIpAddrError::MissingSshAddr)?;
                 let ip = ip_str.parse::<IpAddr>()?;
                 Ok(ip)
             }
             Self::Any if use_ipv6 => Ok(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
             Self::Any => Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
-            Self::Ip(addr) => Ok(*addr),
+            Self::Ip(addr) => Ok(addr),
         }
     }
 }

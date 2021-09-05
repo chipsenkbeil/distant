@@ -294,15 +294,15 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
             // Create the destination directory for the file when copying
             tokio::fs::create_dir_all(dst_parent_dir.as_path()).await?;
 
+            let dst_path = dst_parent_dir.join(local_src_file_name);
+
             // Perform copying from entry to destination (if a file/symlink)
             if !entry.file_type().is_dir() {
-                let dst_file = dst_parent_dir.join(local_src_file_name);
-                tokio::fs::copy(entry.path(), dst_file).await?;
+                tokio::fs::copy(entry.path(), dst_path).await?;
 
             // Otherwise, if a directory, create it
             } else {
-                let dst_dir = dst_parent_dir.join(local_src_file_name);
-                tokio::fs::create_dir(dst_dir).await?;
+                tokio::fs::create_dir(dst_path).await?;
             }
         }
     } else {
@@ -409,7 +409,7 @@ async fn proc_run(
                             None,
                             vec![ResponseData::ProcStdout { id, data }],
                         );
-                        if let Err(_) = tx_2.send(res).await {
+                        if tx_2.send(res).await.is_err() {
                             error!("<Conn @ {}> Stdout channel closed", conn_id);
                             break;
                         }
@@ -445,7 +445,7 @@ async fn proc_run(
                             None,
                             vec![ResponseData::ProcStderr { id, data }],
                         );
-                        if let Err(_) = tx_2.send(res).await {
+                        if tx_2.send(res).await.is_err() {
                             error!("<Conn @ {}> Stderr channel closed", conn_id);
                             break;
                         }
@@ -513,7 +513,7 @@ async fn proc_run(
                             None,
                             vec![ResponseData::ProcDone { id, success, code }]
                         );
-                        if let Err(_) = tx.send(res).await {
+                        if tx.send(res).await.is_err() {
                             error!(
                                 "<Conn @ {}> Failed to send done for process {}!",
                                 conn_id,
@@ -523,7 +523,7 @@ async fn proc_run(
                     }
                     Err(x) => {
                         let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
-                        if let Err(_) = tx.send(res).await {
+                        if tx.send(res).await.is_err() {
                             error!(
                                 "<Conn @ {}> Failed to send error for waiting on process {}!",
                                 conn_id,
@@ -558,10 +558,7 @@ async fn proc_run(
                 let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
                     id, success: false, code: None
                 }]);
-                if let Err(_) = tx
-                    .send(res)
-                    .await
-                {
+                if tx.send(res).await.is_err() {
                     error!("<Conn @ {}> Failed to send done for process {}!", conn_id, id);
                 }
             }
@@ -642,22 +639,56 @@ mod tests {
     use std::time::Duration;
 
     lazy_static::lazy_static! {
-        // TODO: This is a workaround to get the workspace root directory from within a specific
-        //       workspace member as there is no environment variable to support this.
-        //
-        //       See https://github.com/rust-lang/cargo/issues/3946
-        static ref ROOT_DIR: PathBuf = {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize().unwrap()
+        static ref TEMP_SCRIPT_DIR: assert_fs::TempDir = assert_fs::TempDir::new().unwrap();
+        static ref SCRIPT_RUNNER: String = String::from("bash");
+
+        static ref ECHO_ARGS_TO_STDOUT_SH: assert_fs::fixture::ChildPath = {
+            let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");
+            script.write_str(indoc::indoc!(r#"
+                #/usr/bin/env bash
+                printf "%s" "$@"
+            "#)).unwrap();
+            script
         };
-        static ref SCRIPT_DIR: PathBuf = ROOT_DIR.join("scripts").join("test");
 
-        static ref ECHO_ARGS_TO_STDOUT_SH: PathBuf = SCRIPT_DIR.join("echo_args_to_stdout.sh");
-        static ref ECHO_ARGS_TO_STDERR_SH: PathBuf = SCRIPT_DIR.join("echo_args_to_stderr.sh");
-        static ref ECHO_STDIN_TO_STDOUT_SH: PathBuf = SCRIPT_DIR.join("echo_stdin_to_stdout.sh");
-        static ref EXIT_CODE_SH: PathBuf = SCRIPT_DIR.join("exit_code.sh");
-        static ref SLEEP_SH: PathBuf = SCRIPT_DIR.join("sleep.sh");
+        static ref ECHO_ARGS_TO_STDERR_SH: assert_fs::fixture::ChildPath = {
+            let script = TEMP_SCRIPT_DIR.child("echo_args_to_stderr.sh");
+            script.write_str(indoc::indoc!(r#"
+                #/usr/bin/env bash
+                printf "%s" "$@" 1>&2
+            "#)).unwrap();
+            script
+        };
 
-        static ref DOES_NOT_EXIST_BIN: PathBuf = SCRIPT_DIR.join("does_not_exist_bin");
+        static ref ECHO_STDIN_TO_STDOUT_SH: assert_fs::fixture::ChildPath = {
+            let script = TEMP_SCRIPT_DIR.child("echo_stdin_to_stdout.sh");
+            script.write_str(indoc::indoc!(r#"
+                #/usr/bin/env bash
+                while IFS= read; do echo "$REPLY"; done
+            "#)).unwrap();
+            script
+        };
+
+        static ref EXIT_CODE_SH: assert_fs::fixture::ChildPath = {
+            let script = TEMP_SCRIPT_DIR.child("exit_code.sh");
+            script.write_str(indoc::indoc!(r#"
+                #!/usr/bin/env bash
+                exit "$1"
+            "#)).unwrap();
+            script
+        };
+
+        static ref SLEEP_SH: assert_fs::fixture::ChildPath = {
+            let script = TEMP_SCRIPT_DIR.child("sleep.sh");
+            script.write_str(indoc::indoc!(r#"
+                #!/usr/bin/env bash
+                sleep "$1"
+            "#)).unwrap();
+            script
+        };
+
+        static ref DOES_NOT_EXIST_BIN: assert_fs::fixture::ChildPath =
+            TEMP_SCRIPT_DIR.child("does_not_exist_bin");
     }
 
     fn setup(
@@ -729,10 +760,7 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![RequestData::FileReadText { path: path }],
-        );
+        let req = Request::new("test-tenant", vec![RequestData::FileReadText { path }]);
 
         process(conn_id, state, req, tx).await.unwrap();
 
@@ -2043,8 +2071,8 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
-                args: Vec::new(),
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
             }],
         );
 
@@ -2069,8 +2097,11 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
-                args: vec![String::from("some stdout")],
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![
+                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
+                    String::from("some stdout"),
+                ],
             }],
         );
 
@@ -2128,8 +2159,11 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
-                args: vec![String::from("some stderr")],
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![
+                    ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
+                    String::from("some stderr"),
+                ],
             }],
         );
 
@@ -2187,8 +2221,8 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: SLEEP_SH.to_str().unwrap().to_string(),
-                args: vec![String::from("0.1")],
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
             }],
         );
 
@@ -2229,8 +2263,8 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: SLEEP_SH.to_str().unwrap().to_string(),
-                args: vec![String::from("1")],
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
             }],
         );
 
@@ -2303,8 +2337,8 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: SLEEP_SH.to_str().unwrap().to_string(),
-                args: vec![String::from("1")],
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
             }],
         );
 
@@ -2395,8 +2429,8 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![RequestData::ProcRun {
-                cmd: ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string(),
-                args: Vec::new(),
+                cmd: SCRIPT_RUNNER.to_string(),
+                args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
             }],
         );
 
@@ -2467,8 +2501,8 @@ mod tests {
             "test-tenant",
             vec![
                 RequestData::ProcRun {
-                    cmd: SLEEP_SH.to_str().unwrap().to_string(),
-                    args: vec![String::from("1")],
+                    cmd: SCRIPT_RUNNER.to_string(),
+                    args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
                 },
                 RequestData::ProcList {},
             ],
@@ -2490,8 +2524,8 @@ mod tests {
             res.payload[1],
             ResponseData::ProcEntries {
                 entries: vec![RunningProcess {
-                    cmd: SLEEP_SH.to_str().unwrap().to_string(),
-                    args: vec![String::from("1")],
+                    cmd: SCRIPT_RUNNER.to_string(),
+                    args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
                     id,
                 }],
             },

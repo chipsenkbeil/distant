@@ -38,7 +38,7 @@ pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
             }
             Ok(Fork::Parent(pid)) => {
                 info!("[distant detached, pid = {}]", pid);
-                if let Err(_) = fork::close_fd() {
+                if fork::close_fd().is_err() {
                     return Err(Error::ForkError);
                 }
             }
@@ -83,10 +83,8 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     );
 
     // For the child, we want to fully disconnect it from pipes, which we do now
-    if is_forked {
-        if let Err(_) = fork::close_fd() {
-            return Err(Error::ForkError);
-        }
+    if is_forked && fork::close_fd().is_err() {
+        return Err(Error::ForkError);
     }
 
     // Let our server run to completion

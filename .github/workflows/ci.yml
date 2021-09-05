@@ -21,18 +21,12 @@ jobs:
           - { rust: stable, os: windows-latest }
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust ${{ matrix.rust }}
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo test --verbose -p distant-core
@@ -49,19 +43,13 @@ jobs:
           - { rust: stable, os: macos-latest }
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust ${{ matrix.rust }}
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo test --verbose
@@ -73,19 +61,13 @@ jobs:
       RUSTFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust (clippy)
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           components: clippy
+      - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo clippy --workspace --all-targets --verbose
@@ -96,19 +78,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Rust (rustfmt)
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           components: rustfmt
+      - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo fmt --all -- --check

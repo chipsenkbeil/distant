@@ -1,12 +1,12 @@
 use std::ops::{Deref, DerefMut};
 
 /// Wraps a string to provide some friendly read and write methods
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StringBuf(String);
 
 impl StringBuf {
     pub fn new() -> Self {
-        Self(String::new())
+        Self::default()
     }
 
     /// Consumes data within the buffer that represent full lines (end with a newline) and returns

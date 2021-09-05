@@ -184,12 +184,7 @@ where
     let read_task = tokio::spawn(async move {
         let mut task_buf: Option<String> = None;
 
-        loop {
-            let data = match stream.next().await {
-                Some(data) => data,
-                None => break,
-            };
-
+        while let Some(data) = stream.next().await {
             // Create or insert into our buffer
             match &mut task_buf {
                 Some(buf) => buf.push_str(&data),

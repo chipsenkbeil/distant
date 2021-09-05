@@ -420,6 +420,7 @@ mod tests {
         (t1, Session::initialize(t2).unwrap())
     }
 
+    #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
         mpsc::Sender<Transport<InmemoryStream>>,
         Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,

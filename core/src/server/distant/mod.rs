@@ -275,6 +275,7 @@ mod tests {
     };
     use std::pin::Pin;
 
+    #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
         mpsc::Sender<Transport<InmemoryStream>>,
         Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,

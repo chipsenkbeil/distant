@@ -113,7 +113,7 @@ async fn process_outgoing_requests<T, F>(
                 } else if line == "exit" {
                     debug!("Got exit request, so closing cli session");
                     stdin_rx.close();
-                    if let Err(_) = exit_tx.send(()).await {
+                    if exit_tx.send(()).await.is_err() {
                         error!("Failed to close cli session");
                     }
                     continue;

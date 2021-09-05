@@ -148,7 +148,7 @@ mod tests {
             "Shutdown task unexpectedly completed"
         );
 
-        time::sleep(Duration::from_millis(15)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         assert!(
             futures::poll!(task).is_pending(),
@@ -164,7 +164,7 @@ mod tests {
             "Shutdown task unexpectedly completed"
         );
 
-        time::sleep(Duration::from_millis(15)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         assert!(
             futures::poll!(task).is_ready(),
@@ -182,14 +182,14 @@ mod tests {
             "Shutdown task unexpectedly completed"
         );
 
-        time::sleep(Duration::from_millis(15)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert!(
             futures::poll!(&mut task).is_pending(),
             "Shutdown task unexpectedly completed"
         );
 
         task.tracker().lock().await.decrement();
-        time::sleep(Duration::from_millis(15)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         assert!(
             futures::poll!(task).is_ready(),
@@ -199,7 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_task_should_not_resolve_before_minimum_duration() {
-        let mut task = ShutdownTask::initialize(Duration::from_millis(10));
+        let mut task = ShutdownTask::initialize(Duration::from_millis(50));
         assert!(
             futures::poll!(&mut task).is_pending(),
             "Shutdown task unexpectedly completed"

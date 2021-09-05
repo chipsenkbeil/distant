@@ -41,8 +41,8 @@ pub enum ExitCode {
 
 impl ExitCode {
     /// Convert into numeric exit code
-    pub fn to_i32(&self) -> i32 {
-        match *self {
+    pub fn to_i32(self) -> i32 {
+        match self {
             Self::Usage => 64,
             Self::DataErr => 65,
             Self::NoInput => 66,

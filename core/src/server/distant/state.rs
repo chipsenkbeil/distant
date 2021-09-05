@@ -25,7 +25,7 @@ impl State {
     pub fn push_process(&mut self, conn_id: usize, process: Process) {
         self.client_processes
             .entry(conn_id)
-            .or_insert(Vec::new())
+            .or_insert_with(Vec::new)
             .push(process.id);
         self.processes.insert(process.id, process);
     }
@@ -69,7 +69,7 @@ impl State {
                         conn_id,
                         process.id
                     );
-                    if let Err(_) = process.kill_tx.send(()) {
+                    if process.kill_tx.send(()).is_err() {
                         error!(
                             "Conn {} failed to send process {} kill signal",
                             id, process.id

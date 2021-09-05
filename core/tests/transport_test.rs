@@ -1,4 +1,4 @@
-use distant_core::{Transport, TransportError, InmemoryStream, SecretKey};
+use distant_core::{InmemoryStream, SecretKey, Transport, TransportError};
 use std::{io, sync::Arc};
 
 const BUFFER_SIZE: usize = 100;

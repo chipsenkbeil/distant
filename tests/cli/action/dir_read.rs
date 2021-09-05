@@ -449,7 +449,7 @@ fn should_support_json_including_root_directory_if_specified(mut action_cmd: Com
         ResponseData::DirEntries {
             entries: vec![
                 DirEntry {
-                    path: root_path.to_path_buf(),
+                    path: root_path,
                     file_type: FileType::Dir,
                     depth: 0
                 },

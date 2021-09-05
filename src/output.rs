@@ -18,11 +18,10 @@ impl ResponseOut {
         let payload_cnt = res.payload.len();
 
         Ok(match format {
-            Format::Json => ResponseOut::StdoutLine(format!(
-                "{}",
+            Format::Json => ResponseOut::StdoutLine(
                 serde_json::to_string(&res)
-                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
-            )),
+                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
+            ),
 
             // NOTE: For shell, we assume a singular entry in the response's payload
             Format::Shell if payload_cnt != 1 => {
@@ -77,8 +76,7 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             ResponseOut::StdoutLine(String::from_utf8_lossy(&data).to_string())
         }
         ResponseData::Text { data } => ResponseOut::StdoutLine(data),
-        ResponseData::DirEntries { entries, .. } => ResponseOut::StdoutLine(format!(
-            "{}",
+        ResponseData::DirEntries { entries, .. } => ResponseOut::StdoutLine(
             entries
                 .into_iter()
                 .map(|entry| {
@@ -100,7 +98,7 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 })
                 .collect::<Vec<String>>()
                 .join("\n"),
-        )),
+        ),
         ResponseData::Exists(exists) => {
             if exists {
                 ResponseOut::StdoutLine("true".to_string())
@@ -136,14 +134,13 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             accessed.unwrap_or_default(),
             modified.unwrap_or_default(),
         )),
-        ResponseData::ProcEntries { entries } => ResponseOut::StdoutLine(format!(
-            "{}",
+        ResponseData::ProcEntries { entries } => ResponseOut::StdoutLine(
             entries
                 .into_iter()
                 .map(|entry| format!("{}: {} {}", entry.id, entry.cmd, entry.args.join(" ")))
                 .collect::<Vec<String>>()
                 .join("\n"),
-        )),
+        ),
         ResponseData::ProcStart { .. } => ResponseOut::None,
         ResponseData::ProcStdout { data, .. } => ResponseOut::Stdout(data),
         ResponseData::ProcStderr { data, .. } => ResponseOut::Stderr(data),

@@ -145,7 +145,7 @@ impl Listener for TcpListener {
     where
         Self: Sync + 'a,
     {
-        async fn accept<'a>(_self: &'a TcpListener) -> io::Result<TcpStream> {
+        async fn accept(_self: &TcpListener) -> io::Result<TcpStream> {
             _self.accept().await.map(|(stream, _)| stream)
         }
 
@@ -180,8 +180,8 @@ where
     where
         Self: Sync + 'a,
     {
-        async fn accept<'a, T>(
-            _self: &'a tokio::sync::Mutex<tokio::sync::mpsc::Receiver<T>>,
+        async fn accept<T>(
+            _self: &tokio::sync::Mutex<tokio::sync::mpsc::Receiver<T>>,
         ) -> io::Result<T>
         where
             T: DataStream + Send + Sync + 'static,

@@ -5,7 +5,7 @@ use rstest::*;
 use std::{ffi::OsStr, net::SocketAddr, sync::Arc, thread};
 use tokio::{runtime::Runtime, sync::mpsc};
 
-const LOG_PATH: &'static str = "/tmp/test.distant.server.log";
+const LOG_PATH: &str = "/tmp/test.distant.server.log";
 
 /// Context for some listening distant server
 pub struct DistantServerCtx {
