@@ -60,13 +60,6 @@ impl CliSession {
             Err(x) => Err(io::Error::new(io::ErrorKind::BrokenPipe, x)),
         }
     }
-
-    /// Aborts the cli session forcing its task handlers to abort underneath, which means that a
-    /// call to `wait` will return an error
-    pub async fn abort(&self) {
-        self.req_task.abort();
-        self.res_task.abort();
-    }
 }
 
 /// Helper function that loops, processing incoming responses not tied to a request to be sent out

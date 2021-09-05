@@ -117,11 +117,6 @@ impl Process {
     pub fn close_stdin(&mut self) {
         self.stdin_tx.take();
     }
-
-    pub async fn kill_and_wait(self) -> Result<(), JoinError> {
-        let _ = self.kill_tx.send(());
-        self.wait_task.await
-    }
 }
 
 impl Future for Process {
