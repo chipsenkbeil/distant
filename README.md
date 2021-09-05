@@ -1,11 +1,13 @@
 # distant
 
-[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk]
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![CI][distant_ci_img]][distant_ci_lnk]
 
 [distant_crates_img]: https://img.shields.io/crates/v/distant.svg
 [distant_crates_lnk]: https://crates.io/crates/distant
 [distant_doc_img]: https://docs.rs/distant/badge.svg
 [distant_doc_lnk]: https://docs.rs/distant
+[distant_ci_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci.yml/badge.svg
+[distant_ci_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci.yml
 
 Binary to connect with a remote machine to edit files and run programs.
 
