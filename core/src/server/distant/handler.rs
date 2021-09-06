@@ -2096,6 +2096,17 @@ mod tests {
             "ECHO_ARGS_TO_STDOUT_SH: {:?}",
             ECHO_ARGS_TO_STDOUT_SH.to_str()
         );
+        println!(
+            "{:?}",
+            ResponseData::SystemInfo {
+                family: env::consts::FAMILY.to_string(),
+                os: env::consts::OS.to_string(),
+                arch: env::consts::ARCH.to_string(),
+                current_dir: env::current_dir().unwrap_or_default(),
+                main_separator: std::path::MAIN_SEPARATOR,
+            }
+        );
+        panic!();
 
         // Run a program that echoes to stdout
         let req = Request::new(
