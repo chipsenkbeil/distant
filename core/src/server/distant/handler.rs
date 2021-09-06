@@ -2092,6 +2092,10 @@ mod tests {
     #[tokio::test]
     async fn proc_run_should_send_back_stdout_periodically_when_available() {
         let (conn_id, state, tx, mut rx) = setup(1);
+        println!(
+            "ECHO_ARGS_TO_STDOUT_SH: {:?}",
+            ECHO_ARGS_TO_STDOUT_SH.to_str()
+        );
 
         // Run a program that echoes to stdout
         let req = Request::new(

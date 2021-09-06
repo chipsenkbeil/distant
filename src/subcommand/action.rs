@@ -17,19 +17,19 @@ use tokio::{io, time::Duration};
 pub enum Error {
     #[display(fmt = "Process failed with exit code: {}", _0)]
     BadProcessExit(#[error(not(source))] i32),
-    IoError(io::Error),
+    Io(io::Error),
     #[display(fmt = "Non-interactive but no operation supplied")]
     MissingOperation,
     OperationFailed,
-    RemoteProcessError(RemoteProcessError),
-    TransportError(TransportError),
+    RemoteProcess(RemoteProcessError),
+    Transport(TransportError),
 }
 
 impl ExitCodeError for Error {
     fn is_silent(&self) -> bool {
         match self {
             Self::BadProcessExit(_) | Self::OperationFailed => true,
-            Self::RemoteProcessError(x) => x.is_silent(),
+            Self::RemoteProcess(x) => x.is_silent(),
             _ => false,
         }
     }
@@ -37,11 +37,11 @@ impl ExitCodeError for Error {
     fn to_exit_code(&self) -> ExitCode {
         match self {
             Self::BadProcessExit(x) => ExitCode::Custom(*x),
-            Self::IoError(x) => x.to_exit_code(),
+            Self::Io(x) => x.to_exit_code(),
             Self::MissingOperation => ExitCode::Usage,
             Self::OperationFailed => ExitCode::Software,
-            Self::RemoteProcessError(x) => x.to_exit_code(),
-            Self::TransportError(x) => x.to_exit_code(),
+            Self::RemoteProcess(x) => x.to_exit_code(),
+            Self::Transport(x) => x.to_exit_code(),
         }
     }
 }

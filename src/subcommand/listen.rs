@@ -11,19 +11,19 @@ use tokio::{io, task::JoinError};
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
-    ConvertToIpAddrError(ConvertToIpAddrError),
-    ForkError,
-    IoError(io::Error),
-    JoinError(JoinError),
+    ConverToIpAddr(ConvertToIpAddrError),
+    Fork,
+    Io(io::Error),
+    Join(JoinError),
 }
 
 impl ExitCodeError for Error {
     fn to_exit_code(&self) -> ExitCode {
         match self {
-            Self::ConvertToIpAddrError(_) => ExitCode::NoHost,
-            Self::ForkError => ExitCode::OsErr,
-            Self::IoError(x) => x.to_exit_code(),
-            Self::JoinError(_) => ExitCode::Software,
+            Self::ConverToIpAddr(_) => ExitCode::NoHost,
+            Self::Fork => ExitCode::OsErr,
+            Self::Io(x) => x.to_exit_code(),
+            Self::Join(_) => ExitCode::Software,
         }
     }
 }
@@ -39,10 +39,10 @@ pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
             Ok(Fork::Parent(pid)) => {
                 info!("[distant detached, pid = {}]", pid);
                 if fork::close_fd().is_err() {
-                    return Err(Error::ForkError);
+                    return Err(Error::Fork);
                 }
             }
-            Err(_) => return Err(Error::ForkError),
+            Err(_) => return Err(Error::Fork),
         }
     } else {
         let rt = tokio::runtime::Runtime::new()?;
@@ -84,7 +84,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
 
     // For the child, we want to fully disconnect it from pipes, which we do now
     if is_forked && fork::close_fd().is_err() {
-        return Err(Error::ForkError);
+        return Err(Error::Fork);
     }
 
     // Let our server run to completion

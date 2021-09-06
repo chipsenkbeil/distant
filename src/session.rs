@@ -30,7 +30,7 @@ impl CliSession {
             );
 
         let map_line = move |line: &str| match format {
-            Format::Json => serde_json::from_str(&line)
+            Format::Json => serde_json::from_str(line)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x)),
             Format::Shell => {
                 let data = RequestData::from_iter_safe(

@@ -18,18 +18,18 @@ pub enum Error {
     #[display(fmt = "Missing data for session")]
     MissingSessionData,
 
-    ForkError(#[error(not(source))] i32),
-    IoError(io::Error),
-    Utf8Error(FromUtf8Error),
+    Fork(#[error(not(source))] i32),
+    Io(io::Error),
+    Utf8(FromUtf8Error),
 }
 
 impl ExitCodeError for Error {
     fn to_exit_code(&self) -> ExitCode {
         match self {
             Self::MissingSessionData => ExitCode::NoInput,
-            Self::ForkError(_) => ExitCode::OsErr,
-            Self::IoError(x) => x.to_exit_code(),
-            Self::Utf8Error(_) => ExitCode::DataErr,
+            Self::Fork(_) => ExitCode::OsErr,
+            Self::Io(x) => x.to_exit_code(),
+            Self::Utf8(_) => ExitCode::DataErr,
         }
     }
 }
@@ -90,7 +90,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                     })?
                 }
                 Ok(_) => {}
-                Err(x) => return Err(Error::ForkError(x)),
+                Err(x) => return Err(Error::Fork(x)),
             }
         }
         #[cfg(unix)]

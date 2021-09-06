@@ -15,14 +15,14 @@ use tokio::io;
 pub enum Error {
     #[display(fmt = "Process failed with exit code: {}", _0)]
     BadProcessExit(#[error(not(source))] i32),
-    IoError(io::Error),
-    RemoteProcessError(RemoteProcessError),
+    Io(io::Error),
+    RemoteProcess(RemoteProcessError),
 }
 
 impl ExitCodeError for Error {
     fn is_silent(&self) -> bool {
         match self {
-            Self::RemoteProcessError(x) => x.is_silent(),
+            Self::RemoteProcess(x) => x.is_silent(),
             _ => false,
         }
     }
@@ -30,8 +30,8 @@ impl ExitCodeError for Error {
     fn to_exit_code(&self) -> ExitCode {
         match self {
             Self::BadProcessExit(x) => ExitCode::Custom(*x),
-            Self::IoError(x) => x.to_exit_code(),
-            Self::RemoteProcessError(x) => x.to_exit_code(),
+            Self::Io(x) => x.to_exit_code(),
+            Self::RemoteProcess(x) => x.to_exit_code(),
         }
     }
 }
