@@ -164,12 +164,12 @@ mod tests {
             "Shutdown task unexpectedly completed"
         );
 
-        time::sleep(Duration::from_millis(50)).await;
-
-        assert!(
-            futures::poll!(task).is_ready(),
-            "Shutdown task unexpectedly pending"
-        );
+        tokio::select! {
+            _ = task => {}
+            _ = time::sleep(Duration::from_secs(1)) => {
+                panic!("Shutdown task unexpectedly pending");
+            }
+        }
     }
 
     #[tokio::test]
@@ -189,12 +189,13 @@ mod tests {
         );
 
         task.tracker().lock().await.decrement();
-        time::sleep(Duration::from_millis(50)).await;
 
-        assert!(
-            futures::poll!(task).is_ready(),
-            "Shutdown task unexpectedly pending"
-        );
+        tokio::select! {
+            _ = task => {}
+            _ = time::sleep(Duration::from_secs(1)) => {
+                panic!("Shutdown task unexpectedly pending");
+            }
+        }
     }
 
     #[tokio::test]
