@@ -56,6 +56,16 @@ lazy_static::lazy_static! {
         TEMP_SCRIPT_DIR.child("does_not_exist_bin");
 }
 
+macro_rules! next_two_msgs {
+    ($rx:expr) => {{
+        let out = friendly_recv_line($rx, Duration::from_secs(1)).unwrap();
+        let res1: Response = serde_json::from_str(&out).unwrap();
+        let out = friendly_recv_line($rx, Duration::from_secs(1)).unwrap();
+        let res2: Response = serde_json::from_str(&out).unwrap();
+        (res1, res2)
+    }};
+}
+
 #[rstest]
 fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
     // distant action proc-run -- {cmd} [args]
@@ -353,22 +363,16 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
     stdin.write_all(req_string.as_bytes()).unwrap();
     stdin.flush().unwrap();
 
-    // Should receive ok message
-    let out = friendly_recv_line(&stdout, Duration::from_secs(1))
-        .expect("Failed to get ok response from proc stdin");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::Ok => {}
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Get stdout from process and verify it
-    let out =
-        friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stdout");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::ProcStdout { data, .. } => assert_eq!(data, "hello world\n"),
-        x => panic!("Unexpected response: {:?}", x),
+    // Should receive ok message & stdout message, although these may be in different order
+    let (res1, res2) = next_two_msgs!(&stdout);
+    match (&res1.payload[0], &res2.payload[0]) {
+        (ResponseData::Ok, ResponseData::ProcStdout { data, .. }) => {
+            assert_eq!(data, "hello world\n")
+        }
+        (ResponseData::ProcStdout { data, .. }, ResponseData::Ok) => {
+            assert_eq!(data, "hello world\n")
+        }
+        x => panic!("Unexpected responses: {:?}", x),
     };
 
     // Kill the remote process since it only terminates when stdin closes, but we
@@ -383,23 +387,16 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
     stdin.write_all(req_string.as_bytes()).unwrap();
     stdin.flush().unwrap();
 
-    // Should receive ok message
-    let out = friendly_recv_line(&stdout, Duration::from_secs(1))
-        .expect("Failed to get ok response from proc stdin");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::Ok => {}
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Get the indicator of a process completion
-    let out = friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc done");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::ProcDone { success, .. } => {
+    // Should receive ok message & process completion
+    let (res1, res2) = next_two_msgs!(&stdout);
+    match (&res1.payload[0], &res2.payload[0]) {
+        (ResponseData::Ok, ResponseData::ProcDone { success, .. }) => {
             assert!(!success, "Process succeeded unexpectedly");
         }
-        x => panic!("Unexpected response: {:?}", x),
+        (ResponseData::ProcDone { success, .. }, ResponseData::Ok) => {
+            assert!(!success, "Process succeeded unexpectedly");
+        }
+        x => panic!("Unexpected responses: {:?}", x),
     };
 
     // Verify that we received nothing on stderr channel

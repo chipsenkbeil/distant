@@ -71,7 +71,6 @@ pub fn spawn_line_reader<T>(mut reader: T) -> mpsc::Receiver<String>
 where
     T: std::io::Read + Send + 'static,
 {
-    let id = rand::random::<u8>();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut buf = String::new();
@@ -85,15 +84,12 @@ where
             buf.push_str(data.as_ref());
 
             // Send all complete lines
-            match buf.rfind('\n') {
-                Some(idx) => {
-                    let remaining = buf.split_off(idx + 1);
-                    for line in buf.lines() {
-                        tx.send(line.to_string()).unwrap();
-                    }
-                    buf = remaining;
+            if let Some(idx) = buf.rfind('\n') {
+                let remaining = buf.split_off(idx + 1);
+                for line in buf.lines() {
+                    tx.send(line.to_string()).unwrap();
                 }
-                None => {}
+                buf = remaining;
             }
         }
 
