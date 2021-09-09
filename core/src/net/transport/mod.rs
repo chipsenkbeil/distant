@@ -175,7 +175,7 @@ where
     /// when communicating across the wire
     pub async fn from_handshake(stream: T, auth_key: Option<Arc<SecretKey>>) -> io::Result<Self> {
         let connection_tag = stream.to_connection_tag();
-        trace!("Beginning handshake for {}", connection_tag);
+        trace!("Beginning handshake with {}", connection_tag);
 
         // First, wrap the raw stream in our framed codec
         let mut conn = Framed::new(stream, DistantCodec);
@@ -187,6 +187,7 @@ where
         let public_key = EncodedPoint::from(private_key.public_key());
 
         // Fourth, share a random salt and the public key with the server as our first message
+        trace!("Handshake with {} sending public key", connection_tag);
         let salt = Salt::generate(SALT_LEN).map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
         let mut data = Vec::new();
         data.extend_from_slice(salt.as_ref());
@@ -196,6 +197,10 @@ where
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
         // Fifth, wait for a response that we will assume is the other side's salt & public key
+        trace!(
+            "Handshake with {} waiting for remote public key",
+            connection_tag
+        );
         let data = conn.next().await.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -221,6 +226,7 @@ where
 
         // Seventh, establish a shared secret that is NOT uniformly random, so we can't
         // directly use it as our encryption key (32 bytes in length)
+        trace!("Handshake with {} computing shared secret", connection_tag);
         let shared_secret = private_key.diffie_hellman(&other_public_key);
 
         // Eighth, convert our secret key into an orion password that we'll use to derive
@@ -241,11 +247,12 @@ where
         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
 
         // Tenth, derive a higher-entropy key from our shared secret
+        trace!("Handshake with {} deriving encryption key", connection_tag);
         let derived_key = kdf::derive_key(&password, &mixed_salt, 3, 1 << 16, 32)
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
         let crypt_key = Arc::new(derived_key);
-        trace!("Finished handshake for {}", connection_tag);
+        trace!("Finished handshake with {}", connection_tag);
 
         Ok(Self {
             conn,

@@ -1,7 +1,7 @@
 use crate::{
     exit::{ExitCode, ExitCodeError},
     link::RemoteProcessLink,
-    opt::{ActionSubcommand, CommonOpt, SessionInput},
+    opt::{ActionSubcommand, CommonOpt, Format, SessionInput},
     output::ResponseOut,
     session::CliSession,
     utils,
@@ -123,10 +123,12 @@ async fn start<T>(
 where
     T: DataStream + 'static,
 {
+    let is_shell_format = matches!(cmd.format, Format::Shell);
+
     match (cmd.interactive, cmd.operation) {
-        // ProcRun request is specially handled and we ignore interactive as
+        // ProcRun request w/ shell format is specially handled and we ignore interactive as
         // the stdin will be used for sending ProcStdin to remote process
-        (_, Some(RequestData::ProcRun { cmd, args })) => {
+        (_, Some(RequestData::ProcRun { cmd, args })) if is_shell_format => {
             let mut proc = RemoteProcess::spawn(utils::new_tenant(), session, cmd, args).await?;
 
             // If we also parsed an LSP's initialize request for its session, we want to forward

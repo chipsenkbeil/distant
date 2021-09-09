@@ -1,4 +1,7 @@
-use crate::cli::{fixtures::*, utils::random_tenant};
+use crate::cli::{
+    fixtures::*,
+    utils::{distant_subcommand, friendly_recv_line, random_tenant, spawn_line_reader},
+};
 use assert_cmd::Command;
 use assert_fs::prelude::*;
 use distant::ExitCode;
@@ -7,6 +10,7 @@ use distant_core::{
     Request, RequestData, Response, ResponseData,
 };
 use rstest::*;
+use std::{io::Write, time::Duration};
 
 lazy_static::lazy_static! {
     static ref TEMP_SCRIPT_DIR: assert_fs::TempDir = assert_fs::TempDir::new().unwrap();
@@ -159,6 +163,249 @@ fn should_support_json_to_execute_program_and_return_exit_status(mut action_cmd:
         matches!(res.payload[0], ResponseData::ProcStart { .. }),
         "Unexpected response: {:?}",
         res.payload[0],
+    );
+}
+
+#[rstest]
+fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
+    let output = String::from("some output");
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::ProcRun {
+            cmd: SCRIPT_RUNNER.to_string(),
+            args: vec![
+                ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
+                output.to_string(),
+            ],
+        }],
+    };
+
+    // distant action --format json --interactive
+    let mut child = distant_subcommand(ctx, "action")
+        .args(&["--format", "json"])
+        .arg("--interactive")
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = spawn_line_reader(child.stdout.take().unwrap());
+    let stderr = spawn_line_reader(child.stderr.take().unwrap());
+
+    // Send our request as json
+    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
+    stdin.write_all(req_string.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    // Get the indicator of a process started (first line returned can take ~7 seconds due to the
+    // handshake cost)
+    let out =
+        friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    assert!(
+        matches!(res.payload[0], ResponseData::ProcStart { .. }),
+        "Unexpected response: {:?}",
+        res.payload[0]
+    );
+
+    // Get stdout from process and verify it
+    let out =
+        friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stdout");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::ProcStdout { data, .. } => assert_eq!(data, &output),
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Get the indicator of a process completion
+    let out = friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc done");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::ProcDone { success, .. } => {
+            assert!(success, "Process failed unexpectedly");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Verify that we received nothing on stderr channel
+    assert!(
+        stderr.try_recv().is_err(),
+        "Unexpectedly got result on stderr channel"
+    );
+}
+
+#[rstest]
+fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
+    let output = String::from("some output");
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::ProcRun {
+            cmd: SCRIPT_RUNNER.to_string(),
+            args: vec![
+                ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
+                output.to_string(),
+            ],
+        }],
+    };
+
+    // distant action --format json --interactive
+    let mut child = distant_subcommand(ctx, "action")
+        .args(&["--format", "json"])
+        .arg("--interactive")
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = spawn_line_reader(child.stdout.take().unwrap());
+    let stderr = spawn_line_reader(child.stderr.take().unwrap());
+
+    // Send our request as json
+    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
+    stdin.write_all(req_string.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    // Get the indicator of a process started (first line returned can take ~7 seconds due to the
+    // handshake cost)
+    let out =
+        friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    assert!(
+        matches!(res.payload[0], ResponseData::ProcStart { .. }),
+        "Unexpected response: {:?}",
+        res.payload[0]
+    );
+
+    // Get stderr from process and verify it
+    let out =
+        friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stderr");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::ProcStderr { data, .. } => assert_eq!(data, &output),
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Get the indicator of a process completion
+    let out = friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc done");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::ProcDone { success, .. } => {
+            assert!(success, "Process failed unexpectedly");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Verify that we received nothing on stderr channel
+    assert!(
+        stderr.try_recv().is_err(),
+        "Unexpectedly got result on stderr channel"
+    );
+}
+
+#[rstest]
+fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServerCtx) {
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::ProcRun {
+            cmd: SCRIPT_RUNNER.to_string(),
+            args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
+        }],
+    };
+
+    // distant action --format json --interactive
+    let mut child = distant_subcommand(ctx, "action")
+        .args(&["--format", "json"])
+        .arg("--interactive")
+        .args(&["--log-file", "/tmp/test.log", "-vvv"])
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = spawn_line_reader(child.stdout.take().unwrap());
+    let stderr = spawn_line_reader(child.stderr.take().unwrap());
+
+    // Send our request as json
+    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
+    stdin.write_all(req_string.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    // Get the indicator of a process started (first line returned can take ~7 seconds due to the
+    // handshake cost)
+    let out =
+        friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    let id = match &res.payload[0] {
+        ResponseData::ProcStart { id } => *id,
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Send stdin to remote process
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::ProcStdin {
+            id,
+            data: String::from("hello world\n"),
+        }],
+    };
+    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
+    stdin.write_all(req_string.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    // Should receive ok message
+    let out = friendly_recv_line(&stdout, Duration::from_secs(1))
+        .expect("Failed to get ok response from proc stdin");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::Ok => {}
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Get stdout from process and verify it
+    let out =
+        friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stdout");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::ProcStdout { data, .. } => assert_eq!(data, "hello world\n"),
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Kill the remote process since it only terminates when stdin closes, but we
+    // want to verify that we get a proc done is some manner, which won't happen
+    // if stdin closes as our interactive process will also close
+    let req = Request {
+        id: rand::random(),
+        tenant: random_tenant(),
+        payload: vec![RequestData::ProcKill { id }],
+    };
+    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
+    stdin.write_all(req_string.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    // Should receive ok message
+    let out = friendly_recv_line(&stdout, Duration::from_secs(1))
+        .expect("Failed to get ok response from proc stdin");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::Ok => {}
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Get the indicator of a process completion
+    let out = friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc done");
+    let res: Response = serde_json::from_str(&out).unwrap();
+    match &res.payload[0] {
+        ResponseData::ProcDone { success, .. } => {
+            assert!(!success, "Process succeeded unexpectedly");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Verify that we received nothing on stderr channel
+    assert!(
+        stderr.try_recv().is_err(),
+        "Unexpectedly got result on stderr channel"
     );
 }
 
