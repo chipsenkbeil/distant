@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "assert_fs",
  "bytes",
