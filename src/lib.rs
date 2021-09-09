@@ -16,7 +16,7 @@ pub use exit::{ExitCode, ExitCodeError};
 /// Main entrypoint into the program
 pub fn run() {
     let opt = opt::Opt::load();
-    let logger = init_logging(&opt.common);
+    let logger = init_logging(&opt.common, opt.subcommand.is_remote_process());
     if let Err(x) = opt.subcommand.run(opt.common) {
         if !x.is_silent() {
             error!("Exiting due to error: {}", x);
@@ -28,7 +28,7 @@ pub fn run() {
     }
 }
 
-fn init_logging(opt: &opt::CommonOpt) -> flexi_logger::LoggerHandle {
+fn init_logging(opt: &opt::CommonOpt, is_remote_process: bool) -> flexi_logger::LoggerHandle {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
     let modules = &["distant", "distant_core"];
 
@@ -48,8 +48,15 @@ fn init_logging(opt: &opt::CommonOpt) -> flexi_logger::LoggerHandle {
             },
         );
 
-        // If quiet, we suppress all output
-        if opt.quiet {
+        // If quiet, we suppress all logging output
+        //
+        // NOTE: For a process request, unless logging to a file, we also suppress logging output
+        //       to avoid unexpected results when being treated like a process
+        //
+        //       Without this, CI tests can sporadically fail when getting the exit code of a
+        //       process because an error log is provided about failing to broadcast a response
+        //       on the client side
+        if opt.quiet || (is_remote_process && opt.log_file.is_some()) {
             builder.module(module, LevelFilter::Off);
         }
     }

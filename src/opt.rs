@@ -109,6 +109,19 @@ impl Subcommand {
 
         Ok(())
     }
+
+    /// Returns true if subcommand simplifies to acting as a proxy for a remote process
+    pub fn is_remote_process(&self) -> bool {
+        match self {
+            Self::Action(cmd) => cmd
+                .operation
+                .as_ref()
+                .map(|req| req.is_proc_run())
+                .unwrap_or_default(),
+            Self::Lsp(_) => true,
+            _ => false,
+        }
+    }
 }
 
 /// Represents the format for data communicated to & from the client

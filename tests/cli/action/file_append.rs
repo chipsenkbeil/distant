@@ -41,6 +41,9 @@ fn should_report_ok_when_done(mut action_cmd: Command) {
         .stdout("")
         .stderr("");
 
+    // NOTE: We wait a little bit to give the OS time to fully write to file
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     // Because we're talking to a local server, we can verify locally
     file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
 }
@@ -97,6 +100,9 @@ fn should_support_json_output(mut action_cmd: Command) {
         "Unexpected response: {:?}",
         res.payload[0]
     );
+
+    // NOTE: We wait a little bit to give the OS time to fully write to file
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Because we're talking to a local server, we can verify locally
     file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
