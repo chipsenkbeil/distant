@@ -76,13 +76,6 @@ where
         if let Some(data) = self.0.next().await {
             let data = data?;
 
-            if data.is_empty() {
-                return Err(TransportError::from(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Received data is empty",
-                )));
-            }
-
             // Deserialize byte stream into our expected type
             let data = serde_cbor::from_slice(&data)?;
             Ok(Some(data))
@@ -161,13 +154,6 @@ where
         if let Some(data) = self.0.next().await {
             let data = data?;
 
-            if data.is_empty() {
-                return Err(TransportError::from(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Received data is empty",
-                )));
-            }
-
             // Deserialize byte stream into our expected type
             let data = serde_cbor::from_slice(&data)?;
             Ok(Some(data))
@@ -196,37 +182,175 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub struct TestData {
-        name: &'static str,
+        name: String,
         value: usize,
     }
 
-    #[test]
-    fn send_should_convert_data_into_byte_stream_and_send_through_stream() {
-        todo!();
+    #[tokio::test]
+    async fn send_should_convert_data_into_byte_stream_and_send_through_stream() {
+        let (_tx, mut rx, stream) = InmemoryStream::make(1);
+        let mut transport = Transport::new(stream, PlainCodec::new());
+
+        let data = TestData {
+            name: String::from("test"),
+            value: 123,
+        };
+
+        let bytes = serde_cbor::to_vec(&data).unwrap();
+        let len = (bytes.len() as u64).to_be_bytes();
+        let mut frame = Vec::new();
+        frame.extend(len);
+        frame.extend(bytes);
+
+        transport.send(data).await.unwrap();
+
+        let outgoing = rx.recv().await.unwrap();
+        assert_eq!(outgoing, frame);
     }
 
-    #[test]
-    fn receive_should_fail_if_received_data_is_empty() {
-        todo!();
+    #[tokio::test]
+    async fn receive_should_return_none_if_stream_is_closed() {
+        let (_, _, stream) = InmemoryStream::make(1);
+        let mut transport = Transport::new(stream, PlainCodec::new());
+
+        let result = transport.receive::<TestData>().await;
+        match result {
+            Ok(None) => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
-    #[test]
-    fn receive_should_return_none_if_stream_is_closed() {
-        todo!();
+    #[tokio::test]
+    async fn receive_should_fail_if_unable_to_convert_to_type() {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let mut transport = Transport::new(stream, PlainCodec::new());
+
+        #[derive(Serialize, Deserialize)]
+        struct OtherTestData(usize);
+
+        let data = OtherTestData(123);
+        let bytes = serde_cbor::to_vec(&data).unwrap();
+        let len = (bytes.len() as u64).to_be_bytes();
+        let mut frame = Vec::new();
+        frame.extend(len);
+        frame.extend(bytes);
+
+        tx.send(frame).await.unwrap();
+        let result = transport.receive::<TestData>().await;
+        match result {
+            Err(TransportError::SerializeError(_)) => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
-    #[test]
-    fn receive_should_fail_if_unable_to_convert_to_type() {
-        todo!();
+    #[tokio::test]
+    async fn receive_should_return_some_instance_of_type_when_coming_into_stream() {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let mut transport = Transport::new(stream, PlainCodec::new());
+
+        let data = TestData {
+            name: String::from("test"),
+            value: 123,
+        };
+
+        let bytes = serde_cbor::to_vec(&data).unwrap();
+        let len = (bytes.len() as u64).to_be_bytes();
+        let mut frame = Vec::new();
+        frame.extend(len);
+        frame.extend(bytes);
+
+        tx.send(frame).await.unwrap();
+        let received_data = transport.receive::<TestData>().await.unwrap().unwrap();
+        assert_eq!(received_data, data);
     }
 
-    #[test]
-    fn receive_should_return_some_instance_of_type_when_coming_into_stream() {
-        todo!();
+    mod read_half {
+        use super::*;
+
+        #[tokio::test]
+        async fn receive_should_return_none_if_stream_is_closed() {
+            let (_, _, stream) = InmemoryStream::make(1);
+            let transport = Transport::new(stream, PlainCodec::new());
+            let (mut rh, _) = transport.into_split();
+
+            let result = rh.receive::<TestData>().await;
+            match result {
+                Ok(None) => {}
+                x => panic!("Unexpected result: {:?}", x),
+            }
+        }
+
+        #[tokio::test]
+        async fn receive_should_fail_if_unable_to_convert_to_type() {
+            let (tx, _rx, stream) = InmemoryStream::make(1);
+            let transport = Transport::new(stream, PlainCodec::new());
+            let (mut rh, _) = transport.into_split();
+
+            #[derive(Serialize, Deserialize)]
+            struct OtherTestData(usize);
+
+            let data = OtherTestData(123);
+            let bytes = serde_cbor::to_vec(&data).unwrap();
+            let len = (bytes.len() as u64).to_be_bytes();
+            let mut frame = Vec::new();
+            frame.extend(len);
+            frame.extend(bytes);
+
+            tx.send(frame).await.unwrap();
+            let result = rh.receive::<TestData>().await;
+            match result {
+                Err(TransportError::SerializeError(_)) => {}
+                x => panic!("Unexpected result: {:?}", x),
+            }
+        }
+
+        #[tokio::test]
+        async fn receive_should_return_some_instance_of_type_when_coming_into_stream() {
+            let (tx, _rx, stream) = InmemoryStream::make(1);
+            let transport = Transport::new(stream, PlainCodec::new());
+            let (mut rh, _) = transport.into_split();
+
+            let data = TestData {
+                name: String::from("test"),
+                value: 123,
+            };
+
+            let bytes = serde_cbor::to_vec(&data).unwrap();
+            let len = (bytes.len() as u64).to_be_bytes();
+            let mut frame = Vec::new();
+            frame.extend(len);
+            frame.extend(bytes);
+
+            tx.send(frame).await.unwrap();
+            let received_data = rh.receive::<TestData>().await.unwrap().unwrap();
+            assert_eq!(received_data, data);
+        }
     }
 
-    #[test]
-    fn to_connection_tag_should_return_connection_tag_of_stream() {
-        todo!();
+    mod write_half {
+        use super::*;
+
+        #[tokio::test]
+        async fn send_should_convert_data_into_byte_stream_and_send_through_stream() {
+            let (_tx, mut rx, stream) = InmemoryStream::make(1);
+            let transport = Transport::new(stream, PlainCodec::new());
+            let (_, mut wh) = transport.into_split();
+
+            let data = TestData {
+                name: String::from("test"),
+                value: 123,
+            };
+
+            let bytes = serde_cbor::to_vec(&data).unwrap();
+            let len = (bytes.len() as u64).to_be_bytes();
+            let mut frame = Vec::new();
+            frame.extend(len);
+            frame.extend(bytes);
+
+            wh.send(data).await.unwrap();
+
+            let outgoing = rx.recv().await.unwrap();
+            assert_eq!(outgoing, frame);
+        }
     }
 }
