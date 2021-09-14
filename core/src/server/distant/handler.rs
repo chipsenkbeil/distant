@@ -18,7 +18,7 @@ use std::{
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     process::Command,
-    sync::{mpsc, oneshot, Mutex},
+    sync::{mpsc, oneshot, Mutex, MutexGuard},
 };
 use walkdir::WalkDir;
 
@@ -40,6 +40,21 @@ impl From<ServerError> for ResponseData {
     }
 }
 
+type PostHook = Box<dyn FnOnce(MutexGuard<'_, State>) + Send>;
+struct Outgoing {
+    data: ResponseData,
+    post_hook: Option<PostHook>,
+}
+
+impl From<ResponseData> for Outgoing {
+    fn from(data: ResponseData) -> Self {
+        Self {
+            data,
+            post_hook: None,
+        }
+    }
+}
+
 /// Processes the provided request, sending replies using the given sender
 pub(super) async fn process(
     conn_id: usize,
@@ -53,7 +68,7 @@ pub(super) async fn process(
         state: HState,
         data: RequestData,
         tx: Reply,
-    ) -> Result<ResponseData, ServerError> {
+    ) -> Result<Outgoing, ServerError> {
         match data {
             RequestData::FileRead { path } => file_read(path).await,
             RequestData::FileReadText { path } => file_read_text(path).await,
@@ -98,52 +113,65 @@ pub(super) async fn process(
         let tx_2 = tx.clone();
         payload_tasks.push(tokio::spawn(async move {
             match inner(tenant_2, conn_id, state_2, data, tx_2).await {
-                Ok(data) => data,
-                Err(x) => ResponseData::from(x),
+                Ok(outgoing) => outgoing,
+                Err(x) => Outgoing::from(ResponseData::from(x)),
             }
         }));
     }
 
     // Collect the results of our tasks into the payload entries
-    let payload = future::join_all(payload_tasks)
+    let mut outgoing: Vec<Outgoing> = future::join_all(payload_tasks)
         .await
         .into_iter()
         .map(|x| match x {
-            Ok(x) => x,
-            Err(x) => ResponseData::from(x),
+            Ok(outgoing) => outgoing,
+            Err(x) => Outgoing::from(ResponseData::from(x)),
         })
         .collect();
 
+    let post_hooks: Vec<PostHook> = outgoing
+        .iter_mut()
+        .filter_map(|x| x.post_hook.take())
+        .collect();
+
+    let payload = outgoing.into_iter().map(|x| x.data).collect();
     let res = Response::new(req.tenant, Some(req.id), payload);
 
     // Send out our primary response from processing the request
-    tx.send(res).await
+    let result = tx.send(res).await;
+
+    // Invoke all post hooks
+    for hook in post_hooks {
+        hook(state.lock().await);
+    }
+
+    result
 }
 
-async fn file_read(path: PathBuf) -> Result<ResponseData, ServerError> {
-    Ok(ResponseData::Blob {
+async fn file_read(path: PathBuf) -> Result<Outgoing, ServerError> {
+    Ok(Outgoing::from(ResponseData::Blob {
         data: tokio::fs::read(path).await?,
-    })
+    }))
 }
 
-async fn file_read_text(path: PathBuf) -> Result<ResponseData, ServerError> {
-    Ok(ResponseData::Text {
+async fn file_read_text(path: PathBuf) -> Result<Outgoing, ServerError> {
+    Ok(Outgoing::from(ResponseData::Text {
         data: tokio::fs::read_to_string(path).await?,
-    })
+    }))
 }
 
-async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<ResponseData, ServerError> {
+async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
     tokio::fs::write(path, data).await?;
-    Ok(ResponseData::Ok)
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
-async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<ResponseData, ServerError> {
+async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
     let mut file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(path)
         .await?;
     file.write_all(data.as_ref()).await?;
-    Ok(ResponseData::Ok)
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn dir_read(
@@ -152,7 +180,7 @@ async fn dir_read(
     absolute: bool,
     canonicalize: bool,
     include_root: bool,
-) -> Result<ResponseData, ServerError> {
+) -> Result<Outgoing, ServerError> {
     // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
     let root_path = tokio::fs::canonicalize(path).await?;
 
@@ -231,20 +259,20 @@ async fn dir_read(
         }
     }
 
-    Ok(ResponseData::DirEntries { entries, errors })
+    Ok(Outgoing::from(ResponseData::DirEntries { entries, errors }))
 }
 
-async fn dir_create(path: PathBuf, all: bool) -> Result<ResponseData, ServerError> {
+async fn dir_create(path: PathBuf, all: bool) -> Result<Outgoing, ServerError> {
     if all {
         tokio::fs::create_dir_all(path).await?;
     } else {
         tokio::fs::create_dir(path).await?;
     }
 
-    Ok(ResponseData::Ok)
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
-async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, ServerError> {
+async fn remove(path: PathBuf, force: bool) -> Result<Outgoing, ServerError> {
     let path_metadata = tokio::fs::metadata(path.as_path()).await?;
     if path_metadata.is_dir() {
         if force {
@@ -256,10 +284,10 @@ async fn remove(path: PathBuf, force: bool) -> Result<ResponseData, ServerError>
         tokio::fs::remove_file(path).await?;
     }
 
-    Ok(ResponseData::Ok)
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
-async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
+async fn copy(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
     let src_metadata = tokio::fs::metadata(src.as_path()).await?;
     if src_metadata.is_dir() {
         // Create the destination directory first, regardless of if anything
@@ -309,21 +337,23 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
         tokio::fs::copy(src, dst).await?;
     }
 
-    Ok(ResponseData::Ok)
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
-async fn rename(src: PathBuf, dst: PathBuf) -> Result<ResponseData, ServerError> {
+async fn rename(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
     tokio::fs::rename(src, dst).await?;
 
-    Ok(ResponseData::Ok)
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
-async fn exists(path: PathBuf) -> Result<ResponseData, ServerError> {
+async fn exists(path: PathBuf) -> Result<Outgoing, ServerError> {
     // Following experimental `std::fs::try_exists`, which checks the error kind of the
     // metadata lookup to see if it is not found and filters accordingly
     Ok(match tokio::fs::metadata(path.as_path()).await {
-        Ok(_) => ResponseData::Exists(true),
-        Err(x) if x.kind() == io::ErrorKind::NotFound => ResponseData::Exists(false),
+        Ok(_) => Outgoing::from(ResponseData::Exists(true)),
+        Err(x) if x.kind() == io::ErrorKind::NotFound => {
+            Outgoing::from(ResponseData::Exists(false))
+        }
         Err(x) => return Err(ServerError::from(x)),
     })
 }
@@ -332,7 +362,7 @@ async fn metadata(
     path: PathBuf,
     canonicalize: bool,
     resolve_file_type: bool,
-) -> Result<ResponseData, ServerError> {
+) -> Result<Outgoing, ServerError> {
     let metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
     let canonicalized_path = if canonicalize {
         Some(tokio::fs::canonicalize(path.as_path()).await?)
@@ -348,7 +378,7 @@ async fn metadata(
         metadata.file_type()
     };
 
-    Ok(ResponseData::Metadata {
+    Ok(Outgoing::from(ResponseData::Metadata {
         canonicalized_path,
         accessed: metadata
             .accessed()
@@ -374,7 +404,7 @@ async fn metadata(
         } else {
             FileType::Symlink
         },
-    })
+    }))
 }
 
 async fn proc_run(
@@ -384,7 +414,7 @@ async fn proc_run(
     tx: Reply,
     cmd: String,
     args: Vec<String>,
-) -> Result<ResponseData, ServerError> {
+) -> Result<Outgoing, ServerError> {
     let id = rand::random();
 
     let mut child = Command::new(cmd.to_string())
@@ -393,196 +423,203 @@ async fn proc_run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    state
+        .lock()
+        .await
+        .push_process(conn_id, Process::new(id, cmd, args));
 
-    // Spawn a task that sends stdout as a response
-    let tx_2 = tx.clone();
-    let tenant_2 = tenant.clone();
-    let mut stdout = child.stdout.take().unwrap();
-    let stdout_task = tokio::spawn(async move {
-        let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
-        loop {
-            match stdout.read(&mut buf).await {
-                Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
-                    Ok(data) => {
-                        let res = Response::new(
-                            tenant_2.as_str(),
-                            None,
-                            vec![ResponseData::ProcStdout { id, data }],
-                        );
-                        if tx_2.send(res).await.is_err() {
-                            error!("<Conn @ {}> Stdout channel closed", conn_id);
+    let post_hook = Box::new(move |mut state_lock: MutexGuard<'_, State>| {
+        // Spawn a task that sends stdout as a response
+        let tx_2 = tx.clone();
+        let tenant_2 = tenant.clone();
+        let mut stdout = child.stdout.take().unwrap();
+        let stdout_task = tokio::spawn(async move {
+            let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
+            loop {
+                match stdout.read(&mut buf).await {
+                    Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
+                        Ok(data) => {
+                            let res = Response::new(
+                                tenant_2.as_str(),
+                                None,
+                                vec![ResponseData::ProcStdout { id, data }],
+                            );
+                            if tx_2.send(res).await.is_err() {
+                                error!("<Conn @ {}> Stdout channel closed", conn_id);
+                                break;
+                            }
+
+                            // Pause to allow buffer to fill up a little bit, avoiding
+                            // spamming with a lot of smaller responses
+                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                READ_PAUSE_MILLIS,
+                            ))
+                            .await;
+                        }
+                        Err(x) => {
+                            error!("Invalid data read from stdout pipe: {}", x);
                             break;
                         }
-
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Err(x) => {
-                        error!("Invalid data read from stdout pipe: {}", x);
-                        break;
-                    }
-                },
-                Ok(_) => break,
-                Err(_) => break,
+                    },
+                    Ok(_) => break,
+                    Err(_) => break,
+                }
             }
-        }
-    });
+        });
 
-    // Spawn a task that sends stderr as a response
-    let tx_2 = tx.clone();
-    let tenant_2 = tenant.clone();
-    let mut stderr = child.stderr.take().unwrap();
-    let stderr_task = tokio::spawn(async move {
-        let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
-        loop {
-            match stderr.read(&mut buf).await {
-                Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
-                    Ok(data) => {
-                        let res = Response::new(
-                            tenant_2.as_str(),
-                            None,
-                            vec![ResponseData::ProcStderr { id, data }],
-                        );
-                        if tx_2.send(res).await.is_err() {
-                            error!("<Conn @ {}> Stderr channel closed", conn_id);
+        // Spawn a task that sends stderr as a response
+        let tx_2 = tx.clone();
+        let tenant_2 = tenant.clone();
+        let mut stderr = child.stderr.take().unwrap();
+        let stderr_task = tokio::spawn(async move {
+            let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
+            loop {
+                match stderr.read(&mut buf).await {
+                    Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
+                        Ok(data) => {
+                            let res = Response::new(
+                                tenant_2.as_str(),
+                                None,
+                                vec![ResponseData::ProcStderr { id, data }],
+                            );
+                            if tx_2.send(res).await.is_err() {
+                                error!("<Conn @ {}> Stderr channel closed", conn_id);
+                                break;
+                            }
+
+                            // Pause to allow buffer to fill up a little bit, avoiding
+                            // spamming with a lot of smaller responses
+                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                READ_PAUSE_MILLIS,
+                            ))
+                            .await;
+                        }
+                        Err(x) => {
+                            error!("Invalid data read from stdout pipe: {}", x);
                             break;
                         }
+                    },
+                    Ok(_) => break,
+                    Err(_) => break,
+                }
+            }
+        });
 
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
+        // Spawn a task that sends stdin to the process
+        let mut stdin = child.stdin.take().unwrap();
+        let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1);
+        let stdin_task = tokio::spawn(async move {
+            while let Some(line) = stdin_rx.recv().await {
+                if let Err(x) = stdin.write_all(line.as_bytes()).await {
+                    error!(
+                        "<Conn @ {}> Failed to send stdin to process {}: {}",
+                        conn_id, id, x
+                    );
+                    break;
+                }
+            }
+        });
+
+        // Spawn a task that waits on the process to exit but can also
+        // kill the process when triggered
+        let state_2 = Arc::clone(&state);
+        let (kill_tx, kill_rx) = oneshot::channel();
+        let wait_task = tokio::spawn(async move {
+            tokio::select! {
+                status = child.wait() => {
+                    debug!("<Conn @ {}> Process {} done", conn_id, id);
+
+                    // Force stdin task to abort if it hasn't exited as there is no
+                    // point to sending any more stdin
+                    stdin_task.abort();
+
+                    if let Err(x) = stderr_task.await {
+                        error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
                     }
-                    Err(x) => {
-                        error!("Invalid data read from stdout pipe: {}", x);
-                        break;
+
+                    if let Err(x) = stdout_task.await {
+                        error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
                     }
+
+                    state_2.lock().await.remove_process(conn_id, id);
+
+                    match status {
+                        Ok(status) => {
+                            let success = status.success();
+                            let code = status.code();
+                            let res = Response::new(
+                                tenant.as_str(),
+                                None,
+                                vec![ResponseData::ProcDone { id, success, code }]
+                            );
+                            if tx.send(res).await.is_err() {
+                                error!(
+                                    "<Conn @ {}> Failed to send done for process {}!",
+                                    conn_id,
+                                    id,
+                                );
+                            }
+                        }
+                        Err(x) => {
+                            let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
+                            if tx.send(res).await.is_err() {
+                                error!(
+                                    "<Conn @ {}> Failed to send error for waiting on process {}!",
+                                    conn_id,
+                                    id,
+                                );
+                            }
+                        }
+                    }
+
                 },
-                Ok(_) => break,
-                Err(_) => break,
-            }
-        }
-    });
+                _ = kill_rx => {
+                    debug!("<Conn @ {}> Process {} killed", conn_id, id);
 
-    // Spawn a task that sends stdin to the process
-    let mut stdin = child.stdin.take().unwrap();
-    let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1);
-    let stdin_task = tokio::spawn(async move {
-        while let Some(line) = stdin_rx.recv().await {
-            if let Err(x) = stdin.write_all(line.as_bytes()).await {
-                error!(
-                    "<Conn @ {}> Failed to send stdin to process {}: {}",
-                    conn_id, id, x
-                );
-                break;
-            }
-        }
-    });
-
-    // Spawn a task that waits on the process to exit but can also
-    // kill the process when triggered
-    let state_2 = Arc::clone(&state);
-    let (kill_tx, kill_rx) = oneshot::channel();
-    let wait_task = tokio::spawn(async move {
-        tokio::select! {
-            status = child.wait() => {
-                debug!("<Conn @ {}> Process {} done", conn_id, id);
-
-                // Force stdin task to abort if it hasn't exited as there is no
-                // point to sending any more stdin
-                stdin_task.abort();
-
-                if let Err(x) = stderr_task.await {
-                    error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
-                }
-
-                if let Err(x) = stdout_task.await {
-                    error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
-                }
-
-                state_2.lock().await.remove_process(conn_id, id);
-
-                match status {
-                    Ok(status) => {
-                        let success = status.success();
-                        let code = status.code();
-                        let res = Response::new(
-                            tenant.as_str(),
-                            None,
-                            vec![ResponseData::ProcDone { id, success, code }]
-                        );
-                        if tx.send(res).await.is_err() {
-                            error!(
-                                "<Conn @ {}> Failed to send done for process {}!",
-                                conn_id,
-                                id,
-                            );
-                        }
+                    if let Err(x) = child.kill().await {
+                        error!("<Conn @ {}> Unable to kill process {}: {}", conn_id, id, x);
                     }
-                    Err(x) => {
-                        let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
-                        if tx.send(res).await.is_err() {
-                            error!(
-                                "<Conn @ {}> Failed to send error for waiting on process {}!",
-                                conn_id,
-                                id,
-                            );
-                        }
+
+                    // Force stdin task to abort if it hasn't exited as there is no
+                    // point to sending any more stdin
+                    stdin_task.abort();
+
+                    if let Err(x) = stderr_task.await {
+                        error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
+                    }
+
+                    if let Err(x) = stdout_task.await {
+                        error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
+                    }
+
+                    state_2.lock().await.remove_process(conn_id, id);
+
+                    let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
+                        id, success: false, code: None
+                    }]);
+                    if tx.send(res).await.is_err() {
+                        error!("<Conn @ {}> Failed to send done for process {}!", conn_id, id);
                     }
                 }
-
-            },
-            _ = kill_rx => {
-                debug!("<Conn @ {}> Process {} killed", conn_id, id);
-
-                if let Err(x) = child.kill().await {
-                    error!("<Conn @ {}> Unable to kill process {}: {}", conn_id, id, x);
-                }
-
-                // Force stdin task to abort if it hasn't exited as there is no
-                // point to sending any more stdin
-                stdin_task.abort();
-
-                if let Err(x) = stderr_task.await {
-                    error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
-                }
-
-                if let Err(x) = stdout_task.await {
-                    error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
-                }
-
-                state_2.lock().await.remove_process(conn_id, id);
-
-                let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
-                    id, success: false, code: None
-                }]);
-                if tx.send(res).await.is_err() {
-                    error!("<Conn @ {}> Failed to send done for process {}!", conn_id, id);
-                }
             }
+        });
+
+        // Update our state with the new process
+        if let Some(proc) = state_lock.mut_process(id) {
+            proc.initialize(stdin_tx, kill_tx, wait_task);
         }
     });
 
-    // Update our state with the new process
-    let process = Process {
-        cmd,
-        args,
-        id,
-        stdin_tx: Some(stdin_tx),
-        kill_tx,
-        wait_task,
-    };
-    state.lock().await.push_process(conn_id, process);
-
-    Ok(ResponseData::ProcStart { id })
+    Ok(Outgoing {
+        data: ResponseData::ProcStart { id },
+        post_hook: Some(post_hook),
+    })
 }
 
-async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, ServerError> {
+async fn proc_kill(state: HState, id: usize) -> Result<Outgoing, ServerError> {
     if let Some(process) = state.lock().await.processes.remove(&id) {
-        if process.kill_tx.send(()).is_ok() {
-            return Ok(ResponseData::Ok);
+        if process.kill() {
+            return Ok(Outgoing::from(ResponseData::Ok));
         }
     }
 
@@ -592,10 +629,10 @@ async fn proc_kill(state: HState, id: usize) -> Result<ResponseData, ServerError
     )))
 }
 
-async fn proc_stdin(state: HState, id: usize, data: String) -> Result<ResponseData, ServerError> {
+async fn proc_stdin(state: HState, id: usize, data: String) -> Result<Outgoing, ServerError> {
     if let Some(process) = state.lock().await.processes.get(&id) {
         if process.send_stdin(data).await {
-            return Ok(ResponseData::Ok);
+            return Ok(Outgoing::from(ResponseData::Ok));
         }
     }
 
@@ -605,8 +642,8 @@ async fn proc_stdin(state: HState, id: usize, data: String) -> Result<ResponseDa
     )))
 }
 
-async fn proc_list(state: HState) -> Result<ResponseData, ServerError> {
-    Ok(ResponseData::ProcEntries {
+async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
+    Ok(Outgoing::from(ResponseData::ProcEntries {
         entries: state
             .lock()
             .await
@@ -618,17 +655,17 @@ async fn proc_list(state: HState) -> Result<ResponseData, ServerError> {
                 id: p.id,
             })
             .collect(),
-    })
+    }))
 }
 
-async fn system_info() -> Result<ResponseData, ServerError> {
-    Ok(ResponseData::SystemInfo {
+async fn system_info() -> Result<Outgoing, ServerError> {
+    Ok(Outgoing::from(ResponseData::SystemInfo {
         family: env::consts::FAMILY.to_string(),
         os: env::consts::OS.to_string(),
         arch: env::consts::ARCH.to_string(),
         current_dir: env::current_dir().unwrap_or_default(),
         main_separator: std::path::MAIN_SEPARATOR,
-    })
+    }))
 }
 
 #[cfg(test)]
