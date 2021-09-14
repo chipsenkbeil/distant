@@ -188,7 +188,7 @@ fn should_support_json_removing_nonempty_directory_if_force_specified(mut action
 fn should_support_json_output_for_error(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
 
-    // Make a non-empty directory
+    // Make a non-empty directory so we fail to remove it
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
     dir.child("file").touch().unwrap();

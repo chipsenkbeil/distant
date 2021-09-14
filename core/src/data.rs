@@ -523,10 +523,8 @@ impl From<tokio::task::JoinError> for Error {
         Self {
             kind: if x.is_cancelled() {
                 ErrorKind::TaskCancelled
-            } else if x.is_panic() {
-                ErrorKind::TaskPanicked
             } else {
-                ErrorKind::Unknown
+                ErrorKind::TaskPanicked
             },
             description: format!("{}", x),
         }
