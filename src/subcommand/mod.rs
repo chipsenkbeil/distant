@@ -1,10 +1,10 @@
 macro_rules! extract_session_and_start {
     (
-        $cmd:expr, 
-        $session_ty:expr, 
-        $session_file:expr, 
-        $session_socket:expr, 
-        $timeout:expr, 
+        $cmd:expr,
+        $session_ty:expr,
+        $session_file:expr,
+        $session_socket:expr,
+        $timeout:expr,
         $start:expr
     ) => {{
         use distant_core::{PlainCodec, SessionInfo, SessionInfoFile, XChaCha20Poly1305Codec};
