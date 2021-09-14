@@ -7,13 +7,13 @@ use tokio::io;
 const LEN_SIZE: usize = 8;
 
 /// Represents a codec that just ships messages back and forth with no encryption or authentication
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlainCodec;
 impl_traits_for_codec!(PlainCodec);
 
 impl PlainCodec {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 

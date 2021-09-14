@@ -57,7 +57,7 @@ impl Codec for XChaCha20Poly1305Codec {
 
         let ciphertext = self
             .cipher
-            .encrypt(&nonce, item)
+            .encrypt(nonce, item)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Encryption failed"))?;
 
         // Add data in form of {LEN}{NONCE}{CIPHER TEXT}
@@ -98,7 +98,7 @@ impl Codec for XChaCha20Poly1305Codec {
         let ciphertext = &src[(NONCE_SIZE + LEN_SIZE)..(msg_len + LEN_SIZE)];
 
         // Sixth, convert ciphertext back into our item
-        let item = self.cipher.decrypt(&nonce, ciphertext);
+        let item = self.cipher.decrypt(nonce, ciphertext);
 
         // Seventh, advance so frame is no longer kept around
         src.advance(LEN_SIZE + msg_len);

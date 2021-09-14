@@ -8,7 +8,6 @@ use distant_core::{
 };
 use fork::{daemon, Fork};
 use log::*;
-use std::sync::Arc;
 use tokio::{io, task::JoinError};
 
 #[derive(Debug, Display, Error, From)]

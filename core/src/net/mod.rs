@@ -48,6 +48,7 @@ impl<const N: usize> SecretKey<N> {
     }
 
     /// Returns the length of the key
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         N
     }
