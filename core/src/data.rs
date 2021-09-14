@@ -498,14 +498,6 @@ pub struct Error {
 
 impl From<io::Error> for Error {
     fn from(x: io::Error) -> Self {
-        println!("IO ERROR: {:?}", x);
-        println!(
-            "YIELDS: {:?}",
-            Self {
-                kind: ErrorKind::from(x.kind()),
-                description: format!("{}", x),
-            }
-        );
         Self {
             kind: ErrorKind::from(x.kind()),
             description: format!("{}", x),
