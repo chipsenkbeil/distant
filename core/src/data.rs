@@ -523,10 +523,8 @@ impl From<tokio::task::JoinError> for Error {
         Self {
             kind: if x.is_cancelled() {
                 ErrorKind::TaskCancelled
-            } else if x.is_panic() {
-                ErrorKind::TaskPanicked
             } else {
-                ErrorKind::Unknown
+                ErrorKind::TaskPanicked
             },
             description: format!("{}", x),
         }
@@ -597,6 +595,9 @@ pub enum ErrorKind {
     /// This operation is unsupported on this platform
     Unsupported,
 
+    /// An operation could not be completed, because it failed to allocate enough memory.
+    OutOfMemory,
+
     /// When a loop is encountered when walking a directory
     Loop,
 
@@ -632,6 +633,7 @@ impl From<io::ErrorKind> for ErrorKind {
             io::ErrorKind::Other => Self::Other,
             io::ErrorKind::UnexpectedEof => Self::UnexpectedEof,
             io::ErrorKind::Unsupported => Self::Unsupported,
+            io::ErrorKind::OutOfMemory => Self::OutOfMemory,
 
             // This exists because io::ErrorKind is non_exhaustive
             _ => Self::Unknown,

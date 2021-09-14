@@ -30,6 +30,10 @@ impl State {
         self.processes.insert(process.id, process);
     }
 
+    pub fn mut_process(&mut self, proc_id: usize) -> Option<&mut Process> {
+        self.processes.get_mut(&proc_id)
+    }
+
     /// Removes a process associated with a connection
     pub fn remove_process(&mut self, conn_id: usize, proc_id: usize) {
         self.client_processes.entry(conn_id).and_modify(|v| {
@@ -69,11 +73,9 @@ impl State {
                         conn_id,
                         process.id
                     );
-                    if process.kill_tx.send(()).is_err() {
-                        error!(
-                            "Conn {} failed to send process {} kill signal",
-                            id, process.id
-                        );
+                    let pid = process.id;
+                    if !process.kill() {
+                        error!("Conn {} failed to send process {} kill signal", id, pid);
                     }
                 }
             }
@@ -94,16 +96,39 @@ pub struct Process {
 
     /// Transport channel to send new input to the stdin of the process,
     /// one line at a time
-    pub stdin_tx: Option<mpsc::Sender<String>>,
+    stdin_tx: Option<mpsc::Sender<String>>,
 
     /// Transport channel to report that the process should be killed
-    pub kill_tx: oneshot::Sender<()>,
+    kill_tx: Option<oneshot::Sender<()>>,
 
     /// Task used to wait on the process to complete or be killed
-    pub wait_task: JoinHandle<()>,
+    wait_task: Option<JoinHandle<()>>,
 }
 
 impl Process {
+    pub fn new(id: usize, cmd: String, args: Vec<String>) -> Self {
+        Self {
+            id,
+            cmd,
+            args,
+            stdin_tx: None,
+            kill_tx: None,
+            wait_task: None,
+        }
+    }
+
+    /// Lazy initialization of process state
+    pub(crate) fn initialize(
+        &mut self,
+        stdin_tx: mpsc::Sender<String>,
+        kill_tx: oneshot::Sender<()>,
+        wait_task: JoinHandle<()>,
+    ) {
+        self.stdin_tx = Some(stdin_tx);
+        self.kill_tx = Some(kill_tx);
+        self.wait_task = Some(wait_task);
+    }
+
     pub async fn send_stdin(&self, input: impl Into<String>) -> bool {
         if let Some(stdin) = self.stdin_tx.as_ref() {
             if stdin.send(input.into()).await.is_ok() {
@@ -117,12 +142,23 @@ impl Process {
     pub fn close_stdin(&mut self) {
         self.stdin_tx.take();
     }
+
+    pub fn kill(self) -> bool {
+        self.kill_tx
+            .map(|tx| tx.send(()).is_ok())
+            .unwrap_or_default()
+    }
 }
 
 impl Future for Process {
     type Output = Result<(), JoinError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.wait_task).poll(cx)
+        if let Some(task) = self.wait_task.as_mut() {
+            Pin::new(task).poll(cx)
+        } else {
+            // TODO: Does this work?
+            Poll::Pending
+        }
     }
 }

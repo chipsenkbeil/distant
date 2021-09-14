@@ -2,7 +2,7 @@ use crate::{
     client::Session,
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, RequestData, Response, ResponseData},
-    net::{DataStream, TransportError},
+    net::{Codec, DataStream, TransportError},
 };
 use derive_more::{Display, Error, From};
 use log::*;
@@ -59,14 +59,15 @@ pub struct RemoteProcess {
 
 impl RemoteProcess {
     /// Spawns the specified process on the remote machine using the given session
-    pub async fn spawn<T>(
+    pub async fn spawn<T, U>(
         tenant: String,
-        mut session: Session<T>,
+        mut session: Session<T, U>,
         cmd: String,
         args: Vec<String>,
     ) -> Result<Self, RemoteProcessError>
     where
         T: DataStream + 'static,
+        U: Codec + Send + 'static,
     {
         // Submit our run request and wait for a response
         let res = session
@@ -195,15 +196,16 @@ impl RemoteStderr {
 
 /// Helper function that loops, processing outgoing stdin requests to a remote process as well as
 /// supporting a kill request to terminate the remote process
-async fn process_outgoing_requests<T>(
+async fn process_outgoing_requests<T, U>(
     tenant: String,
     id: usize,
-    mut session: Session<T>,
+    mut session: Session<T, U>,
     mut stdin_rx: mpsc::Receiver<String>,
     mut kill_rx: mpsc::Receiver<()>,
 ) -> Result<(), RemoteProcessError>
 where
     T: DataStream,
+    U: Codec,
 {
     let result = loop {
         tokio::select! {
@@ -290,10 +292,13 @@ mod tests {
     use super::*;
     use crate::{
         data::{Error, ErrorKind},
-        net::{InmemoryStream, Transport},
+        net::{InmemoryStream, PlainCodec, Transport},
     };
 
-    fn make_session() -> (Transport<InmemoryStream>, Session<InmemoryStream>) {
+    fn make_session() -> (
+        Transport<InmemoryStream, PlainCodec>,
+        Session<InmemoryStream, PlainCodec>,
+    ) {
         let (t1, t2) = Transport::make_pair();
         (t1, Session::initialize(t2).unwrap())
     }

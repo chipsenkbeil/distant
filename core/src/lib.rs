@@ -10,9 +10,10 @@ mod constants;
 
 mod net;
 pub use net::{
-    DataStream, InmemoryStream, InmemoryStreamReadHalf, InmemoryStreamWriteHalf, Listener,
-    SecretKey, Transport, TransportError, TransportListener, TransportListenerCtx,
-    TransportReadHalf, TransportWriteHalf, UnprotectedToHexKey,
+    Codec, DataStream, InmemoryStream, InmemoryStreamReadHalf, InmemoryStreamWriteHalf, Listener,
+    PlainCodec, SecretKey, SecretKey32, SecretKeyError, Transport, TransportError,
+    TransportListener, TransportReadHalf, TransportWriteHalf, UnprotectedToHexKey,
+    XChaCha20Poly1305Codec,
 };
 
 pub mod data;

@@ -3,10 +3,11 @@ use crate::{
     opt::{CommonOpt, ConvertToIpAddrError, ListenSubcommand},
 };
 use derive_more::{Display, Error, From};
-use distant_core::{DistantServer, DistantServerOptions, SecretKey, UnprotectedToHexKey};
+use distant_core::{
+    DistantServer, DistantServerOptions, SecretKey32, UnprotectedToHexKey, XChaCha20Poly1305Codec,
+};
 use fork::{daemon, Fork};
 use log::*;
-use std::sync::Arc;
 use tokio::{io, task::JoinError};
 
 #[derive(Debug, Display, Error, From)]
@@ -63,11 +64,14 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     }
 
     // Bind & start our server
-    let auth_key = Arc::new(SecretKey::default());
+    let key = SecretKey32::default();
+    let key_hex_string = key.unprotected_to_hex_key();
+    let codec = XChaCha20Poly1305Codec::from(key);
+
     let (server, port) = DistantServer::bind(
         addr,
         cmd.port,
-        Some(Arc::clone(&auth_key)),
+        codec,
         DistantServerOptions {
             shutdown_after,
             max_msg_capacity: cmd.max_msg_capacity as usize,
@@ -76,11 +80,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     .await?;
 
     // Print information about port, key, etc.
-    println!(
-        "DISTANT DATA -- {} {}",
-        port,
-        auth_key.unprotected_to_hex_key()
-    );
+    println!("DISTANT DATA -- {} {}", port, key_hex_string);
 
     // For the child, we want to fully disconnect it from pipes, which we do now
     if is_forked && fork::close_fd().is_err() {

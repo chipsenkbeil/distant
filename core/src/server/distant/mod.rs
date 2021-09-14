@@ -4,12 +4,8 @@ mod state;
 use state::State;
 
 use crate::{
-    constants::CONN_HANDSHAKE_TIMEOUT_MILLIS,
     data::{Request, Response},
-    net::{
-        DataStream, SecretKey, Transport, TransportListener, TransportListenerCtx,
-        TransportReadHalf, TransportWriteHalf,
-    },
+    net::{Codec, DataStream, Transport, TransportListener, TransportReadHalf, TransportWriteHalf},
     server::{
         utils::{ConnTracker, ShutdownTask},
         PortRange,
@@ -49,35 +45,35 @@ impl Default for DistantServerOptions {
 impl DistantServer {
     /// Bind to an IP address and port from the given range, taking an optional shutdown duration
     /// that will shutdown the server if there is no active connection after duration
-    pub async fn bind(
+    pub async fn bind<U>(
         addr: IpAddr,
         port: PortRange,
-        auth_key: Option<Arc<SecretKey>>,
+        codec: U,
         opts: DistantServerOptions,
-    ) -> io::Result<(Self, u16)> {
+    ) -> io::Result<(Self, u16)>
+    where
+        U: Codec + Send + 'static,
+    {
         debug!("Binding to {} in range {}", addr, port);
         let listener = TcpListener::bind(port.make_socket_addrs(addr).as_slice()).await?;
 
         let port = listener.local_addr()?.port();
         debug!("Bound to port: {}", port);
 
-        let stream = TransportListener::initialize(
-            listener,
-            TransportListenerCtx {
-                auth_key,
-                timeout: Some(Duration::from_millis(CONN_HANDSHAKE_TIMEOUT_MILLIS)),
-            },
-        )
+        let stream = TransportListener::initialize(listener, move |stream| {
+            Transport::new(stream, codec.clone())
+        })
         .into_stream();
 
         Ok((Self::initialize(Box::pin(stream), opts), port))
     }
 
     /// Initialize a distant server using the provided listener
-    pub fn initialize<T, S>(stream: S, opts: DistantServerOptions) -> Self
+    pub fn initialize<T, U, S>(stream: S, opts: DistantServerOptions) -> Self
     where
         T: DataStream + Send + 'static,
-        S: Stream<Item = Transport<T>> + Send + Unpin + 'static,
+        U: Codec + Send + 'static,
+        S: Stream<Item = Transport<T, U>> + Send + Unpin + 'static,
     {
         // Build our state for the server
         let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
@@ -102,7 +98,7 @@ impl DistantServer {
     }
 }
 
-async fn connection_loop<T, S>(
+async fn connection_loop<T, U, S>(
     mut stream: S,
     state: Arc<Mutex<State>>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
@@ -110,7 +106,8 @@ async fn connection_loop<T, S>(
     max_msg_capacity: usize,
 ) where
     T: DataStream + Send + 'static,
-    S: Stream<Item = Transport<T>> + Send + Unpin + 'static,
+    U: Codec + Send + 'static,
+    S: Stream<Item = Transport<T, U>> + Send + Unpin + 'static,
 {
     let inner = async move {
         loop {
@@ -155,8 +152,8 @@ async fn connection_loop<T, S>(
 
 /// Processes a new connection, performing a handshake, and then spawning two tasks to handle
 /// input and output, returning join handles for the input and output tasks respectively
-async fn on_new_conn<T>(
-    transport: Transport<T>,
+async fn on_new_conn<T, U>(
+    transport: Transport<T, U>,
     conn_id: usize,
     state: Arc<Mutex<State>>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
@@ -164,6 +161,7 @@ async fn on_new_conn<T>(
 ) -> io::Result<JoinHandle<()>>
 where
     T: DataStream,
+    U: Codec + Send + 'static,
 {
     // Update our tracker to reflect the new connection
     if let Some(ct) = tracker.as_ref() {
@@ -201,13 +199,14 @@ where
 
 /// Repeatedly reads in new requests, processes them, and sends their responses to the
 /// response loop
-async fn request_loop<T>(
+async fn request_loop<T, U>(
     conn_id: usize,
     state: Arc<Mutex<State>>,
-    mut transport: TransportReadHalf<T>,
+    mut transport: TransportReadHalf<T, U>,
     tx: mpsc::Sender<Response>,
 ) where
     T: AsyncRead + Send + Unpin + 'static,
+    U: Codec,
 {
     loop {
         match transport.receive::<Request>().await {
@@ -242,12 +241,13 @@ async fn request_loop<T>(
 }
 
 /// Repeatedly sends responses out over the wire
-async fn response_loop<T>(
+async fn response_loop<T, U>(
     conn_id: usize,
-    mut transport: TransportWriteHalf<T>,
+    mut transport: TransportWriteHalf<T, U>,
     mut rx: mpsc::Receiver<Response>,
 ) where
     T: AsyncWrite + Send + Unpin + 'static,
+    U: Codec,
 {
     while let Some(res) = rx.recv().await {
         debug!(
@@ -271,16 +271,16 @@ mod tests {
     use super::*;
     use crate::{
         data::{RequestData, ResponseData},
-        net::InmemoryStream,
+        net::{InmemoryStream, PlainCodec},
     };
     use std::pin::Pin;
 
     #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
-        mpsc::Sender<Transport<InmemoryStream>>,
-        Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,
+        mpsc::Sender<Transport<InmemoryStream, PlainCodec>>,
+        Pin<Box<dyn Stream<Item = Transport<InmemoryStream, PlainCodec>> + Send>>,
     ) {
-        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream>>(1);
+        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream, PlainCodec>>(1);
         let stream = futures::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(move |transport| (transport, rx))
         });

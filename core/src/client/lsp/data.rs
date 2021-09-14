@@ -382,17 +382,17 @@ impl LspContent {
 
         // Attempt to grab the distant initialization options
         match self.strip_session_params() {
-            Some((Some(host), Some(port), Some(auth_key))) => {
+            Some((Some(host), Some(port), Some(key))) => {
                 let host = host
                     .as_str()
                     .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
                 let port = port
                     .as_u64()
                     .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
-                let auth_key = auth_key
+                let key = key
                     .as_str()
                     .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
-                Ok(format!("DISTANT DATA {} {} {}", host, port, auth_key).parse()?)
+                Ok(format!("DISTANT DATA {} {} {}", host, port, key).parse()?)
             }
             _ => Err(LspSessionInfoError::MissingSessionInfoParams),
         }
@@ -407,7 +407,7 @@ impl LspContent {
     ///             "distant": {
     ///                 "host": "...",
     ///                 "port": ...,
-    ///                 "auth_key": "..."
+    ///                 "key": "..."
     ///             }
     ///         }
     ///     }
@@ -423,7 +423,7 @@ impl LspContent {
                 (
                     v.get_mut("host").map(Value::take),
                     v.get_mut("port").map(Value::take),
-                    v.get_mut("auth_key").map(Value::take),
+                    v.get_mut("key").map(Value::take),
                 )
             })
     }
@@ -482,6 +482,9 @@ impl FromStr for LspContent {
 mod tests {
     use super::*;
     use crate::net::SecretKey;
+
+    // 32-byte test hex key (64 hex characters)
+    const TEST_HEX_KEY: &str = "ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD";
 
     macro_rules! make_obj {
         ($($tail:tt)*) => {
@@ -641,7 +644,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": 22,
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -654,7 +657,7 @@ mod tests {
             SessionInfo {
                 host: String::from("some.host"),
                 port: 22,
-                auth_key: SecretKey::from_slice(&hex::decode(b"abc123").unwrap()).unwrap(),
+                key: SecretKey::from_slice(&hex::decode(TEST_HEX_KEY).unwrap()).unwrap(),
             }
         );
     }
@@ -673,7 +676,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": 22,
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -706,7 +709,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": 22,
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -753,7 +756,7 @@ mod tests {
                     "initializationOptions": {
                         "distant": {
                             "port": 22,
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -782,7 +785,7 @@ mod tests {
                         "distant": {
                             "host": 1234,
                             "port": 22,
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -810,7 +813,7 @@ mod tests {
                     "initializationOptions": {
                         "distant": {
                             "host": "some.host",
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -839,7 +842,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": "abcd",
-                            "auth_key": "abc123"
+                            "key": TEST_HEX_KEY
                         }
                     }
                 }
@@ -855,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn data_take_session_info_should_fail_if_missing_auth_key_param() {
+    fn data_take_session_info_should_fail_if_missing_key_param() {
         let mut data = LspData {
             header: LspHeader {
                 content_length: 123456,
@@ -883,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    fn data_take_session_info_should_fail_if_auth_key_param_is_invalid() {
+    fn data_take_session_info_should_fail_if_key_param_is_invalid() {
         let mut data = LspData {
             header: LspHeader {
                 content_length: 123456,
@@ -896,7 +899,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": 22,
-                            "auth_key": 1234,
+                            "key": 1234,
                         }
                     }
                 }
@@ -924,7 +927,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": 22,
-                            "auth_key": "abc123",
+                            "key": TEST_HEX_KEY,
                         }
                     }
                 }
@@ -953,7 +956,7 @@ mod tests {
                         "distant": {
                             "host": "some.host",
                             "port": 22,
-                            "auth_key": "abc123",
+                            "key": TEST_HEX_KEY,
                         }
                     }
                 }
