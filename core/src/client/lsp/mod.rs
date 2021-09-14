@@ -1,5 +1,8 @@
 use super::{RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout};
-use crate::{client::Session, net::DataStream};
+use crate::{
+    client::Session,
+    net::{Codec, DataStream},
+};
 use futures::stream::{Stream, StreamExt};
 use std::{
     fmt::Write,
@@ -23,14 +26,15 @@ pub struct RemoteLspProcess {
 impl RemoteLspProcess {
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
-    pub async fn spawn<T>(
+    pub async fn spawn<T, U>(
         tenant: String,
-        session: Session<T>,
+        session: Session<T, U>,
         cmd: String,
         args: Vec<String>,
     ) -> Result<Self, RemoteProcessError>
     where
         T: DataStream + 'static,
+        U: Codec + Send + 'static,
     {
         let mut inner = RemoteProcess::spawn(tenant, session, cmd, args).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
@@ -252,7 +256,7 @@ mod tests {
     use super::*;
     use crate::{
         data::{Request, RequestData, Response, ResponseData},
-        net::{InmemoryStream, Transport},
+        net::{InmemoryStream, PlainCodec, Transport},
     };
     use std::{future::Future, time::Duration};
 
@@ -260,7 +264,7 @@ mod tests {
     const TIMEOUT: Duration = Duration::from_millis(50);
 
     // Configures an lsp process with a means to send & receive data from outside
-    async fn spawn_lsp_process() -> (Transport<InmemoryStream>, RemoteLspProcess) {
+    async fn spawn_lsp_process() -> (Transport<InmemoryStream, PlainCodec>, RemoteLspProcess) {
         let (mut t1, t2) = Transport::make_pair();
         let session = Session::initialize(t2).unwrap();
         let spawn_task = tokio::spawn(RemoteLspProcess::spawn(

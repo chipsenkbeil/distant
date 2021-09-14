@@ -2,7 +2,7 @@ use crate::{
     client::Session,
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, RequestData, Response, ResponseData},
-    net::{DataStream, Transport, TransportReadHalf, TransportWriteHalf},
+    net::{Codec, DataStream, Transport, TransportReadHalf, TransportWriteHalf},
     server::utils::{ConnTracker, ShutdownTask},
 };
 use futures::stream::{Stream, StreamExt};
@@ -25,15 +25,17 @@ pub struct RelayServer {
 }
 
 impl RelayServer {
-    pub fn initialize<T1, T2, S>(
-        mut session: Session<T1>,
+    pub fn initialize<T1, T2, U1, U2, S>(
+        mut session: Session<T1, U1>,
         mut stream: S,
         shutdown_after: Option<Duration>,
     ) -> io::Result<Self>
     where
         T1: DataStream + 'static,
         T2: DataStream + Send + 'static,
-        S: Stream<Item = Transport<T2>> + Send + Unpin + 'static,
+        U1: Codec + Send + 'static,
+        U2: Codec + Send + 'static,
+        S: Stream<Item = Transport<T2, U2>> + Send + Unpin + 'static,
     {
         let conns: Arc<Mutex<HashMap<usize, Conn>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -200,13 +202,14 @@ struct ConnState {
 }
 
 impl Conn {
-    pub async fn initialize<T>(
-        transport: Transport<T>,
+    pub async fn initialize<T, U>(
+        transport: Transport<T, U>,
         req_tx: mpsc::Sender<Request>,
         ct: Option<Arc<Mutex<ConnTracker>>>,
     ) -> io::Result<Self>
     where
         T: DataStream + 'static,
+        U: Codec + Send + 'static,
     {
         // Create a unique id to associate with the connection since its address
         // is not guaranteed to have an identifiable string
@@ -290,14 +293,15 @@ impl Conn {
 }
 
 /// Conn::Request -> Session::Fire
-async fn handle_conn_incoming<T>(
+async fn handle_conn_incoming<T, U>(
     conn_id: usize,
     state: Arc<Mutex<ConnState>>,
-    mut reader: TransportReadHalf<T>,
+    mut reader: TransportReadHalf<T, U>,
     tenant_tx: oneshot::Sender<String>,
     req_tx: mpsc::Sender<Request>,
 ) where
     T: AsyncRead + Unpin,
+    U: Codec,
 {
     macro_rules! process_req {
         ($on_success:expr; $done:expr) => {
@@ -365,14 +369,15 @@ async fn handle_conn_incoming<T>(
     }
 }
 
-async fn handle_conn_outgoing<T>(
+async fn handle_conn_outgoing<T, U>(
     conn_id: usize,
     state: Arc<Mutex<ConnState>>,
-    mut writer: TransportWriteHalf<T>,
+    mut writer: TransportWriteHalf<T, U>,
     tenant_rx: oneshot::Receiver<String>,
     mut res_rx: mpsc::Receiver<Response>,
 ) where
     T: AsyncWrite + Unpin,
+    U: Codec,
 {
     // We wait for the tenant to be identified by the first request
     // before processing responses to be sent back; this is easier
@@ -412,20 +417,23 @@ async fn handle_conn_outgoing<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::InmemoryStream;
+    use crate::net::{InmemoryStream, PlainCodec};
     use std::{pin::Pin, time::Duration};
 
-    fn make_session() -> (Transport<InmemoryStream>, Session<InmemoryStream>) {
+    fn make_session() -> (
+        Transport<InmemoryStream, PlainCodec>,
+        Session<InmemoryStream, PlainCodec>,
+    ) {
         let (t1, t2) = Transport::make_pair();
         (t1, Session::initialize(t2).unwrap())
     }
 
     #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
-        mpsc::Sender<Transport<InmemoryStream>>,
-        Pin<Box<dyn Stream<Item = Transport<InmemoryStream>> + Send>>,
+        mpsc::Sender<Transport<InmemoryStream, PlainCodec>>,
+        Pin<Box<dyn Stream<Item = Transport<InmemoryStream, PlainCodec>> + Send>>,
     ) {
-        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream>>(1);
+        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream, PlainCodec>>(1);
         let stream = futures::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(move |transport| (transport, rx))
         });

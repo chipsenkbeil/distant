@@ -1,7 +1,6 @@
-use super::{DataStream, SecretKey, Transport};
+use super::{DataStream, PlainCodec, Transport};
 use std::{
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 use tokio::{
@@ -130,18 +129,20 @@ impl DataStream for InmemoryStream {
     }
 }
 
-impl Transport<InmemoryStream> {
-    /// Produces a pair of inmemory transports that are connected to each other with matching
-    /// auth and encryption keys
+impl Transport<InmemoryStream, PlainCodec> {
+    /// Produces a pair of inmemory transports that are connected to each other using
+    /// a standard codec
     ///
     /// Sets the buffer for message passing for each underlying stream to the given buffer size
-    pub fn pair(buffer: usize) -> (Transport<InmemoryStream>, Transport<InmemoryStream>) {
-        let auth_key = Arc::new(SecretKey::default());
-        let crypt_key = Arc::new(SecretKey::default());
-
+    pub fn pair(
+        buffer: usize,
+    ) -> (
+        Transport<InmemoryStream, PlainCodec>,
+        Transport<InmemoryStream, PlainCodec>,
+    ) {
         let (a, b) = InmemoryStream::pair(buffer);
-        let a = Transport::new(a, Some(Arc::clone(&auth_key)), Arc::clone(&crypt_key));
-        let b = Transport::new(b, Some(auth_key), crypt_key);
+        let a = Transport::new(a, PlainCodec::new());
+        let b = Transport::new(b, PlainCodec::new());
         (a, b)
     }
 }

@@ -8,8 +8,8 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    DataStream, LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Session,
-    SessionInfo, SessionInfoFile, TransportError,
+    Codec, DataStream, LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Session,
+    TransportError,
 };
 use tokio::{io, time::Duration};
 
@@ -54,74 +54,27 @@ pub fn run(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let timeout = opt.to_timeout_duration();
-
-    match cmd.session {
-        SessionInput::Environment => {
-            start(
-                cmd,
-                Session::tcp_connect_timeout(SessionInfo::from_environment()?, timeout).await?,
-                timeout,
-                None,
-            )
-            .await
-        }
-        SessionInput::File => {
-            let path = cmd.session_data.session_file.clone();
-            start(
-                cmd,
-                Session::tcp_connect_timeout(
-                    SessionInfoFile::load_from(path).await?.into(),
-                    timeout,
-                )
-                .await?,
-                timeout,
-                None,
-            )
-            .await
-        }
-        SessionInput::Pipe => {
-            start(
-                cmd,
-                Session::tcp_connect_timeout(SessionInfo::from_stdin()?, timeout).await?,
-                timeout,
-                None,
-            )
-            .await
-        }
-        SessionInput::Lsp => {
-            let mut data =
-                LspData::from_buf_reader(&mut std::io::stdin().lock()).map_err(io::Error::from)?;
-            let info = data.take_session_info().map_err(io::Error::from)?;
-            start(
-                cmd,
-                Session::tcp_connect_timeout(info, timeout).await?,
-                timeout,
-                Some(data),
-            )
-            .await
-        }
-        #[cfg(unix)]
-        SessionInput::Socket => {
-            let path = cmd.session_data.session_socket.clone();
-            start(
-                cmd,
-                Session::unix_connect_timeout(path, None, timeout).await?,
-                timeout,
-                None,
-            )
-            .await
-        }
-    }
+    let session_file = cmd.session_data.session_file.clone();
+    let session_socket = cmd.session_data.session_socket.clone();
+    extract_session_and_start!(
+        cmd,
+        cmd.session,
+        session_file,
+        session_socket,
+        timeout,
+        |cmd, session, timeout, lsp_data| start(cmd, session, timeout, lsp_data)
+    )
 }
 
-async fn start<T>(
+async fn start<T, U>(
     cmd: ActionSubcommand,
-    mut session: Session<T>,
+    mut session: Session<T, U>,
     timeout: Duration,
     lsp_data: Option<LspData>,
 ) -> Result<(), Error>
 where
     T: DataStream + 'static,
+    U: Codec + Send + 'static,
 {
     let is_shell_format = matches!(cmd.format, Format::Shell);
 

@@ -1,5 +1,5 @@
-use super::{DataStream, SecretKey, Transport};
-use std::{net::SocketAddr, sync::Arc};
+use super::{Codec, DataStream, Transport};
+use std::net::SocketAddr;
 use tokio::{
     io,
     net::{
@@ -23,21 +23,16 @@ impl DataStream for TcpStream {
     }
 }
 
-impl Transport<TcpStream> {
-    /// Establishes a connection using the provided session and performs a handshake to establish
-    /// means of encryption, returning a transport ready to communicate with the other side
-    ///
-    /// Takes an optional authentication key
-    pub async fn connect(
-        addrs: impl ToSocketAddrs,
-        auth_key: Option<Arc<SecretKey>>,
-    ) -> io::Result<Self> {
+impl<U: Codec> Transport<TcpStream, U> {
+    /// Establishes a connection to one of the specified addresses and uses the provided codec
+    /// for transportation
+    pub async fn connect(addrs: impl ToSocketAddrs, codec: U) -> io::Result<Self> {
         let stream = TcpStream::connect(addrs).await?;
-        Self::from_handshake(stream, auth_key).await
+        Ok(Transport::new(stream, codec))
     }
 
     /// Returns the address of the peer the transport is connected to
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.conn.get_ref().peer_addr()
+        self.0.get_ref().peer_addr()
     }
 }

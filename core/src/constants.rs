@@ -12,13 +12,6 @@ pub const MAX_PIPE_CHUNK_SIZE: usize = 16384;
 /// to avoid sending many small messages to clients
 pub const READ_PAUSE_MILLIS: u64 = 50;
 
-/// Represents the length of the salt to use for encryption
-pub const SALT_LEN: usize = 16;
-
-/// Represents time in milliseconds a connection has to perform a handshake (on server side)
-/// before the server discards the connection (5 minutes)
-pub const CONN_HANDSHAKE_TIMEOUT_MILLIS: u64 = 300000;
-
 /// Test-only constants
 #[cfg(test)]
 pub mod test {

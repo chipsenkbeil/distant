@@ -2,12 +2,13 @@ use crate::{
     client::utils,
     constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
     data::{Request, Response},
-    net::{DataStream, SecretKey, Transport, TransportError, TransportWriteHalf},
+    net::{Codec, DataStream, Transport, TransportError, TransportWriteHalf},
 };
 use log::*;
 use std::{
     collections::HashMap,
     convert,
+    net::SocketAddr,
     sync::{Arc, Mutex},
 };
 use tokio::{
@@ -24,12 +25,13 @@ pub use info::{SessionInfo, SessionInfoFile, SessionInfoParseError};
 type Callbacks = Arc<Mutex<HashMap<usize, oneshot::Sender<Response>>>>;
 
 /// Represents a session with a remote server that can be used to send requests & receive responses
-pub struct Session<T>
+pub struct Session<T, U>
 where
     T: DataStream,
+    U: Codec,
 {
     /// Underlying transport used by session
-    t_write: TransportWriteHalf<T::Write>,
+    t_write: TransportWriteHalf<T::Write, U>,
 
     /// Collection of callbacks to be invoked upon receiving a response to a request
     callbacks: Callbacks,
@@ -41,12 +43,10 @@ where
     pub broadcast: Option<mpsc::Receiver<Response>>,
 }
 
-impl Session<TcpStream> {
+impl<U: Codec + Send + 'static> Session<TcpStream, U> {
     /// Connect to a remote TCP server using the provided information
-    pub async fn tcp_connect(info: SessionInfo) -> io::Result<Self> {
-        let addr = info.to_socket_addr().await?;
-        let transport =
-            Transport::<TcpStream>::connect(addr, Some(Arc::new(info.auth_key))).await?;
+    pub async fn tcp_connect(addr: SocketAddr, codec: U) -> io::Result<Self> {
+        let transport = Transport::<TcpStream, U>::connect(addr, codec).await?;
         debug!(
             "Session has been established with {}",
             transport
@@ -58,21 +58,22 @@ impl Session<TcpStream> {
     }
 
     /// Connect to a remote TCP server, timing out after duration has passed
-    pub async fn tcp_connect_timeout(info: SessionInfo, duration: Duration) -> io::Result<Self> {
-        utils::timeout(duration, Self::tcp_connect(info))
+    pub async fn tcp_connect_timeout(
+        addr: SocketAddr,
+        codec: U,
+        duration: Duration,
+    ) -> io::Result<Self> {
+        utils::timeout(duration, Self::tcp_connect(addr, codec))
             .await
             .and_then(convert::identity)
     }
 }
 
 #[cfg(unix)]
-impl Session<tokio::net::UnixStream> {
+impl<U: Codec + Send + 'static> Session<tokio::net::UnixStream, U> {
     /// Connect to a proxy unix socket
-    pub async fn unix_connect(
-        path: impl AsRef<std::path::Path>,
-        auth_key: Option<Arc<SecretKey>>,
-    ) -> io::Result<Self> {
-        let transport = Transport::<tokio::net::UnixStream>::connect(path, auth_key).await?;
+    pub async fn unix_connect(path: impl AsRef<std::path::Path>, codec: U) -> io::Result<Self> {
+        let transport = Transport::<tokio::net::UnixStream, U>::connect(path, codec).await?;
         debug!(
             "Session has been established with {}",
             transport
@@ -86,21 +87,22 @@ impl Session<tokio::net::UnixStream> {
     /// Connect to a proxy unix socket, timing out after duration has passed
     pub async fn unix_connect_timeout(
         path: impl AsRef<std::path::Path>,
-        auth_key: Option<Arc<SecretKey>>,
+        codec: U,
         duration: Duration,
     ) -> io::Result<Self> {
-        utils::timeout(duration, Self::unix_connect(path, auth_key))
+        utils::timeout(duration, Self::unix_connect(path, codec))
             .await
             .and_then(convert::identity)
     }
 }
 
-impl<T> Session<T>
+impl<T, U> Session<T, U>
 where
     T: DataStream,
+    U: Codec + Send + 'static,
 {
     /// Initializes a session using the provided transport
-    pub fn initialize(transport: Transport<T>) -> io::Result<Self> {
+    pub fn initialize(transport: Transport<T, U>) -> io::Result<Self> {
         let (mut t_read, t_write) = transport.into_split();
         let callbacks: Callbacks = Arc::new(Mutex::new(HashMap::new()));
         let (broadcast_tx, broadcast_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
@@ -151,7 +153,13 @@ where
             response_task,
         })
     }
+}
 
+impl<T, U> Session<T, U>
+where
+    T: DataStream,
+    U: Codec,
+{
     /// Waits for the session to terminate, which results when the receiving end of the network
     /// connection is closed (or the session is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {

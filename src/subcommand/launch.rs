@@ -6,7 +6,8 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    RelayServer, Session, SessionInfo, SessionInfoFile, TransportListener, TransportListenerCtx,
+    PlainCodec, RelayServer, Session, SessionInfo, SessionInfoFile, Transport, TransportListener,
+    XChaCha20Poly1305Codec,
 };
 use fork::{daemon, Fork};
 use log::*;
@@ -124,7 +125,9 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
 }
 
 async fn keep_loop(info: SessionInfo, format: Format, duration: Duration) -> io::Result<()> {
-    match Session::tcp_connect_timeout(info, duration).await {
+    let addr = info.to_socket_addr().await?;
+    let codec = XChaCha20Poly1305Codec::from(info.key);
+    match Session::tcp_connect_timeout(addr, codec, duration).await {
         Ok(session) => {
             let cli_session = CliSession::new(utils::new_tenant(), session, format);
             cli_session.wait().await
@@ -143,7 +146,9 @@ async fn socket_loop(
     // We need to form a connection with the actual server to forward requests
     // and responses between connections
     debug!("Connecting to {} {}", info.host, info.port);
-    let session = Session::tcp_connect_timeout(info, duration).await?;
+    let addr = info.to_socket_addr().await?;
+    let codec = XChaCha20Poly1305Codec::from(info.key);
+    let session = Session::tcp_connect_timeout(addr, codec, duration).await?;
 
     // Remove the socket file if it already exists
     if !fail_if_socket_exists && socket_path.as_ref().exists() {
@@ -156,14 +161,9 @@ async fn socket_loop(
     debug!("Binding to unix socket: {:?}", socket_path.as_ref());
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
-    let stream = TransportListener::initialize(
-        listener,
-        TransportListenerCtx {
-            auth_key: None,
-            timeout: Some(duration),
-        },
-    )
-    .into_stream();
+    let stream =
+        TransportListener::initialize(listener, |stream| Transport::new(stream, PlainCodec::new()))
+            .into_stream();
 
     let server = RelayServer::initialize(session, Box::pin(stream), shutdown_after)?;
     server

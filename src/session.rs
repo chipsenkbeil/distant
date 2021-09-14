@@ -1,7 +1,7 @@
 use crate::{
     buf::StringBuf, constants::MAX_PIPE_CHUNK_SIZE, opt::Format, output::ResponseOut, stdin,
 };
-use distant_core::{DataStream, Request, RequestData, Response, Session};
+use distant_core::{Codec, DataStream, Request, RequestData, Response, Session};
 use log::*;
 use std::{io, thread};
 use structopt::StructOpt;
@@ -16,9 +16,10 @@ pub struct CliSession {
 }
 
 impl CliSession {
-    pub fn new<T>(tenant: String, mut session: Session<T>, format: Format) -> Self
+    pub fn new<T, U>(tenant: String, mut session: Session<T, U>, format: Format) -> Self
     where
         T: DataStream + 'static,
+        U: Codec + Send + 'static,
     {
         let (stdin_thread, stdin_rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
 
@@ -86,14 +87,15 @@ async fn process_incoming_responses(
 
 /// Helper function that loops, processing outgoing requests created from stdin, and printing out
 /// responses
-async fn process_outgoing_requests<T, F>(
-    mut session: Session<T>,
+async fn process_outgoing_requests<T, U, F>(
+    mut session: Session<T, U>,
     mut stdin_rx: mpsc::Receiver<String>,
     exit_tx: mpsc::Sender<()>,
     format: Format,
     map_line: F,
 ) where
     T: DataStream,
+    U: Codec,
     F: Fn(&str) -> io::Result<Request>,
 {
     let mut buf = StringBuf::new();

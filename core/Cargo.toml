@@ -12,13 +12,12 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 bytes = "1.1.0"
+chacha20poly1305 = "0.9.0"
 derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error", "is_variant"] }
 futures = "0.3.16"
 hex = "0.4.3"
-k256 = { version = "0.9.6", features = ["ecdh"] }
 lazy_static = "1.4.0"
 log = "0.4.14"
-orion = "0.16.0"
 rand = { version = "0.8.4", features = ["getrandom"] }
 serde = { version = "1.0.126", features = ["derive"] }
 serde_cbor = "0.11.1"

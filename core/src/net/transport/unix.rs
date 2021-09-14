@@ -1,5 +1,4 @@
-use super::{DataStream, SecretKey, Transport};
-use std::sync::Arc;
+use super::{Codec, DataStream, Transport};
 use tokio::{
     io,
     net::{
@@ -23,21 +22,16 @@ impl DataStream for UnixStream {
     }
 }
 
-impl Transport<UnixStream> {
-    /// Establishes a connection using the provided session and performs a handshake to establish
-    /// means of encryption, returning a transport ready to communicate with the other side
-    ///
-    /// Takes an optional authentication key
-    pub async fn connect(
-        path: impl AsRef<std::path::Path>,
-        auth_key: Option<Arc<SecretKey>>,
-    ) -> io::Result<Self> {
+impl<U: Codec> Transport<UnixStream, U> {
+    /// Establishes a connection to the socket at the specified path and uses the provided codec
+    /// for transportation
+    pub async fn connect(path: impl AsRef<std::path::Path>, codec: U) -> io::Result<Self> {
         let stream = UnixStream::connect(path.as_ref()).await?;
-        Self::from_handshake(stream, auth_key).await
+        Ok(Transport::new(stream, codec))
     }
 
     /// Returns the address of the peer the transport is connected to
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.conn.get_ref().peer_addr()
+        self.0.get_ref().peer_addr()
     }
 }

@@ -1,4 +1,4 @@
-use crate::net::{SecretKey, UnprotectedToHexKey};
+use crate::net::{SecretKey32, UnprotectedToHexKey};
 use derive_more::{Display, Error};
 use std::{
     env,
@@ -13,7 +13,7 @@ use tokio::{io, net::lookup_host};
 pub struct SessionInfo {
     pub host: String,
     pub port: u16,
-    pub auth_key: SecretKey,
+    pub key: SecretKey32,
 }
 
 #[derive(Copy, Clone, Debug, Display, Error, PartialEq, Eq)]
@@ -76,7 +76,7 @@ impl FromStr for SessionInfo {
             .map_err(|_| SessionInfoParseError::InvalidPort)?;
 
         // Fourth, load up the key and convert it back into a secret key from a hex slice
-        let auth_key = SecretKey::from_slice(
+        let key = SecretKey32::from_slice(
             &hex::decode(
                 tokens
                     .next()
@@ -87,11 +87,7 @@ impl FromStr for SessionInfo {
         )
         .map_err(|_| SessionInfoParseError::InvalidKey)?;
 
-        Ok(SessionInfo {
-            host,
-            port,
-            auth_key,
-        })
+        Ok(SessionInfo { host, port, key })
     }
 }
 
@@ -116,9 +112,9 @@ impl SessionInfo {
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
     }
 
-    /// Consumes the session and returns the auth key
-    pub fn into_auth_key(self) -> SecretKey {
-        self.auth_key
+    /// Consumes the session and returns the key
+    pub fn into_key(self) -> SecretKey32 {
+        self.key
     }
 
     /// Returns the ip address associated with the session based on the host
@@ -148,7 +144,7 @@ impl SessionInfo {
             "DISTANT DATA {} {} {}",
             self.host,
             self.port,
-            self.auth_key.unprotected_to_hex_key()
+            self.key.unprotected_to_hex_key()
         )
     }
 }
