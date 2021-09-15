@@ -40,16 +40,57 @@ impl Opt {
     }
 }
 
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Display,
+    PartialEq,
+    Eq,
+    IsVariant,
+    IntoStaticStr,
+    EnumString,
+    EnumVariantNames,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    pub fn to_log_level_filter(self) -> log::LevelFilter {
+        match self {
+            Self::Off => log::LevelFilter::Off,
+            Self::Error => log::LevelFilter::Error,
+            Self::Warn => log::LevelFilter::Warn,
+            Self::Info => log::LevelFilter::Info,
+            Self::Debug => log::LevelFilter::Debug,
+            Self::Trace => log::LevelFilter::Trace,
+        }
+    }
+}
+
 /// Contains options that are common across subcommands
 #[derive(Debug, StructOpt)]
 pub struct CommonOpt {
-    /// Verbose mode (-v, -vv, -vvv, etc.)
-    #[structopt(short, long, parse(from_occurrences), global = true)]
-    pub verbose: u8,
-
-    /// Quiet mode, suppresses all logging
+    /// Quiet mode, suppresses all logging (shortcut for log level off)
     #[structopt(short, long, global = true)]
     pub quiet: bool,
+
+    /// Log level to use throughout the application
+    #[structopt(
+        long, 
+        global = true, 
+        case_insensitive = true,
+        default_value = LogLevel::Info.into(),
+        possible_values = LogLevel::VARIANTS
+    )]
+    pub log_level: LogLevel,
 
     /// Log output to disk instead of stderr
     #[structopt(long, global = true)]

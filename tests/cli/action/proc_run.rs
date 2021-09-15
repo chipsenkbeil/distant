@@ -327,7 +327,6 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
     let mut child = distant_subcommand(ctx, "action")
         .args(&["--format", "json"])
         .arg("--interactive")
-        .args(&["--log-file", "/tmp/test.log", "-vvv"])
         .spawn()
         .unwrap();
 

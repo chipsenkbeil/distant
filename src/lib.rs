@@ -38,15 +38,7 @@ fn init_logging(opt: &opt::CommonOpt, is_remote_process: bool) -> flexi_logger::
 
     // For each module, configure logging
     for module in modules {
-        builder.module(
-            module,
-            match opt.verbose {
-                0 => LevelFilter::Warn,
-                1 => LevelFilter::Info,
-                2 => LevelFilter::Debug,
-                _ => LevelFilter::Trace,
-            },
-        );
+        builder.module(module, opt.log_level.to_log_level_filter());
 
         // If quiet, we suppress all logging output
         //
