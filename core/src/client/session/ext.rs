@@ -1,5 +1,5 @@
 use crate::{
-    client::{RemoteProcess, Session},
+    client::{RemoteProcess, RemoteProcessError, Session},
     data::{DirEntry, Error as Failure, FileType, Request, RequestData, ResponseData},
     net::TransportError,
 };
@@ -19,7 +19,8 @@ pub enum SessionExtError {
     MismatchedResponse,
 }
 
-pub type AsyncReturn<'a, T> = Pin<Box<dyn Future<Output = Result<T, SessionExtError>> + Send + 'a>>;
+pub type AsyncReturn<'a, T, E = SessionExtError> =
+    Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 /// Represents metadata about some path on a remote machine
 pub struct Metadata {
@@ -132,7 +133,7 @@ pub trait SessionExt {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<String>,
-    ) -> AsyncReturn<'_, RemoteProcess>;
+    ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError>;
 
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
@@ -396,14 +397,10 @@ impl SessionExt for Session {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<String>,
-    ) -> AsyncReturn<'_, RemoteProcess> {
+    ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
-        Box::pin(async move {
-            RemoteProcess::spawn(tenant, self, cmd, args)
-                .await
-                .map_err(SessionExtError::from)
-        })
+        Box::pin(async move { RemoteProcess::spawn(tenant, self, cmd, args).await })
     }
 
     /// Writes a remote file with the data from a collection of bytes

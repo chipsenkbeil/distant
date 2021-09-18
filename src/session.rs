@@ -62,13 +62,8 @@ impl CliSession {
     }
 }
 
-/// Helper function that loops, processing incoming responses not tied to a request to be sent out
-/// over stdout/stderr
-async fn process_incoming_responses(
-    mailbox: Mailbox,
-    format: Format,
-    mut exit: watch::Receiver<bool>,
-) {
+/// Helper function that loops, processing incoming responses to a mailbox
+async fn process_mailbox(mailbox: Mailbox, format: Format, mut exit: watch::Receiver<bool>) {
     loop {
         tokio::select! {
             res = mailbox.next() => {
@@ -117,23 +112,32 @@ async fn process_outgoing_requests<F>(
                 trace!("Processing line: {:?}", line);
                 if line.is_empty() {
                     continue;
-                } else if line == "exit" {
-                    debug!("Got exit request, so closing cli session");
-                    stdin_rx.close();
-                    if exit_tx.send(true).is_err() {
-                        error!("Failed to close cli session");
-                    }
-                    continue;
                 }
 
                 match map_line(line) {
                     Ok(req) => match session.mail(req).await {
                         Ok(mailbox) => {
-                            tokio::spawn(process_incoming_responses(
-                                mailbox,
-                                format,
-                                exit_tx.subscribe(),
-                            ));
+                            // Wait to get our first response before moving on to the next line
+                            // of input
+                            if let Some(res) = mailbox.next().await {
+                                // Convert to response to output, and when successful launch
+                                // a handler for continued responses to the same request
+                                // such as with processes
+                                match ResponseOut::new(format, res) {
+                                    Ok(out) => {
+                                        out.print();
+
+                                        tokio::spawn(process_mailbox(
+                                            mailbox,
+                                            format,
+                                            exit_tx.subscribe(),
+                                        ));
+                                    }
+                                    Err(x) => {
+                                        error!("{}", x);
+                                    }
+                                }
+                            }
                         }
                         Err(x) => {
                             error!("Failed to send request: {}", x)
@@ -146,12 +150,12 @@ async fn process_outgoing_requests<F>(
             }
         }
     }
+
+    // Close out any dangling mailbox handlers
+    let _ = exit_tx.send(true);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn should_support_
 }

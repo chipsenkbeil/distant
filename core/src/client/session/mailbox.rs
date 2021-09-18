@@ -1,6 +1,9 @@
-use crate::data::Response;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, Mutex};
+use crate::{client::utils, data::Response};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{
+    io,
+    sync::{mpsc, Mutex},
+};
 
 pub struct PostOffice {
     mailboxes: HashMap<usize, mpsc::Sender<Response>>,
@@ -72,5 +75,10 @@ impl Mailbox {
     /// Receives next response in mailbox
     pub async fn next(&self) -> Option<Response> {
         self.rx.lock().await.recv().await
+    }
+
+    /// Receives next response in mailbox, waiting up to duration before timing out
+    pub async fn next_timeout(&self, duration: Duration) -> io::Result<Option<Response>> {
+        utils::timeout(duration, self.next()).await
     }
 }

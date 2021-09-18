@@ -64,7 +64,7 @@ impl RemoteProcess {
         session: &mut Session,
         cmd: impl Into<String>,
         args: Vec<String>,
-    ) -> Result<Self, TransportError> {
+    ) -> Result<Self, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
 
@@ -79,9 +79,8 @@ impl RemoteProcess {
         // Wait until we get the first response, and get id from proc started
         let (id, origin_id) = match mailbox.next().await {
             Some(res) if res.payload.len() != 1 => {
-                return Err(TransportError::IoError(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Got wrong payload size",
+                return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                    io::Error::new(io::ErrorKind::InvalidData, "Got wrong payload size"),
                 )));
             }
             Some(res) => {
@@ -89,16 +88,18 @@ impl RemoteProcess {
                 match res.payload.into_iter().next().unwrap() {
                     ResponseData::ProcStart { id } => (id, origin_id),
                     x => {
-                        return Err(TransportError::IoError(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Got response type of {}", x.as_ref()),
+                        return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Got response type of {}", x.as_ref()),
+                            ),
                         )))
                     }
                 }
             }
             None => {
-                return Err(TransportError::IoError(io::Error::from(
-                    io::ErrorKind::ConnectionAborted,
+                return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                    io::Error::from(io::ErrorKind::ConnectionAborted),
                 )))
             }
         };
@@ -340,7 +341,8 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(TransportError::IoError(x)) if x.kind() == io::ErrorKind::InvalidData
+                Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
+                    if x.kind() == io::ErrorKind::InvalidData
             ),
             "Unexpected result: {:?}",
             result
@@ -384,7 +386,8 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(TransportError::IoError(x)) if x.kind() == io::ErrorKind::InvalidData
+                Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
+                    if x.kind() == io::ErrorKind::InvalidData
             ),
             "Unexpected result: {:?}",
             result
