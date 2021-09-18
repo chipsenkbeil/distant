@@ -1,35 +1,38 @@
 use crate::{
     buf::StringBuf, constants::MAX_PIPE_CHUNK_SIZE, opt::Format, output::ResponseOut, stdin,
 };
-use distant_core::{Codec, DataStream, Request, RequestData, Response, Session};
+use distant_core::{Mailbox, Request, RequestData, Session};
 use log::*;
-use std::{io, thread};
+use std::io;
 use structopt::StructOpt;
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 /// Represents a wrapper around a session that provides CLI functionality such as reading from
 /// stdin and piping results back out to stdout
 pub struct CliSession {
-    _stdin_thread: thread::JoinHandle<()>,
     req_task: JoinHandle<()>,
-    res_task: JoinHandle<io::Result<()>>,
 }
 
 impl CliSession {
-    pub fn new<T, U>(tenant: String, mut session: Session<T, U>, format: Format) -> Self
-    where
-        T: DataStream + 'static,
-        U: Codec + Send + 'static,
-    {
-        let (stdin_thread, stdin_rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
+    /// Creates a new instance of a session for use in CLI interactions being fed input using
+    /// the program's stdin
+    pub fn new_for_stdin(tenant: String, session: Session, format: Format) -> Self {
+        let (_stdin_thread, stdin_rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
 
-        let (exit_tx, exit_rx) = mpsc::channel(1);
-        let broadcast = session.broadcast.take().unwrap();
-        let res_task =
-            tokio::spawn(
-                async move { process_incoming_responses(broadcast, format, exit_rx).await },
-            );
+        Self::new(tenant, session, format, stdin_rx)
+    }
 
+    /// Creates a new instance of a session for use in CLI interactions being fed input using
+    /// the provided receiver
+    pub fn new(
+        tenant: String,
+        session: Session,
+        format: Format,
+        stdin_rx: mpsc::Receiver<String>,
+    ) -> Self {
         let map_line = move |line: &str| match format {
             Format::Json => serde_json::from_str(line)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x)),
@@ -44,20 +47,16 @@ impl CliSession {
             }
         };
         let req_task = tokio::spawn(async move {
-            process_outgoing_requests(session, stdin_rx, exit_tx, format, map_line).await
+            process_outgoing_requests(session, stdin_rx, format, map_line).await
         });
 
-        Self {
-            _stdin_thread: stdin_thread,
-            req_task,
-            res_task,
-        }
+        Self { req_task }
     }
 
     /// Wait for the cli session to terminate
     pub async fn wait(self) -> io::Result<()> {
-        match tokio::try_join!(self.req_task, self.res_task) {
-            Ok((_, res)) => res,
+        match self.req_task.await {
+            Ok(res) => Ok(res),
             Err(x) => Err(io::Error::new(io::ErrorKind::BrokenPipe, x)),
         }
     }
@@ -66,20 +65,28 @@ impl CliSession {
 /// Helper function that loops, processing incoming responses not tied to a request to be sent out
 /// over stdout/stderr
 async fn process_incoming_responses(
-    mut broadcast: mpsc::Receiver<Response>,
+    mailbox: Mailbox,
     format: Format,
-    mut exit: mpsc::Receiver<()>,
-) -> io::Result<()> {
+    mut exit: watch::Receiver<bool>,
+) {
     loop {
         tokio::select! {
-            res = broadcast.recv() => {
+            res = mailbox.next() => {
                 match res {
-                    Some(res) => ResponseOut::new(format, res)?.print(),
-                    None => return Ok(()),
+                    Some(res) => match ResponseOut::new(format, res) {
+                        Ok(out) => out.print(),
+                        Err(x) => {
+                            error!("{}", x);
+                            break;
+                        }
+                    },
+                    None => break,
                 }
             }
-            _ = exit.recv() => {
-                return Ok(());
+            v = exit.changed() => {
+                if v.is_err() || *exit.borrow() {
+                    break;
+                }
             }
         }
     }
@@ -87,18 +94,16 @@ async fn process_incoming_responses(
 
 /// Helper function that loops, processing outgoing requests created from stdin, and printing out
 /// responses
-async fn process_outgoing_requests<T, U, F>(
-    mut session: Session<T, U>,
+async fn process_outgoing_requests<F>(
+    mut session: Session,
     mut stdin_rx: mpsc::Receiver<String>,
-    exit_tx: mpsc::Sender<()>,
     format: Format,
     map_line: F,
 ) where
-    T: DataStream,
-    U: Codec,
     F: Fn(&str) -> io::Result<Request>,
 {
     let mut buf = StringBuf::new();
+    let (exit_tx, _) = watch::channel(false);
 
     while let Some(data) = stdin_rx.recv().await {
         // Update our buffer with the new data and split it into concrete lines and remainder
@@ -115,18 +120,21 @@ async fn process_outgoing_requests<T, U, F>(
                 } else if line == "exit" {
                     debug!("Got exit request, so closing cli session");
                     stdin_rx.close();
-                    if exit_tx.send(()).await.is_err() {
+                    if exit_tx.send(true).is_err() {
                         error!("Failed to close cli session");
                     }
                     continue;
                 }
 
                 match map_line(line) {
-                    Ok(req) => match session.send(req).await {
-                        Ok(res) => match ResponseOut::new(format, res) {
-                            Ok(out) => out.print(),
-                            Err(x) => error!("Failed to format response: {}", x),
-                        },
+                    Ok(req) => match session.mail(req).await {
+                        Ok(mailbox) => {
+                            tokio::spawn(process_incoming_responses(
+                                mailbox,
+                                format,
+                                exit_tx.subscribe(),
+                            ));
+                        }
                         Err(x) => {
                             error!("Failed to send request: {}", x)
                         }
@@ -138,4 +146,12 @@ async fn process_outgoing_requests<T, U, F>(
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_support_
 }

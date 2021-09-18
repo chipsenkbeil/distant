@@ -10,7 +10,9 @@ use futures::future;
 use log::*;
 use std::{
     env,
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     process::Stdio,
     sync::Arc,
     time::SystemTime,
@@ -22,8 +24,8 @@ use tokio::{
 };
 use walkdir::WalkDir;
 
-pub type Reply = mpsc::Sender<Response>;
 type HState = Arc<Mutex<State>>;
+type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 
 #[derive(Debug, Display, Error, From)]
 pub enum ServerError {
@@ -60,15 +62,17 @@ pub(super) async fn process(
     conn_id: usize,
     state: HState,
     req: Request,
-    tx: Reply,
+    tx: mpsc::Sender<Response>,
 ) -> Result<(), mpsc::error::SendError<Response>> {
-    async fn inner(
-        tenant: Arc<String>,
+    async fn inner<F>(
         conn_id: usize,
         state: HState,
         data: RequestData,
-        tx: Reply,
-    ) -> Result<Outgoing, ServerError> {
+        reply: F,
+    ) -> Result<Outgoing, ServerError>
+    where
+        F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+    {
         match data {
             RequestData::FileRead { path } => file_read(path).await,
             RequestData::FileReadText { path } => file_read_text(path).await,
@@ -93,9 +97,7 @@ pub(super) async fn process(
                 canonicalize,
                 resolve_file_type,
             } => metadata(path, canonicalize, resolve_file_type).await,
-            RequestData::ProcRun { cmd, args } => {
-                proc_run(tenant.to_string(), conn_id, state, tx, cmd, args).await
-            }
+            RequestData::ProcRun { cmd, args } => proc_run(conn_id, state, reply, cmd, args).await,
             RequestData::ProcKill { id } => proc_kill(state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestData::ProcList {} => proc_list(state).await,
@@ -103,16 +105,24 @@ pub(super) async fn process(
         }
     }
 
-    let tenant = Arc::new(req.tenant.clone());
+    let reply = {
+        let origin_id = req.id;
+        let tenant = req.tenant.clone();
+        let tx_2 = tx.clone();
+        move |payload: Vec<ResponseData>| -> ReplyRet {
+            let tx = tx_2.clone();
+            let res = Response::new(tenant.to_string(), origin_id, payload);
+            Box::pin(async move { tx.send(res).await.is_ok() })
+        }
+    };
 
     // Build up a collection of tasks to run independently
     let mut payload_tasks = Vec::new();
     for data in req.payload {
-        let tenant_2 = Arc::clone(&tenant);
         let state_2 = Arc::clone(&state);
-        let tx_2 = tx.clone();
+        let reply_2 = reply.clone();
         payload_tasks.push(tokio::spawn(async move {
-            match inner(tenant_2, conn_id, state_2, data, tx_2).await {
+            match inner(conn_id, state_2, data, reply_2).await {
                 Ok(outgoing) => outgoing,
                 Err(x) => Outgoing::from(ResponseData::from(x)),
             }
@@ -135,7 +145,7 @@ pub(super) async fn process(
         .collect();
 
     let payload = outgoing.into_iter().map(|x| x.data).collect();
-    let res = Response::new(req.tenant, Some(req.id), payload);
+    let res = Response::new(req.tenant, req.id, payload);
 
     // Send out our primary response from processing the request
     let result = tx.send(res).await;
@@ -407,14 +417,16 @@ async fn metadata(
     }))
 }
 
-async fn proc_run(
-    tenant: String,
+async fn proc_run<F>(
     conn_id: usize,
     state: HState,
-    tx: Reply,
+    reply: F,
     cmd: String,
     args: Vec<String>,
-) -> Result<Outgoing, ServerError> {
+) -> Result<Outgoing, ServerError>
+where
+    F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+{
     let id = rand::random();
 
     let mut child = Command::new(cmd.to_string())
@@ -430,21 +442,16 @@ async fn proc_run(
 
     let post_hook = Box::new(move |mut state_lock: MutexGuard<'_, State>| {
         // Spawn a task that sends stdout as a response
-        let tx_2 = tx.clone();
-        let tenant_2 = tenant.clone();
         let mut stdout = child.stdout.take().unwrap();
+        let mut reply_2 = reply.clone();
         let stdout_task = tokio::spawn(async move {
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
                 match stdout.read(&mut buf).await {
                     Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
                         Ok(data) => {
-                            let res = Response::new(
-                                tenant_2.as_str(),
-                                None,
-                                vec![ResponseData::ProcStdout { id, data }],
-                            );
-                            if tx_2.send(res).await.is_err() {
+                            let payload = vec![ResponseData::ProcStdout { id, data }];
+                            if !reply_2(payload).await {
                                 error!("<Conn @ {}> Stdout channel closed", conn_id);
                                 break;
                             }
@@ -468,21 +475,16 @@ async fn proc_run(
         });
 
         // Spawn a task that sends stderr as a response
-        let tx_2 = tx.clone();
-        let tenant_2 = tenant.clone();
         let mut stderr = child.stderr.take().unwrap();
+        let mut reply_2 = reply.clone();
         let stderr_task = tokio::spawn(async move {
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
                 match stderr.read(&mut buf).await {
                     Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
                         Ok(data) => {
-                            let res = Response::new(
-                                tenant_2.as_str(),
-                                None,
-                                vec![ResponseData::ProcStderr { id, data }],
-                            );
-                            if tx_2.send(res).await.is_err() {
+                            let payload = vec![ResponseData::ProcStderr { id, data }];
+                            if !reply_2(payload).await {
                                 error!("<Conn @ {}> Stderr channel closed", conn_id);
                                 break;
                             }
@@ -524,6 +526,7 @@ async fn proc_run(
         // kill the process when triggered
         let state_2 = Arc::clone(&state);
         let (kill_tx, kill_rx) = oneshot::channel();
+        let mut reply_2 = reply.clone();
         let wait_task = tokio::spawn(async move {
             tokio::select! {
                 status = child.wait() => {
@@ -547,12 +550,8 @@ async fn proc_run(
                         Ok(status) => {
                             let success = status.success();
                             let code = status.code();
-                            let res = Response::new(
-                                tenant.as_str(),
-                                None,
-                                vec![ResponseData::ProcDone { id, success, code }]
-                            );
-                            if tx.send(res).await.is_err() {
+                            let payload = vec![ResponseData::ProcDone { id, success, code }];
+                            if !reply_2(payload).await {
                                 error!(
                                     "<Conn @ {}> Failed to send done for process {}!",
                                     conn_id,
@@ -561,8 +560,8 @@ async fn proc_run(
                             }
                         }
                         Err(x) => {
-                            let res = Response::new(tenant.as_str(), None, vec![ResponseData::from(x)]);
-                            if tx.send(res).await.is_err() {
+                            let payload = vec![ResponseData::from(x)];
+                            if !reply_2(payload).await {
                                 error!(
                                     "<Conn @ {}> Failed to send error for waiting on process {}!",
                                     conn_id,
@@ -594,10 +593,8 @@ async fn proc_run(
 
                     state_2.lock().await.remove_process(conn_id, id);
 
-                    let res = Response::new(tenant.as_str(), None, vec![ResponseData::ProcDone {
-                        id, success: false, code: None
-                    }]);
-                    if tx.send(res).await.is_err() {
+                    let payload = vec![ResponseData::ProcDone { id, success: false, code: None }];
+                    if !reply_2(payload).await {
                         error!("<Conn @ {}> Failed to send done for process {}!", conn_id, id);
                     }
                 }

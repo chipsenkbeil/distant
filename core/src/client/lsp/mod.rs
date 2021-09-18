@@ -1,8 +1,5 @@
 use super::{RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout};
-use crate::{
-    client::Session,
-    net::{Codec, DataStream},
-};
+use crate::client::Session;
 use futures::stream::{Stream, StreamExt};
 use std::{
     fmt::Write,
@@ -26,16 +23,12 @@ pub struct RemoteLspProcess {
 impl RemoteLspProcess {
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
-    pub async fn spawn<T, U>(
-        tenant: String,
-        session: Session<T, U>,
-        cmd: String,
+    pub async fn spawn(
+        tenant: impl Into<String>,
+        session: &mut Session,
+        cmd: impl Into<String>,
         args: Vec<String>,
-    ) -> Result<Self, RemoteProcessError>
-    where
-        T: DataStream + 'static,
-        U: Codec + Send + 'static,
-    {
+    ) -> Result<Self, RemoteProcessError> {
         let mut inner = RemoteProcess::spawn(tenant, session, cmd, args).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
@@ -266,13 +259,16 @@ mod tests {
     // Configures an lsp process with a means to send & receive data from outside
     async fn spawn_lsp_process() -> (Transport<InmemoryStream, PlainCodec>, RemoteLspProcess) {
         let (mut t1, t2) = Transport::make_pair();
-        let session = Session::initialize(t2).unwrap();
-        let spawn_task = tokio::spawn(RemoteLspProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let mut session = Session::initialize(t2).unwrap();
+        let spawn_task = tokio::spawn(async move {
+            RemoteLspProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = t1.receive::<Request>().await.unwrap().unwrap();
@@ -280,7 +276,7 @@ mod tests {
         // Send back a response through the session
         t1.send(Response::new(
             "test-tenant",
-            Some(req.id),
+            req.id,
             vec![ResponseData::ProcStart { id: rand::random() }],
         ))
         .await
@@ -524,7 +520,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -561,7 +557,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_a.to_string(),
@@ -580,7 +576,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_b.to_string(),
@@ -615,7 +611,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", msg, extra),
@@ -659,7 +655,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", msg_1, msg_2),
@@ -694,7 +690,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -725,7 +721,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -762,7 +758,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_a.to_string(),
@@ -781,7 +777,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_b.to_string(),
@@ -816,7 +812,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", msg, extra),
@@ -860,7 +856,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", msg_1, msg_2),
@@ -895,7 +891,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                proc.origin_id,
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({

@@ -1,9 +1,9 @@
 mod client;
 pub use client::{
     LspContent, LspContentParseError, LspData, LspDataParseError, LspHeader, LspHeaderParseError,
-    LspSessionInfoError, RemoteLspProcess, RemoteLspStderr, RemoteLspStdin, RemoteLspStdout,
-    RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout, Session,
-    SessionInfo, SessionInfoFile, SessionInfoParseError,
+    LspSessionInfoError, Mailbox, RemoteLspProcess, RemoteLspStderr, RemoteLspStdin,
+    RemoteLspStdout, RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout,
+    Session, SessionInfo, SessionInfoFile, SessionInfoParseError,
 };
 
 mod constants;

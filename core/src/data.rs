@@ -257,9 +257,9 @@ pub struct Response {
     /// A unique id associated with the response
     pub id: usize,
 
-    /// The id of the originating request, if there was one
-    /// (some responses are sent unprompted)
-    pub origin_id: Option<usize>,
+    /// The id of the originating request that yielded this response
+    /// (more than one response may have same origin)
+    pub origin_id: usize,
 
     /// The main payload containing a collection of data comprising one or more results
     pub payload: Vec<ResponseData>,
@@ -267,11 +267,7 @@ pub struct Response {
 
 impl Response {
     /// Creates a new response, generating a unique id for it
-    pub fn new(
-        tenant: impl Into<String>,
-        origin_id: Option<usize>,
-        payload: Vec<ResponseData>,
-    ) -> Self {
+    pub fn new(tenant: impl Into<String>, origin_id: usize, payload: Vec<ResponseData>) -> Self {
         let id = rand::random();
         Self {
             tenant: tenant.into(),
@@ -486,7 +482,8 @@ impl From<tokio::task::JoinError> for ResponseData {
 }
 
 /// General purpose error type that can be sent across the wire
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[display(fmt = "{}: {}", kind, description)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
     /// Label describing the kind of error

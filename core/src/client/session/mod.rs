@@ -1,51 +1,55 @@
 use crate::{
     client::utils,
-    constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
+    constants::CLIENT_MAILBOX_CAPACITY,
     data::{Request, Response},
-    net::{Codec, DataStream, Transport, TransportError, TransportWriteHalf},
+    net::{Codec, DataStream, Transport, TransportError},
 };
 use log::*;
 use std::{
-    collections::HashMap,
     convert,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    ops::{Deref, DerefMut},
+    sync::Arc,
 };
 use tokio::{
     io,
     net::TcpStream,
-    sync::{mpsc, oneshot},
+    sync::{mpsc, Mutex},
     task::{JoinError, JoinHandle},
     time::Duration,
 };
 
+mod ext;
+pub use ext::SessionExt;
+
 mod info;
 pub use info::{SessionInfo, SessionInfoFile, SessionInfoParseError};
 
-type Callbacks = Arc<Mutex<HashMap<usize, oneshot::Sender<Response>>>>;
+mod mailbox;
+pub use mailbox::Mailbox;
+use mailbox::PostOffice;
 
 /// Represents a session with a remote server that can be used to send requests & receive responses
-pub struct Session<T, U>
-where
-    T: DataStream,
-    U: Codec,
-{
-    /// Underlying transport used by session
-    t_write: TransportWriteHalf<T::Write, U>,
+pub struct Session {
+    /// Used to send requests to a server
+    sender: SessionSender,
 
-    /// Collection of callbacks to be invoked upon receiving a response to a request
-    callbacks: Callbacks,
+    /// Contains the task that is running to send requests to a server
+    request_task: JoinHandle<()>,
 
     /// Contains the task that is running to receive responses from a server
     response_task: JoinHandle<()>,
 
-    /// Represents the receiver for broadcasted responses (ones with no callback)
-    pub broadcast: Option<mpsc::Receiver<Response>>,
+    /// Contains the task that runs on a timer to prune closed mailboxes
+    prune_task: JoinHandle<()>,
 }
 
-impl<U: Codec + Send + 'static> Session<TcpStream, U> {
+impl Session {
     /// Connect to a remote TCP server using the provided information
-    pub async fn tcp_connect(addr: SocketAddr, codec: U) -> io::Result<Self> {
+    pub async fn tcp_connect<U>(addr: SocketAddr, codec: U) -> io::Result<Self>
+    where
+        U: Codec + Send + 'static,
+    {
         let transport = Transport::<TcpStream, U>::connect(addr, codec).await?;
         debug!(
             "Session has been established with {}",
@@ -58,11 +62,14 @@ impl<U: Codec + Send + 'static> Session<TcpStream, U> {
     }
 
     /// Connect to a remote TCP server, timing out after duration has passed
-    pub async fn tcp_connect_timeout(
+    pub async fn tcp_connect_timeout<U>(
         addr: SocketAddr,
         codec: U,
         duration: Duration,
-    ) -> io::Result<Self> {
+    ) -> io::Result<Self>
+    where
+        U: Codec + Send + 'static,
+    {
         utils::timeout(duration, Self::tcp_connect(addr, codec))
             .await
             .and_then(convert::identity)
@@ -70,9 +77,12 @@ impl<U: Codec + Send + 'static> Session<TcpStream, U> {
 }
 
 #[cfg(unix)]
-impl<U: Codec + Send + 'static> Session<tokio::net::UnixStream, U> {
+impl Session {
     /// Connect to a proxy unix socket
-    pub async fn unix_connect(path: impl AsRef<std::path::Path>, codec: U) -> io::Result<Self> {
+    pub async fn unix_connect<U>(path: impl AsRef<std::path::Path>, codec: U) -> io::Result<Self>
+    where
+        U: Codec + Send + 'static,
+    {
         let transport = Transport::<tokio::net::UnixStream, U>::connect(path, codec).await?;
         debug!(
             "Session has been established with {}",
@@ -85,53 +95,49 @@ impl<U: Codec + Send + 'static> Session<tokio::net::UnixStream, U> {
     }
 
     /// Connect to a proxy unix socket, timing out after duration has passed
-    pub async fn unix_connect_timeout(
+    pub async fn unix_connect_timeout<U>(
         path: impl AsRef<std::path::Path>,
         codec: U,
         duration: Duration,
-    ) -> io::Result<Self> {
+    ) -> io::Result<Self>
+    where
+        U: Codec + Send + 'static,
+    {
         utils::timeout(duration, Self::unix_connect(path, codec))
             .await
             .and_then(convert::identity)
     }
 }
 
-impl<T, U> Session<T, U>
-where
-    T: DataStream,
-    U: Codec + Send + 'static,
-{
+impl Session {
     /// Initializes a session using the provided transport
-    pub fn initialize(transport: Transport<T, U>) -> io::Result<Self> {
-        let (mut t_read, t_write) = transport.into_split();
-        let callbacks: Callbacks = Arc::new(Mutex::new(HashMap::new()));
-        let (broadcast_tx, broadcast_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
+    pub fn initialize<T, U>(transport: Transport<T, U>) -> io::Result<Self>
+    where
+        T: DataStream,
+        U: Codec + Send + 'static,
+    {
+        let (mut t_read, mut t_write) = transport.into_split();
+        let post_office = Arc::new(Mutex::new(PostOffice::new()));
 
         // Start a task that continually checks for responses and triggers callbacks
-        let callbacks_2 = Arc::clone(&callbacks);
+        let post_office_2 = Arc::clone(&post_office);
         let response_task = tokio::spawn(async move {
             loop {
                 match t_read.receive::<Response>().await {
                     Ok(Some(res)) => {
                         trace!("Incoming response: {:?}", res);
-                        let maybe_callback = res
-                            .origin_id
-                            .as_ref()
-                            .and_then(|id| callbacks_2.lock().unwrap().remove(id));
+                        let res_id = res.id;
+                        let res_origin_id = res.origin_id;
 
-                        // If there is an origin to this response, trigger the callback
-                        if let Some(tx) = maybe_callback {
-                            trace!("Callback exists for response! Triggering!");
-                            if let Err(res) = tx.send(res) {
-                                error!("Failed to trigger callback for response {}", res.id);
-                            }
-
-                        // Otherwise, this goes into the junk draw of response handlers
-                        } else {
-                            trace!("Callback missing for response! Broadcasting!");
-                            if let Err(x) = broadcast_tx.send(res).await {
-                                error!("Failed to trigger broadcast: {}", x);
-                            }
+                        // Try to send response to appropriate mailbox
+                        // NOTE: We don't log failures as errors as using fire(...) for a
+                        //       session is valid and would not have a mailbox
+                        if !post_office_2.lock().await.deliver(res).await {
+                            trace!(
+                                "Response {} has no mailbox for origin {}",
+                                res_id,
+                                res_origin_id
+                            );
                         }
                     }
                     Ok(None) => {
@@ -144,47 +150,121 @@ where
                     }
                 }
             }
+
+            // Clean up remaining mailbox senders
+            post_office_2.lock().await.close_mailboxes();
         });
 
+        let (tx, mut rx) = mpsc::channel::<Request>(1);
+        let request_task = tokio::spawn(async move {
+            while let Some(req) = rx.recv().await {
+                if let Err(x) = t_write.send(req).await {
+                    error!("Failed to send request to server: {}", x);
+                    break;
+                }
+            }
+        });
+
+        // Create a task that runs once a minute and prunes mailboxes
+        let post_office_2 = Arc::clone(&post_office);
+        let prune_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                post_office_2.lock().await.prune_mailboxes();
+            }
+        });
+
+        let sender = SessionSender { tx, post_office };
+
         Ok(Self {
-            t_write,
-            callbacks,
-            broadcast: Some(broadcast_rx),
+            sender,
+            request_task,
             response_task,
+            prune_task,
         })
     }
 }
 
-impl<T, U> Session<T, U>
-where
-    T: DataStream,
-    U: Codec,
-{
+impl Session {
     /// Waits for the session to terminate, which results when the receiving end of the network
     /// connection is closed (or the session is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {
-        self.response_task.await
+        self.prune_task.abort();
+        tokio::try_join!(self.request_task, self.response_task).map(|_| ())
     }
 
     /// Abort the session's current connection by forcing its response task to shutdown
     pub fn abort(&self) {
-        self.response_task.abort()
+        self.request_task.abort();
+        self.response_task.abort();
+        self.prune_task.abort();
+    }
+
+    /// Clones the underlying sender for requests and returns the cloned instance
+    pub fn clone_sender(&self) -> SessionSender {
+        self.sender.clone()
+    }
+}
+
+impl Deref for Session {
+    type Target = SessionSender;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sender
+    }
+}
+
+impl DerefMut for Session {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sender
+    }
+}
+
+/// Represents a sender of requests tied to a session
+#[derive(Clone)]
+pub struct SessionSender {
+    /// Used to send requests to a server
+    tx: mpsc::Sender<Request>,
+
+    /// Collection of mailboxes for receiving responses to requests
+    post_office: Arc<Mutex<PostOffice>>,
+}
+
+impl SessionSender {
+    /// Returns true if no more requests can be transferred
+    pub fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+
+    /// Sends a request and returns a mailbox that can receive one or more responses
+    pub async fn mail(&mut self, req: Request) -> Result<Mailbox, TransportError> {
+        trace!("Mailing request: {:?}", req);
+
+        // First, create a mailbox using the request's id
+        let mailbox = self
+            .post_office
+            .lock()
+            .await
+            .make_mailbox(req.id, CLIENT_MAILBOX_CAPACITY);
+
+        // Second, send the request
+        self.fire(req).await?;
+
+        // Third, return mailbox
+        Ok(mailbox)
     }
 
     /// Sends a request and waits for a response
     pub async fn send(&mut self, req: Request) -> Result<Response, TransportError> {
         trace!("Sending request: {:?}", req);
 
-        // First, add a callback that will trigger when we get the response for this request
-        let (tx, rx) = oneshot::channel();
-        self.callbacks.lock().unwrap().insert(req.id, tx);
+        // Send mail and get back a mailbox
+        let mailbox = self.mail(req).await?;
 
-        // Second, send the request
-        self.t_write.send(req).await?;
-
-        // Third, wait for the response
-        rx.await
-            .map_err(|x| TransportError::from(io::Error::new(io::ErrorKind::ConnectionAborted, x)))
+        // Wait for first response, and then drop the mailbox
+        mailbox.next().await.ok_or_else(|| {
+            TransportError::IoError(io::Error::from(io::ErrorKind::ConnectionAborted))
+        })
     }
 
     /// Sends a request and waits for a response, timing out after duration has passed
@@ -204,7 +284,10 @@ where
     /// Any response that would be received gets sent over the broadcast channel instead
     pub async fn fire(&mut self, req: Request) -> Result<(), TransportError> {
         trace!("Firing off request: {:?}", req);
-        self.t_write.send(req).await
+        self.tx
+            .send(req)
+            .await
+            .map_err(|x| TransportError::IoError(io::Error::new(io::ErrorKind::BrokenPipe, x)))
     }
 
     /// Sends a request without waiting for a response, timing out after duration has passed
@@ -237,7 +320,7 @@ mod tests {
         let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
         let res = Response::new(
             TENANT,
-            Some(req.id),
+            req.id,
             vec![ResponseData::ProcEntries {
                 entries: Vec::new(),
             }],
