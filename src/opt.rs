@@ -84,8 +84,8 @@ pub struct CommonOpt {
 
     /// Log level to use throughout the application
     #[structopt(
-        long, 
-        global = true, 
+        long,
+        global = true,
         case_insensitive = true,
         default_value = LogLevel::Info.into(),
         possible_values = LogLevel::VARIANTS
