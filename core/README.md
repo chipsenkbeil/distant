@@ -47,7 +47,7 @@ use std::path::PathBuf;
 //
 // DISTANT_HOST     = "..."
 // DISTANT_PORT     = "..."
-// DISTANT_AUTH_KEY = "..."
+// DISTANT_KEY = "..."
 let mut session = Session::tcp_connect(SessionInfo::from_environment()?).await.unwrap();
 
 // Send a request under a specific name and wait for a response

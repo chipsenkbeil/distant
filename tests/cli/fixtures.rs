@@ -10,7 +10,7 @@ const LOG_PATH: &str = "/tmp/test.distant.server.log";
 /// Context for some listening distant server
 pub struct DistantServerCtx {
     pub addr: SocketAddr,
-    pub auth_key: String,
+    pub key: String,
     done_tx: mpsc::Sender<()>,
 }
 
@@ -55,11 +55,11 @@ impl DistantServerCtx {
         });
 
         // Extract our server startup data if we succeeded
-        let (port, auth_key) = started_rx.blocking_recv().unwrap().unwrap();
+        let (port, key) = started_rx.blocking_recv().unwrap().unwrap();
 
         Self {
             addr: SocketAddr::new(ip_addr, port),
-            auth_key,
+            key,
             done_tx,
         }
     }
@@ -72,7 +72,7 @@ impl DistantServerCtx {
             .args(&["--session", "environment"])
             .env("DISTANT_HOST", self.addr.ip().to_string())
             .env("DISTANT_PORT", self.addr.port().to_string())
-            .env("DISTANT_AUTH_KEY", self.auth_key.as_str());
+            .env("DISTANT_KEY", self.key.as_str());
         cmd
     }
 }

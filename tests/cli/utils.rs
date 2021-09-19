@@ -109,7 +109,7 @@ pub fn distant_subcommand(ctx: &DistantServerCtx, subcommand: &str) -> Command {
         .args(&["--session", "environment"])
         .env("DISTANT_HOST", ctx.addr.ip().to_string())
         .env("DISTANT_PORT", ctx.addr.port().to_string())
-        .env("DISTANT_AUTH_KEY", ctx.auth_key.as_str())
+        .env("DISTANT_KEY", ctx.key.as_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

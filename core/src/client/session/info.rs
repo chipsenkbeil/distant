@@ -100,8 +100,8 @@ impl SessionInfo {
 
         let host = env::var("DISTANT_HOST").map_err(to_err)?;
         let port = env::var("DISTANT_PORT").map_err(to_err)?;
-        let auth_key = env::var("DISTANT_AUTH_KEY").map_err(to_err)?;
-        Ok(format!("DISTANT DATA {} {} {}", host, port, auth_key).parse()?)
+        let key = env::var("DISTANT_KEY").map_err(to_err)?;
+        Ok(format!("DISTANT DATA {} {} {}", host, port, key).parse()?)
     }
 
     /// Loads session from the next line available in this program's stdin
@@ -137,8 +137,8 @@ impl SessionInfo {
         Ok(SocketAddr::from((addr, self.port)))
     }
 
-    /// Converts to unprotected string that exposes the auth key in the form of
-    /// `DISTANT DATA <host> <port> <auth key>`
+    /// Converts to unprotected string that exposes the key in the form of
+    /// `DISTANT DATA <host> <port> <key>`
     pub fn to_unprotected_string(&self) -> String {
         format!(
             "DISTANT DATA {} {} {}",
