@@ -9,7 +9,7 @@ use std::{
     convert,
     net::SocketAddr,
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use tokio::{
     io,
@@ -32,7 +32,7 @@ use mailbox::PostOffice;
 /// Represents a session with a remote server that can be used to send requests & receive responses
 pub struct Session {
     /// Used to send requests to a server
-    sender: SessionSender,
+    channel: SessionChannel,
 
     /// Contains the task that is running to send requests to a server
     request_task: JoinHandle<()>,
@@ -118,9 +118,10 @@ impl Session {
     {
         let (mut t_read, mut t_write) = transport.into_split();
         let post_office = Arc::new(Mutex::new(PostOffice::new()));
+        let weak_post_office = Arc::downgrade(&post_office);
 
-        // Start a task that continually checks for responses and triggers callbacks
-        let post_office_2 = Arc::clone(&post_office);
+        // Start a task that continually checks for responses and delivers them using the
+        // post office
         let response_task = tokio::spawn(async move {
             loop {
                 match t_read.receive::<Response>().await {
@@ -132,7 +133,7 @@ impl Session {
                         // Try to send response to appropriate mailbox
                         // NOTE: We don't log failures as errors as using fire(...) for a
                         //       session is valid and would not have a mailbox
-                        if !post_office_2.lock().await.deliver(res).await {
+                        if !post_office.lock().await.deliver(res).await {
                             trace!(
                                 "Response {} has no mailbox for origin {}",
                                 res_id,
@@ -152,7 +153,7 @@ impl Session {
             }
 
             // Clean up remaining mailbox senders
-            post_office_2.lock().await.close_mailboxes();
+            post_office.lock().await.clear_mailboxes();
         });
 
         let (tx, mut rx) = mpsc::channel::<Request>(1);
@@ -166,18 +167,25 @@ impl Session {
         });
 
         // Create a task that runs once a minute and prunes mailboxes
-        let post_office_2 = Arc::clone(&post_office);
+        let post_office = Weak::clone(&weak_post_office);
         let prune_task = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
-                post_office_2.lock().await.prune_mailboxes();
+                if let Some(post_office) = Weak::upgrade(&post_office) {
+                    post_office.lock().await.prune_mailboxes();
+                } else {
+                    break;
+                }
             }
         });
 
-        let sender = SessionSender { tx, post_office };
+        let channel = SessionChannel {
+            tx,
+            post_office: weak_post_office,
+        };
 
         Ok(Self {
-            sender,
+            channel,
             request_task,
             response_task,
             prune_task,
@@ -200,49 +208,64 @@ impl Session {
         self.prune_task.abort();
     }
 
-    /// Clones the underlying sender for requests and returns the cloned instance
-    pub fn clone_sender(&self) -> SessionSender {
-        self.sender.clone()
+    /// Clones the underlying channel for requests and returns the cloned instance
+    pub fn clone_channel(&self) -> SessionChannel {
+        self.channel.clone()
     }
 }
 
 impl Deref for Session {
-    type Target = SessionSender;
+    type Target = SessionChannel;
 
     fn deref(&self) -> &Self::Target {
-        &self.sender
+        &self.channel
     }
 }
 
 impl DerefMut for Session {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.sender
+        &mut self.channel
     }
 }
 
-/// Represents a sender of requests tied to a session
+impl From<Session> for SessionChannel {
+    fn from(session: Session) -> Self {
+        session.channel
+    }
+}
+
+/// Represents a sender of requests tied to a session, holding onto a weak reference of
+/// mailboxes to relay responses, meaning that once the [`Session`] is closed or dropped,
+/// any sent request will no longer be able to receive responses
 #[derive(Clone)]
-pub struct SessionSender {
+pub struct SessionChannel {
     /// Used to send requests to a server
     tx: mpsc::Sender<Request>,
 
     /// Collection of mailboxes for receiving responses to requests
-    post_office: Arc<Mutex<PostOffice>>,
+    post_office: Weak<Mutex<PostOffice>>,
 }
 
-impl SessionSender {
+impl SessionChannel {
     /// Returns true if no more requests can be transferred
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
 
-    /// Sends a request and returns a mailbox that can receive one or more responses
+    /// Sends a request and returns a mailbox that can receive one or more responses, failing if
+    /// unable to send a request or if the session's receiving line to the remote server has
+    /// already been severed
     pub async fn mail(&mut self, req: Request) -> Result<Mailbox, TransportError> {
         trace!("Mailing request: {:?}", req);
 
         // First, create a mailbox using the request's id
-        let mailbox = self
-            .post_office
+        let mailbox = Weak::upgrade(&self.post_office)
+            .ok_or_else(|| {
+                TransportError::IoError(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "Session's post office is no longer available",
+                ))
+            })?
             .lock()
             .await
             .make_mailbox(req.id, CLIENT_MAILBOX_CAPACITY);
@@ -254,12 +277,13 @@ impl SessionSender {
         Ok(mailbox)
     }
 
-    /// Sends a request and waits for a response
+    /// Sends a request and waits for a response, failing if unable to send a request or if
+    /// the session's receiving line to the remote server has already been severed
     pub async fn send(&mut self, req: Request) -> Result<Response, TransportError> {
         trace!("Sending request: {:?}", req);
 
         // Send mail and get back a mailbox
-        let mailbox = self.mail(req).await?;
+        let mut mailbox = self.mail(req).await?;
 
         // Wait for first response, and then drop the mailbox
         mailbox.next().await.ok_or_else(|| {
@@ -279,9 +303,8 @@ impl SessionSender {
             .and_then(convert::identity)
     }
 
-    /// Sends a request without waiting for a response
-    ///
-    /// Any response that would be received gets sent over the broadcast channel instead
+    /// Sends a request without waiting for a response; this method is able to be used even
+    /// if the session's receiving line to the remote server has been severed
     pub async fn fire(&mut self, req: Request) -> Result<(), TransportError> {
         trace!("Firing off request: {:?}", req);
         self.tx
@@ -311,6 +334,40 @@ mod tests {
         data::{RequestData, ResponseData},
     };
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
+        let (t1, mut t2) = Transport::make_pair();
+        let mut session = Session::initialize(t1).unwrap();
+
+        let req = Request::new(TENANT, vec![RequestData::ProcList {}]);
+        let res = Response::new(TENANT, req.id, vec![ResponseData::Ok]);
+
+        let mut mailbox = session.mail(req).await.unwrap();
+
+        // Get first response
+        match tokio::join!(mailbox.next(), t2.send(res.clone())) {
+            (Some(actual), _) => assert_eq!(actual, res),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+
+        // Get second response
+        match tokio::join!(mailbox.next(), t2.send(res.clone())) {
+            (Some(actual), _) => assert_eq!(actual, res),
+            x => panic!("Unexpected response: {:?}", x),
+        }
+
+        // Trigger the mailbox to wait BEFORE closing our transport to ensure that
+        // we don't get stuck if the mailbox was already waiting
+        let next_task = tokio::spawn(async move { mailbox.next().await });
+        tokio::task::yield_now().await;
+
+        drop(t2);
+        match next_task.await {
+            Ok(None) => {}
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {

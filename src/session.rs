@@ -6,7 +6,7 @@ use log::*;
 use std::io;
 use structopt::StructOpt;
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 
@@ -63,27 +63,22 @@ impl CliSession {
 }
 
 /// Helper function that loops, processing incoming responses to a mailbox
-async fn process_mailbox(mailbox: Mailbox, format: Format, mut exit: watch::Receiver<bool>) {
-    loop {
-        tokio::select! {
-            res = mailbox.next() => {
-                match res {
-                    Some(res) => match ResponseOut::new(format, res) {
-                        Ok(out) => out.print(),
-                        Err(x) => {
-                            error!("{}", x);
-                            break;
-                        }
-                    },
-                    None => break,
-                }
-            }
-            v = exit.changed() => {
-                if v.is_err() || *exit.borrow() {
+async fn process_mailbox(mut mailbox: Mailbox, format: Format, exit: oneshot::Receiver<()>) {
+    let inner = async move {
+        while let Some(res) = mailbox.next().await {
+            match ResponseOut::new(format, res) {
+                Ok(out) => out.print(),
+                Err(x) => {
+                    error!("{}", x);
                     break;
                 }
             }
         }
+    };
+
+    tokio::select! {
+        _ = inner => {}
+        _ = exit => {}
     }
 }
 
@@ -98,7 +93,7 @@ async fn process_outgoing_requests<F>(
     F: Fn(&str) -> io::Result<Request>,
 {
     let mut buf = StringBuf::new();
-    let (exit_tx, _) = watch::channel(false);
+    let mut mailbox_exits = Vec::new();
 
     while let Some(data) = stdin_rx.recv().await {
         // Update our buffer with the new data and split it into concrete lines and remainder
@@ -116,7 +111,7 @@ async fn process_outgoing_requests<F>(
 
                 match map_line(line) {
                     Ok(req) => match session.mail(req).await {
-                        Ok(mailbox) => {
+                        Ok(mut mailbox) => {
                             // Wait to get our first response before moving on to the next line
                             // of input
                             if let Some(res) = mailbox.next().await {
@@ -127,11 +122,9 @@ async fn process_outgoing_requests<F>(
                                     Ok(out) => {
                                         out.print();
 
-                                        tokio::spawn(process_mailbox(
-                                            mailbox,
-                                            format,
-                                            exit_tx.subscribe(),
-                                        ));
+                                        let (tx, rx) = oneshot::channel();
+                                        mailbox_exits.push(tx);
+                                        tokio::spawn(process_mailbox(mailbox, format, rx));
                                     }
                                     Err(x) => {
                                         error!("{}", x);
@@ -152,10 +145,7 @@ async fn process_outgoing_requests<F>(
     }
 
     // Close out any dangling mailbox handlers
-    let _ = exit_tx.send(true);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
+    for tx in mailbox_exits {
+        let _ = tx.send(());
+    }
 }

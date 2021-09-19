@@ -1,5 +1,5 @@
 use crate::{
-    client::{Mailbox, Session, SessionSender},
+    client::{Mailbox, Session, SessionChannel},
     constants::CLIENT_MAILBOX_CAPACITY,
     data::{Request, RequestData, ResponseData},
     net::TransportError,
@@ -69,7 +69,7 @@ impl RemoteProcess {
         let cmd = cmd.into();
 
         // Submit our run request and get back a mailbox for responses
-        let mailbox = session
+        let mut mailbox = session
             .mail(Request::new(
                 tenant.as_str(),
                 vec![RequestData::ProcRun { cmd, args }],
@@ -121,9 +121,9 @@ impl RemoteProcess {
         });
 
         // Spawn a task that takes stdin from our channel and forwards it to the remote process
-        let sender = session.clone_sender();
+        let channel = session.clone_channel();
         let req_task = tokio::spawn(async move {
-            process_outgoing_requests(tenant, id, sender, stdin_rx, kill_rx).await
+            process_outgoing_requests(tenant, id, channel, stdin_rx, kill_rx).await
         });
 
         Ok(Self {
@@ -216,7 +216,7 @@ impl RemoteStderr {
 async fn process_outgoing_requests(
     tenant: String,
     id: usize,
-    mut sender: SessionSender,
+    mut channel: SessionChannel,
     mut stdin_rx: mpsc::Receiver<String>,
     mut kill_rx: mpsc::Receiver<()>,
 ) -> Result<(), RemoteProcessError> {
@@ -224,7 +224,7 @@ async fn process_outgoing_requests(
         tokio::select! {
             data = stdin_rx.recv() => {
                 match data {
-                    Some(data) => sender.fire(
+                    Some(data) => channel.fire(
                         Request::new(
                             tenant.as_str(),
                             vec![RequestData::ProcStdin { id, data }]
@@ -235,7 +235,7 @@ async fn process_outgoing_requests(
             }
             msg = kill_rx.recv() => {
                 if msg.is_some() {
-                    sender.fire(Request::new(
+                    channel.fire(Request::new(
                         tenant.as_str(),
                         vec![RequestData::ProcKill { id }],
                     )).await?;
@@ -254,7 +254,7 @@ async fn process_outgoing_requests(
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
 async fn process_incoming_responses(
     proc_id: usize,
-    mailbox: Mailbox,
+    mut mailbox: Mailbox,
     stdout_tx: mpsc::Sender<String>,
     stderr_tx: mpsc::Sender<String>,
     kill_tx: mpsc::Sender<()>,
@@ -722,6 +722,10 @@ mod tests {
 
         // Receive the process and then terminate session connection
         let proc = spawn_task.await.unwrap().unwrap();
+
+        // Ensure that the spawned task gets a chance to wait on stdout/stderr
+        tokio::task::yield_now().await;
+
         drop(transport);
 
         // Ensure that the other tasks are cancelled before continuing

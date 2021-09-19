@@ -93,6 +93,12 @@ async fn start(
                 proc.stderr.take().unwrap(),
             );
 
+            // Drop main session as the singular remote process will now manage stdin/stdout/stderr
+            // NOTE: Without this, severing stdin when from this side would not occur as we would
+            //       continue to maintain a second reference to the remote connection's input
+            //       through the primary session
+            drop(session);
+
             let (success, exit_code) = proc.wait().await?;
 
             // Shut down our link

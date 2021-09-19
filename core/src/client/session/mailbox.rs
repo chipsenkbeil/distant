@@ -1,9 +1,6 @@
 use crate::{client::utils, data::Response};
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::{
-    io,
-    sync::{mpsc, Mutex},
-};
+use std::{collections::HashMap, time::Duration};
+use tokio::{io, sync::mpsc};
 
 pub struct PostOffice {
     mailboxes: HashMap<usize, mpsc::Sender<Response>>,
@@ -21,10 +18,7 @@ impl PostOffice {
         let (tx, rx) = mpsc::channel(buffer);
         self.mailboxes.insert(id, tx);
 
-        Mailbox {
-            id,
-            rx: Arc::new(Mutex::new(rx)),
-        }
+        Mailbox { id, rx }
     }
 
     /// Delivers a response to appropriate mailbox, returning false if no mailbox is found
@@ -38,7 +32,7 @@ impl PostOffice {
             false
         };
 
-        // If failed, we want to remvoe the mailbox sender as it is no longer valid
+        // If failed, we want to remove the mailbox sender as it is no longer valid
         if !success {
             self.mailboxes.remove(&id);
         }
@@ -52,18 +46,17 @@ impl PostOffice {
     }
 
     /// Closes out all mailboxes by removing the mailboxes delivery trackers internally
-    pub fn close_mailboxes(&mut self) {
+    pub fn clear_mailboxes(&mut self) {
         self.mailboxes.clear();
     }
 }
 
-#[derive(Clone)]
 pub struct Mailbox {
     /// Represents id associated with the mailbox
     id: usize,
 
     /// Underlying mailbox storage
-    rx: Arc<Mutex<mpsc::Receiver<Response>>>,
+    rx: mpsc::Receiver<Response>,
 }
 
 impl Mailbox {
@@ -73,12 +66,19 @@ impl Mailbox {
     }
 
     /// Receives next response in mailbox
-    pub async fn next(&self) -> Option<Response> {
-        self.rx.lock().await.recv().await
+    pub async fn next(&mut self) -> Option<Response> {
+        self.rx.recv().await
     }
 
     /// Receives next response in mailbox, waiting up to duration before timing out
-    pub async fn next_timeout(&self, duration: Duration) -> io::Result<Option<Response>> {
+    pub async fn next_timeout(&mut self, duration: Duration) -> io::Result<Option<Response>> {
         utils::timeout(duration, self.next()).await
+    }
+
+    /// Closes the mailbox such that it will not receive any more responses
+    ///
+    /// Any responses already in the mailbox will still be returned via `next`
+    pub async fn close(&mut self) {
+        self.rx.close()
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    client::{Session, SessionSender},
+    client::{Session, SessionChannel},
     data::{Request, RequestData, ResponseData},
     net::{Codec, DataStream, Transport},
     server::utils::{ConnTracker, ShutdownTask},
@@ -39,12 +39,12 @@ impl RelayServer {
         let accept_task = tokio::spawn(async move {
             let inner = async move {
                 loop {
-                    let sender = session.clone_sender();
+                    let channel = session.clone_channel();
                     match stream.next().await {
                         Some(transport) => {
                             let result = Conn::initialize(
                                 transport,
-                                sender,
+                                channel,
                                 tracker.as_ref().map(Arc::clone),
                             )
                             .await;
@@ -104,7 +104,7 @@ struct Conn {
 impl Conn {
     pub async fn initialize<T, U>(
         transport: Transport<T, U>,
-        sender: SessionSender,
+        channel: SessionChannel,
         ct: Option<Arc<Mutex<ConnTracker>>>,
     ) -> io::Result<Self>
     where
@@ -120,7 +120,7 @@ impl Conn {
             ct.lock().await.increment();
         }
 
-        let conn_task = spawn_conn_handler(id, transport, sender, ct).await;
+        let conn_task = spawn_conn_handler(id, transport, channel, ct).await;
 
         Ok(Self { id, conn_task })
     }
@@ -139,7 +139,7 @@ impl Conn {
 async fn spawn_conn_handler<T, U>(
     conn_id: usize,
     transport: Transport<T, U>,
-    mut sender: SessionSender,
+    mut channel: SessionChannel,
     ct: Option<Arc<Mutex<ConnTracker>>>,
 ) -> JoinHandle<()>
 where
@@ -151,18 +151,18 @@ where
     let t_writer = Arc::new(Mutex::new(t_writer));
 
     let (done_tx, done_rx) = oneshot::channel();
-    let mut sender_2 = sender.clone();
+    let mut channel_2 = channel.clone();
     let processes_2 = Arc::clone(&processes);
     let task = tokio::spawn(async move {
         loop {
-            if sender_2.is_closed() {
+            if channel_2.is_closed() {
                 break;
             }
 
             // For each request, forward it through the session and monitor all responses
             match t_reader.receive::<Request>().await {
-                Ok(Some(req)) => match sender_2.mail(req).await {
-                    Ok(mailbox) => {
+                Ok(Some(req)) => match channel_2.mail(req).await {
+                    Ok(mut mailbox) => {
                         let processes = Arc::clone(&processes_2);
                         let t_writer = Arc::clone(&t_writer);
                         tokio::spawn(async move {
@@ -217,7 +217,7 @@ where
                 conn_id,
                 p_lock.len()
             );
-            if let Err(x) = sender
+            if let Err(x) = channel
                 .fire(Request::new(
                     "relay",
                     p_lock
