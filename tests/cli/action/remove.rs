@@ -215,13 +215,16 @@ fn should_support_json_output_for_error(mut action_cmd: Command) {
     assert!(
         matches!(
             res.payload[0],
+            // NOTE: After some refactoring, unknown error type shows up in
+            //       our CI but not on my local machine. I can't pin it down.
+            //       The description matches what we'd expect regarding the
+            //       directory not being empty, so for now going to support
+            //       either of these error kinds.
             ResponseData::Error(Error {
-                // NOTE: After some refactoring, unknown error type shows up in
-                //       our CI but not on my local machine. I can't pin it down.
-                //       The description matches what we'd expect regarding the
-                //       directory not being empty, so for now going to support
-                //       either of these error kinds.
-                kind: ErrorKind::Other | ErrorKind::Unknown,
+                kind: ErrorKind::Other,
+                ..
+            }) | ResponseData::Error(Error {
+                kind: ErrorKind::Unknown,
                 ..
             })
         ),
