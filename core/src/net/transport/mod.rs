@@ -199,7 +199,7 @@ mod tests {
         let bytes = serde_cbor::to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
-        frame.extend(len);
+        frame.extend(len.iter().copied());
         frame.extend(bytes);
 
         transport.send(data).await.unwrap();
@@ -232,7 +232,7 @@ mod tests {
         let bytes = serde_cbor::to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
-        frame.extend(len);
+        frame.extend(len.iter().copied());
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
@@ -256,7 +256,7 @@ mod tests {
         let bytes = serde_cbor::to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
-        frame.extend(len);
+        frame.extend(len.iter().copied());
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
@@ -293,7 +293,7 @@ mod tests {
             let bytes = serde_cbor::to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
-            frame.extend(len);
+            frame.extend(len.iter().copied());
             frame.extend(bytes);
 
             tx.send(frame).await.unwrap();
@@ -318,7 +318,7 @@ mod tests {
             let bytes = serde_cbor::to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
-            frame.extend(len);
+            frame.extend(len.iter().copied());
             frame.extend(bytes);
 
             tx.send(frame).await.unwrap();
@@ -344,7 +344,7 @@ mod tests {
             let bytes = serde_cbor::to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
-            frame.extend(len);
+            frame.extend(len.iter().copied());
             frame.extend(bytes);
 
             wh.send(data).await.unwrap();

@@ -64,12 +64,12 @@ impl FromStr for PortRange {
 
     /// Parses PORT into single range or PORT1:PORTN into full range
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.split_once(':') {
-            Some((start, end)) => Ok(Self {
-                start: start.parse()?,
-                end: Some(end.parse()?),
+        match s.find(':') {
+            Some(idx) if idx + 1 < s.len() => Ok(Self {
+                start: s[..idx].parse()?,
+                end: Some(s[(idx + 1)..].parse()?),
             }),
-            None => Ok(Self {
+            _ => Ok(Self {
                 start: s.parse()?,
                 end: None,
             }),

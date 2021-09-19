@@ -277,14 +277,19 @@ impl FromStr for LspHeader {
         let mut content_type = None;
 
         for line in lines {
-            if let Some((name, value)) = line.split_once(':') {
-                match name {
-                    "Content-Length" => content_length = Some(value.trim().parse()?),
-                    "Content-Type" => content_type = Some(value.trim().to_string()),
-                    _ => return Err(LspHeaderParseError::BadHeaderField),
+            match line.find(':') {
+                Some(idx) if idx + 1 < line.len() => {
+                    let name = &line[..idx];
+                    let value = &line[(idx + 1)..];
+                    match name {
+                        "Content-Length" => content_length = Some(value.trim().parse()?),
+                        "Content-Type" => content_type = Some(value.trim().to_string()),
+                        _ => return Err(LspHeaderParseError::BadHeaderField),
+                    }
                 }
-            } else {
-                return Err(LspHeaderParseError::BadHeaderField);
+                _ => {
+                    return Err(LspHeaderParseError::BadHeaderField);
+                }
             }
         }
 
