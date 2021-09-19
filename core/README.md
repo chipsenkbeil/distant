@@ -6,7 +6,7 @@
 [distant_crates_lnk]: https://crates.io/crates/distant-core
 [distant_doc_img]: https://docs.rs/distant-core/badge.svg
 [distant_doc_lnk]: https://docs.rs/distant-core
-[distant_rustc_img]: https://img.shields.io/badge/distant-core-rustc_1.51+-lightgray.svg
+[distant_rustc_img]: https://img.shields.io/badge/distant_core-rustc_1.51+-lightgray.svg
 [distant_rustc_lnk]: https://blog.rust-lang.org/2021/03/25/Rust-1.51.0.html
 
 Library that powers the [`distant`](https://github.com/chipsenkbeil/distant)
