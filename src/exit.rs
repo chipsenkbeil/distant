@@ -106,12 +106,11 @@ impl ExitCodeError for TransportError {
 
 impl ExitCodeError for RemoteProcessError {
     fn is_silent(&self) -> bool {
-        matches!(self, Self::BadResponse)
+        true
     }
 
     fn to_exit_code(&self) -> ExitCode {
         match self {
-            Self::BadResponse => ExitCode::DataErr,
             Self::ChannelDead => ExitCode::Unavailable,
             Self::TransportError(x) => x.to_exit_code(),
             Self::UnexpectedEof => ExitCode::IoError,

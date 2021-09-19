@@ -1,8 +1,8 @@
 use crate::{
-    client::Session,
-    constants::CLIENT_BROADCAST_CHANNEL_CAPACITY,
-    data::{Request, RequestData, Response, ResponseData},
-    net::{Codec, DataStream, TransportError},
+    client::{Mailbox, Session, SessionChannel},
+    constants::CLIENT_MAILBOX_CAPACITY,
+    data::{Request, RequestData, ResponseData},
+    net::TransportError,
 };
 use derive_more::{Display, Error, From};
 use log::*;
@@ -14,9 +14,6 @@ use tokio::{
 
 #[derive(Debug, Display, Error, From)]
 pub enum RemoteProcessError {
-    /// When the process receives an unexpected response
-    BadResponse,
-
     /// When attempting to relay stdout/stderr over channels, but the channels fail
     ChannelDead,
 
@@ -36,6 +33,9 @@ pub enum RemoteProcessError {
 pub struct RemoteProcess {
     /// Id of the process
     id: usize,
+
+    /// Id used to map back to mailbox
+    pub(crate) origin_id: usize,
 
     /// Task that forwards stdin to the remote process by bundling it as stdin requests
     req_task: JoinHandle<Result<(), RemoteProcessError>>,
@@ -59,39 +59,55 @@ pub struct RemoteProcess {
 
 impl RemoteProcess {
     /// Spawns the specified process on the remote machine using the given session
-    pub async fn spawn<T, U>(
-        tenant: String,
-        mut session: Session<T, U>,
-        cmd: String,
+    pub async fn spawn(
+        tenant: impl Into<String>,
+        session: &mut Session,
+        cmd: impl Into<String>,
         args: Vec<String>,
-    ) -> Result<Self, RemoteProcessError>
-    where
-        T: DataStream + 'static,
-        U: Codec + Send + 'static,
-    {
-        // Submit our run request and wait for a response
-        let res = session
-            .send(Request::new(
+    ) -> Result<Self, RemoteProcessError> {
+        let tenant = tenant.into();
+        let cmd = cmd.into();
+
+        // Submit our run request and get back a mailbox for responses
+        let mut mailbox = session
+            .mail(Request::new(
                 tenant.as_str(),
                 vec![RequestData::ProcRun { cmd, args }],
             ))
             .await?;
 
-        // We expect a singular response back
-        if res.payload.len() != 1 {
-            return Err(RemoteProcessError::BadResponse);
-        }
-
-        // Response should be proc starting
-        let id = match res.payload.into_iter().next().unwrap() {
-            ResponseData::ProcStart { id } => id,
-            _ => return Err(RemoteProcessError::BadResponse),
+        // Wait until we get the first response, and get id from proc started
+        let (id, origin_id) = match mailbox.next().await {
+            Some(res) if res.payload.len() != 1 => {
+                return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                    io::Error::new(io::ErrorKind::InvalidData, "Got wrong payload size"),
+                )));
+            }
+            Some(res) => {
+                let origin_id = res.origin_id;
+                match res.payload.into_iter().next().unwrap() {
+                    ResponseData::ProcStart { id } => (id, origin_id),
+                    x => {
+                        return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Got response type of {}", x.as_ref()),
+                            ),
+                        )))
+                    }
+                }
+            }
+            None => {
+                return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                    io::Error::from(io::ErrorKind::ConnectionAborted),
+                )))
+            }
         };
 
         // Create channels for our stdin/stdout/stderr
-        let (stdin_tx, stdin_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
-        let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
-        let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_BROADCAST_CHANNEL_CAPACITY);
+        let (stdin_tx, stdin_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
+        let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
+        let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
 
         // Used to terminate request task, either explicitly by the process or internally
         // by the response task when it terminates
@@ -100,18 +116,19 @@ impl RemoteProcess {
         // Now we spawn a task to handle future responses that are async
         // such as ProcStdout, ProcStderr, and ProcDone
         let kill_tx_2 = kill_tx.clone();
-        let broadcast = session.broadcast.take().unwrap();
         let res_task = tokio::spawn(async move {
-            process_incoming_responses(id, broadcast, stdout_tx, stderr_tx, kill_tx_2).await
+            process_incoming_responses(id, mailbox, stdout_tx, stderr_tx, kill_tx_2).await
         });
 
         // Spawn a task that takes stdin from our channel and forwards it to the remote process
+        let channel = session.clone_channel();
         let req_task = tokio::spawn(async move {
-            process_outgoing_requests(tenant, id, session, stdin_rx, kill_rx).await
+            process_outgoing_requests(tenant, id, channel, stdin_rx, kill_rx).await
         });
 
         Ok(Self {
             id,
+            origin_id,
             req_task,
             res_task,
             stdin: Some(RemoteStdin(stdin_tx)),
@@ -196,22 +213,18 @@ impl RemoteStderr {
 
 /// Helper function that loops, processing outgoing stdin requests to a remote process as well as
 /// supporting a kill request to terminate the remote process
-async fn process_outgoing_requests<T, U>(
+async fn process_outgoing_requests(
     tenant: String,
     id: usize,
-    mut session: Session<T, U>,
+    mut channel: SessionChannel,
     mut stdin_rx: mpsc::Receiver<String>,
     mut kill_rx: mpsc::Receiver<()>,
-) -> Result<(), RemoteProcessError>
-where
-    T: DataStream,
-    U: Codec,
-{
+) -> Result<(), RemoteProcessError> {
     let result = loop {
         tokio::select! {
             data = stdin_rx.recv() => {
                 match data {
-                    Some(data) => session.fire(
+                    Some(data) => channel.fire(
                         Request::new(
                             tenant.as_str(),
                             vec![RequestData::ProcStdin { id, data }]
@@ -222,12 +235,10 @@ where
             }
             msg = kill_rx.recv() => {
                 if msg.is_some() {
-                    session
-                        .fire(Request::new(
-                            tenant.as_str(),
-                            vec![RequestData::ProcKill { id }],
-                        ))
-                        .await?;
+                    channel.fire(Request::new(
+                        tenant.as_str(),
+                        vec![RequestData::ProcKill { id }],
+                    )).await?;
                     break Ok(());
                 } else {
                     break Err(RemoteProcessError::ChannelDead);
@@ -243,12 +254,12 @@ where
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
 async fn process_incoming_responses(
     proc_id: usize,
-    mut broadcast: mpsc::Receiver<Response>,
+    mut mailbox: Mailbox,
     stdout_tx: mpsc::Sender<String>,
     stderr_tx: mpsc::Sender<String>,
     kill_tx: mpsc::Sender<()>,
 ) -> Result<(bool, Option<i32>), RemoteProcessError> {
-    while let Some(res) = broadcast.recv().await {
+    while let Some(res) = mailbox.next().await {
         // Check if any of the payload data is the termination
         let exit_status = res.payload.iter().find_map(|data| match data {
             ResponseData::ProcDone { id, success, code } if *id == proc_id => {
@@ -291,61 +302,68 @@ async fn process_incoming_responses(
 mod tests {
     use super::*;
     use crate::{
-        data::{Error, ErrorKind},
+        data::{Error, ErrorKind, Response},
         net::{InmemoryStream, PlainCodec, Transport},
     };
 
-    fn make_session() -> (
-        Transport<InmemoryStream, PlainCodec>,
-        Session<InmemoryStream, PlainCodec>,
-    ) {
+    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, Session) {
         let (t1, t2) = Transport::make_pair();
         (t1, Session::initialize(t2).unwrap())
     }
 
     #[tokio::test]
-    async fn spawn_should_return_bad_response_if_payload_size_unexpected() {
-        let (mut transport, session) = make_session();
+    async fn spawn_should_return_invalid_data_if_payload_size_unexpected() {
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
-            .send(Response::new("test-tenant", Some(req.id), Vec::new()))
+            .send(Response::new("test-tenant", req.id, Vec::new()))
             .await
             .unwrap();
 
         // Get the spawn result and verify
         let result = spawn_task.await.unwrap();
         assert!(
-            matches!(result, Err(RemoteProcessError::BadResponse)),
+            matches!(
+                &result,
+                Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
+                    if x.kind() == io::ErrorKind::InvalidData
+            ),
             "Unexpected result: {:?}",
             result
         );
     }
 
     #[tokio::test]
-    async fn spawn_should_return_bad_response_if_did_not_get_a_indicator_that_process_started() {
-        let (mut transport, session) = make_session();
+    async fn spawn_should_return_invalid_data_if_did_not_get_a_indicator_that_process_started() {
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -354,7 +372,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::Error(Error {
                     kind: ErrorKind::Other,
                     description: String::from("some error"),
@@ -366,7 +384,11 @@ mod tests {
         // Get the spawn result and verify
         let result = spawn_task.await.unwrap();
         assert!(
-            matches!(result, Err(RemoteProcessError::BadResponse)),
+            matches!(
+                &result,
+                Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
+                    if x.kind() == io::ErrorKind::InvalidData
+            ),
             "Unexpected result: {:?}",
             result
         );
@@ -374,16 +396,19 @@ mod tests {
 
     #[tokio::test]
     async fn kill_should_return_error_if_internal_tasks_already_completed() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -393,7 +418,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -416,16 +441,19 @@ mod tests {
 
     #[tokio::test]
     async fn kill_should_send_proc_kill_request_and_then_cause_stdin_forwarding_to_close() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -435,7 +463,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -469,16 +497,19 @@ mod tests {
 
     #[tokio::test]
     async fn stdin_should_be_forwarded_from_receiver_field() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -488,7 +519,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -521,16 +552,19 @@ mod tests {
 
     #[tokio::test]
     async fn stdout_should_be_forwarded_to_receiver_field() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -540,7 +574,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -552,7 +586,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                req.id,
                 vec![ResponseData::ProcStdout {
                     id,
                     data: String::from("some out"),
@@ -567,16 +601,19 @@ mod tests {
 
     #[tokio::test]
     async fn stderr_should_be_forwarded_to_receiver_field() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -586,7 +623,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -598,7 +635,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                req.id,
                 vec![ResponseData::ProcStderr {
                     id,
                     data: String::from("some err"),
@@ -613,16 +650,19 @@ mod tests {
 
     #[tokio::test]
     async fn wait_should_return_error_if_internal_tasks_fail() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -632,7 +672,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -652,16 +692,19 @@ mod tests {
 
     #[tokio::test]
     async fn wait_should_return_error_if_connection_terminates_before_receiving_done_response() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -671,7 +714,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -679,6 +722,10 @@ mod tests {
 
         // Receive the process and then terminate session connection
         let proc = spawn_task.await.unwrap().unwrap();
+
+        // Ensure that the spawned task gets a chance to wait on stdout/stderr
+        tokio::task::yield_now().await;
+
         drop(transport);
 
         // Ensure that the other tasks are cancelled before continuing
@@ -694,16 +741,19 @@ mod tests {
 
     #[tokio::test]
     async fn receiving_done_response_should_result_in_wait_returning_exit_information() {
-        let (mut transport, session) = make_session();
+        let (mut transport, mut session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
-        let spawn_task = tokio::spawn(RemoteProcess::spawn(
-            String::from("test-tenant"),
-            session,
-            String::from("cmd"),
-            vec![String::from("arg")],
-        ));
+        let spawn_task = tokio::spawn(async move {
+            RemoteProcess::spawn(
+                String::from("test-tenant"),
+                &mut session,
+                String::from("cmd"),
+                vec![String::from("arg")],
+            )
+            .await
+        });
 
         // Wait until we get the request from the session
         let req = transport.receive::<Request>().await.unwrap().unwrap();
@@ -713,7 +763,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                Some(req.id),
+                req.id,
                 vec![ResponseData::ProcStart { id }],
             ))
             .await
@@ -727,7 +777,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                None,
+                req.id,
                 vec![ResponseData::ProcDone {
                     id,
                     success: false,

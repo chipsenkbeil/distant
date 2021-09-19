@@ -12,10 +12,10 @@ servers that operate on remote machines and clients that talk to them.
 
 - Asynchronous in nature, powered by [`tokio`](https://tokio.rs/)
 - Data is serialized to send across the wire via [`CBOR`](https://cbor.io/)
-- Encryption & authentication are handled via [`orion`](https://crates.io/crates/orion)
-    - [XChaCha20Poly1305](https://cryptopp.com/wiki/XChaCha20Poly1305) for an authenticated encryption scheme
-    - [BLAKE2b-256](https://www.blake2.net/) in keyed mode for a second authentication
-    - [Elliptic Curve Diffie-Hellman](https://en.wikipedia.org/wiki/Elliptic-curve_Diffie%E2%80%93Hellman) (ECDH) for key exchange
+- Encryption & authentication are handled via
+  [XChaCha20Poly1305](https://tools.ietf.org/html/rfc8439) for an authenticated
+  encryption scheme via
+  [RustCrypto/ChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305)
 
 ## Installation
 

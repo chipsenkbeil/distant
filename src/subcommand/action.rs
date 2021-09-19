@@ -8,8 +8,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    Codec, DataStream, LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Session,
-    TransportError,
+    LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Session, TransportError,
 };
 use tokio::{io, time::Duration};
 
@@ -66,23 +65,20 @@ async fn run_async(cmd: ActionSubcommand, opt: CommonOpt) -> Result<(), Error> {
     )
 }
 
-async fn start<T, U>(
+async fn start(
     cmd: ActionSubcommand,
-    mut session: Session<T, U>,
+    mut session: Session,
     timeout: Duration,
     lsp_data: Option<LspData>,
-) -> Result<(), Error>
-where
-    T: DataStream + 'static,
-    U: Codec + Send + 'static,
-{
+) -> Result<(), Error> {
     let is_shell_format = matches!(cmd.format, Format::Shell);
 
     match (cmd.interactive, cmd.operation) {
         // ProcRun request w/ shell format is specially handled and we ignore interactive as
         // the stdin will be used for sending ProcStdin to remote process
         (_, Some(RequestData::ProcRun { cmd, args })) if is_shell_format => {
-            let mut proc = RemoteProcess::spawn(utils::new_tenant(), session, cmd, args).await?;
+            let mut proc =
+                RemoteProcess::spawn(utils::new_tenant(), &mut session, cmd, args).await?;
 
             // If we also parsed an LSP's initialize request for its session, we want to forward
             // it along in the case of a process call
@@ -96,6 +92,12 @@ where
                 proc.stdout.take().unwrap(),
                 proc.stderr.take().unwrap(),
             );
+
+            // Drop main session as the singular remote process will now manage stdin/stdout/stderr
+            // NOTE: Without this, severing stdin when from this side would not occur as we would
+            //       continue to maintain a second reference to the remote connection's input
+            //       through the primary session
+            drop(session);
 
             let (success, exit_code) = proc.wait().await?;
 
@@ -145,7 +147,7 @@ where
 
             // Enter into CLI session where we receive requests on stdin and send out
             // over stdout/stderr
-            let cli_session = CliSession::new(utils::new_tenant(), session, cmd.format);
+            let cli_session = CliSession::new_for_stdin(utils::new_tenant(), session, cmd.format);
             cli_session.wait().await?;
 
             Ok(())

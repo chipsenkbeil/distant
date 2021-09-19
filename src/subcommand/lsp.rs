@@ -5,7 +5,7 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{Codec, DataStream, LspData, RemoteLspProcess, RemoteProcessError, Session};
+use distant_core::{LspData, RemoteLspProcess, RemoteProcessError, Session};
 use tokio::io;
 
 #[derive(Debug, Display, Error, From)]
@@ -53,16 +53,13 @@ async fn run_async(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
     )
 }
 
-async fn start<T, U>(
+async fn start(
     cmd: LspSubcommand,
-    session: Session<T, U>,
+    mut session: Session,
     lsp_data: Option<LspData>,
-) -> Result<(), Error>
-where
-    T: DataStream + 'static,
-    U: Codec + Send + 'static,
-{
-    let mut proc = RemoteLspProcess::spawn(utils::new_tenant(), session, cmd.cmd, cmd.args).await?;
+) -> Result<(), Error> {
+    let mut proc =
+        RemoteLspProcess::spawn(utils::new_tenant(), &mut session, cmd.cmd, cmd.args).await?;
 
     // If we also parsed an LSP's initialize request for its session, we want to forward
     // it along in the case of a process call

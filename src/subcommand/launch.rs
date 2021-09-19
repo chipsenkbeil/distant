@@ -129,7 +129,7 @@ async fn keep_loop(info: SessionInfo, format: Format, duration: Duration) -> io:
     let codec = XChaCha20Poly1305Codec::from(info.key);
     match Session::tcp_connect_timeout(addr, codec, duration).await {
         Ok(session) => {
-            let cli_session = CliSession::new(utils::new_tenant(), session, format);
+            let cli_session = CliSession::new_for_stdin(utils::new_tenant(), session, format);
             cli_session.wait().await
         }
         Err(x) => Err(x),
