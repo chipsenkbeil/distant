@@ -48,7 +48,7 @@ fn init_logging(opt: &opt::CommonOpt, is_remote_process: bool) -> flexi_logger::
         //       Without this, CI tests can sporadically fail when getting the exit code of a
         //       process because an error log is provided about failing to broadcast a response
         //       on the client side
-        if opt.quiet || (is_remote_process && opt.log_file.is_some()) {
+        if opt.quiet || (is_remote_process && opt.log_file.is_none()) {
             builder.module(module, LevelFilter::Off);
         }
     }
