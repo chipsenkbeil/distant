@@ -4,5 +4,5 @@ mod session;
 mod utils;
 
 pub use lsp::*;
-pub use process::{RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout};
+pub use process::*;
 pub use session::*;

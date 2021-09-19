@@ -216,7 +216,7 @@ checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
 name = "distant"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "assert_fs",
  "bytes",
