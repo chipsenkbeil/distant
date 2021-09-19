@@ -243,6 +243,7 @@ dependencies = [
  "assert_fs",
  "derive_more",
  "distant-core",
+ "distant-ssh2",
  "flexi_logger",
  "fork",
  "indoc",
@@ -283,6 +284,20 @@ dependencies = [
  "tokio",
  "tokio-util",
  "walkdir",
+]
+
+[[package]]
+name = "distant-ssh2"
+version = "0.15.0"
+dependencies = [
+ "assert_cmd",
+ "assert_fs",
+ "distant-core",
+ "indoc",
+ "predicates",
+ "rpassword",
+ "rstest",
+ "ssh2",
 ]
 
 [[package]]

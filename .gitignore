@@ -1,3 +1,4 @@
 /target
-.DS_Store
-/core/Cargo.lock
+**/.DS_Store
+/distant-core/Cargo.lock
+/distant-ssh2/Cargo.lock
