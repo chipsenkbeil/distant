@@ -1,5 +1,12 @@
 # distant core
 
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] 
+
+[distant_crates_img]: https://img.shields.io/crates/v/distant-core.svg
+[distant_crates_lnk]: https://crates.io/crates/distant-core
+[distant_doc_img]: https://docs.rs/distant-core/badge.svg
+[distant_doc_lnk]: https://docs.rs/distant-core
+
 Library that powers the [`distant`](https://github.com/chipsenkbeil/distant)
 binary.
 
