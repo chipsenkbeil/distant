@@ -294,10 +294,12 @@ dependencies = [
  "assert_fs",
  "distant-core",
  "indoc",
+ "lazy_static",
  "predicates",
  "rpassword",
  "rstest",
  "ssh2",
+ "tokio",
 ]
 
 [[package]]
