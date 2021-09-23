@@ -1,3 +1,4 @@
+use once_cell::sync::Lazy;
 use std::{env, path::PathBuf};
 
 /// Represents the maximum size (in bytes) that data will be read from pipes
@@ -14,15 +15,16 @@ pub const SERVER_CONN_MSG_CAPACITY: usize = 10000;
 /// before failing (0 meaning indefinitely)
 pub const TIMEOUT: usize = 15000;
 
-lazy_static::lazy_static! {
-    pub static ref TIMEOUT_STR: String = TIMEOUT.to_string();
-    pub static ref SERVER_CONN_MSG_CAPACITY_STR: String = SERVER_CONN_MSG_CAPACITY.to_string();
+pub static TIMEOUT_STR: Lazy<String> = Lazy::new(|| TIMEOUT.to_string());
+pub static SERVER_CONN_MSG_CAPACITY_STR: Lazy<String> =
+    Lazy::new(|| SERVER_CONN_MSG_CAPACITY.to_string());
 
-    /// Represents the path to the global session file
-    pub static ref SESSION_FILE_PATH: PathBuf = env::temp_dir().join("distant.session");
-    pub static ref SESSION_FILE_PATH_STR: String = SESSION_FILE_PATH.to_string_lossy().to_string();
+/// Represents the path to the global session file
+pub static SESSION_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| env::temp_dir().join("distant.session"));
+pub static SESSION_FILE_PATH_STR: Lazy<String> =
+    Lazy::new(|| SESSION_FILE_PATH.to_string_lossy().to_string());
 
-    /// Represents the path to a socket to communicate instead of a session file
-    pub static ref SESSION_SOCKET_PATH: PathBuf = env::temp_dir().join("distant.sock");
-    pub static ref SESSION_SOCKET_PATH_STR: String = SESSION_SOCKET_PATH.to_string_lossy().to_string();
-}
+/// Represents the path to a socket to communicate instead of a session file
+pub static SESSION_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| env::temp_dir().join("distant.sock"));
+pub static SESSION_SOCKET_PATH_STR: Lazy<String> =
+    Lazy::new(|| SESSION_SOCKET_PATH.to_string_lossy().to_string());

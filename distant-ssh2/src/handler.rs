@@ -350,11 +350,12 @@ where
         // kill the process when triggered
         let state_2 = Arc::clone(&state);
         let mut reply_2 = reply.clone();
-        let wait_task = tokio::spawn(async move {
+        tokio::spawn(async move {
             let (success, should_kill) = loop {
                 match (child.try_wait(), kill_rx.try_recv()) {
                     (Ok(Some(status)), _) => break (status.success(), false),
-                    (_, Ok(_) | Err(oneshot::error::TryRecvError::Closed)) => break (false, true),
+                    (_, Ok(_)) => break (false, true),
+                    (_, Err(oneshot::error::TryRecvError::Closed)) => break (false, true),
                     _ => {}
                 }
 
@@ -403,7 +404,7 @@ where
 }
 
 async fn proc_kill(
-    session: WezSession,
+    _session: WezSession,
     state: Arc<Mutex<State>>,
     id: usize,
 ) -> io::Result<Outgoing> {
@@ -420,7 +421,7 @@ async fn proc_kill(
 }
 
 async fn proc_stdin(
-    session: WezSession,
+    _session: WezSession,
     state: Arc<Mutex<State>>,
     id: usize,
     data: String,
@@ -437,7 +438,7 @@ async fn proc_stdin(
     ))
 }
 
-async fn proc_list(session: WezSession, state: Arc<Mutex<State>>) -> io::Result<Outgoing> {
+async fn proc_list(_session: WezSession, state: Arc<Mutex<State>>) -> io::Result<Outgoing> {
     Ok(Outgoing::from(ResponseData::ProcEntries {
         entries: state
             .lock()

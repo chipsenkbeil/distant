@@ -1,6 +1,7 @@
 use crate::cli::utils;
 use assert_cmd::Command;
 use distant_core::*;
+use once_cell::sync::OnceCell;
 use rstest::*;
 use std::{ffi::OsStr, net::SocketAddr, thread};
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -86,11 +87,9 @@ impl Drop for DistantServerCtx {
 
 #[fixture]
 pub fn ctx() -> &'static DistantServerCtx {
-    lazy_static::lazy_static! {
-        static ref CTX: DistantServerCtx = DistantServerCtx::initialize();
-    }
+    static CTX: OnceCell<DistantServerCtx> = OnceCell::new();
 
-    &CTX
+    CTX.get_or_init(|| DistantServerCtx::initialize())
 }
 
 #[fixture]

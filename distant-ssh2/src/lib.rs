@@ -4,6 +4,7 @@ use log::*;
 use smol::channel::Receiver as SmolReceiver;
 use std::{
     io::{self, Write},
+    path::PathBuf,
     sync::Arc,
 };
 use tokio::sync::{mpsc, Mutex};
@@ -35,15 +36,19 @@ pub struct Ssh2AuthEvent {
 
 #[derive(Clone, Debug, Default)]
 pub struct Ssh2SessionOpts {
+    pub identity_files: Vec<PathBuf>,
+    pub identities_only: Option<bool>,
     pub port: Option<u16>,
+    pub proxy_command: Option<String>,
     pub user: Option<String>,
+    pub user_known_hosts_files: Vec<PathBuf>,
 }
 
 pub struct Ssh2AuthHandler {
-    on_authenticate: Box<dyn FnMut(Ssh2AuthEvent) -> io::Result<Vec<String>>>,
-    on_banner: Box<dyn FnMut(&str)>,
-    on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool>>,
-    on_error: Box<dyn FnMut(&str)>,
+    pub on_authenticate: Box<dyn FnMut(Ssh2AuthEvent) -> io::Result<Vec<String>>>,
+    pub on_banner: Box<dyn FnMut(&str)>,
+    pub on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool>>,
+    pub on_error: Box<dyn FnMut(&str)>,
 }
 
 impl Default for Ssh2AuthHandler {
@@ -110,14 +115,51 @@ impl Ssh2Session {
         let mut config = WezConfig::new();
         config.add_default_config_files();
 
+        // Grab the config for the specific host
         let mut config = config.for_host(host.as_ref());
+
+        // Override config with any settings provided by session opts
         if let Some(port) = opts.port.as_ref() {
             config.insert("port".to_string(), port.to_string());
         }
         if let Some(user) = opts.user.as_ref() {
             config.insert("user".to_string(), user.to_string());
         }
+        if !opts.identity_files.is_empty() {
+            config.insert(
+                "identityfile".to_string(),
+                opts.identity_files
+                    .iter()
+                    .filter_map(|p| p.to_str())
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>()
+                    .join(" "),
+            );
+        }
+        if let Some(yes) = opts.identities_only.as_ref() {
+            let value = if *yes {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            };
+            config.insert("identitiesonly".to_string(), value);
+        }
+        if let Some(cmd) = opts.proxy_command.as_ref() {
+            config.insert("proxycommand".to_string(), cmd.to_string());
+        }
+        if !opts.user_known_hosts_files.is_empty() {
+            config.insert(
+                "userknownhostsfile".to_string(),
+                opts.user_known_hosts_files
+                    .iter()
+                    .filter_map(|p| p.to_str())
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>()
+                    .join(" "),
+            );
+        }
 
+        // Establish a connection
         let (session, events) = WezSession::connect(config.clone())
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 

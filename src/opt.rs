@@ -7,7 +7,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From, IsVariant};
 use distant_core::{PortRange, RequestData};
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::{
     env,
     net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr},
@@ -18,9 +18,7 @@ use std::{
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, IntoStaticStr, VariantNames};
 
-lazy_static! {
-    static ref USERNAME: String = whoami::username();
-}
+static USERNAME: Lazy<String> = Lazy::new(|| whoami::username());
 
 /// Options and commands to apply to binary
 #[derive(Debug, StructOpt)]

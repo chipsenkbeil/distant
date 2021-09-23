@@ -1,6 +1,7 @@
 use assert_fs::{prelude::*, TempDir};
 use distant_core::Session;
-use distant_ssh2::{Ssh2Session, Ssh2SessionOpts};
+use distant_ssh2::{Ssh2AuthHandler, Ssh2Session, Ssh2SessionOpts};
+use once_cell::sync::OnceCell;
 use rstest::*;
 use std::{
     collections::HashMap,
@@ -49,25 +50,53 @@ impl SshKeygen {
     }
 }
 
+pub struct SshAgent;
+
+impl SshAgent {
+    pub fn generate_shell_env() -> io::Result<HashMap<String, String>> {
+        let output = Command::new("ssh-agent").arg("-s").output()?;
+        let stdout = String::from_utf8(output.stdout)
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+        Ok(stdout
+            .split(";")
+            .map(str::trim)
+            .filter(|s| s.contains("="))
+            .map(|s| {
+                let mut tokens = s.split("=");
+                let key = tokens.next().unwrap().trim().to_string();
+                let rest = tokens
+                    .map(str::trim)
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>()
+                    .join("=");
+                (key, rest)
+            })
+            .collect::<HashMap<String, String>>())
+    }
+
+    pub fn update_tests_with_shell_env() -> io::Result<()> {
+        let env_map = Self::generate_shell_env()?;
+        for (key, value) in env_map {
+            std::env::set_var(key, value);
+        }
+
+        Ok(())
+    }
+}
+
 pub struct SshAdd;
 
 impl SshAdd {
     pub fn exec(path: impl AsRef<Path>) -> io::Result<bool> {
+        let env_map = SshAgent::generate_shell_env()?;
+
         Command::new("ssh-add")
             .arg(path.as_ref())
+            .envs(env_map)
             .status()
             .map(|status| status.success())
     }
 }
-
-/* eval $(ssh-agent -s)
-
-ssh-keygen -t rsa -f $SSHDIR/id_rsa -N "" -q
-chmod 0600 $SSHDIR/id_rsa*
-ssh-add $SSHDIR/id_rsa
-cp $SSHDIR/id_rsa.pub $SSHDIR/authorized_keys
-
-ssh-keygen -f $SSHDIR/ssh_host_rsa_key -N '' -t rsa */
 
 #[derive(Debug)]
 pub struct SshdConfig(HashMap<String, Vec<String>>);
@@ -76,8 +105,9 @@ impl Default for SshdConfig {
     fn default() -> Self {
         let mut config = Self::new();
 
+        config.set_authentication_methods(vec!["publickey".to_string()]);
         config.set_subsystem(true, true);
-        config.set_use_pam(true);
+        config.set_use_pam(false);
         config.set_x11_forwarding(true);
         config.set_use_privilege_separation(false);
         config.set_print_motd(true);
@@ -94,6 +124,10 @@ impl Default for SshdConfig {
 impl SshdConfig {
     pub fn new() -> Self {
         Self(HashMap::new())
+    }
+
+    pub fn set_authentication_methods(&mut self, methods: Vec<String>) {
+        self.0.insert("AuthenticationMethods".to_string(), methods);
     }
 
     pub fn set_authorized_keys_file(&mut self, path: impl AsRef<Path>) {
@@ -238,6 +272,9 @@ impl Sshd {
     pub fn spawn(mut config: SshdConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let tmp = TempDir::new()?;
 
+        // Ensure that everything needed for interacting with ssh-agent is set
+        SshAgent::update_tests_with_shell_env()?;
+
         // ssh-keygen -t rsa -f $ROOT/id_rsa -N "" -q
         let id_rsa_file = tmp.child("id_rsa");
         assert!(
@@ -289,17 +326,22 @@ impl Sshd {
 
         loop {
             let port = PORT.fetch_add(1, Ordering::Relaxed);
-            println!("TRYING PORT {}", port);
 
             match Self::try_spawn(port, config_path.as_ref(), log_path.as_ref()) {
                 // If successful, return our spawned server child process
                 Ok(Ok(child)) => break Ok((child, port)),
 
-                // If the server died when spawned, we don't want to keep trying it
-                Ok(Err((code, msg))) => {
+                // If the server died when spawned and we reached the final port, we want to exit
+                Ok(Err((code, msg))) if port == PORT_RANGE.1 => {
                     break Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("{} failed [{}]: {}", BIN_PATH_STR, code.unwrap_or(-1), msg),
+                        format!(
+                            "{} failed [{}]: {}",
+                            BIN_PATH_STR,
+                            code.map(|x| x.to_string())
+                                .unwrap_or_else(|| String::from("???")),
+                            msg
+                        ),
                     ))
                 }
 
@@ -307,7 +349,7 @@ impl Sshd {
                 Err(x) if port == PORT_RANGE.1 => break Err(x),
 
                 // Otherwise, try next port
-                Err(_) => continue,
+                Err(_) | Ok(Err(_)) => continue,
             }
         }
     }
@@ -355,11 +397,9 @@ impl Drop for Sshd {
 
 #[fixture]
 pub fn sshd() -> &'static Sshd {
-    lazy_static::lazy_static! {
-        static ref SSHD: Sshd = Sshd::spawn(Default::default()).unwrap();
-    }
+    static SSHD: OnceCell<Sshd> = OnceCell::new();
 
-    &SSHD
+    SSHD.get_or_init(|| Sshd::spawn(Default::default()).unwrap())
 }
 
 #[fixture]
@@ -370,11 +410,23 @@ pub async fn session(sshd: &'_ Sshd) -> Session {
         "127.0.0.1",
         Ssh2SessionOpts {
             port: Some(port),
+            identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
+            user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
             ..Default::default()
         },
     )
     .unwrap()
-    .authenticate(Default::default())
+    .authenticate(Ssh2AuthHandler {
+        on_authenticate: Box::new(|ev| {
+            println!("on_authenticate: {:?}", ev);
+            Ok(vec![String::new(); ev.prompts.len()])
+        }),
+        on_host_verify: Box::new(|host| {
+            println!("on_host_verify: {}", host);
+            Ok(true)
+        }),
+        ..Default::default()
+    })
     .await
     .unwrap()
 }
