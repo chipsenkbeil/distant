@@ -62,9 +62,8 @@ lazy_static::lazy_static! {
 
 #[rstest]
 #[tokio::test]
-async fn file_read_should_send_error_if_fails_to_read_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_read_should_send_error_if_fails_to_read_file(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let path = temp.child("missing-file").path().to_path_buf();
     let req = Request::new("test-tenant", vec![RequestData::FileRead { path }]);
@@ -80,9 +79,8 @@ async fn file_read_should_send_error_if_fails_to_read_file(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_read_should_send_blob_with_file_contents(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_read_should_send_blob_with_file_contents(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some file contents").unwrap();
@@ -104,9 +102,8 @@ async fn file_read_should_send_blob_with_file_contents(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_read_text_should_send_error_if_fails_to_read_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_read_text_should_send_error_if_fails_to_read_file(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let path = temp.child("missing-file").path().to_path_buf();
     let req = Request::new("test-tenant", vec![RequestData::FileReadText { path }]);
@@ -122,9 +119,8 @@ async fn file_read_text_should_send_error_if_fails_to_read_file(sshd: &'_ Sshd) 
 
 #[rstest]
 #[tokio::test]
-async fn file_read_text_should_send_text_with_file_contents(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_read_text_should_send_text_with_file_contents(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("some file contents").unwrap();
@@ -146,9 +142,8 @@ async fn file_read_text_should_send_text_with_file_contents(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_write_should_send_error_if_fails_to_write_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_write_should_send_error_if_fails_to_write_file(#[future] session: Session) {
+    let mut session = session.await;
     // Create a temporary path and add to it to ensure that there are
     // extra components that don't exist to cause writing to fail
     let temp = TempDir::new().unwrap();
@@ -176,9 +171,8 @@ async fn file_write_should_send_error_if_fails_to_write_file(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_write_should_send_ok_when_successful(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_write_should_send_ok_when_successful(#[future] session: Session) {
+    let mut session = session.await;
     // Path should point to a file that does not exist, but all
     // other components leading up to it do
     let temp = TempDir::new().unwrap();
@@ -207,9 +201,8 @@ async fn file_write_should_send_ok_when_successful(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_write_text_should_send_error_if_fails_to_write_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_write_text_should_send_error_if_fails_to_write_file(#[future] session: Session) {
+    let mut session = session.await;
     // Create a temporary path and add to it to ensure that there are
     // extra components that don't exist to cause writing to fail
     let temp = TempDir::new().unwrap();
@@ -237,9 +230,8 @@ async fn file_write_text_should_send_error_if_fails_to_write_file(sshd: &'_ Sshd
 
 #[rstest]
 #[tokio::test]
-async fn file_write_text_should_send_ok_when_successful(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_write_text_should_send_ok_when_successful(#[future] session: Session) {
+    let mut session = session.await;
     // Path should point to a file that does not exist, but all
     // other components leading up to it do
     let temp = TempDir::new().unwrap();
@@ -268,9 +260,8 @@ async fn file_write_text_should_send_ok_when_successful(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_append_should_send_error_if_fails_to_create_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_append_should_send_error_if_fails_to_create_file(#[future] session: Session) {
+    let mut session = session.await;
     // Create a temporary path and add to it to ensure that there are
     // extra components that don't exist to cause writing to fail
     let temp = TempDir::new().unwrap();
@@ -298,9 +289,8 @@ async fn file_append_should_send_error_if_fails_to_create_file(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_append_should_send_ok_when_successful(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_append_should_send_ok_when_successful(#[future] session: Session) {
+    let mut session = session.await;
     // Create a temporary file and fill it with some contents
     let temp = TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -331,9 +321,8 @@ async fn file_append_should_send_ok_when_successful(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn file_append_text_should_send_error_if_fails_to_create_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_append_text_should_send_error_if_fails_to_create_file(#[future] session: Session) {
+    let mut session = session.await;
     // Create a temporary path and add to it to ensure that there are
     // extra components that don't exist to cause writing to fail
     let temp = TempDir::new().unwrap();
@@ -361,9 +350,8 @@ async fn file_append_text_should_send_error_if_fails_to_create_file(sshd: &'_ Ss
 
 #[rstest]
 #[tokio::test]
-async fn file_append_text_should_send_ok_when_successful(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn file_append_text_should_send_ok_when_successful(#[future] session: Session) {
+    let mut session = session.await;
     // Create a temporary file and fill it with some contents
     let temp = TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -394,9 +382,8 @@ async fn file_append_text_should_send_ok_when_successful(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_read_should_send_error_if_directory_does_not_exist(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_read_should_send_error_if_directory_does_not_exist(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let dir = temp.child("test-dir");
 
@@ -443,9 +430,8 @@ async fn setup_dir() -> TempDir {
 
 #[rstest]
 #[tokio::test]
-async fn dir_read_should_support_depth_limits(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_read_should_support_depth_limits(#[future] session: Session) {
+    let mut session = session.await;
     // Create directory with some nested items
     let root_dir = setup_dir().await;
 
@@ -484,9 +470,8 @@ async fn dir_read_should_support_depth_limits(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_read_should_support_unlimited_depth_using_zero(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_read_should_support_unlimited_depth_using_zero(#[future] session: Session) {
+    let mut session = session.await;
     // Create directory with some nested items
     let root_dir = setup_dir().await;
 
@@ -529,9 +514,10 @@ async fn dir_read_should_support_unlimited_depth_using_zero(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_read_should_support_including_directory_in_returned_entries(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_read_should_support_including_directory_in_returned_entries(
+    #[future] session: Session,
+) {
+    let mut session = session.await;
     // Create directory with some nested items
     let root_dir = setup_dir().await;
 
@@ -575,9 +561,8 @@ async fn dir_read_should_support_including_directory_in_returned_entries(sshd: &
 
 #[rstest]
 #[tokio::test]
-async fn dir_read_should_support_returning_absolute_paths(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_read_should_support_returning_absolute_paths(#[future] session: Session) {
+    let mut session = session.await;
     // Create directory with some nested items
     let root_dir = setup_dir().await;
 
@@ -617,9 +602,8 @@ async fn dir_read_should_support_returning_absolute_paths(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_read_should_support_returning_canonicalized_paths(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_read_should_support_returning_canonicalized_paths(#[future] session: Session) {
+    let mut session = session.await;
     // Create directory with some nested items
     let root_dir = setup_dir().await;
 
@@ -659,9 +643,8 @@ async fn dir_read_should_support_returning_canonicalized_paths(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_create_should_send_error_if_fails(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_create_should_send_error_if_fails(#[future] session: Session) {
+    let mut session = session.await;
     // Make a path that has multiple non-existent components
     // so the creation will fail
     let root_dir = setup_dir().await;
@@ -689,9 +672,8 @@ async fn dir_create_should_send_error_if_fails(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_create_should_send_ok_when_successful(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_create_should_send_ok_when_successful(#[future] session: Session) {
+    let mut session = session.await;
     let root_dir = setup_dir().await;
     let path = root_dir.path().join("new-dir");
 
@@ -717,9 +699,8 @@ async fn dir_create_should_send_ok_when_successful(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn dir_create_should_support_creating_multiple_dir_components(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn dir_create_should_support_creating_multiple_dir_components(#[future] session: Session) {
+    let mut session = session.await;
     let root_dir = setup_dir().await;
     let path = root_dir.path().join("nested").join("new-dir");
 
@@ -745,9 +726,8 @@ async fn dir_create_should_support_creating_multiple_dir_components(sshd: &'_ Ss
 
 #[rstest]
 #[tokio::test]
-async fn remove_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn remove_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("missing-file");
 
@@ -773,9 +753,8 @@ async fn remove_should_send_error_on_failure(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn remove_should_support_deleting_a_directory(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn remove_should_support_deleting_a_directory(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
@@ -802,9 +781,8 @@ async fn remove_should_support_deleting_a_directory(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn remove_should_delete_nonempty_directory_if_force_is_true(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn remove_should_delete_nonempty_directory_if_force_is_true(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
@@ -832,9 +810,8 @@ async fn remove_should_delete_nonempty_directory_if_force_is_true(sshd: &'_ Sshd
 
 #[rstest]
 #[tokio::test]
-async fn remove_should_support_deleting_a_single_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn remove_should_support_deleting_a_single_file(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("some-file");
     file.touch().unwrap();
@@ -861,9 +838,8 @@ async fn remove_should_support_deleting_a_single_file(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn copy_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn copy_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let src = temp.child("src");
     let dst = temp.child("dst");
@@ -890,9 +866,8 @@ async fn copy_should_send_error_on_failure(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn copy_should_support_copying_an_entire_directory(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn copy_should_support_copying_an_entire_directory(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
 
     let src = temp.child("src");
@@ -928,9 +903,8 @@ async fn copy_should_support_copying_an_entire_directory(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn copy_should_support_copying_an_empty_directory(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn copy_should_support_copying_an_empty_directory(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let src = temp.child("src");
     src.create_dir_all().unwrap();
@@ -959,9 +933,10 @@ async fn copy_should_support_copying_an_empty_directory(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn copy_should_support_copying_a_directory_that_only_contains_directories(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn copy_should_support_copying_a_directory_that_only_contains_directories(
+    #[future] session: Session,
+) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
 
     let src = temp.child("src");
@@ -997,9 +972,8 @@ async fn copy_should_support_copying_a_directory_that_only_contains_directories(
 
 #[rstest]
 #[tokio::test]
-async fn copy_should_support_copying_a_single_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn copy_should_support_copying_a_single_file(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let src = temp.child("src");
     src.write_str("some text").unwrap();
@@ -1028,9 +1002,8 @@ async fn copy_should_support_copying_a_single_file(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn rename_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn rename_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let src = temp.child("src");
     let dst = temp.child("dst");
@@ -1057,9 +1030,8 @@ async fn rename_should_send_error_on_failure(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn rename_should_support_renaming_an_entire_directory(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn rename_should_support_renaming_an_entire_directory(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
 
     let src = temp.child("src");
@@ -1095,9 +1067,8 @@ async fn rename_should_support_renaming_an_entire_directory(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn rename_should_support_renaming_a_single_file(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn rename_should_support_renaming_a_single_file(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let src = temp.child("src");
     src.write_str("some text").unwrap();
@@ -1126,9 +1097,8 @@ async fn rename_should_support_renaming_a_single_file(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn exists_should_send_true_if_path_exists(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn exists_should_send_true_if_path_exists(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
@@ -1147,9 +1117,8 @@ async fn exists_should_send_true_if_path_exists(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn exists_should_send_false_if_path_does_not_exist(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn exists_should_send_false_if_path_does_not_exist(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
 
@@ -1167,9 +1136,8 @@ async fn exists_should_send_false_if_path_does_not_exist(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn metadata_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn metadata_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
 
@@ -1193,9 +1161,8 @@ async fn metadata_should_send_error_on_failure(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn metadata_should_send_back_metadata_on_file_if_exists(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn metadata_should_send_back_metadata_on_file_if_exists(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
     file.write_str("some text").unwrap();
@@ -1229,9 +1196,8 @@ async fn metadata_should_send_back_metadata_on_file_if_exists(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn metadata_should_send_back_metadata_on_dir_if_exists(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn metadata_should_send_back_metadata_on_dir_if_exists(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
@@ -1264,9 +1230,8 @@ async fn metadata_should_send_back_metadata_on_dir_if_exists(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn metadata_should_send_back_metadata_on_symlink_if_exists(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn metadata_should_send_back_metadata_on_symlink_if_exists(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
     file.write_str("some text").unwrap();
@@ -1302,9 +1267,8 @@ async fn metadata_should_send_back_metadata_on_symlink_if_exists(sshd: &'_ Sshd)
 
 #[rstest]
 #[tokio::test]
-async fn metadata_should_include_canonicalized_path_if_flag_specified(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn metadata_should_include_canonicalized_path_if_flag_specified(#[future] session: Session) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
     file.write_str("some text").unwrap();
@@ -1340,9 +1304,10 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(sshd: &'_ 
 
 #[rstest]
 #[tokio::test]
-async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
+    #[future] session: Session,
+) {
+    let mut session = session.await;
     let temp = TempDir::new().unwrap();
     let file = temp.child("file");
     file.write_str("some text").unwrap();
@@ -1372,9 +1337,8 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(sshd: &'
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_run_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     let req = Request::new(
         "test-tenant",
         vec![RequestData::ProcRun {
@@ -1394,9 +1358,8 @@ async fn proc_run_should_send_error_on_failure(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_send_back_proc_start_on_success(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_run_should_send_back_proc_start_on_success(#[future] session: Session) {
+    let mut session = session.await;
     let req = Request::new(
         "test-tenant",
         vec![RequestData::ProcRun {
@@ -1419,9 +1382,8 @@ async fn proc_run_should_send_back_proc_start_on_success(sshd: &'_ Sshd) {
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_run_should_send_back_stdout_periodically_when_available(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] session: Session) {
+    let mut session = session.await;
     // Run a program that echoes to stdout
     let req = Request::new(
         "test-tenant",
@@ -1483,9 +1445,8 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(sshd: &'_ 
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_run_should_send_back_stderr_periodically_when_available(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] session: Session) {
+    let mut session = session.await;
     // Run a program that echoes to stderr
     let req = Request::new(
         "test-tenant",
@@ -1547,9 +1508,8 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(sshd: &'_ 
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_run_should_clear_process_from_state_when_done(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_run_should_clear_process_from_state_when_done(#[future] session: Session) {
+    let mut session = session.await;
     // Run a program that ends after a little bit
     let req = Request::new(
         "test-tenant",
@@ -1595,9 +1555,8 @@ async fn proc_run_should_clear_process_from_state_when_done(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_clear_process_from_state_when_killed(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_run_should_clear_process_from_state_when_killed(#[future] session: Session) {
+    let mut session = session.await;
     // Run a program that ends slowly
     let req = Request::new(
         "test-tenant",
@@ -1648,9 +1607,8 @@ async fn proc_run_should_clear_process_from_state_when_killed(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn proc_kill_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_kill_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     // Send kill to a non-existent process
     let req = Request::new(
         "test-tenant",
@@ -1670,9 +1628,8 @@ async fn proc_kill_should_send_error_on_failure(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn proc_kill_should_send_ok_and_done_responses_on_success(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_kill_should_send_ok_and_done_responses_on_success(#[future] session: Session) {
+    let mut session = session.await;
     // First, run a program that sits around (sleep for 1 second)
     let req = Request::new(
         "test-tenant",
@@ -1715,9 +1672,8 @@ async fn proc_kill_should_send_ok_and_done_responses_on_success(sshd: &'_ Sshd) 
 
 #[rstest]
 #[tokio::test]
-async fn proc_stdin_should_send_error_on_failure(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_stdin_should_send_error_on_failure(#[future] session: Session) {
+    let mut session = session.await;
     // Send stdin to a non-existent process
     let req = Request::new(
         "test-tenant",
@@ -1743,8 +1699,10 @@ async fn proc_stdin_should_send_error_on_failure(sshd: &'_ Sshd) {
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
+async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process(
+    #[future] session: Session,
+) {
+    let mut session = session.await;
 
     // First, run a program that listens for stdin
     let req = Request::new(
@@ -1793,9 +1751,8 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
 
 #[rstest]
 #[tokio::test]
-async fn proc_list_should_send_proc_entry_list(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
+    let mut session = session.await;
     // Run a process and get the list that includes that process
     // at the same time (using sleep of 1 second)
     let req = Request::new(
@@ -1835,11 +1792,9 @@ async fn proc_list_should_send_proc_entry_list(sshd: &'_ Sshd) {
 
 #[rstest]
 #[tokio::test]
-async fn system_info_should_send_system_info_based_on_binary(sshd: &'_ Sshd) {
-    let session: Session = todo!("Create ssh2 session");
-
+async fn system_info_should_send_system_info_based_on_binary(#[future] session: Session) {
+    let mut session = session.await;
     let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
-
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     assert_eq!(

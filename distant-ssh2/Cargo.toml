@@ -11,9 +11,15 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+async-compat = "0.2.1"
 distant-core = { version = "=0.15.0", path = "../distant-core" }
+futures = "0.3.16"
+log = "0.4.14"
+rand = { version = "0.8.4", features = ["getrandom"] }
 rpassword = "5.0.1"
-ssh2 = { version = "0.9.1", features = ["vendored-openssl"] }
+smol = "1.2"
+tokio = { version = "1.12.0", features = ["full"] }
+wezterm-ssh = { version = "0.2.0", features = ["vendored-openssl"], git = "https://github.com/chipsenkbeil/wezterm" }
 
 [dev-dependencies]
 assert_cmd = "2.0.0"
@@ -22,4 +28,3 @@ indoc = "1.0.3"
 lazy_static = "1.4.0"
 predicates = "2.0.2"
 rstest = "0.11.0"
-tokio = { version = "1.9.0", features = ["full"] }

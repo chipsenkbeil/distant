@@ -1,4 +1,6 @@
 use assert_fs::{prelude::*, TempDir};
+use distant_core::Session;
+use distant_ssh2::{Ssh2Session, Ssh2SessionOpts};
 use rstest::*;
 use std::{
     collections::HashMap,
@@ -287,6 +289,7 @@ impl Sshd {
 
         loop {
             let port = PORT.fetch_add(1, Ordering::Relaxed);
+            println!("TRYING PORT {}", port);
 
             match Self::try_spawn(port, config_path.as_ref(), log_path.as_ref()) {
                 // If successful, return our spawned server child process
@@ -315,6 +318,7 @@ impl Sshd {
         log_path: impl AsRef<Path>,
     ) -> io::Result<Result<Child, (Option<i32>, String)>> {
         let mut child = Command::new(BIN_PATH_STR)
+            .arg("-D")
             .arg("-p")
             .arg(port.to_string())
             .arg("-f")
@@ -330,7 +334,11 @@ impl Sshd {
             let output = child.wait_with_output()?;
             Ok(Err((
                 exit_status.code(),
-                String::from_utf8(output.stderr).unwrap(),
+                format!(
+                    "{}\n{}",
+                    String::from_utf8(output.stdout).unwrap(),
+                    String::from_utf8(output.stderr).unwrap(),
+                ),
             )))
         } else {
             Ok(Ok(child))
@@ -352,4 +360,21 @@ pub fn sshd() -> &'static Sshd {
     }
 
     &SSHD
+}
+
+#[fixture]
+pub async fn session(sshd: &'_ Sshd) -> Session {
+    let port = sshd.port;
+
+    Ssh2Session::connect(
+        "127.0.0.1",
+        Ssh2SessionOpts {
+            port: Some(port),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .authenticate(Default::default())
+    .await
+    .unwrap()
 }
