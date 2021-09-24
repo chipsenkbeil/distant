@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot, Mutex, MutexGuard};
-use wezterm_ssh::{Child, ExecResult, FileDescriptor, Session as WezSession, SshChildProcess};
+use wezterm_ssh::{Child, ExecResult, OpenFlags, OpenType, Session as WezSession};
 
 const MAX_PIPE_CHUNK_SIZE: usize = 1024;
 const READ_PAUSE_MILLIS: u64 = 50;
@@ -154,11 +154,33 @@ pub(super) async fn process(
 }
 
 async fn file_read(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
-    todo!();
+    use smol::io::AsyncReadExt;
+    let mut file = session
+        .open(path)
+        .compat()
+        .await
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).compat().await?;
+
+    Ok(Outgoing::from(ResponseData::Blob {
+        data: contents.into_bytes(),
+    }))
 }
 
 async fn file_read_text(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
-    todo!();
+    use smol::io::AsyncReadExt;
+    let mut file = session
+        .open(path)
+        .compat()
+        .await
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).compat().await?;
+
+    Ok(Outgoing::from(ResponseData::Text { data: contents }))
 }
 
 async fn file_write(
@@ -166,7 +188,16 @@ async fn file_write(
     path: PathBuf,
     data: impl AsRef<[u8]>,
 ) -> io::Result<Outgoing> {
-    todo!();
+    use smol::io::AsyncWriteExt;
+    let mut file = session
+        .create(path)
+        .compat()
+        .await
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+    file.write_all(data.as_ref()).compat().await?;
+
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn file_append(
@@ -174,7 +205,21 @@ async fn file_append(
     path: PathBuf,
     data: impl AsRef<[u8]>,
 ) -> io::Result<Outgoing> {
-    todo!();
+    use smol::io::AsyncWriteExt;
+    let mut file = session
+        .open_mode(
+            path,
+            OpenFlags::CREATE | OpenFlags::APPEND,
+            0o644,
+            OpenType::File,
+        )
+        .compat()
+        .await
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+    file.write_all(data.as_ref()).compat().await?;
+
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn dir_read(
@@ -189,7 +234,18 @@ async fn dir_read(
 }
 
 async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result<Outgoing> {
-    todo!();
+    // Makes the immediate directory, failing if given a path with missing components
+    async fn mkdir(session: &WezSession, path: PathBuf) -> io::Result<()> {
+        session
+            .mkdir(path, 0o644)
+            .compat()
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+    }
+
+    todo!("Try creating directory, if fail remove component and try, then go back down on success");
+
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<Outgoing> {
@@ -229,6 +285,7 @@ where
 {
     let id = rand::random();
     let cmd_string = format!("{} {}", cmd, args.join(" "));
+    println!("cmd_string: {}", cmd_string);
 
     let ExecResult {
         mut stdin,

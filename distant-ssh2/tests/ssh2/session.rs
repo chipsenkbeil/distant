@@ -17,7 +17,7 @@ static ECHO_ARGS_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|
         .write_str(indoc::indoc!(
             r#"
                 #/usr/bin/env bash
-                printf "%s" "$@"
+                printf "%s" "$*"
             "#
         ))
         .unwrap();
@@ -30,7 +30,7 @@ static ECHO_ARGS_TO_STDERR_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|
         .write_str(indoc::indoc!(
             r#"
                 #/usr/bin/env bash
-                printf "%s" "$@" 1>&2
+                printf "%s" "$*" 1>&2
             "#
         ))
         .unwrap();
@@ -1410,7 +1410,7 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] 
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
-                String::from("some stdout"),
+                String::from("'some stdout'"),
             ],
         }],
     );
@@ -1473,7 +1473,7 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] 
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![
                 ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
-                String::from("some stderr"),
+                String::from("'some stderr'"),
             ],
         }],
     );

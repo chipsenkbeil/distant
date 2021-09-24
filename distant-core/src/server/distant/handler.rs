@@ -689,7 +689,7 @@ mod tests {
             .write_str(indoc::indoc!(
                 r#"
                 #/usr/bin/env bash
-                printf "%s" "$@"
+                printf "%s" "$*"
             "#
             ))
             .unwrap();
@@ -702,7 +702,7 @@ mod tests {
             .write_str(indoc::indoc!(
                 r#"
                 #/usr/bin/env bash
-                printf "%s" "$@" 1>&2
+                printf "%s" "$*" 1>&2
             "#
             ))
             .unwrap();

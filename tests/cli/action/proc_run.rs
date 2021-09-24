@@ -22,7 +22,7 @@ static ECHO_ARGS_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|
         .write_str(indoc::indoc!(
             r#"
             #/usr/bin/env bash
-            printf "%s" "$@"
+            printf "%s" "$*"
         "#
         ))
         .unwrap();
@@ -35,7 +35,7 @@ static ECHO_ARGS_TO_STDERR_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|
         .write_str(indoc::indoc!(
             r#"
             #/usr/bin/env bash
-            printf "%s" "$@" 1>&2
+            printf "%s" "$*" 1>&2
         "#
         ))
         .unwrap();
