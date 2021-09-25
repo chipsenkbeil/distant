@@ -84,20 +84,6 @@ impl SshAgent {
     }
 }
 
-pub struct SshAdd;
-
-impl SshAdd {
-    pub fn exec(path: impl AsRef<Path>) -> io::Result<bool> {
-        let env_map = SshAgent::generate_shell_env()?;
-
-        Command::new("ssh-add")
-            .arg(path.as_ref())
-            .envs(env_map)
-            .status()
-            .map(|status| status.success())
-    }
-}
-
 #[derive(Debug)]
 pub struct SshdConfig(HashMap<String, Vec<String>>);
 
@@ -281,10 +267,6 @@ impl Sshd {
             SshKeygen::generate_rsa(id_rsa_file.path(), "")?,
             "Failed to ssh-keygen id_rsa"
         );
-        assert!(
-            SshAdd::exec(id_rsa_file.path())?,
-            "Failed to ssh-add id_rsa"
-        );
 
         // cp $ROOT/id_rsa.pub $ROOT/authorized_keys
         let authorized_keys_file = tmp.child("authorized_keys");
@@ -369,8 +351,8 @@ impl Sshd {
             .arg(log_path.as_ref())
             .spawn()?;
 
-        // Pause for couple of seconds to make sure that the server didn't die due to an error
-        thread::sleep(Duration::from_secs(2));
+        // Pause for a little bit to make sure that the server didn't die due to an error
+        thread::sleep(Duration::from_millis(100));
 
         if let Some(exit_status) = child.try_wait()? {
             let output = child.wait_with_output()?;
@@ -411,6 +393,7 @@ pub async fn session(sshd: &'_ Sshd) -> Session {
         Ssh2SessionOpts {
             port: Some(port),
             identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
+            identities_only: Some(true),
             user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
             ..Default::default()
         },

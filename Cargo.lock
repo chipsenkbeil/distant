@@ -177,7 +177,7 @@ checksum = "e91831deabf0d6d7ec49552e489aed63b7456a7a3c46cff62adad428110b0af0"
 [[package]]
 name = "async_ossl"
 version = "0.1.0"
-source = "git+https://github.com/chipsenkbeil/wezterm#2d80ff56eb9826be61972b50d6823a36ca42ed5c"
+source = "git+https://github.com/chipsenkbeil/wezterm#8fbf9b7f1e9fc28736e775e894c3855af18ba561"
 dependencies = [
  "openssl",
 ]
@@ -535,7 +535,7 @@ dependencies = [
 [[package]]
 name = "filedescriptor"
 version = "0.8.1"
-source = "git+https://github.com/chipsenkbeil/wezterm#2d80ff56eb9826be61972b50d6823a36ca42ed5c"
+source = "git+https://github.com/chipsenkbeil/wezterm#8fbf9b7f1e9fc28736e775e894c3855af18ba561"
 dependencies = [
  "libc",
  "thiserror",
@@ -1154,7 +1154,7 @@ dependencies = [
 [[package]]
 name = "portable-pty"
 version = "0.5.0"
-source = "git+https://github.com/chipsenkbeil/wezterm#2d80ff56eb9826be61972b50d6823a36ca42ed5c"
+source = "git+https://github.com/chipsenkbeil/wezterm#8fbf9b7f1e9fc28736e775e894c3855af18ba561"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -1940,7 +1940,7 @@ dependencies = [
 [[package]]
 name = "wezterm-ssh"
 version = "0.2.0"
-source = "git+https://github.com/chipsenkbeil/wezterm#2d80ff56eb9826be61972b50d6823a36ca42ed5c"
+source = "git+https://github.com/chipsenkbeil/wezterm#8fbf9b7f1e9fc28736e775e894c3855af18ba561"
 dependencies = [
  "anyhow",
  "async_ossl",

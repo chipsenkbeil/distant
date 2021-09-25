@@ -17,7 +17,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot, Mutex, MutexGuard};
 use wezterm_ssh::{Child, ExecResult, OpenFlags, OpenType, Session as WezSession};
 
-const MAX_PIPE_CHUNK_SIZE: usize = 1024;
+const MAX_PIPE_CHUNK_SIZE: usize = 8192;
 const READ_PAUSE_MILLIS: u64 = 50;
 const WAIT_PAUSE_MILLIS: u64 = 50;
 
@@ -156,6 +156,7 @@ pub(super) async fn process(
 async fn file_read(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
     use smol::io::AsyncReadExt;
     let mut file = session
+        .sftp()
         .open(path)
         .compat()
         .await
@@ -172,6 +173,7 @@ async fn file_read(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
 async fn file_read_text(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
     use smol::io::AsyncReadExt;
     let mut file = session
+        .sftp()
         .open(path)
         .compat()
         .await
@@ -190,6 +192,7 @@ async fn file_write(
 ) -> io::Result<Outgoing> {
     use smol::io::AsyncWriteExt;
     let mut file = session
+        .sftp()
         .create(path)
         .compat()
         .await
@@ -207,9 +210,10 @@ async fn file_append(
 ) -> io::Result<Outgoing> {
     use smol::io::AsyncWriteExt;
     let mut file = session
+        .sftp()
         .open_mode(
             path,
-            OpenFlags::CREATE | OpenFlags::APPEND,
+            OpenFlags::WRITE | OpenFlags::APPEND,
             0o644,
             OpenType::File,
         )
@@ -237,6 +241,7 @@ async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result
     // Makes the immediate directory, failing if given a path with missing components
     async fn mkdir(session: &WezSession, path: PathBuf) -> io::Result<()> {
         session
+            .sftp()
             .mkdir(path, 0o644)
             .compat()
             .await

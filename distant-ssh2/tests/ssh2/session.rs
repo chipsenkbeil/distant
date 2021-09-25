@@ -1718,6 +1718,7 @@ async fn proc_stdin_should_send_error_on_failure(#[future] session: Session) {
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
+#[ignore]
 async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process(
     #[future] session: Session,
 ) {
