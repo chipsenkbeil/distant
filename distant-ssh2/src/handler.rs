@@ -387,7 +387,83 @@ async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result
 }
 
 async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<Outgoing> {
-    todo!();
+    let sftp = session.sftp();
+
+    // Determine if we are dealing with a file or directory
+    let stat = sftp
+        .stat(path.to_path_buf())
+        .compat()
+        .await
+        .map_err(to_other_error)?;
+
+    // If a file or symlink, we just unlink (easy)
+    if stat.is_file() || stat.file_type().is_symlink() {
+        sftp.unlink(path)
+            .compat()
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
+    // If directory and not forcing, we just rmdir (easy)
+    } else if !force {
+        sftp.rmdir(path)
+            .compat()
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
+    // Otherwise, we need to find all files and directories, keep track of their depth, and
+    // then attempt to remove them all
+    } else {
+        let mut entries = Vec::new();
+        let mut to_traverse = vec![DirEntry {
+            path,
+            file_type: FileType::Dir,
+            depth: 0,
+        }];
+
+        // Collect all entries within directory
+        while let Some(entry) = to_traverse.pop() {
+            if entry.file_type == FileType::Dir {
+                let path = entry.path.to_path_buf();
+                let depth = entry.depth;
+
+                entries.push(entry);
+
+                for (path, stat) in sftp.readdir(path).await.map_err(to_other_error)? {
+                    to_traverse.push(DirEntry {
+                        path,
+                        file_type: if stat.is_dir() {
+                            FileType::Dir
+                        } else if stat.is_file() {
+                            FileType::File
+                        } else {
+                            FileType::Symlink
+                        },
+                        depth: depth + 1,
+                    });
+                }
+            } else {
+                entries.push(entry);
+            }
+        }
+
+        // Sort by depth such that deepest are last as we will be popping
+        // off entries from end to remove first
+        entries.sort_unstable_by_key(|e| e.depth);
+
+        while let Some(entry) = entries.pop() {
+            if entry.file_type == FileType::Dir {
+                sftp.rmdir(entry.path)
+                    .compat()
+                    .await
+                    .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
+            } else {
+                sftp.unlink(entry.path)
+                    .compat()
+                    .await
+                    .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
+            }
+        }
+    }
+
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn copy(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Outgoing> {
