@@ -270,7 +270,7 @@ async fn dir_read(
 
         // Always include any non-root in our traverse list, but only include the
         // root directory if flagged to do so
-        if (is_root && include_root) || !is_root {
+        if !is_root || include_root {
             entries.push(entry);
         }
 
@@ -563,7 +563,7 @@ async fn metadata(
         file_type,
         len: stat.size.unwrap_or_default(),
         // Check that owner, group, or other has write permission (if not, then readonly)
-        readonly: stat.perm.map(|p| p | 0o222 == 0).unwrap_or_default(),
+        readonly: stat.perm.map(|p| p & 0o222 == 0).unwrap_or_default(),
         accessed: stat.atime.map(u128::from),
         modified: stat.mtime.map(u128::from),
         created: None,

@@ -94,9 +94,9 @@ impl Default for Ssh2AuthHandler {
             on_banner: Box::new(|_| {}),
             on_host_verify: Box::new(|message| {
                 eprintln!("{}", message);
-                match rpassword::prompt_password_stderr("Enter [y/n]> ")?.as_str() {
+                match rpassword::prompt_password_stderr("Enter [y/N]> ")?.as_str() {
                     "y" | "Y" | "yes" | "YES" => Ok(true),
-                    "n" | "N" | "no" | "NO" | _ => Ok(false),
+                    _ => Ok(false),
                 }
             }),
             on_error: Box::new(|_| {}),
@@ -160,8 +160,8 @@ impl Ssh2Session {
         }
 
         // Establish a connection
-        let (session, events) = WezSession::connect(config.clone())
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        let (session, events) =
+            WezSession::connect(config).map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
         Ok(Self { session, events })
     }
