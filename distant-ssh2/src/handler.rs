@@ -221,6 +221,8 @@ async fn file_append(
         .open_mode(
             path,
             OpenFlags::WRITE | OpenFlags::APPEND,
+            // Using 755 as this mirrors "ssh <host> touch ..."
+            // 644: rw-r--r--
             0o644,
             OpenType::File,
         )
@@ -342,17 +344,44 @@ async fn dir_read(
 }
 
 async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result<Outgoing> {
+    let sftp = session.sftp();
+
     // Makes the immediate directory, failing if given a path with missing components
-    async fn mkdir(session: &WezSession, path: PathBuf) -> io::Result<()> {
-        session
-            .sftp()
-            .mkdir(path, 0o644)
+    async fn mkdir(sftp: &wezterm_ssh::Sftp, path: PathBuf) -> io::Result<()> {
+        // Using 755 as this mirrors "ssh <host> mkdir ..."
+        // 755: rwxr-xr-x
+        sftp.mkdir(path, 0o755)
             .compat()
             .await
             .map_err(to_other_error)
     }
 
-    todo!("Try creating directory, if fail remove component and try, then go back down on success");
+    if all {
+        // Keep trying to create a directory, moving up to parent each time a failure happens
+        let mut failed_paths = Vec::new();
+        let mut cur_path = path.as_path();
+        loop {
+            let failed = mkdir(&sftp, cur_path.to_path_buf()).await.is_err();
+            if failed {
+                failed_paths.push(cur_path);
+                if let Some(path) = cur_path.parent() {
+                    cur_path = path;
+                } else {
+                    return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Now that we've successfully created a parent component (or the directory), proceed
+        // to attempt to create each failed directory
+        while let Some(path) = failed_paths.pop() {
+            mkdir(&sftp, path.to_path_buf()).await?;
+        }
+    } else {
+        mkdir(&sftp, path).await?;
+    }
 
     Ok(Outgoing::from(ResponseData::Ok))
 }

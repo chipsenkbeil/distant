@@ -721,7 +721,7 @@ async fn dir_create_should_send_ok_when_successful(#[future] session: Session) {
 async fn dir_create_should_support_creating_multiple_dir_components(#[future] session: Session) {
     let mut session = session.await;
     let root_dir = setup_dir().await;
-    let path = root_dir.path().join("nested").join("new-dir");
+    let path = root_dir.path().join("nested").join("new").join("dir");
 
     let req = Request::new(
         "test-tenant",
