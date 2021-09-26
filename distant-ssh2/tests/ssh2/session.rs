@@ -6,7 +6,11 @@ use distant_core::{
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use rstest::*;
-use std::{env, path::Path, time::Duration};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
@@ -1814,6 +1818,31 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
 #[tokio::test]
 async fn system_info_should_send_system_info_based_on_binary(#[future] session: Session) {
     let mut session = session.await;
+
+    // Figure out what SFTP's realpath(.) would resolve to
+    let res = session
+        .send(Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: PathBuf::from("."),
+                canonicalize: true,
+                resolve_file_type: false,
+            }],
+        ))
+        .await
+        .unwrap();
+    let current_dir = if let ResponseData::Metadata {
+        canonicalized_path, ..
+    } = &res.payload[0]
+    {
+        canonicalized_path
+            .as_deref()
+            .expect("Missing canonicalized path")
+            .to_path_buf()
+    } else {
+        panic!("Failed to get metadata for '.'")
+    };
+
     let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
@@ -1821,9 +1850,9 @@ async fn system_info_should_send_system_info_based_on_binary(#[future] session: 
         res.payload[0],
         ResponseData::SystemInfo {
             family: env::consts::FAMILY.to_string(),
-            os: env::consts::OS.to_string(),
-            arch: env::consts::ARCH.to_string(),
-            current_dir: env::current_dir().unwrap_or_default(),
+            os: "".to_string(),
+            arch: "".to_string(),
+            current_dir,
             main_separator: std::path::MAIN_SEPARATOR,
         },
         "Unexpected response: {:?}",

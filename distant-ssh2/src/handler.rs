@@ -9,7 +9,7 @@ use std::{
     collections::HashMap,
     future::Future,
     io::{self, Read, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     sync::Arc,
     time::Duration,
@@ -808,5 +808,32 @@ async fn proc_list(_session: WezSession, state: Arc<Mutex<State>>) -> io::Result
 }
 
 async fn system_info(session: WezSession) -> io::Result<Outgoing> {
-    todo!();
+    let current_dir = session
+        .sftp()
+        .realpath(".")
+        .compat()
+        .await
+        .map_err(to_other_error)?;
+
+    let first_component = current_dir.components().next();
+    let is_windows =
+        first_component.is_some() && matches!(first_component.unwrap(), Component::Prefix(_));
+    let is_unix = current_dir.as_os_str().to_string_lossy().starts_with('/');
+
+    let family = if is_windows {
+        "windows"
+    } else if is_unix {
+        "unix"
+    } else {
+        ""
+    }
+    .to_string();
+
+    Ok(Outgoing::from(ResponseData::SystemInfo {
+        family,
+        os: "".to_string(),
+        arch: "".to_string(),
+        current_dir,
+        main_separator: if is_windows { '\\' } else { '/' },
+    }))
 }
