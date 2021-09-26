@@ -467,7 +467,43 @@ async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<O
 }
 
 async fn copy(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Outgoing> {
-    todo!();
+    // NOTE: SFTP does not provide a remote-to-remote copy method, so we instead execute
+    //       a program and hope that it applies, starting with the Unix/BSD/GNU cp method
+    //       and switch to Window's xcopy if the former fails
+
+    // Unix cp -R <src> <dst>
+    let unix_result = session
+        .exec(&format!("cp -R {:?} {:?}", src, dst), None)
+        .compat()
+        .await;
+
+    let failed = unix_result.is_err() || {
+        let exit_status = unix_result.unwrap().child.async_wait().compat().await;
+        exit_status.is_err() || !exit_status.unwrap().success()
+    };
+
+    // Windows xcopy <src> <dst> /s /e
+    if failed {
+        let exit_status = session
+            .exec(&format!("xcopy {:?} {:?} /s /e", src, dst), None)
+            .compat()
+            .await
+            .map_err(to_other_error)?
+            .child
+            .async_wait()
+            .compat()
+            .await
+            .map_err(to_other_error)?;
+
+        if !exit_status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unix and windows copy commands failed",
+            ));
+        }
+    }
+
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn rename(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Outgoing> {
