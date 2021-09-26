@@ -471,11 +471,23 @@ async fn copy(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Out
 }
 
 async fn rename(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Outgoing> {
-    todo!();
+    session
+        .sftp()
+        .rename(src, dst, None)
+        .compat()
+        .await
+        .map_err(to_other_error)?;
+
+    Ok(Outgoing::from(ResponseData::Ok))
 }
 
 async fn exists(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
-    todo!();
+    // NOTE: SFTP does not provide a means to check if a path exists that can be performed
+    // separately from getting permission errors; so, we just assume any error means that the path
+    // does not exist
+    let exists = session.sftp().lstat(path).compat().await.is_ok();
+
+    Ok(Outgoing::from(ResponseData::Exists(exists)))
 }
 
 async fn metadata(
@@ -484,7 +496,42 @@ async fn metadata(
     canonicalize: bool,
     resolve_file_type: bool,
 ) -> io::Result<Outgoing> {
-    todo!();
+    let sftp = session.sftp();
+    let canonicalized_path = if canonicalize {
+        Some(
+            sftp.realpath(path.to_path_buf())
+                .compat()
+                .await
+                .map_err(to_other_error)?,
+        )
+    } else {
+        None
+    };
+
+    let stat = if resolve_file_type {
+        sftp.stat(path).compat().await.map_err(to_other_error)?
+    } else {
+        sftp.lstat(path).compat().await.map_err(to_other_error)?
+    };
+
+    let file_type = if stat.is_dir() {
+        FileType::Dir
+    } else if stat.is_file() {
+        FileType::File
+    } else {
+        FileType::Symlink
+    };
+
+    Ok(Outgoing::from(ResponseData::Metadata {
+        canonicalized_path,
+        file_type,
+        len: stat.size.unwrap_or_default(),
+        // Check that owner, group, or other has write permission (if not, then readonly)
+        readonly: stat.perm.map(|p| p | 0o222 == 0).unwrap_or_default(),
+        accessed: stat.atime.map(u128::from),
+        modified: stat.mtime.map(u128::from),
+        created: None,
+    }))
 }
 
 async fn proc_run<F>(
