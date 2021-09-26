@@ -508,7 +508,7 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] session: S
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     match &res.payload[0] {
-        ResponseData::DirEntries { entries, .. } => {
+        ResponseData::DirEntries { entries, errors } => {
             assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
             assert_eq!(entries[0].file_type, FileType::File);
@@ -647,13 +647,13 @@ async fn dir_read_should_support_returning_canonicalized_paths(#[future] session
             assert_eq!(entries[0].path, Path::new("file1"));
             assert_eq!(entries[0].depth, 1);
 
-            // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
-            assert_eq!(entries[1].file_type, FileType::Symlink);
-            assert_eq!(entries[1].path, Path::new("sub1").join("file2"));
+            assert_eq!(entries[1].file_type, FileType::Dir);
+            assert_eq!(entries[1].path, Path::new("sub1"));
             assert_eq!(entries[1].depth, 1);
 
-            assert_eq!(entries[2].file_type, FileType::Dir);
-            assert_eq!(entries[2].path, Path::new("sub1"));
+            // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
+            assert_eq!(entries[2].file_type, FileType::Symlink);
+            assert_eq!(entries[2].path, Path::new("sub1").join("file2"));
             assert_eq!(entries[2].depth, 1);
         }
         x => panic!("Unexpected response: {:?}", x),

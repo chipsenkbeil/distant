@@ -1,6 +1,6 @@
 use async_compat::CompatExt;
 use distant_core::{
-    data::{DirEntry, FileType, RunningProcess},
+    data::{DirEntry, Error as DistantError, FileType, RunningProcess},
     Request, RequestData, Response, ResponseData,
 };
 use futures::future;
@@ -9,7 +9,7 @@ use std::{
     collections::HashMap,
     future::Future,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
     time::Duration,
@@ -20,6 +20,13 @@ use wezterm_ssh::{Child, ExecResult, OpenFlags, OpenType, Session as WezSession}
 const MAX_PIPE_CHUNK_SIZE: usize = 8192;
 const READ_PAUSE_MILLIS: u64 = 50;
 const WAIT_PAUSE_MILLIS: u64 = 50;
+
+fn to_other_error<E>(err: E) -> io::Error
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    io::Error::new(io::ErrorKind::Other, err)
+}
 
 #[derive(Default)]
 pub(crate) struct State {
@@ -160,7 +167,7 @@ async fn file_read(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
         .open(path)
         .compat()
         .await
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        .map_err(to_other_error)?;
 
     let mut contents = String::new();
     file.read_to_string(&mut contents).compat().await?;
@@ -177,7 +184,7 @@ async fn file_read_text(session: WezSession, path: PathBuf) -> io::Result<Outgoi
         .open(path)
         .compat()
         .await
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        .map_err(to_other_error)?;
 
     let mut contents = String::new();
     file.read_to_string(&mut contents).compat().await?;
@@ -196,7 +203,7 @@ async fn file_write(
         .create(path)
         .compat()
         .await
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        .map_err(to_other_error)?;
 
     file.write_all(data.as_ref()).compat().await?;
 
@@ -219,7 +226,7 @@ async fn file_append(
         )
         .compat()
         .await
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        .map_err(to_other_error)?;
 
     file.write_all(data.as_ref()).compat().await?;
 
@@ -234,7 +241,104 @@ async fn dir_read(
     canonicalize: bool,
     include_root: bool,
 ) -> io::Result<Outgoing> {
-    todo!();
+    let sftp = session.sftp();
+
+    // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
+    let root_path = sftp.realpath(path).compat().await.map_err(to_other_error)?;
+
+    // Build up our entry list
+    let mut entries = Vec::new();
+    let mut errors = Vec::new();
+
+    let mut to_traverse = vec![DirEntry {
+        path: root_path.to_path_buf(),
+        file_type: FileType::Dir,
+        depth: 0,
+    }];
+
+    while let Some(entry) = to_traverse.pop() {
+        let is_root = entry.depth == 0;
+        let next_depth = entry.depth + 1;
+        let ft = entry.file_type;
+        let path = if entry.path.is_relative() {
+            root_path.join(&entry.path)
+        } else {
+            entry.path.to_path_buf()
+        };
+
+        // Always include any non-root in our traverse list, but only include the
+        // root directory if flagged to do so
+        if (is_root && include_root) || !is_root {
+            entries.push(entry);
+        }
+
+        let is_dir = match ft {
+            FileType::Dir => true,
+            FileType::File => false,
+            FileType::Symlink => match sftp.stat(&path).await {
+                Ok(stat) => stat.file_type().is_dir(),
+                Err(x) => {
+                    errors.push(DistantError::from(to_other_error(x)));
+                    continue;
+                }
+            },
+        };
+
+        // Determine if we continue traversing or stop
+        if is_dir && (depth == 0 || next_depth <= depth) {
+            match sftp.readdir(&path).compat().await.map_err(to_other_error) {
+                Ok(entries) => {
+                    for (mut path, stat) in entries {
+                        // Canonicalize the path if specified, otherwise just return
+                        // the path as is
+                        path = if canonicalize {
+                            match sftp.realpath(path).compat().await {
+                                Ok(path) => path,
+                                Err(x) => {
+                                    errors.push(DistantError::from(to_other_error(x)));
+                                    continue;
+                                }
+                            }
+                        } else {
+                            path
+                        };
+
+                        // Strip the path of its prefix based if not flagged as absolute
+                        if !absolute {
+                            // NOTE: In the situation where we canonicalized the path earlier,
+                            // there is no guarantee that our root path is still the parent of
+                            // the symlink's destination; so, in that case we MUST just return
+                            // the path if the strip_prefix fails
+                            path = path
+                                .strip_prefix(root_path.as_path())
+                                .map(Path::to_path_buf)
+                                .unwrap_or(path);
+                        };
+
+                        let ft = stat.file_type();
+                        to_traverse.push(DirEntry {
+                            path,
+                            file_type: if ft.is_dir() {
+                                FileType::Dir
+                            } else if ft.is_file() {
+                                FileType::File
+                            } else {
+                                FileType::Symlink
+                            },
+                            depth: next_depth,
+                        });
+                    }
+                }
+                Err(x) if is_root => return Err(io::Error::new(io::ErrorKind::Other, x)),
+                Err(x) => errors.push(DistantError::from(x)),
+            }
+        }
+    }
+
+    // Sort entries by filename
+    entries.sort_unstable_by_key(|e| e.path.to_path_buf());
+
+    Ok(Outgoing::from(ResponseData::DirEntries { entries, errors }))
 }
 
 async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result<Outgoing> {
@@ -245,7 +349,7 @@ async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result
             .mkdir(path, 0o644)
             .compat()
             .await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+            .map_err(to_other_error)
     }
 
     todo!("Try creating directory, if fail remove component and try, then go back down on success");
@@ -290,7 +394,6 @@ where
 {
     let id = rand::random();
     let cmd_string = format!("{} {}", cmd, args.join(" "));
-    println!("cmd_string: {}", cmd_string);
 
     let ExecResult {
         mut stdin,
@@ -301,7 +404,7 @@ where
         .exec(&cmd_string, None)
         .compat()
         .await
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        .map_err(to_other_error)?;
 
     let (stdin_tx, mut stdin_rx) = mpsc::channel(1);
     let (kill_tx, mut kill_rx) = oneshot::channel();
