@@ -722,19 +722,6 @@ mod tests {
         script
     });
 
-    static EXIT_CODE_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-        let script = TEMP_SCRIPT_DIR.child("exit_code.sh");
-        script
-            .write_str(indoc::indoc!(
-                r#"
-                #!/usr/bin/env bash
-                exit "$1"
-            "#
-            ))
-            .unwrap();
-        script
-    });
-
     static SLEEP_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
         let script = TEMP_SCRIPT_DIR.child("sleep.sh");
         script

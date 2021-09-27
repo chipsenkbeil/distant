@@ -53,23 +53,24 @@ jobs:
       - name: Ensure /run/sshd exists on Unix
         run: mkdir -p /run/sshd
         if: |
-          ${{ matrix.os != 'windows-latest' }} &&
-          ${{ matrix.os != 'macos-latest' }} &&
+          matrix.os != 'windows-latest' &&
+          matrix.os != 'macos-latest' &&
           steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (default features)
         run: cargo test --verbose -p distant-ssh2
         if: |
-          ${{ matrix.os != 'windows-latest' }} &&
+          matrix.os != 'windows-latest' &&
           steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (all features)
         run: cargo test --verbose --all-features -p distant-ssh2
         if: |
-          ${{ matrix.os != 'windows-latest' }} &&
+          matrix.os != 'windows-latest' &&
           steps.changes.outputs.ssh2 == 'true'
       - name: Run CLI tests
         run: cargo test --verbose
+        shell: bash
         if: |
-          ${{ matrix.os != 'windows-latest' }} &&
+          matrix.os != 'windows-latest' &&
           steps.changes.outputs.cli == 'true'
 
   clippy:

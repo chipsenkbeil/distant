@@ -22,7 +22,7 @@ const BIN_PATH_STR: &str = "/usr/sbin/sshd";
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
 
-const USERNAME: Lazy<String> = Lazy::new(|| whoami::username());
+static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 
 pub struct SshKeygen;
 
@@ -61,11 +61,11 @@ impl SshAgent {
         let stdout = String::from_utf8(output.stdout)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
         Ok(stdout
-            .split(";")
+            .split(';')
             .map(str::trim)
-            .filter(|s| s.contains("="))
+            .filter(|s| s.contains('='))
             .map(|s| {
-                let mut tokens = s.split("=");
+                let mut tokens = s.split('=');
                 let key = tokens.next().unwrap().trim().to_string();
                 let rest = tokens
                     .map(str::trim)

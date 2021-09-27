@@ -18,7 +18,7 @@ use std::{
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, IntoStaticStr, VariantNames};
 
-static USERNAME: Lazy<String> = Lazy::new(|| whoami::username());
+static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 
 /// Options and commands to apply to binary
 #[derive(Debug, StructOpt)]
@@ -236,7 +236,7 @@ pub struct ActionSubcommand {
 
     /// Method to communicate with a remote machine
     #[structopt(
-        short, 
+        short,
         long,
         default_value = Method::default().into(),
         possible_values = Method::VARIANTS
@@ -470,7 +470,7 @@ pub struct LaunchSubcommand {
 
     /// Method to communicate with a remote machine
     #[structopt(
-        short, 
+        short,
         long,
         default_value = Method::default().into(),
         possible_values = Method::VARIANTS
@@ -620,7 +620,7 @@ pub struct LspSubcommand {
 
     /// Method to communicate with a remote machine
     #[structopt(
-        short, 
+        short,
         long,
         default_value = Method::default().into(),
         possible_values = Method::VARIANTS

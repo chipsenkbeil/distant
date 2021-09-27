@@ -89,7 +89,7 @@ impl Drop for DistantServerCtx {
 pub fn ctx() -> &'static DistantServerCtx {
     static CTX: OnceCell<DistantServerCtx> = OnceCell::new();
 
-    CTX.get_or_init(|| DistantServerCtx::initialize())
+    CTX.get_or_init(DistantServerCtx::initialize)
 }
 
 #[fixture]
