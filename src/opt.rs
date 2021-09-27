@@ -163,6 +163,34 @@ impl Subcommand {
     }
 }
 
+/// Represents the method to use in communicating with a remote machine
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Display,
+    PartialEq,
+    Eq,
+    IsVariant,
+    IntoStaticStr,
+    EnumString,
+    EnumVariantNames,
+)]
+pub enum Method {
+    /// Launch/connect to a distant server running on a remote machine
+    Distant,
+
+    /// Connect to an SSH server running on a remote machine
+    #[cfg(feature = "distant-ssh2")]
+    Ssh,
+}
+
+impl Default for Method {
+    fn default() -> Self {
+        Self::Distant
+    }
+}
+
 /// Represents the format for data communicated to & from the client
 #[derive(
     Copy,
@@ -205,6 +233,15 @@ pub struct ActionSubcommand {
         possible_values = Format::VARIANTS
     )]
     pub format: Format,
+
+    /// Method to communicate with a remote machine
+    #[structopt(
+        short, 
+        long,
+        default_value = Method::default().into(),
+        possible_values = Method::VARIANTS
+    )]
+    pub method: Method,
 
     /// Represents the medium for retrieving a session for use in performing the action
     #[structopt(
@@ -431,6 +468,15 @@ pub struct LaunchSubcommand {
     )]
     pub format: Format,
 
+    /// Method to communicate with a remote machine
+    #[structopt(
+        short, 
+        long,
+        default_value = Method::default().into(),
+        possible_values = Method::VARIANTS
+    )]
+    pub method: Method,
+
     /// Path to distant program on remote machine to execute via ssh;
     /// by default, this program needs to be available within PATH as
     /// specified when compiling ssh (not your login shell)
@@ -571,6 +617,15 @@ pub struct LspSubcommand {
         possible_values = Format::VARIANTS
     )]
     pub format: Format,
+
+    /// Method to communicate with a remote machine
+    #[structopt(
+        short, 
+        long,
+        default_value = Method::default().into(),
+        possible_values = Method::VARIANTS
+    )]
+    pub method: Method,
 
     /// Represents the medium for retrieving a session to use when running a remote LSP server
     #[structopt(

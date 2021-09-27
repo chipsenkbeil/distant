@@ -561,7 +561,7 @@ async fn metadata(
     Ok(Outgoing::from(ResponseData::Metadata {
         canonicalized_path,
         file_type,
-        len: stat.size.unwrap_or_default(),
+        len: stat.len(),
         // Check that owner, group, or other has write permission (if not, then readonly)
         readonly: stat.is_readonly(),
         accessed: stat.accessed.map(u128::from),
@@ -593,6 +593,17 @@ where
         .compat()
         .await
         .map_err(to_other_error)?;
+
+    // Force stdin, stdout, and stderr to be nonblocking
+    stdin
+        .set_non_blocking(true)
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+    stdout
+        .set_non_blocking(true)
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+    stderr
+        .set_non_blocking(true)
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
     // Check if the process died immediately and report
     // an error if that's the case
@@ -719,7 +730,7 @@ where
                 _ = kill_rx.recv() => {
                     should_kill = true;
                 }
-                result = child.async_wait() => {
+                result = child.async_wait().compat() => {
                     match result {
                         Ok(status) => {
                             success = status.success();
@@ -746,9 +757,13 @@ where
                 //       so, we need to manually run kill/taskkill to make sure that the
                 //       process is sent a kill signal
                 if let Some(pid) = child.process_id() {
-                    let _ = session.exec(&format!("kill -9 {}", pid), None).await;
+                    let _ = session
+                        .exec(&format!("kill -9 {}", pid), None)
+                        .compat()
+                        .await;
                     let _ = session
                         .exec(&format!("taskkill /F /PID {}", pid), None)
+                        .compat()
                         .await;
                 }
             } else {

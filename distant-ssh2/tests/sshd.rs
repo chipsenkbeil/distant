@@ -381,6 +381,19 @@ impl Drop for Sshd {
 }
 
 #[fixture]
+pub fn logger() -> &'static flexi_logger::LoggerHandle {
+    static LOGGER: OnceCell<flexi_logger::LoggerHandle> = OnceCell::new();
+
+    LOGGER.get_or_init(|| {
+        // flexi_logger::Logger::try_with_str("off, distant_core=trace, distant_ssh2=trace")
+        flexi_logger::Logger::try_with_str("off, distant_core=warn, distant_ssh2=warn")
+            .expect("Failed to load env")
+            .start()
+            .expect("Failed to start logger")
+    })
+}
+
+#[fixture]
 pub fn sshd() -> &'static Sshd {
     static SSHD: OnceCell<Sshd> = OnceCell::new();
 
@@ -388,7 +401,7 @@ pub fn sshd() -> &'static Sshd {
 }
 
 #[fixture]
-pub async fn session(sshd: &'_ Sshd) -> Session {
+pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> Session {
     let port = sshd.port;
 
     Ssh2Session::connect(

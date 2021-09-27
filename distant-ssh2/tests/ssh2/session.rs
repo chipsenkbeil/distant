@@ -54,19 +54,6 @@ static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(
     script
 });
 
-static EXIT_CODE_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("exit_code.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-                #!/usr/bin/env bash
-                exit "$1"
-            "#
-        ))
-        .unwrap();
-    script
-});
-
 static SLEEP_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
     let script = TEMP_SCRIPT_DIR.child("sleep.sh");
     script
@@ -512,7 +499,7 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] session: S
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     match &res.payload[0] {
-        ResponseData::DirEntries { entries, errors } => {
+        ResponseData::DirEntries { entries, .. } => {
             assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
             assert_eq!(entries[0].file_type, FileType::File);
@@ -1360,7 +1347,7 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_send_error_on_failure(#[future] session: Session) {
+async fn proc_run_should_send_error_over_stderr_on_failure(#[future] session: Session) {
     let mut session = session.await;
     let req = Request::new(
         "test-tenant",
@@ -1370,13 +1357,37 @@ async fn proc_run_should_send_error_on_failure(#[future] session: Session) {
         }],
     );
 
-    let res = session.send(req).await.unwrap();
+    // NOTE: This diverges from distant in that we don't get an error message and instead
+    //       will always get stderr as ssh runs every command in some kind of shell
+    let mut mailbox = session.mail(req).await.unwrap();
+
+    // Get proc start message
+    let res = mailbox.next().await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
-    assert!(
-        matches!(&res.payload[0], ResponseData::Error(_)),
-        "Unexpected response: {:?}",
-        res.payload[0]
-    );
+    let proc_id = match &res.payload[0] {
+        ResponseData::ProcStart { id } => *id,
+        x => panic!("Unexpected response: {:?}", x),
+    };
+
+    // Get proc stderr message
+    let res = mailbox.next().await.unwrap();
+    assert_eq!(res.payload.len(), 1, "Wrong payload size");
+    match &res.payload[0] {
+        ResponseData::ProcStderr { id, .. } => {
+            assert_eq!(proc_id, *id, "Wrong process stderr received");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    }
+
+    // Get proc done message
+    let res = mailbox.next().await.unwrap();
+    assert_eq!(res.payload.len(), 1, "Wrong payload size");
+    match &res.payload[0] {
+        ResponseData::ProcDone { id, .. } => {
+            assert_eq!(proc_id, *id, "Wrong process done received");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    }
 }
 
 #[rstest]
@@ -1722,7 +1733,6 @@ async fn proc_stdin_should_send_error_on_failure(#[future] session: Session) {
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-#[ignore]
 async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process(
     #[future] session: Session,
 ) {
@@ -1777,21 +1787,16 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
 #[tokio::test]
 async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
     let mut session = session.await;
-    // Run a process and get the list that includes that process
-    // at the same time (using sleep of 1 second)
     let req = Request::new(
         "test-tenant",
-        vec![
-            RequestData::ProcRun {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-            },
-            RequestData::ProcList {},
-        ],
+        vec![RequestData::ProcRun {
+            cmd: SCRIPT_RUNNER.to_string(),
+            args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
+        }],
     );
 
     let res = session.send(req).await.unwrap();
-    assert_eq!(res.payload.len(), 2, "Wrong payload size");
+    assert_eq!(res.payload.len(), 1, "Wrong payload size");
 
     // Grab the id of the started process
     let id = match &res.payload[0] {
@@ -1799,13 +1804,18 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
         x => panic!("Unexpected response: {:?}", x),
     };
 
+    let req = Request::new("test-tenant", vec![RequestData::ProcList {}]);
+
+    let res = session.send(req).await.unwrap();
+    assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
     // Verify our process shows up in our entry list
     assert_eq!(
-        res.payload[1],
+        res.payload[0],
         ResponseData::ProcEntries {
             entries: vec![RunningProcess {
                 cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
                 id,
             }],
         },
