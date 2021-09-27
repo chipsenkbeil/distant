@@ -50,6 +50,9 @@ jobs:
       - name: Run core tests (all features)
         run: cargo test --verbose --all-features -p distant-core
         if: steps.changes.outputs.core == 'true'
+      - name: Create /run/sshd and /var/run/sshd
+        run: mkdir -p /run/sshd && mkdir -p /var/run/sshd
+        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (default features)
         run: cargo test --verbose -p distant-ssh2
         if: steps.changes.outputs.ssh2 == 'true'
