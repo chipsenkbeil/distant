@@ -1,7 +1,7 @@
 use assert_fs::{prelude::*, TempDir};
 use distant_core::Session;
 use distant_ssh2::{Ssh2AuthHandler, Ssh2Session, Ssh2SessionOpts};
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
 use rstest::*;
 use std::{
     collections::HashMap,
@@ -21,6 +21,8 @@ const BIN_PATH_STR: &str = "/usr/sbin/sshd";
 
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
+
+const USERNAME: Lazy<String> = Lazy::new(|| whoami::username());
 
 pub struct SshKeygen;
 
@@ -93,6 +95,7 @@ impl Default for SshdConfig {
         let mut config = Self::new();
 
         config.set_authentication_methods(vec!["publickey".to_string()]);
+        config.set_use_privilege_separation(false);
         config.set_subsystem(true, true);
         config.set_use_pam(false);
         config.set_x11_forwarding(true);
@@ -394,6 +397,7 @@ pub async fn session(sshd: &'_ Sshd) -> Session {
             port: Some(port),
             identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
             identities_only: Some(true),
+            user: Some(USERNAME.to_string()),
             user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
             ..Default::default()
         },
