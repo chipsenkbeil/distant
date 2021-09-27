@@ -12,14 +12,12 @@ use std::{
     path::{Component, Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    time::Duration,
 };
-use tokio::sync::{mpsc, oneshot, Mutex, MutexGuard};
-use wezterm_ssh::{Child, ExecResult, OpenFlags, OpenType, Session as WezSession};
+use tokio::sync::{mpsc, Mutex};
+use wezterm_ssh::{Child, ExecResult, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
 
 const MAX_PIPE_CHUNK_SIZE: usize = 8192;
 const READ_PAUSE_MILLIS: u64 = 50;
-const WAIT_PAUSE_MILLIS: u64 = 50;
 
 fn to_other_error<E>(err: E) -> io::Error
 where
@@ -38,12 +36,12 @@ struct Process {
     cmd: String,
     args: Vec<String>,
     stdin_tx: mpsc::Sender<String>,
-    kill_tx: oneshot::Sender<()>,
+    kill_tx: mpsc::Sender<()>,
 }
 
 type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 
-type PostHook = Box<dyn FnOnce(MutexGuard<'_, State>) + Send>;
+type PostHook = Box<dyn FnOnce() + Send>;
 struct Outgoing {
     data: ResponseData,
     post_hook: Option<PostHook>,
@@ -148,13 +146,12 @@ pub(super) async fn process(
 
     let payload = outgoing.into_iter().map(|x| x.data).collect();
     let res = Response::new(req.tenant, req.id, payload);
-
     // Send out our primary response from processing the request
     let result = tx.send(res).await;
 
     // Invoke all post hooks
     for hook in post_hooks {
-        hook(state.lock().await);
+        hook();
     }
 
     result
@@ -220,11 +217,14 @@ async fn file_append(
         .sftp()
         .open_mode(
             path,
-            OpenFlags::WRITE | OpenFlags::APPEND,
-            // Using 755 as this mirrors "ssh <host> touch ..."
-            // 644: rw-r--r--
-            0o644,
-            OpenType::File,
+            OpenOptions {
+                read: false,
+                write: Some(WriteMode::Append),
+                // Using 644 as this mirrors "ssh <host> touch ..."
+                // 644: rw-r--r--
+                mode: 0o644,
+                ty: OpenFileType::File,
+            },
         )
         .compat()
         .await
@@ -278,7 +278,7 @@ async fn dir_read(
             FileType::Dir => true,
             FileType::File => false,
             FileType::Symlink => match sftp.stat(&path).await {
-                Ok(stat) => stat.file_type().is_dir(),
+                Ok(stat) => stat.is_dir(),
                 Err(x) => {
                     errors.push(DistantError::from(to_other_error(x)));
                     continue;
@@ -317,7 +317,7 @@ async fn dir_read(
                                 .unwrap_or(path);
                         };
 
-                        let ft = stat.file_type();
+                        let ft = stat.ty;
                         to_traverse.push(DirEntry {
                             path,
                             file_type: if ft.is_dir() {
@@ -397,7 +397,7 @@ async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<O
         .map_err(to_other_error)?;
 
     // If a file or symlink, we just unlink (easy)
-    if stat.is_file() || stat.file_type().is_symlink() {
+    if stat.is_file() || stat.is_symlink() {
         sftp.unlink(path)
             .compat()
             .await
@@ -509,7 +509,7 @@ async fn copy(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Out
 async fn rename(session: WezSession, src: PathBuf, dst: PathBuf) -> io::Result<Outgoing> {
     session
         .sftp()
-        .rename(src, dst, None)
+        .rename(src, dst, Default::default())
         .compat()
         .await
         .map_err(to_other_error)?;
@@ -563,9 +563,9 @@ async fn metadata(
         file_type,
         len: stat.size.unwrap_or_default(),
         // Check that owner, group, or other has write permission (if not, then readonly)
-        readonly: stat.perm.map(|p| p & 0o222 == 0).unwrap_or_default(),
-        accessed: stat.atime.map(u128::from),
-        modified: stat.mtime.map(u128::from),
+        readonly: stat.is_readonly(),
+        accessed: stat.accessed.map(u128::from),
+        modified: stat.modified.map(u128::from),
         created: None,
     }))
 }
@@ -594,8 +594,17 @@ where
         .await
         .map_err(to_other_error)?;
 
+    // Check if the process died immediately and report
+    // an error if that's the case
+    if let Ok(Some(exit_status)) = child.try_wait() {
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("Process exited early: {:?}", exit_status),
+        ));
+    }
+
     let (stdin_tx, mut stdin_rx) = mpsc::channel(1);
-    let (kill_tx, mut kill_rx) = oneshot::channel();
+    let (kill_tx, mut kill_rx) = mpsc::channel(1);
     state.lock().await.processes.insert(
         id,
         Process {
@@ -607,7 +616,7 @@ where
         },
     );
 
-    let post_hook = Box::new(move |state_lock: MutexGuard<'_, State>| {
+    let post_hook = Box::new(move || {
         // Spawn a task that sends stdout as a response
         let mut reply_2 = reply.clone();
         let stdout_task = tokio::spawn(async move {
@@ -704,16 +713,23 @@ where
         let state_2 = Arc::clone(&state);
         let mut reply_2 = reply.clone();
         tokio::spawn(async move {
-            let (success, should_kill) = loop {
-                match (child.try_wait(), kill_rx.try_recv()) {
-                    (Ok(Some(status)), _) => break (status.success(), false),
-                    (_, Ok(_)) => break (false, true),
-                    (_, Err(oneshot::error::TryRecvError::Closed)) => break (false, true),
-                    _ => {}
+            let mut should_kill = false;
+            let mut success = false;
+            tokio::select! {
+                _ = kill_rx.recv() => {
+                    should_kill = true;
                 }
-
-                tokio::time::sleep(Duration::from_millis(WAIT_PAUSE_MILLIS)).await;
-            };
+                result = child.async_wait() => {
+                    match result {
+                        Ok(status) => {
+                            success = status.success();
+                        }
+                        Err(x) => {
+                            error!("<Ssh: Proc {}> Waiting on process failed: {}", id, x);
+                        }
+                    }
+                }
+            }
 
             // Force stdin task to abort if it hasn't exited as there is no
             // point to sending any more stdin
@@ -721,8 +737,19 @@ where
 
             if should_kill {
                 debug!("<Ssh: Proc {}> Process killed", id);
+
                 if let Err(x) = child.kill() {
                     error!("<Ssh: Proc {}> Unable to kill process: {}", id, x);
+                }
+
+                // NOTE: At the moment, child.kill does nothing for wezterm_ssh::SshChildProcess;
+                //       so, we need to manually run kill/taskkill to make sure that the
+                //       process is sent a kill signal
+                if let Some(pid) = child.process_id() {
+                    let _ = session.exec(&format!("kill -9 {}", pid), None).await;
+                    let _ = session
+                        .exec(&format!("taskkill /F /PID {}", pid), None)
+                        .await;
                 }
             } else {
                 debug!("<Ssh: Proc {}> Process done", id);
@@ -762,7 +789,7 @@ async fn proc_kill(
     id: usize,
 ) -> io::Result<Outgoing> {
     if let Some(process) = state.lock().await.processes.remove(&id) {
-        if process.kill_tx.send(()).is_ok() {
+        if process.kill_tx.send(()).await.is_ok() {
             return Ok(Outgoing::from(ResponseData::Ok));
         }
     }

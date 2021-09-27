@@ -19,6 +19,9 @@ opt-level = 'z'
 lto = true
 codegen-units = 1
 
+[patch.crates-io]
+ssh2 = { git = "https://github.com/wez/ssh2-rs.git", branch="win32ssl" }
+
 [dependencies]
 derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error", "is_variant"] }
 distant-core = { version = "=0.15.0", path = "distant-core", features = ["structopt"] }
