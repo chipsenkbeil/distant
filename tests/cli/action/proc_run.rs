@@ -9,52 +9,67 @@ use distant_core::{
     data::{Error, ErrorKind},
     Request, RequestData, Response, ResponseData,
 };
+use once_cell::sync::Lazy;
 use rstest::*;
 use std::{io::Write, time::Duration};
 
-lazy_static::lazy_static! {
-    static ref TEMP_SCRIPT_DIR: assert_fs::TempDir = assert_fs::TempDir::new().unwrap();
-    static ref SCRIPT_RUNNER: String = String::from("bash");
+static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> = Lazy::new(|| assert_fs::TempDir::new().unwrap());
+static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
 
-    static ref ECHO_ARGS_TO_STDOUT_SH: assert_fs::fixture::ChildPath = {
-        let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");
-        script.write_str(indoc::indoc!(r#"
+static ECHO_ARGS_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
+    let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");
+    script
+        .write_str(indoc::indoc!(
+            r#"
             #/usr/bin/env bash
-            printf "%s" "$@"
-        "#)).unwrap();
-        script
-    };
+            printf "%s" "$*"
+        "#
+        ))
+        .unwrap();
+    script
+});
 
-    static ref ECHO_ARGS_TO_STDERR_SH: assert_fs::fixture::ChildPath = {
-        let script = TEMP_SCRIPT_DIR.child("echo_args_to_stderr.sh");
-        script.write_str(indoc::indoc!(r#"
+static ECHO_ARGS_TO_STDERR_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
+    let script = TEMP_SCRIPT_DIR.child("echo_args_to_stderr.sh");
+    script
+        .write_str(indoc::indoc!(
+            r#"
             #/usr/bin/env bash
-            printf "%s" "$@" 1>&2
-        "#)).unwrap();
-        script
-    };
+            printf "%s" "$*" 1>&2
+        "#
+        ))
+        .unwrap();
+    script
+});
 
-    static ref ECHO_STDIN_TO_STDOUT_SH: assert_fs::fixture::ChildPath = {
-        let script = TEMP_SCRIPT_DIR.child("echo_stdin_to_stdout.sh");
-        script.write_str(indoc::indoc!(r#"
+static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
+    let script = TEMP_SCRIPT_DIR.child("echo_stdin_to_stdout.sh");
+    script
+        .write_str(indoc::indoc!(
+            r#"
             #/usr/bin/env bash
             while IFS= read; do echo "$REPLY"; done
-        "#)).unwrap();
-        script
-    };
+        "#
+        ))
+        .unwrap();
+    script
+});
 
-    static ref EXIT_CODE_SH: assert_fs::fixture::ChildPath = {
-        let script = TEMP_SCRIPT_DIR.child("exit_code.sh");
-        script.write_str(indoc::indoc!(r#"
+static EXIT_CODE_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
+    let script = TEMP_SCRIPT_DIR.child("exit_code.sh");
+    script
+        .write_str(indoc::indoc!(
+            r#"
             #!/usr/bin/env bash
             exit "$1"
-        "#)).unwrap();
-        script
-    };
+        "#
+        ))
+        .unwrap();
+    script
+});
 
-    static ref DOES_NOT_EXIST_BIN: assert_fs::fixture::ChildPath =
-        TEMP_SCRIPT_DIR.child("does_not_exist_bin");
-}
+static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
+    Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
 macro_rules! next_two_msgs {
     ($rx:expr) => {{

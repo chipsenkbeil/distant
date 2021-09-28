@@ -1,4 +1,5 @@
 use crate::cli::fixtures::DistantServerCtx;
+use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use std::{
     env, io,
@@ -8,11 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-lazy_static::lazy_static! {
-    /// Predicate that checks for a single line that is a failure
-    pub static ref FAILURE_LINE: predicates::str::RegexPredicate =
-        regex_pred(r"^Failed \(.*\): '.*'\.\n$");
-}
+/// Predicate that checks for a single line that is a failure
+pub static FAILURE_LINE: Lazy<predicates::str::RegexPredicate> =
+    Lazy::new(|| regex_pred(r"^Failed \(.*\): '.*'\.\n$"));
 
 /// Produces a regex predicate using the given string
 pub fn regex_pred(s: &str) -> predicates::str::RegexPredicate {

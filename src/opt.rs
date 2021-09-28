@@ -7,7 +7,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From, IsVariant};
 use distant_core::{PortRange, RequestData};
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::{
     env,
     net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr},
@@ -18,9 +18,7 @@ use std::{
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, IntoStaticStr, VariantNames};
 
-lazy_static! {
-    static ref USERNAME: String = whoami::username();
-}
+static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 
 /// Options and commands to apply to binary
 #[derive(Debug, StructOpt)]
@@ -123,6 +121,22 @@ pub struct SessionOpt {
     pub session_socket: PathBuf,
 }
 
+/// Contains options related ssh
+#[derive(Clone, Debug, StructOpt)]
+pub struct SshConnectionOpts {
+    /// Host to use for connection to when using SSH method
+    #[structopt(name = "ssh-host", long, default_value = "localhost")]
+    pub host: String,
+
+    /// Port to use for connection when using SSH method
+    #[structopt(name = "ssh-port", long, default_value = "22")]
+    pub port: u16,
+
+    /// Alternative user for connection when using SSH method
+    #[structopt(name = "ssh-user", long)]
+    pub user: Option<String>,
+}
+
 #[derive(Debug, StructOpt)]
 pub enum Subcommand {
     /// Performs some action on a remote machine
@@ -162,6 +176,35 @@ impl Subcommand {
             Self::Lsp(_) => true,
             _ => false,
         }
+    }
+}
+
+/// Represents the method to use in communicating with a remote machine
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Display,
+    PartialEq,
+    Eq,
+    IsVariant,
+    IntoStaticStr,
+    EnumString,
+    EnumVariantNames,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum Method {
+    /// Launch/connect to a distant server running on a remote machine
+    Distant,
+
+    /// Connect to an SSH server running on a remote machine
+    #[cfg(feature = "ssh2")]
+    Ssh,
+}
+
+impl Default for Method {
+    fn default() -> Self {
+        Self::Distant
     }
 }
 
@@ -208,9 +251,20 @@ pub struct ActionSubcommand {
     )]
     pub format: Format,
 
+    /// Method to communicate with a remote machine
+    #[structopt(
+        short,
+        long,
+        case_insensitive = true,
+        default_value = Method::default().into(),
+        possible_values = Method::VARIANTS
+    )]
+    pub method: Method,
+
     /// Represents the medium for retrieving a session for use in performing the action
     #[structopt(
         long,
+        case_insensitive = true,
         default_value = SessionInput::default().into(),
         possible_values = SessionInput::VARIANTS
     )]
@@ -219,6 +273,10 @@ pub struct ActionSubcommand {
     /// Contains additional information related to sessions
     #[structopt(flatten)]
     pub session_data: SessionOpt,
+
+    /// SSH connection settings when method is ssh
+    #[structopt(flatten)]
+    pub ssh_connection: SshConnectionOpts,
 
     /// If specified, commands to send are sent over stdin and responses are received
     /// over stdout (and stderr if mode is shell)
@@ -574,9 +632,20 @@ pub struct LspSubcommand {
     )]
     pub format: Format,
 
+    /// Method to communicate with a remote machine
+    #[structopt(
+        short,
+        long,
+        case_insensitive = true,
+        default_value = Method::default().into(),
+        possible_values = Method::VARIANTS
+    )]
+    pub method: Method,
+
     /// Represents the medium for retrieving a session to use when running a remote LSP server
     #[structopt(
         long,
+        case_insensitive = true,
         default_value = SessionInput::default().into(),
         possible_values = SessionInput::VARIANTS
     )]
@@ -585,6 +654,10 @@ pub struct LspSubcommand {
     /// Contains additional information related to sessions
     #[structopt(flatten)]
     pub session_data: SessionOpt,
+
+    /// SSH connection settings when method is ssh
+    #[structopt(flatten)]
+    pub ssh_connection: SshConnectionOpts,
 
     /// Command to run on the remote machine that represents an LSP server
     pub cmd: String,

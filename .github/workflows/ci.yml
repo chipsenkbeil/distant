@@ -9,8 +9,8 @@ on:
       - master
 
 jobs:
-  test-core:
-    name: "[distant-core] Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
+  tests:
+    name: "Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,34 +32,52 @@ jobs:
         run: cargo --version
       - uses: Vampire/setup-wsl@v1
         if: ${{ matrix.os == 'windows-latest' }}
-      - run: cargo test --verbose -p distant-core
-      - run: cargo test --verbose --all-features -p distant-core
-
-  test-cli:
-    name: "[distant] Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { rust: stable, os: ubuntu-latest }
-          - { rust: stable, os: macos-latest }
-          # - { rust: stable, os: windows-latest }
-          - { rust: 1.51.0, os: ubuntu-latest }
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install Rust ${{ matrix.rust }}
-        uses: actions-rs/toolchain@v1
+      - uses: dorny/paths-filter@v2
+        id: changes
         with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v1
-      - name: Check Cargo availability
-        run: cargo --version
-      - uses: Vampire/setup-wsl@v1
-        if: ${{ matrix.os == 'windows-latest' }}
-      - run: cargo test --verbose
+          base: ${{ github.ref }}
+          filters: |
+            cli:
+              - 'src/**'
+              - 'Cargo.*'
+            core:
+              - 'distant-core/**'
+            ssh2:
+              - 'distant-ssh2/**'
+      - name: Run core tests (default features)
+        run: cargo test --verbose -p distant-core
+        if: steps.changes.outputs.core == 'true'
+      - name: Run core tests (all features)
+        run: cargo test --verbose --all-features -p distant-core
+        if: steps.changes.outputs.core == 'true'
+      - name: Ensure /run/sshd exists on Unix
+        run: mkdir -p /run/sshd
+        if: |
+          matrix.os != 'windows-latest' &&
+          matrix.os != 'macos-latest' &&
+          steps.changes.outputs.ssh2 == 'true'
+      - name: Run ssh2 tests (default features)
+        run: cargo test --verbose -p distant-ssh2
+        if: |
+          matrix.os != 'windows-latest' &&
+          steps.changes.outputs.ssh2 == 'true'
+      - name: Run ssh2 tests (all features)
+        run: cargo test --verbose --all-features -p distant-ssh2
+        if: |
+          matrix.os != 'windows-latest' &&
+          steps.changes.outputs.ssh2 == 'true'
+      - name: Run CLI tests
+        run: cargo test --verbose
+        shell: bash
+        if: |
+          matrix.os != 'windows-latest' &&
+          steps.changes.outputs.cli == 'true'
+      - name: Run CLI tests (no default features)
+        run: cargo test --verbose --no-default-features
+        shell: bash
+        if: |
+          matrix.os != 'windows-latest' &&
+          steps.changes.outputs.cli == 'true'
 
   clippy:
     name: Lint with clippy

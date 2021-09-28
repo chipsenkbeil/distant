@@ -1,0 +1,32 @@
+[package]
+name = "distant-ssh2"
+description = "Library to enable native ssh-2 protocol for use with distant sessions"
+categories = ["network-programming"]
+version = "0.15.0"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2018"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+async-compat = "0.2.1"
+distant-core = { version = "=0.15.0", path = "../distant-core" }
+futures = "0.3.16"
+log = "0.4.14"
+rand = { version = "0.8.4", features = ["getrandom"] }
+rpassword = "5.0.1"
+smol = "1.2"
+tokio = { version = "1.12.0", features = ["full"] }
+wezterm-ssh = { version = "0.2.0", features = ["vendored-openssl"], git = "https://github.com/chipsenkbeil/wezterm" }
+
+[dev-dependencies]
+assert_cmd = "2.0.0"
+assert_fs = "1.0.4"
+flexi_logger = "0.19.4"
+indoc = "1.0.3"
+once_cell = "1.8.0"
+predicates = "2.0.2"
+rstest = "0.11.0"
+whoami = "1.1.4"
