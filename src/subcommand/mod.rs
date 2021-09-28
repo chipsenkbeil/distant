@@ -49,12 +49,13 @@ impl CommandRunner {
             #[cfg(feature = "ssh2")]
             Method::Ssh => {
                 use distant_ssh2::{Ssh2Session, Ssh2SessionOpts};
-                let SshConnectionOpts { host, port } = ssh_connection;
+                let SshConnectionOpts { host, port, user } = ssh_connection;
 
                 let session = Ssh2Session::connect(
                     host,
                     Ssh2SessionOpts {
                         port: Some(port),
+                        user,
                         ..Default::default()
                     },
                 )

@@ -72,6 +72,12 @@ jobs:
         if: |
           matrix.os != 'windows-latest' &&
           steps.changes.outputs.cli == 'true'
+      - name: Run CLI tests (no default features)
+        run: cargo test --verbose --no-default-features
+        shell: bash
+        if: |
+          matrix.os != 'windows-latest' &&
+          steps.changes.outputs.cli == 'true'
 
   clippy:
     name: Lint with clippy

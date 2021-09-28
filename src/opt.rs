@@ -125,12 +125,16 @@ pub struct SessionOpt {
 #[derive(Clone, Debug, StructOpt)]
 pub struct SshConnectionOpts {
     /// Host to use for connection to when using SSH method
-    #[structopt(long, default_value = "localhost")]
+    #[structopt(name = "ssh-host", long, default_value = "localhost")]
     pub host: String,
 
     /// Port to use for connection when using SSH method
-    #[structopt(long, default_value = "22")]
+    #[structopt(name = "ssh-port", long, default_value = "22")]
     pub port: u16,
+
+    /// Alternative user for connection when using SSH method
+    #[structopt(name = "ssh-user", long)]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, StructOpt)]
