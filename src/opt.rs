@@ -188,6 +188,7 @@ impl Subcommand {
     EnumString,
     EnumVariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum Method {
     /// Launch/connect to a distant server running on a remote machine
     Distant,
@@ -250,6 +251,7 @@ pub struct ActionSubcommand {
     #[structopt(
         short,
         long,
+        case_insensitive = true,
         default_value = Method::default().into(),
         possible_values = Method::VARIANTS
     )]
@@ -258,6 +260,7 @@ pub struct ActionSubcommand {
     /// Represents the medium for retrieving a session for use in performing the action
     #[structopt(
         long,
+        case_insensitive = true,
         default_value = SessionInput::default().into(),
         possible_values = SessionInput::VARIANTS
     )]
@@ -629,6 +632,7 @@ pub struct LspSubcommand {
     #[structopt(
         short,
         long,
+        case_insensitive = true,
         default_value = Method::default().into(),
         possible_values = Method::VARIANTS
     )]
@@ -637,6 +641,7 @@ pub struct LspSubcommand {
     /// Represents the medium for retrieving a session to use when running a remote LSP server
     #[structopt(
         long,
+        case_insensitive = true,
         default_value = SessionInput::default().into(),
         possible_values = SessionInput::VARIANTS
     )]
