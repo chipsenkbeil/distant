@@ -1,5 +1,5 @@
 use super::{RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout};
-use crate::client::Session;
+use crate::client::SessionChannel;
 use futures::stream::{Stream, StreamExt};
 use std::{
     fmt::Write,
@@ -25,11 +25,11 @@ impl RemoteLspProcess {
     /// the process like an LSP server
     pub async fn spawn(
         tenant: impl Into<String>,
-        session: &mut Session,
+        channel: SessionChannel,
         cmd: impl Into<String>,
         args: Vec<String>,
     ) -> Result<Self, RemoteProcessError> {
-        let mut inner = RemoteProcess::spawn(tenant, session, cmd, args).await?;
+        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
@@ -248,6 +248,7 @@ fn read_lsp_messages(input: String) -> io::Result<(Option<String>, Vec<LspData>)
 mod tests {
     use super::*;
     use crate::{
+        client::Session,
         data::{Request, RequestData, Response, ResponseData},
         net::{InmemoryStream, PlainCodec, Transport},
     };
@@ -259,11 +260,11 @@ mod tests {
     // Configures an lsp process with a means to send & receive data from outside
     async fn spawn_lsp_process() -> (Transport<InmemoryStream, PlainCodec>, RemoteLspProcess) {
         let (mut t1, t2) = Transport::make_pair();
-        let mut session = Session::initialize(t2).unwrap();
+        let session = Session::initialize(t2).unwrap();
         let spawn_task = tokio::spawn(async move {
             RemoteLspProcess::spawn(
                 String::from("test-tenant"),
-                &mut session,
+                session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
             )

@@ -1,14 +1,15 @@
 use crate::{
-    client::{RemoteLspProcess, RemoteProcess, RemoteProcessError, Session},
+    client::{RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel},
     data::{DirEntry, Error as Failure, FileType, Request, RequestData, ResponseData},
     net::TransportError,
 };
 use derive_more::{Display, Error, From};
 use std::{future::Future, path::PathBuf, pin::Pin};
 
-/// Represents an error that can occur related to convenience functions tied to a [`Session`]
+/// Represents an error that can occur related to convenience functions tied to a
+/// [`SessionChannel`] through [`SessionChannelExt`]
 #[derive(Debug, Display, Error, From)]
-pub enum SessionExtError {
+pub enum SessionChannelExtError {
     /// Occurs when the remote action fails
     Failure(#[error(not(source))] Failure),
 
@@ -19,7 +20,7 @@ pub enum SessionExtError {
     MismatchedResponse,
 }
 
-pub type AsyncReturn<'a, T, E = SessionExtError> =
+pub type AsyncReturn<'a, T, E = SessionChannelExtError> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 /// Represents metadata about some path on a remote machine
@@ -35,8 +36,8 @@ pub struct Metadata {
     pub modified: Option<u128>,
 }
 
-/// Provides convenience functions on top of a [`Session`]
-pub trait SessionExt {
+/// Provides convenience functions on top of a [`SessionChannel`]
+pub trait SessionChannelExt {
     /// Appends to a remote file using the data from a collection of bytes
     fn append_file(
         &mut self,
@@ -166,7 +167,7 @@ macro_rules! make_body {
             if data.is_ok() {
                 Ok(())
             } else {
-                Err(SessionExtError::MismatchedResponse)
+                Err(SessionChannelExtError::MismatchedResponse)
             }
         })
     };
@@ -177,12 +178,12 @@ macro_rules! make_body {
             $self
                 .send(req)
                 .await
-                .map_err(SessionExtError::from)
+                .map_err(SessionChannelExtError::from)
                 .and_then(|res| {
                     if res.payload.len() == 1 {
                         Ok(res.payload.into_iter().next().unwrap())
                     } else {
-                        Err(SessionExtError::MismatchedResponse)
+                        Err(SessionChannelExtError::MismatchedResponse)
                     }
                 })
                 .and_then($and_then)
@@ -190,7 +191,7 @@ macro_rules! make_body {
     }};
 }
 
-impl SessionExt for Session {
+impl SessionChannelExt for SessionChannel {
     fn append_file(
         &mut self,
         tenant: impl Into<String>,
@@ -258,7 +259,7 @@ impl SessionExt for Session {
             RequestData::Exists { path: path.into() },
             |data| match data {
                 ResponseData::Exists(x) => Ok(x),
-                _ => Err(SessionExtError::MismatchedResponse),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
     }
@@ -296,7 +297,7 @@ impl SessionExt for Session {
                     created,
                     modified,
                 }),
-                _ => Err(SessionExtError::MismatchedResponse),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
     }
@@ -322,7 +323,7 @@ impl SessionExt for Session {
             },
             |data| match data {
                 ResponseData::DirEntries { entries, errors } => Ok((entries, errors)),
-                _ => Err(SessionExtError::MismatchedResponse),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
     }
@@ -338,7 +339,7 @@ impl SessionExt for Session {
             RequestData::FileRead { path: path.into() },
             |data| match data {
                 ResponseData::Blob { data } => Ok(data),
-                _ => Err(SessionExtError::MismatchedResponse),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
     }
@@ -354,7 +355,7 @@ impl SessionExt for Session {
             RequestData::FileReadText { path: path.into() },
             |data| match data {
                 ResponseData::Text { data } => Ok(data),
-                _ => Err(SessionExtError::MismatchedResponse),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
     }
@@ -395,7 +396,7 @@ impl SessionExt for Session {
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
-        Box::pin(async move { RemoteProcess::spawn(tenant, self, cmd, args).await })
+        Box::pin(async move { RemoteProcess::spawn(tenant, self.clone(), cmd, args).await })
     }
 
     fn spawn_lsp(
@@ -406,7 +407,7 @@ impl SessionExt for Session {
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
-        Box::pin(async move { RemoteLspProcess::spawn(tenant, self, cmd, args).await })
+        Box::pin(async move { RemoteLspProcess::spawn(tenant, self.clone(), cmd, args).await })
     }
 
     fn write_file(

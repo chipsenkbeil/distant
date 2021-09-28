@@ -88,7 +88,8 @@ async fn start(
         // the stdin will be used for sending ProcStdin to remote process
         (_, Some(RequestData::ProcRun { cmd, args })) if is_shell_format => {
             let mut proc =
-                RemoteProcess::spawn(utils::new_tenant(), &mut session, cmd, args).await?;
+                RemoteProcess::spawn(utils::new_tenant(), session.clone_channel(), cmd, args)
+                    .await?;
 
             // If we also parsed an LSP's initialize request for its session, we want to forward
             // it along in the case of a process call

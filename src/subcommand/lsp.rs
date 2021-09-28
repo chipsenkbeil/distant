@@ -65,11 +65,16 @@ async fn run_async(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 async fn start(
     cmd: LspSubcommand,
-    mut session: Session,
+    session: Session,
     lsp_data: Option<LspData>,
 ) -> Result<(), Error> {
-    let mut proc =
-        RemoteLspProcess::spawn(utils::new_tenant(), &mut session, cmd.cmd, cmd.args).await?;
+    let mut proc = RemoteLspProcess::spawn(
+        utils::new_tenant(),
+        session.clone_channel(),
+        cmd.cmd,
+        cmd.args,
+    )
+    .await?;
 
     // If we also parsed an LSP's initialize request for its session, we want to forward
     // it along in the case of a process call
