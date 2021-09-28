@@ -1,5 +1,5 @@
 use crate::{
-    client::{RemoteProcess, RemoteProcessError, Session},
+    client::{RemoteLspProcess, RemoteProcess, RemoteProcessError, Session},
     data::{DirEntry, Error as Failure, FileType, Request, RequestData, ResponseData},
     net::TransportError,
 };
@@ -135,6 +135,14 @@ pub trait SessionExt {
         args: Vec<String>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError>;
 
+    /// Spawns an LSP process on the remote machine
+    fn spawn_lsp(
+        &mut self,
+        tenant: impl Into<String>,
+        cmd: impl Into<String>,
+        args: Vec<String>,
+    ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError>;
+
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
         &mut self,
@@ -183,7 +191,6 @@ macro_rules! make_body {
 }
 
 impl SessionExt for Session {
-    /// Appends to a remote file using the data from a collection of bytes
     fn append_file(
         &mut self,
         tenant: impl Into<String>,
@@ -198,7 +205,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Appends to a remote file using the data from a string
     fn append_file_text(
         &mut self,
         tenant: impl Into<String>,
@@ -213,7 +219,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Copies a remote file or directory from src to dst
     fn copy(
         &mut self,
         tenant: impl Into<String>,
@@ -228,7 +233,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Creates a remote directory, optionally creating all parent components if specified
     fn create_dir(
         &mut self,
         tenant: impl Into<String>,
@@ -243,7 +247,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Checks if a path exists on a remote machine
     fn exists(
         &mut self,
         tenant: impl Into<String>,
@@ -260,7 +263,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Retrieves metadata about a path on a remote machine
     fn metadata(
         &mut self,
         tenant: impl Into<String>,
@@ -299,7 +301,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Reads entries from a directory, returning a tuple of directory entries and failures
     fn read_dir(
         &mut self,
         tenant: impl Into<String>,
@@ -326,7 +327,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Reads a remote file as a collection of bytes
     fn read_file(
         &mut self,
         tenant: impl Into<String>,
@@ -343,7 +343,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Returns a remote file as a string
     fn read_file_text(
         &mut self,
         tenant: impl Into<String>,
@@ -360,8 +359,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Removes a remote file or directory, supporting removal of non-empty directories if
-    /// force is true
     fn remove(
         &mut self,
         tenant: impl Into<String>,
@@ -376,7 +373,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Renames a remote file or directory from src to dst
     fn rename(
         &mut self,
         tenant: impl Into<String>,
@@ -391,7 +387,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Spawns a process on the remote machine
     fn spawn(
         &mut self,
         tenant: impl Into<String>,
@@ -403,7 +398,17 @@ impl SessionExt for Session {
         Box::pin(async move { RemoteProcess::spawn(tenant, self, cmd, args).await })
     }
 
-    /// Writes a remote file with the data from a collection of bytes
+    fn spawn_lsp(
+        &mut self,
+        tenant: impl Into<String>,
+        cmd: impl Into<String>,
+        args: Vec<String>,
+    ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError> {
+        let tenant = tenant.into();
+        let cmd = cmd.into();
+        Box::pin(async move { RemoteLspProcess::spawn(tenant, self, cmd, args).await })
+    }
+
     fn write_file(
         &mut self,
         tenant: impl Into<String>,
@@ -418,7 +423,6 @@ impl SessionExt for Session {
         )
     }
 
-    /// Writes a remote file with the data from a string
     fn write_file_text(
         &mut self,
         tenant: impl Into<String>,
