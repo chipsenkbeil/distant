@@ -1,7 +1,8 @@
 use crate::{
     exit::{ExitCode, ExitCodeError},
     link::RemoteProcessLink,
-    opt::{CommonOpt, LspSubcommand, SessionInput},
+    opt::{CommonOpt, LspSubcommand},
+    subcommand::CommandRunner,
     utils,
 };
 use derive_more::{Display, Error, From};
@@ -40,17 +41,26 @@ pub fn run(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
 }
 
 async fn run_async(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
+    let method = cmd.method;
     let timeout = opt.to_timeout_duration();
+    let ssh_connection = cmd.ssh_connection.clone();
+    let session_input = cmd.session;
     let session_file = cmd.session_data.session_file.clone();
     let session_socket = cmd.session_data.session_socket.clone();
-    extract_session_and_start!(
-        cmd,
-        cmd.session,
+
+    CommandRunner {
+        method,
+        ssh_connection,
+        session_input,
         session_file,
         session_socket,
         timeout,
-        |cmd, session, _, lsp_data| start(cmd, session, lsp_data)
+    }
+    .run(
+        |session, _, lsp_data| Box::pin(start(cmd, session, lsp_data)),
+        Error::Io,
     )
+    .await
 }
 
 async fn start(

@@ -121,6 +121,18 @@ pub struct SessionOpt {
     pub session_socket: PathBuf,
 }
 
+/// Contains options related ssh
+#[derive(Clone, Debug, StructOpt)]
+pub struct SshConnectionOpts {
+    /// Host to use for connection to when using SSH method
+    #[structopt(long, default_value = "localhost")]
+    pub host: String,
+
+    /// Port to use for connection when using SSH method
+    #[structopt(long, default_value = "22")]
+    pub port: u16,
+}
+
 #[derive(Debug, StructOpt)]
 pub enum Subcommand {
     /// Performs some action on a remote machine
@@ -181,7 +193,7 @@ pub enum Method {
     Distant,
 
     /// Connect to an SSH server running on a remote machine
-    #[cfg(feature = "distant-ssh2")]
+    #[cfg(feature = "ssh2")]
     Ssh,
 }
 
@@ -254,6 +266,10 @@ pub struct ActionSubcommand {
     /// Contains additional information related to sessions
     #[structopt(flatten)]
     pub session_data: SessionOpt,
+
+    /// SSH connection settings when method is ssh
+    #[structopt(flatten)]
+    pub ssh_connection: SshConnectionOpts,
 
     /// If specified, commands to send are sent over stdin and responses are received
     /// over stdout (and stderr if mode is shell)
@@ -468,15 +484,6 @@ pub struct LaunchSubcommand {
     )]
     pub format: Format,
 
-    /// Method to communicate with a remote machine
-    #[structopt(
-        short,
-        long,
-        default_value = Method::default().into(),
-        possible_values = Method::VARIANTS
-    )]
-    pub method: Method,
-
     /// Path to distant program on remote machine to execute via ssh;
     /// by default, this program needs to be available within PATH as
     /// specified when compiling ssh (not your login shell)
@@ -638,6 +645,10 @@ pub struct LspSubcommand {
     /// Contains additional information related to sessions
     #[structopt(flatten)]
     pub session_data: SessionOpt,
+
+    /// SSH connection settings when method is ssh
+    #[structopt(flatten)]
+    pub ssh_connection: SshConnectionOpts,
 
     /// Command to run on the remote machine that represents an LSP server
     pub cmd: String,
