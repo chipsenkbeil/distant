@@ -3,6 +3,7 @@ use distant_core::{Request, Session, Transport};
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
 use std::{
+    collections::BTreeMap,
     io::{self, Write},
     path::PathBuf,
     sync::Arc,
@@ -13,6 +14,7 @@ use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as We
 mod handler;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ssh2AuthPrompt {
     /// The label to show when prompting the user
     pub prompt: String,
@@ -23,6 +25,7 @@ pub struct Ssh2AuthPrompt {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ssh2AuthEvent {
     /// Represents the name of the user to be authenticated. This may be empty!
     pub username: String,
@@ -35,13 +38,40 @@ pub struct Ssh2AuthEvent {
 }
 
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ssh2SessionOpts {
+    /// List of files from which the user's DSA, ECDSA, Ed25519, or RSA authentication identity
+    /// is read, defaulting to
+    ///
+    /// - `~/.ssh/id_dsa`
+    /// - `~/.ssh/id_ecdsa`
+    /// - `~/.ssh/id_ed25519`
+    /// - `~/.ssh/id_rsa`
     pub identity_files: Vec<PathBuf>,
+
+    /// If provided and true, specifies that ssh should only use the configured authentication
+    /// and certificate files (either the defaults or configured from `identity_files`)
+    ///
+    /// Default is false (aka no)
     pub identities_only: Option<bool>,
+
+    /// Port to use when connecting to an SSHD instance
     pub port: Option<u16>,
+
+    /// Specifies the command to use to connect to the server
     pub proxy_command: Option<String>,
+
+    /// Specifies the user to log in as
     pub user: Option<String>,
+
+    /// Specifies one or more files to use for the user host key database, defaulting to
+    ///
+    /// - `~/.ssh/known_hosts`
+    /// - `~/.ssh/known_hosts2`
     pub user_known_hosts_files: Vec<PathBuf>,
+
+    /// Additional options to provide as defined by `ssh_config(5)`
+    pub other: BTreeMap<String, String>,
 }
 
 pub struct Ssh2AuthHandler {
@@ -158,6 +188,9 @@ impl Ssh2Session {
                     .join(" "),
             );
         }
+
+        // Add in any of the other options provided
+        config.extend(opts.other);
 
         // Establish a connection
         let (session, events) =
