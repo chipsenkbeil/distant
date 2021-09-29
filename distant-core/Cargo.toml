@@ -10,9 +10,6 @@ repository = "https://github.com/chipsenkbeil/distant"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 
-[features]
-native-ssh2 = ["rpassword", "ssh2"]
-
 [dependencies]
 bytes = "1.1.0"
 chacha20poly1305 = "0.9.0"
@@ -31,8 +28,6 @@ tokio-util = { version = "0.6.7", features = ["codec"] }
 walkdir = "2.3.2"
 
 # Optional dependencies based on features
-rpassword = { version = "5.0.1", optional = true }
-ssh2 = { version = "0.9.1", features = ["vendored-openssl"], optional = true }
 structopt = { version = "0.3.22", optional = true }
 
 [dev-dependencies]

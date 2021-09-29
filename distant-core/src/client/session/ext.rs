@@ -4,6 +4,7 @@ use crate::{
     net::TransportError,
 };
 use derive_more::{Display, Error, From};
+use serde::{Deserialize, Serialize};
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 /// Represents an error that can occur related to convenience functions tied to a
@@ -24,6 +25,7 @@ pub type AsyncReturn<'a, T, E = SessionChannelExtError> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 /// Represents metadata about some path on a remote machine
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Metadata {
     pub file_type: FileType,
     pub len: u64,
