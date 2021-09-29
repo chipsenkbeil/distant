@@ -330,32 +330,7 @@ pub enum ResponseData {
     Exists(bool),
 
     /// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
-    Metadata {
-        /// Canonicalized path to the file or directory, resolving symlinks, only included
-        /// if flagged during the request
-        canonicalized_path: Option<PathBuf>,
-
-        /// Represents the type of the entry as a file/dir/symlink
-        file_type: FileType,
-
-        /// Size of the file/directory/symlink in bytes
-        len: u64,
-
-        /// Whether or not the file/directory/symlink is marked as unwriteable
-        readonly: bool,
-
-        /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
-        /// can be optional as certain systems don't support this
-        accessed: Option<u128>,
-
-        /// Represents when (in milliseconds) the file/directory/symlink was created;
-        /// can be optional as certain systems don't support this
-        created: Option<u128>,
-
-        /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
-        /// can be optional as certain systems don't support this
-        modified: Option<u128>,
-    },
+    Metadata(Metadata),
 
     /// Response to starting a new process
     ProcStart {
@@ -400,26 +375,59 @@ pub enum ResponseData {
     },
 
     /// Response to retrieving information about the server and the system it is on
-    SystemInfo {
-        /// Family of the operating system as described in
-        /// https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html
-        family: String,
+    SystemInfo(SystemInfo),
+}
 
-        /// Name of the specific operating system as described in
-        /// https://doc.rust-lang.org/std/env/consts/constant.OS.html
-        os: String,
+/// Represents metadata about some path on a remote machine
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Metadata {
+    /// Canonicalized path to the file or directory, resolving symlinks, only included
+    /// if flagged during the request
+    pub canonicalized_path: Option<PathBuf>,
 
-        /// Architecture of the CPI as described in
-        /// https://doc.rust-lang.org/std/env/consts/constant.ARCH.html
-        arch: String,
+    /// Represents the type of the entry as a file/dir/symlink
+    pub file_type: FileType,
 
-        /// Current working directory of the running server process
-        current_dir: PathBuf,
+    /// Size of the file/directory/symlink in bytes
+    pub len: u64,
 
-        /// Primary separator for path components for the current platform
-        /// as defined in https://doc.rust-lang.org/std/path/constant.MAIN_SEPARATOR.html
-        main_separator: char,
-    },
+    /// Whether or not the file/directory/symlink is marked as unwriteable
+    pub readonly: bool,
+
+    /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
+    /// can be optional as certain systems don't support this
+    pub accessed: Option<u128>,
+
+    /// Represents when (in milliseconds) the file/directory/symlink was created;
+    /// can be optional as certain systems don't support this
+    pub created: Option<u128>,
+
+    /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
+    /// can be optional as certain systems don't support this
+    pub modified: Option<u128>,
+}
+
+/// Represents information about a system
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemInfo {
+    /// Family of the operating system as described in
+    /// https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html
+    pub family: String,
+
+    /// Name of the specific operating system as described in
+    /// https://doc.rust-lang.org/std/env/consts/constant.OS.html
+    pub os: String,
+
+    /// Architecture of the CPI as described in
+    /// https://doc.rust-lang.org/std/env/consts/constant.ARCH.html
+    pub arch: String,
+
+    /// Current working directory of the running server process
+    pub current_dir: PathBuf,
+
+    /// Primary separator for path components for the current platform
+    /// as defined in https://doc.rust-lang.org/std/path/constant.MAIN_SEPARATOR.html
+    pub main_separator: char,
 }
 
 /// Represents information about a single entry within a directory

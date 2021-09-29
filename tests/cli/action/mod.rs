@@ -12,3 +12,4 @@ mod metadata;
 mod proc_run;
 mod remove;
 mod rename;
+mod system_info;

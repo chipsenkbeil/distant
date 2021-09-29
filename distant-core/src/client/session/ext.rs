@@ -1,10 +1,9 @@
 use crate::{
     client::{RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel},
-    data::{DirEntry, Error as Failure, FileType, Request, RequestData, ResponseData},
+    data::{DirEntry, Error as Failure, Metadata, Request, RequestData, ResponseData, SystemInfo},
     net::TransportError,
 };
 use derive_more::{Display, Error, From};
-use serde::{Deserialize, Serialize};
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 /// Represents an error that can occur related to convenience functions tied to a
@@ -23,20 +22,6 @@ pub enum SessionChannelExtError {
 
 pub type AsyncReturn<'a, T, E = SessionChannelExtError> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
-
-/// Represents metadata about some path on a remote machine
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Metadata {
-    pub file_type: FileType,
-    pub len: u64,
-    pub readonly: bool,
-
-    pub canonicalized_path: Option<PathBuf>,
-
-    pub accessed: Option<u128>,
-    pub created: Option<u128>,
-    pub modified: Option<u128>,
-}
 
 /// Provides convenience functions on top of a [`SessionChannel`]
 pub trait SessionChannelExt {
@@ -135,7 +120,7 @@ pub trait SessionChannelExt {
         &mut self,
         tenant: impl Into<String>,
         cmd: impl Into<String>,
-        args: Vec<String>,
+        args: Vec<impl Into<String>>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError>;
 
     /// Spawns an LSP process on the remote machine
@@ -143,8 +128,11 @@ pub trait SessionChannelExt {
         &mut self,
         tenant: impl Into<String>,
         cmd: impl Into<String>,
-        args: Vec<String>,
+        args: Vec<impl Into<String>>,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError>;
+
+    /// Retrieves information about the remote system
+    fn system_info(&mut self, tenant: impl Into<String>) -> AsyncReturn<'_, SystemInfo>;
 
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
@@ -282,23 +270,7 @@ impl SessionChannelExt for SessionChannel {
                 resolve_file_type
             },
             |data| match data {
-                ResponseData::Metadata {
-                    canonicalized_path,
-                    file_type,
-                    len,
-                    readonly,
-                    accessed,
-                    created,
-                    modified,
-                } => Ok(Metadata {
-                    canonicalized_path,
-                    file_type,
-                    len,
-                    readonly,
-                    accessed,
-                    created,
-                    modified,
-                }),
+                ResponseData::Metadata(x) => Ok(x),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
@@ -394,10 +366,11 @@ impl SessionChannelExt for SessionChannel {
         &mut self,
         tenant: impl Into<String>,
         cmd: impl Into<String>,
-        args: Vec<String>,
+        args: Vec<impl Into<String>>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
+        let args = args.into_iter().map(Into::into).collect();
         Box::pin(async move { RemoteProcess::spawn(tenant, self.clone(), cmd, args).await })
     }
 
@@ -405,11 +378,24 @@ impl SessionChannelExt for SessionChannel {
         &mut self,
         tenant: impl Into<String>,
         cmd: impl Into<String>,
-        args: Vec<String>,
+        args: Vec<impl Into<String>>,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
+        let args = args.into_iter().map(Into::into).collect();
         Box::pin(async move { RemoteLspProcess::spawn(tenant, self.clone(), cmd, args).await })
+    }
+
+    fn system_info(&mut self, tenant: impl Into<String>) -> AsyncReturn<'_, SystemInfo> {
+        make_body!(
+            self,
+            tenant,
+            RequestData::SystemInfo {},
+            |data| match data {
+                ResponseData::SystemInfo(x) => Ok(x),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
+            }
+        )
     }
 
     fn write_file(

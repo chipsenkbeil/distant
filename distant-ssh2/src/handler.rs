@@ -1,6 +1,6 @@
 use async_compat::CompatExt;
 use distant_core::{
-    data::{DirEntry, Error as DistantError, FileType, RunningProcess},
+    data::{DirEntry, Error as DistantError, FileType, Metadata, RunningProcess, SystemInfo},
     Request, RequestData, Response, ResponseData,
 };
 use futures::future;
@@ -558,7 +558,7 @@ async fn metadata(
         FileType::Symlink
     };
 
-    Ok(Outgoing::from(ResponseData::Metadata {
+    Ok(Outgoing::from(ResponseData::Metadata(Metadata {
         canonicalized_path,
         file_type,
         len: stat.len(),
@@ -567,7 +567,7 @@ async fn metadata(
         accessed: stat.accessed.map(u128::from),
         modified: stat.modified.map(u128::from),
         created: None,
-    }))
+    })))
 }
 
 async fn proc_run<F>(
@@ -871,11 +871,11 @@ async fn system_info(session: WezSession) -> io::Result<Outgoing> {
     }
     .to_string();
 
-    Ok(Outgoing::from(ResponseData::SystemInfo {
+    Ok(Outgoing::from(ResponseData::SystemInfo(SystemInfo {
         family,
         os: "".to_string(),
         arch: "".to_string(),
         current_dir,
         main_separator: if is_windows { '\\' } else { '/' },
-    }))
+    })))
 }

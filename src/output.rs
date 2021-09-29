@@ -1,5 +1,8 @@
 use crate::opt::Format;
-use distant_core::{data::Error, Response, ResponseData};
+use distant_core::{
+    data::{Error, Metadata, SystemInfo},
+    Response, ResponseData,
+};
 use log::*;
 use std::io;
 
@@ -106,7 +109,7 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 ResponseOut::StdoutLine("false".to_string())
             }
         }
-        ResponseData::Metadata {
+        ResponseData::Metadata(Metadata {
             canonicalized_path,
             file_type,
             len,
@@ -114,7 +117,7 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             accessed,
             created,
             modified,
-        } => ResponseOut::StdoutLine(format!(
+        }) => ResponseOut::StdoutLine(format!(
             concat!(
                 "{}",
                 "Type: {}\n",
@@ -153,13 +156,13 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 ResponseOut::StderrLine(format!("Proc {} failed", id))
             }
         }
-        ResponseData::SystemInfo {
+        ResponseData::SystemInfo(SystemInfo {
             family,
             os,
             arch,
             current_dir,
             main_separator,
-        } => ResponseOut::StdoutLine(format!(
+        }) => ResponseOut::StdoutLine(format!(
             concat!(
                 "Family: {:?}\n",
                 "Operating System: {:?}\n",

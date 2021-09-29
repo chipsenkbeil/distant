@@ -1,7 +1,8 @@
 use crate::sshd::*;
 use assert_fs::{prelude::*, TempDir};
 use distant_core::{
-    FileType, Request, RequestData, Response, ResponseData, RunningProcess, Session,
+    FileType, Metadata, Request, RequestData, Response, ResponseData, RunningProcess, Session,
+    SystemInfo,
 };
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
@@ -1191,13 +1192,13 @@ async fn metadata_should_send_back_metadata_on_file_if_exists(#[future] session:
     assert!(
         matches!(
             res.payload[0],
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 canonicalized_path: None,
                 file_type: FileType::File,
                 len: 9,
                 readonly: false,
                 ..
-            }
+            })
         ),
         "Unexpected response: {:?}",
         res.payload[0]
@@ -1226,12 +1227,12 @@ async fn metadata_should_send_back_metadata_on_dir_if_exists(#[future] session: 
     assert!(
         matches!(
             res.payload[0],
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 canonicalized_path: None,
                 file_type: FileType::Dir,
                 readonly: false,
                 ..
-            }
+            })
         ),
         "Unexpected response: {:?}",
         res.payload[0]
@@ -1263,12 +1264,12 @@ async fn metadata_should_send_back_metadata_on_symlink_if_exists(#[future] sessi
     assert!(
         matches!(
             res.payload[0],
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 canonicalized_path: None,
                 file_type: FileType::Symlink,
                 readonly: false,
                 ..
-            }
+            })
         ),
         "Unexpected response: {:?}",
         res.payload[0]
@@ -1298,12 +1299,12 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(#[future] 
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     match &res.payload[0] {
-        ResponseData::Metadata {
+        ResponseData::Metadata(Metadata {
             canonicalized_path: Some(path),
             file_type: FileType::Symlink,
             readonly: false,
             ..
-        } => assert_eq!(
+        }) => assert_eq!(
             path,
             &file.path().canonicalize().unwrap(),
             "Symlink canonicalized path does not match referenced file"
@@ -1337,10 +1338,10 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     match &res.payload[0] {
-        ResponseData::Metadata {
+        ResponseData::Metadata(Metadata {
             file_type: FileType::File,
             ..
-        } => {}
+        }) => {}
         x => panic!("Unexpected response: {:?}", x),
     }
 }
@@ -1841,9 +1842,9 @@ async fn system_info_should_send_system_info_based_on_binary(#[future] session: 
         ))
         .await
         .unwrap();
-    let current_dir = if let ResponseData::Metadata {
+    let current_dir = if let ResponseData::Metadata(Metadata {
         canonicalized_path, ..
-    } = &res.payload[0]
+    }) = &res.payload[0]
     {
         canonicalized_path
             .as_deref()
@@ -1858,13 +1859,13 @@ async fn system_info_should_send_system_info_based_on_binary(#[future] session: 
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     assert_eq!(
         res.payload[0],
-        ResponseData::SystemInfo {
+        ResponseData::SystemInfo(SystemInfo {
             family: env::consts::FAMILY.to_string(),
             os: "".to_string(),
             arch: "".to_string(),
             current_dir,
             main_separator: std::path::MAIN_SEPARATOR,
-        },
+        }),
         "Unexpected response: {:?}",
         res.payload[0]
     );

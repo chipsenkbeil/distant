@@ -6,7 +6,7 @@ use assert_cmd::Command;
 use assert_fs::prelude::*;
 use distant::ExitCode;
 use distant_core::{
-    data::{Error, ErrorKind, FileType},
+    data::{Error, ErrorKind, FileType, Metadata},
     Request, RequestData, Response, ResponseData,
 };
 use rstest::*;
@@ -165,12 +165,12 @@ fn should_support_json_metadata_for_file(mut action_cmd: Command) {
     assert!(
         matches!(
             res.payload[0],
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 canonicalized_path: None,
                 file_type: FileType::File,
                 readonly: false,
                 ..
-            },
+            }),
         ),
         "Unexpected response: {:?}",
         res.payload[0],
@@ -207,12 +207,12 @@ fn should_support_json_metadata_for_directory(mut action_cmd: Command) {
     assert!(
         matches!(
             res.payload[0],
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 canonicalized_path: None,
                 file_type: FileType::Dir,
                 readonly: false,
                 ..
-            },
+            }),
         ),
         "Unexpected response: {:?}",
         res.payload[0],
@@ -250,12 +250,12 @@ fn should_support_json_metadata_for_including_a_canonicalized_path(mut action_cm
 
     let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
     match &res.payload[0] {
-        ResponseData::Metadata {
+        ResponseData::Metadata(Metadata {
             canonicalized_path: Some(path),
             file_type: FileType::Symlink,
             readonly: false,
             ..
-        } => assert_eq!(path, &file.path().canonicalize().unwrap()),
+        }) => assert_eq!(path, &file.path().canonicalize().unwrap()),
         x => panic!("Unexpected response: {:?}", x),
     }
 }
@@ -293,10 +293,10 @@ fn should_support_json_metadata_for_resolving_file_type_of_symlink(mut action_cm
     assert!(
         matches!(
             res.payload[0],
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 file_type: FileType::File,
                 ..
-            },
+            }),
         ),
         "Unexpected response: {:?}",
         res.payload[0],

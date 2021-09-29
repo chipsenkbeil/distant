@@ -1,7 +1,8 @@
 use crate::{
     constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
     data::{
-        self, DirEntry, FileType, Request, RequestData, Response, ResponseData, RunningProcess,
+        self, DirEntry, FileType, Metadata, Request, RequestData, Response, ResponseData,
+        RunningProcess, SystemInfo,
     },
     server::distant::state::{Process, State},
 };
@@ -388,7 +389,7 @@ async fn metadata(
         metadata.file_type()
     };
 
-    Ok(Outgoing::from(ResponseData::Metadata {
+    Ok(Outgoing::from(ResponseData::Metadata(Metadata {
         canonicalized_path,
         accessed: metadata
             .accessed()
@@ -414,7 +415,7 @@ async fn metadata(
         } else {
             FileType::Symlink
         },
-    }))
+    })))
 }
 
 async fn proc_run<F>(
@@ -662,13 +663,13 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
 }
 
 async fn system_info() -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(ResponseData::SystemInfo {
+    Ok(Outgoing::from(ResponseData::SystemInfo(SystemInfo {
         family: env::consts::FAMILY.to_string(),
         os: env::consts::OS.to_string(),
         arch: env::consts::ARCH.to_string(),
         current_dir: env::current_dir().unwrap_or_default(),
         main_separator: std::path::MAIN_SEPARATOR,
-    }))
+    })))
 }
 
 #[cfg(test)]
@@ -1930,13 +1931,13 @@ mod tests {
         assert!(
             matches!(
                 res.payload[0],
-                ResponseData::Metadata {
+                ResponseData::Metadata(Metadata {
                     canonicalized_path: None,
                     file_type: FileType::File,
                     len: 9,
                     readonly: false,
                     ..
-                }
+                })
             ),
             "Unexpected response: {:?}",
             res.payload[0]
@@ -1966,12 +1967,12 @@ mod tests {
         assert!(
             matches!(
                 res.payload[0],
-                ResponseData::Metadata {
+                ResponseData::Metadata(Metadata {
                     canonicalized_path: None,
                     file_type: FileType::Dir,
                     readonly: false,
                     ..
-                }
+                })
             ),
             "Unexpected response: {:?}",
             res.payload[0]
@@ -2004,12 +2005,12 @@ mod tests {
         assert!(
             matches!(
                 res.payload[0],
-                ResponseData::Metadata {
+                ResponseData::Metadata(Metadata {
                     canonicalized_path: None,
                     file_type: FileType::Symlink,
                     readonly: false,
                     ..
-                }
+                })
             ),
             "Unexpected response: {:?}",
             res.payload[0]
@@ -2040,12 +2041,12 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 canonicalized_path: Some(path),
                 file_type: FileType::Symlink,
                 readonly: false,
                 ..
-            } => assert_eq!(
+            }) => assert_eq!(
                 path,
                 &file.path().canonicalize().unwrap(),
                 "Symlink canonicalized path does not match referenced file"
@@ -2078,10 +2079,10 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::Metadata {
+            ResponseData::Metadata(Metadata {
                 file_type: FileType::File,
                 ..
-            } => {}
+            }) => {}
             x => panic!("Unexpected response: {:?}", x),
         }
     }
@@ -2605,13 +2606,13 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert_eq!(
             res.payload[0],
-            ResponseData::SystemInfo {
+            ResponseData::SystemInfo(SystemInfo {
                 family: env::consts::FAMILY.to_string(),
                 os: env::consts::OS.to_string(),
                 arch: env::consts::ARCH.to_string(),
                 current_dir: env::current_dir().unwrap_or_default(),
                 main_separator: std::path::MAIN_SEPARATOR,
-            },
+            }),
             "Unexpected response: {:?}",
             res.payload[0]
         );

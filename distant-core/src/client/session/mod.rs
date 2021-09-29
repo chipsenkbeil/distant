@@ -20,7 +20,7 @@ use tokio::{
 };
 
 mod ext;
-pub use ext::{Metadata, SessionChannelExt, SessionChannelExtError};
+pub use ext::{SessionChannelExt, SessionChannelExtError};
 
 mod info;
 pub use info::{SessionInfo, SessionInfoFile, SessionInfoParseError};
