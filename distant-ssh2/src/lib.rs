@@ -74,14 +74,14 @@ pub struct Ssh2SessionOpts {
     pub other: BTreeMap<String, String>,
 }
 
-pub struct Ssh2AuthHandler {
-    pub on_authenticate: Box<dyn FnMut(Ssh2AuthEvent) -> io::Result<Vec<String>>>,
-    pub on_banner: Box<dyn FnMut(&str)>,
-    pub on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool>>,
-    pub on_error: Box<dyn FnMut(&str)>,
+pub struct Ssh2AuthHandler<'a> {
+    pub on_authenticate: Box<dyn FnMut(Ssh2AuthEvent) -> io::Result<Vec<String>> + 'a>,
+    pub on_banner: Box<dyn FnMut(&str) + 'a>,
+    pub on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool> + 'a>,
+    pub on_error: Box<dyn FnMut(&str) + 'a>,
 }
 
-impl Default for Ssh2AuthHandler {
+impl Default for Ssh2AuthHandler<'static> {
     fn default() -> Self {
         Self {
             on_authenticate: Box::new(|ev| {
@@ -200,7 +200,7 @@ impl Ssh2Session {
     }
 
     /// Authenticates the [`Ssh2Session`] and produces a [`Session`]
-    pub async fn authenticate(self, mut handler: Ssh2AuthHandler) -> io::Result<Session> {
+    pub async fn authenticate(self, mut handler: Ssh2AuthHandler<'_>) -> io::Result<Session> {
         // Perform the authentication by listening for events and continuing to handle them
         // until authenticated
         while let Ok(event) = self.events.recv().await {
