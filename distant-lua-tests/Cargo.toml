@@ -1,0 +1,15 @@
+[package]
+name = "distant-lua-tests"
+description = "Tests for distant-lua crate"
+version = "0.0.0"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+distant-core = { path = "../distant-core" }
+futures = "0.3.17"
+mlua = { version = "0.6.4", features = ["luajit", "vendored", "serialize", "async", "macros"] }
+once_cell = "1.8.0"
+rstest = "0.11.0"
+tokio = { version = "1.12.0", features = ["rt", "sync"] }
