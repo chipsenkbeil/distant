@@ -1,6 +1,6 @@
 use crate::{
     client::{Mailbox, SessionChannel},
-    constants::CLIENT_MAILBOX_CAPACITY,
+    constants::CLIENT_PIPE_CAPACITY,
     data::{Request, RequestData, ResponseData},
     net::TransportError,
 };
@@ -105,9 +105,9 @@ impl RemoteProcess {
         };
 
         // Create channels for our stdin/stdout/stderr
-        let (stdin_tx, stdin_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
-        let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
-        let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
+        let (stdin_tx, stdin_rx) = mpsc::channel(CLIENT_PIPE_CAPACITY);
+        let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_PIPE_CAPACITY);
+        let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_PIPE_CAPACITY);
 
         // Used to terminate request task, either explicitly by the process or internally
         // by the response task when it terminates

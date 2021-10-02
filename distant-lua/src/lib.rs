@@ -1,10 +1,10 @@
+use async_compat::CompatExt;
 use mlua::prelude::*;
 
-mod runtime;
 mod session;
 mod utils;
 
-pub use session::{LaunchOpts, Session};
+pub use session::{ConnectOpts, LaunchOpts, Session};
 
 #[mlua::lua_module]
 fn distant_lua(lua: &Lua) -> LuaResult<LuaTable> {
@@ -19,9 +19,18 @@ fn distant_lua(lua: &Lua) -> LuaResult<LuaTable> {
     // launch(opts: LaunchOpts) -> Session
     exports.set(
         "launch",
-        lua.create_async_function(|lua, value: LuaValue| async move {
-            let opts = LaunchOpts::from_lua(value, lua)?;
-            Session::launch(opts).await
+        lua.create_async_function(|lua, opts: LuaValue| async move {
+            let opts = LaunchOpts::from_lua(opts, lua)?;
+            Session::launch(opts).compat().await
+        })?,
+    )?;
+
+    // connect(opts: ConnectOpts) -> Session
+    exports.set(
+        "connect",
+        lua.create_async_function(|lua, opts: LuaValue| async move {
+            let opts: ConnectOpts = lua.from_value(opts)?;
+            Session::connect(opts).compat().await
         })?,
     )?;
 

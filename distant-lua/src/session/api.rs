@@ -41,8 +41,7 @@ macro_rules! make_api {
                 channel: SessionChannel,
                 params: [<$name:camel Params>],
             ) -> LuaResult<$ret> {
-                let rt = crate::runtime::get()?;
-                rt.block_on([<$name:snake>](channel, params))
+                futures::executor::block_on([<$name:snake>](channel, params))
             }
 
             pub async fn [<$name:snake>](

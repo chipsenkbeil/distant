@@ -480,6 +480,7 @@ dependencies = [
 name = "distant-lua"
 version = "0.15.0-alpha.6"
 dependencies = [
+ "async-compat",
  "distant-core",
  "distant-ssh2",
  "futures",
@@ -487,6 +488,7 @@ dependencies = [
  "once_cell",
  "oorandom",
  "paste",
+ "rstest",
  "serde",
  "tokio",
  "whoami",
@@ -510,6 +512,7 @@ dependencies = [
  "rpassword",
  "rstest",
  "serde",
+ "shell-words",
  "smol",
  "tokio",
  "wezterm-ssh",

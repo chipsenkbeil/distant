@@ -51,7 +51,7 @@ impl CommandRunner {
                 use distant_ssh2::{Ssh2Session, Ssh2SessionOpts};
                 let SshConnectionOpts { host, port, user } = ssh_connection;
 
-                let session = Ssh2Session::connect(
+                let mut session = Ssh2Session::connect(
                     host,
                     Ssh2SessionOpts {
                         port: Some(port),
@@ -59,12 +59,14 @@ impl CommandRunner {
                         ..Default::default()
                     },
                 )
-                .map_err(wrap_err)?
-                .authenticate(Default::default())
-                .await
                 .map_err(wrap_err)?;
 
-                (session, None)
+                session
+                    .authenticate(Default::default())
+                    .await
+                    .map_err(wrap_err)?;
+
+                (session.into_ssh_client_session().map_err(wrap_err)?, None)
             }
 
             Method::Distant => {

@@ -4,7 +4,7 @@ mod transport;
 use derive_more::{Display, Error};
 pub use listener::{AcceptFuture, Listener, TransportListener};
 use rand::{rngs::OsRng, RngCore};
-use std::fmt;
+use std::{fmt, str::FromStr};
 pub use transport::*;
 
 #[derive(Debug, Display, Error)]
@@ -78,6 +78,15 @@ impl<const N: usize> SecretKey<N> {
         value[..N].copy_from_slice(slice);
 
         Ok(Self(value))
+    }
+}
+
+impl<const N: usize> FromStr for SecretKey<N> {
+    type Err = SecretKeyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = hex::decode(s).map_err(|_| SecretKeyError)?;
+        Self::from_slice(&bytes)
     }
 }
 

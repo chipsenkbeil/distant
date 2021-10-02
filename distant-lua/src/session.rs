@@ -1,9 +1,9 @@
 use crate::utils;
+use async_compat::CompatExt;
 use distant_core::{
-    Session as DistantSession, SessionChannel, SessionChannelExt, SessionInfo,
-    XChaCha20Poly1305Codec,
+    SecretKey32, Session as DistantSession, SessionChannel, XChaCha20Poly1305Codec,
 };
-use distant_ssh2::Ssh2Session;
+use distant_ssh2::{IntoDistantSessionOpts, Ssh2Session};
 use mlua::{prelude::*, LuaSerdeExt, UserData, UserDataFields, UserDataMethods};
 use once_cell::sync::Lazy;
 use paste::paste;
@@ -12,19 +12,22 @@ use std::{collections::HashMap, io, sync::RwLock};
 /// try_timeout!(timeout: Duration, Future<Output = Result<T, E>>) -> LuaResult<T>
 macro_rules! try_timeout {
     ($timeout:expr, $f:expr) => {{
+        use async_compat::CompatExt;
+        use futures::future::FutureExt;
         use mlua::prelude::*;
         let timeout: std::time::Duration = $timeout;
-        let fut = async move { $f };
+        let fut = ($f).fuse().compat();
+        let sleep = tokio::time::sleep(timeout).fuse().compat();
 
         tokio::select! {
-            _ = tokio::time::sleep(timeout) => {
+            _ = sleep => {
                 let err = std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     format!("Reached timeout of {}s", timeout.as_secs_f32())
                 );
                 Err(err.to_lua_err())
             }
-            res = fut.await => {
+            res = fut => {
                 res.to_lua_err()
             }
         }
@@ -35,8 +38,8 @@ mod api;
 mod opts;
 mod proc;
 
-pub use opts::LaunchOpts;
-use opts::Method;
+use opts::Mode;
+pub use opts::{ConnectOpts, LaunchOpts};
 use proc::{RemoteLspProcess, RemoteProcess};
 
 /// Contains mapping of id -> session for use in maintaining active sessions
@@ -69,79 +72,69 @@ impl Session {
     }
 
     /// Launches a new distant session on a remote machine
-    // pub async fn launch(ssh_opts: SshOpts) -> LuaResult {}
     pub async fn launch(opts: LaunchOpts<'_>) -> LuaResult<Self> {
         let LaunchOpts {
             host,
-            method,
+            mode,
             handler,
             ssh,
             timeout,
         } = opts;
 
         // First, establish a connection to an SSH server
-        let ssh_session = Ssh2Session::connect(host, ssh.into()).to_lua_err()?;
+        let mut ssh_session = Ssh2Session::connect(host, ssh.into()).to_lua_err()?;
 
-        // Second, authenticate with the server and get a session that is powered by SSH
-        let mut session = ssh_session.authenticate(handler).await.to_lua_err()?;
+        // Second, authenticate with the server
+        ssh_session
+            .authenticate(handler)
+            .compat()
+            .await
+            .to_lua_err()?;
 
-        // Third, if the actual method we want is distant, then we use our current session to
-        // spawn distant and then swap out our session with that one
-        //
-        // Otherwise, we just return this session as is
-        let session = match method {
-            Method::Distant => {
-                // TODO: Provide spawn arguments (--host and other)
-                let mut proc = session
-                    .spawn("<launch>", "distant", vec!["listen", "--daemon"])
-                    .await
-                    .to_lua_err()?;
-                let mut stdout = proc.stdout.take().unwrap();
-                let (success, code) = proc.wait().await.to_lua_err()?;
-                session.abort();
-
-                if success {
-                    // TODO: Does this work post-success?
-                    let mut out = String::new();
-                    while let Ok(data) = stdout.read().await {
-                        out.push_str(&data);
-                    }
-                    let maybe_info = out
-                        .lines()
-                        .find_map(|line| line.parse::<SessionInfo>().ok());
-                    match maybe_info {
-                        Some(info) => {
-                            let addr = info.to_socket_addr().await.to_lua_err()?;
-                            let key = info.key;
-                            let codec = XChaCha20Poly1305Codec::from(key);
-                            DistantSession::tcp_connect_timeout(addr, codec, timeout)
-                                .await
-                                .to_lua_err()?
-                        }
-                        None => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Missing session data",
-                            )
-                            .to_lua_err())
-                        }
-                    }
-                } else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!(
-                            "Spawning distant failed: {}",
-                            code.map(|x| x.to_string())
-                                .unwrap_or_else(|| String::from("???"))
-                        ),
-                    )
-                    .to_lua_err());
-                }
-            }
-            Method::Ssh => session,
+        // Third, convert our ssh session into a distant session based on desired method
+        let session = match mode {
+            Mode::Distant => ssh_session
+                .into_distant_session(IntoDistantSessionOpts {
+                    timeout,
+                    ..Default::default()
+                })
+                .compat()
+                .await
+                .to_lua_err()?,
+            Mode::Ssh => ssh_session.into_ssh_client_session().to_lua_err()?,
         };
 
         // Fourth, store our current session in our global map and then return a reference
+        let id = utils::rand_u32()? as usize;
+        SESSION_MAP
+            .write()
+            .map_err(|x| x.to_string().to_lua_err())?
+            .insert(id, session);
+        Ok(Self::new(id))
+    }
+
+    /// Connects to an already-running remote distant server
+    pub async fn connect(opts: ConnectOpts) -> LuaResult<Self> {
+        let addr = tokio::net::lookup_host(format!("{}:{}", opts.host, opts.port))
+            .compat()
+            .await
+            .to_lua_err()?
+            .next()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    "Failed to resolve host & port",
+                )
+            })
+            .to_lua_err()?;
+        let key: SecretKey32 = opts.key.parse().to_lua_err()?;
+        let codec = XChaCha20Poly1305Codec::from(key);
+
+        let session = DistantSession::tcp_connect_timeout(addr, codec, opts.timeout)
+            .compat()
+            .await
+            .to_lua_err()?;
+
         let id = utils::rand_u32()? as usize;
         SESSION_MAP
             .write()
@@ -166,8 +159,9 @@ macro_rules! impl_methods {
                 $block
             });
             $methods.add_async_method(stringify!([<$name:snake>]), |$lua, this, params: LuaValue| async move {
+                use async_compat::CompatExt;
                 let params: api::[<$name:camel Params>] = $lua.from_value(params)?;
-                let $data = api::[<$name:snake>](get_session_channel(this.id)?, params).await?;
+                let $data = api::[<$name:snake>](get_session_channel(this.id)?, params).compat().await?;
 
                 #[allow(unused_braces)]
                 $block

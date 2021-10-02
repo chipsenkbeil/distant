@@ -1,3 +1,4 @@
+use async_compat::CompatExt;
 use distant_core::{
     RemoteLspProcess as DistantRemoteLspProcess, RemoteProcess as DistantRemoteProcess,
 };
@@ -62,6 +63,7 @@ impl RemoteProcess {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Stdin closed").to_lua_err()
                 })?
                 .write(data)
+                .compat()
                 .await
                 .to_lua_err()
         })
@@ -75,6 +77,7 @@ impl RemoteProcess {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Stdout closed").to_lua_err()
                 })?
                 .read()
+                .compat()
                 .await
                 .to_lua_err()
         })
@@ -88,6 +91,7 @@ impl RemoteProcess {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Stderr closed").to_lua_err()
                 })?
                 .read()
+                .compat()
                 .await
                 .to_lua_err()
         })
@@ -95,7 +99,7 @@ impl RemoteProcess {
 
     pub async fn kill(&self) -> LuaResult<()> {
         with_proc!(PROC_MAP, self.id, proc -> {
-            proc.kill().await.to_lua_err()
+            proc.kill().compat().await.to_lua_err()
         })
     }
 
@@ -114,18 +118,17 @@ impl UserData for RemoteProcess {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method("is_active", |_, this, _: LuaValue| this.is_active());
         methods.add_async_method("write_stdin", |_, this, data: String| async move {
-            this.write_stdin(data).await
+            this.write_stdin(data).compat().await
         });
         methods.add_async_method("read_stdout", |_, this, _: LuaValue| async move {
-            this.read_stdout().await
+            this.read_stdout().compat().await
         });
         methods.add_async_method("read_stderr", |_, this, _: LuaValue| async move {
-            this.read_stderr().await
+            this.read_stderr().compat().await
         });
-        methods.add_async_method(
-            "kill",
-            |_, this, _: LuaValue| async move { this.kill().await },
-        );
+        methods.add_async_method("kill", |_, this, _: LuaValue| async move {
+            this.kill().compat().await
+        });
         methods.add_method("abort", |_, this, _: LuaValue| this.abort());
     }
 }
@@ -164,6 +167,7 @@ impl RemoteLspProcess {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Stdin closed").to_lua_err()
                 })?
                 .write(data.as_str())
+                .compat()
                 .await
                 .to_lua_err()
         })
@@ -177,6 +181,7 @@ impl RemoteLspProcess {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Stdout closed").to_lua_err()
                 })?
                 .read()
+                .compat()
                 .await
                 .to_lua_err()
         })
@@ -190,6 +195,7 @@ impl RemoteLspProcess {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Stderr closed").to_lua_err()
                 })?
                 .read()
+                .compat()
                 .await
                 .to_lua_err()
         })
@@ -197,7 +203,7 @@ impl RemoteLspProcess {
 
     pub async fn kill(&self) -> LuaResult<()> {
         with_proc!(LSP_PROC_MAP, self.id, proc -> {
-            proc.kill().await.to_lua_err()
+            proc.kill().compat().await.to_lua_err()
         })
     }
 
@@ -216,18 +222,17 @@ impl UserData for RemoteLspProcess {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method("is_active", |_, this, _: LuaValue| this.is_active());
         methods.add_async_method("write_stdin", |_, this, data: String| async move {
-            this.write_stdin(data).await
+            this.write_stdin(data).compat().await
         });
         methods.add_async_method("read_stdout", |_, this, _: LuaValue| async move {
-            this.read_stdout().await
+            this.read_stdout().compat().await
         });
         methods.add_async_method("read_stderr", |_, this, _: LuaValue| async move {
-            this.read_stderr().await
+            this.read_stderr().compat().await
         });
-        methods.add_async_method(
-            "kill",
-            |_, this, _: LuaValue| async move { this.kill().await },
-        );
+        methods.add_async_method("kill", |_, this, _: LuaValue| async move {
+            this.kill().compat().await
+        });
         methods.add_method("abort", |_, this, _: LuaValue| this.abort());
     }
 }

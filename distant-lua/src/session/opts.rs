@@ -3,10 +3,18 @@ use mlua::prelude::*;
 use serde::Deserialize;
 use std::{fmt, io, time::Duration};
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ConnectOpts {
+    pub host: String,
+    pub port: u16,
+    pub key: String,
+    pub timeout: Duration,
+}
+
 #[derive(Default)]
 pub struct LaunchOpts<'a> {
     pub host: String,
-    pub method: Method,
+    pub mode: Mode,
     pub handler: Ssh2AuthHandler<'a>,
     pub ssh: Ssh2SessionOpts,
     pub timeout: Duration,
@@ -16,7 +24,7 @@ impl fmt::Debug for LaunchOpts<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LaunchOpts")
             .field("host", &self.host)
-            .field("method", &self.method)
+            .field("mode", &self.mode)
             .field("handler", &"...")
             .field("ssh", &self.ssh)
             .field("timeout", &self.timeout)
@@ -29,7 +37,7 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
         match lua_value {
             LuaValue::Table(tbl) => Ok(Self {
                 host: tbl.get("host")?,
-                method: lua.from_value(tbl.get("method")?)?,
+                mode: lua.from_value(tbl.get("mode")?)?,
                 handler: Ssh2AuthHandler {
                     on_authenticate: {
                         let f: LuaFunction = tbl.get("on_authenticate")?;
@@ -123,12 +131,12 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
 
 #[derive(Copy, Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Method {
+pub enum Mode {
     Distant,
     Ssh,
 }
 
-impl Default for Method {
+impl Default for Mode {
     fn default() -> Self {
         Self::Distant
     }
