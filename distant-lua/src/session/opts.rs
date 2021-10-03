@@ -3,12 +3,78 @@ use mlua::prelude::*;
 use serde::Deserialize;
 use std::{fmt, io, time::Duration};
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct ConnectOpts {
     pub host: String,
     pub port: u16,
     pub key: String,
     pub timeout: Duration,
+}
+
+impl<'lua> FromLua<'lua> for ConnectOpts {
+    fn from_lua(lua_value: LuaValue<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+        match lua_value {
+            LuaValue::Table(tbl) => Ok(Self {
+                host: tbl.get("host")?,
+                port: tbl.get("port")?,
+                key: tbl.get("key")?,
+                timeout: {
+                    let milliseconds: u64 = tbl.get("timeout")?;
+                    Duration::from_millis(milliseconds)
+                },
+            }),
+            LuaValue::Nil => Err(LuaError::FromLuaConversionError {
+                from: "Nil",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::Boolean(_) => Err(LuaError::FromLuaConversionError {
+                from: "Boolean",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::LightUserData(_) => Err(LuaError::FromLuaConversionError {
+                from: "LightUserData",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::Integer(_) => Err(LuaError::FromLuaConversionError {
+                from: "Integer",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::Number(_) => Err(LuaError::FromLuaConversionError {
+                from: "Number",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::String(_) => Err(LuaError::FromLuaConversionError {
+                from: "String",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::Function(_) => Err(LuaError::FromLuaConversionError {
+                from: "Function",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::Thread(_) => Err(LuaError::FromLuaConversionError {
+                from: "Thread",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::UserData(_) => Err(LuaError::FromLuaConversionError {
+                from: "UserData",
+                to: "ConnectOpts",
+                message: None,
+            }),
+            LuaValue::Error(_) => Err(LuaError::FromLuaConversionError {
+                from: "Error",
+                to: "ConnectOpts",
+                message: None,
+            }),
+        }
+    }
 }
 
 #[derive(Default)]

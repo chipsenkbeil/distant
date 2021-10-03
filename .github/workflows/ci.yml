@@ -44,6 +44,9 @@ jobs:
               - 'distant-core/**'
             ssh2:
               - 'distant-ssh2/**'
+            lua:
+              - 'distant-lua/**'
+              - 'distant-lua-tests/**'
       - name: Run core tests (default features)
         run: cargo test --verbose -p distant-core
         if: steps.changes.outputs.core == 'true'
@@ -78,6 +81,11 @@ jobs:
         if: |
           matrix.os != 'windows-latest' &&
           steps.changes.outputs.cli == 'true'
+      - name: Run Lua tests
+        run: (cd distant-lua && cargo build) && (cd distant-lua-tests && cargo test --verbose)
+        shell: bash
+        if: |
+          steps.changes.outputs.lua == 'true'
 
   clippy:
     name: Lint with clippy

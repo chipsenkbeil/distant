@@ -65,6 +65,7 @@ impl Drop for DistantServerCtx {
     }
 }
 
+/// Returns a reference to the global distant server
 #[fixture]
 pub fn ctx() -> &'static DistantServerCtx {
     static CTX: OnceCell<DistantServerCtx> = OnceCell::new();

@@ -6,10 +6,19 @@ authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2018"
 publish = false
 
+[features]
+default = ["luajit", "vendored"]
+lua54 = ["mlua/lua54"]
+lua53 = ["mlua/lua53"]
+lua52 = ["mlua/lua52"]
+lua51 = ["mlua/lua51"]
+luajit = ["mlua/luajit"]
+vendored = ["mlua/vendored"]
+
 [dependencies]
 distant-core = { path = "../distant-core" }
 futures = "0.3.17"
-mlua = { version = "0.6.4", features = ["luajit", "vendored", "serialize", "async", "macros"] }
+mlua = { version = "0.6.4", features = ["async", "macros", "serialize"] }
 once_cell = "1.8.0"
 rstest = "0.11.0"
 tokio = { version = "1.12.0", features = ["rt", "sync"] }

@@ -127,6 +127,7 @@ impl Session {
                 )
             })
             .to_lua_err()?;
+
         let key: SecretKey32 = opts.key.parse().to_lua_err()?;
         let codec = XChaCha20Poly1305Codec::from(key);
 

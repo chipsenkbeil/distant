@@ -10,6 +10,9 @@ pub use session::{ConnectOpts, LaunchOpts, Session};
 fn distant_lua(lua: &Lua) -> LuaResult<LuaTable> {
     let exports = lua.create_table()?;
 
+    exports.set("PENDING", utils::pending(lua)?)?;
+    exports.set("utils", utils::make_utils_tbl(lua)?)?;
+
     // get_session_by_id(id: usize) -> Session
     exports.set(
         "get_session_by_id",
@@ -29,7 +32,7 @@ fn distant_lua(lua: &Lua) -> LuaResult<LuaTable> {
     exports.set(
         "connect",
         lua.create_async_function(|lua, opts: LuaValue| async move {
-            let opts: ConnectOpts = lua.from_value(opts)?;
+            let opts = ConnectOpts::from_lua(opts, lua)?;
             Session::connect(opts).compat().await
         })?,
     )?;
