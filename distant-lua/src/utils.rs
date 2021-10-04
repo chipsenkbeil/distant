@@ -11,38 +11,58 @@ pub fn make_utils_tbl(lua: &Lua) -> LuaResult<LuaTable> {
     let tbl = lua.create_table()?;
 
     tbl.set(
-        "make_callback",
-        lua.create_function(|lua, (async_fn, schedule_fn)| {
-            make_callback(lua, async_fn, schedule_fn)
-        })?,
+        "nvim_wrap_async",
+        lua.create_function(|lua, async_fn| nvim_wrap_async(lua, async_fn))?,
     )?;
-    tbl.set("pending", lua.create_function(|lua, ()| pending(lua))?)?;
+    tbl.set(
+        "wrap_async",
+        lua.create_function(|lua, (async_fn, schedule_fn)| wrap_async(lua, async_fn, schedule_fn))?,
+    )?;
     tbl.set("rand_u32", lua.create_function(|_, ()| rand_u32())?)?;
 
     Ok(tbl)
 }
 
-pub fn make_callback<'a>(
+/// Specialty function that performs wrap_async using `vim.schedule` from neovim
+pub fn nvim_wrap_async<'a>(lua: &'a Lua, async_fn: LuaFunction<'a>) -> LuaResult<LuaFunction<'a>> {
+    let schedule_fn = lua.load("vim.schedule").eval()?;
+    wrap_async(lua, async_fn, schedule_fn)
+}
+
+/// Wraps an async function and a scheduler function such that
+/// a new function is returned that takes a callback when the async
+/// function completes as well as zero or more arguments to provide
+/// to the async function when first executing it
+pub fn wrap_async<'a>(
     lua: &'a Lua,
     async_fn: LuaFunction<'a>,
     schedule_fn: LuaFunction<'a>,
 ) -> LuaResult<LuaFunction<'a>> {
     let pending = pending(lua)?;
     lua.load(chunk! {
-        function(args, cb)
-            assert(type(args) == "table", "Invalid type for args")
+        function(cb, ...)
             assert(type(cb) == "function", "Invalid type for cb")
 
-            local poll_pending = (coroutine.wrap($pending))()
-            local thread_fn = coroutine.wrap($async_fn)
-            local status, res = pcall(thread_fn(args))
+            // Wrap the async function in a coroutine so we can poll it
+            local thread = coroutine.create($async_fn)
+
+            // Start the future by peforming the first poll
+            local status, res = coroutine.resume(thread, ...)
 
             local inner_fn
             inner_fn = function()
-                if res == poll_pending then
-                    $schedule_fn(inner_fn)
-                else
+                // Thread has exited already, so res is an error
+                if not status then
                     cb(res)
+                // Got pending status on success, so we are still waiting
+                else if res == $pending then
+                    // Resume the coroutine and then schedule a followup
+                    // once it has completed another round
+                    status, res = coroutine.resume(thread)
+                    $schedule_fn(inner_fn)
+                // Got success with non-pending status, so this should be the result
+                else
+                    cb(nil, res)
                 end
             end
             $schedule_fn(inner_fn)
@@ -52,7 +72,7 @@ pub fn make_callback<'a>(
 }
 
 /// Return mlua's internal `Poll::Pending`
-pub fn pending(lua: &Lua) -> LuaResult<LuaValue> {
+pub(super) fn pending(lua: &Lua) -> LuaResult<LuaValue> {
     let pending = lua.create_async_function(|_, ()| async move {
         tokio::task::yield_now().await;
         Ok(())
