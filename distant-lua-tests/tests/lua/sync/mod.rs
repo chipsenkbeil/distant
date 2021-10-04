@@ -5,3 +5,5 @@ mod create_dir;
 mod exists;
 mod metadata;
 mod read_dir;
+mod read_file;
+mod read_file_text;
