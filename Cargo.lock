@@ -504,10 +504,12 @@ dependencies = [
 name = "distant-lua-tests"
 version = "0.0.0"
 dependencies = [
+ "assert_fs",
  "distant-core",
  "futures",
  "mlua",
  "once_cell",
+ "predicates",
  "rstest",
  "tokio",
 ]

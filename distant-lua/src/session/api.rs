@@ -1,3 +1,4 @@
+use crate::runtime::get_runtime;
 use distant_core::{
     DirEntry, Error as Failure, Metadata, RemoteLspProcess, RemoteProcess, SessionChannel,
     SessionChannelExt,
@@ -10,6 +11,11 @@ use std::{path::PathBuf, time::Duration};
 
 static TENANT: Lazy<String> = Lazy::new(|| format!("{}", whoami::hostname()));
 
+/// Default depth for reading directory
+const fn default_depth() -> usize {
+    1
+}
+
 // Default timeout in milliseconds (15 secs)
 const fn default_timeout() -> u64 {
     15000
@@ -19,13 +25,13 @@ macro_rules! make_api {
     (
         $name:ident,
         $ret:ty,
-        {$($pname:ident: $ptype:ty),*},
+        {$($(#[$pmeta:meta])* $pname:ident: $ptype:ty),*},
         |$channel:ident, $tenant:ident, $params:ident| $block:block $(,)?
     ) => {
         paste! {
             #[derive(Clone, Debug, Deserialize)]
             pub struct [<$name:camel Params>] {
-                $($pname: $ptype,)*
+                $($(#[$pmeta])* $pname: $ptype,)*
 
                 #[serde(default = "default_timeout")]
                 timeout: u64,
@@ -41,7 +47,7 @@ macro_rules! make_api {
                 channel: SessionChannel,
                 params: [<$name:camel Params>],
             ) -> LuaResult<$ret> {
-                futures::executor::block_on([<$name:snake>](channel, params))
+                get_runtime()?.block_on([<$name:snake>](channel, params))
             }
 
             pub async fn [<$name:snake>](
@@ -73,7 +79,7 @@ make_api!(copy, (), { src: PathBuf, dst: PathBuf }, |channel, tenant, params| {
     channel.copy(tenant, params.src, params.dst).await
 });
 
-make_api!(create_dir, (), { path: PathBuf, all: bool }, |channel, tenant, params| {
+make_api!(create_dir, (), { path: PathBuf, #[serde(default)] all: bool }, |channel, tenant, params| {
     channel.create_dir(tenant, params.path, params.all).await
 });
 
@@ -87,7 +93,11 @@ make_api!(
 make_api!(
     metadata,
     Metadata,
-    { path: PathBuf, canonicalize: bool, resolve_file_type: bool },
+    {
+        path: PathBuf,
+        #[serde(default)] canonicalize: bool,
+        #[serde(default)] resolve_file_type: bool
+    },
     |channel, tenant, params| {
         channel.metadata(
             tenant,
@@ -101,7 +111,13 @@ make_api!(
 make_api!(
     read_dir,
     (Vec<DirEntry>, Vec<Failure>),
-    { path: PathBuf, depth: usize, absolute: bool, canonicalize: bool, include_root: bool },
+    {
+        path: PathBuf,
+        #[serde(default = "default_depth")] depth: usize,
+        #[serde(default)] absolute: bool,
+        #[serde(default)] canonicalize: bool,
+        #[serde(default)] include_root: bool
+    },
     |channel, tenant, params| {
         channel.read_dir(
             tenant,
@@ -131,7 +147,7 @@ make_api!(
 make_api!(
     remove,
     (),
-    { path: PathBuf, force: bool },
+    { path: PathBuf, #[serde(default)] force: bool },
     |channel, tenant, params| { channel.remove(tenant, params.path, params.force).await }
 );
 

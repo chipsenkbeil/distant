@@ -1,4 +1,4 @@
-use crate::utils;
+use crate::{runtime::get_runtime, utils};
 use async_compat::CompatExt;
 use distant_core::{
     SecretKey32, Session as DistantSession, SessionChannel, XChaCha20Poly1305Codec,
@@ -8,6 +8,62 @@ use mlua::{prelude::*, LuaSerdeExt, UserData, UserDataFields, UserDataMethods};
 use once_cell::sync::Lazy;
 use paste::paste;
 use std::{collections::HashMap, io, sync::RwLock};
+
+/// Makes a Lua table containing the session functions
+pub fn make_session_tbl(lua: &Lua) -> LuaResult<LuaTable> {
+    let tbl = lua.create_table()?;
+
+    // get_by_id(id: usize) -> Option<Session>
+    tbl.set(
+        "get_by_id",
+        lua.create_function(|_, id: usize| {
+            let exists = has_session(id)?;
+            if exists {
+                Ok(Some(Session::new(id)))
+            } else {
+                Ok(None)
+            }
+        })?,
+    )?;
+
+    // launch(opts: LaunchOpts) -> Future<Session>
+    tbl.set(
+        "launch",
+        lua.create_async_function(|lua, opts: LuaValue| async move {
+            let opts = LaunchOpts::from_lua(opts, lua)?;
+            Session::launch(opts).compat().await
+        })?,
+    )?;
+
+    // launch_sync(opts: LaunchOpts) -> Session
+    tbl.set(
+        "launch_sync",
+        lua.create_function(|lua, opts: LuaValue| {
+            let opts = LaunchOpts::from_lua(opts, lua)?;
+            get_runtime()?.block_on(Session::launch(opts))
+        })?,
+    )?;
+
+    // connect(opts: ConnectOpts) -> Future<Session>
+    tbl.set(
+        "connect",
+        lua.create_async_function(|lua, opts: LuaValue| async move {
+            let opts = ConnectOpts::from_lua(opts, lua)?;
+            Session::connect(opts).compat().await
+        })?,
+    )?;
+
+    // connect_sync(opts: ConnectOpts) -> Session
+    tbl.set(
+        "connect_sync",
+        lua.create_function(|lua, opts: LuaValue| {
+            let opts = ConnectOpts::from_lua(opts, lua)?;
+            get_runtime()?.block_on(Session::connect(opts))
+        })?,
+    )?;
+
+    Ok(tbl)
+}
 
 /// try_timeout!(timeout: Duration, Future<Output = Result<T, E>>) -> LuaResult<T>
 macro_rules! try_timeout {
@@ -45,6 +101,13 @@ use proc::{RemoteLspProcess, RemoteProcess};
 /// Contains mapping of id -> session for use in maintaining active sessions
 static SESSION_MAP: Lazy<RwLock<HashMap<usize, DistantSession>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+fn has_session(id: usize) -> LuaResult<bool> {
+    Ok(SESSION_MAP
+        .read()
+        .map_err(|x| x.to_string().to_lua_err())?
+        .contains_key(&id))
+}
 
 fn get_session_channel(id: usize) -> LuaResult<SessionChannel> {
     let lock = SESSION_MAP.read().map_err(|x| x.to_string().to_lua_err())?;

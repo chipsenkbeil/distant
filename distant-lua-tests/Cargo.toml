@@ -7,7 +7,7 @@ edition = "2018"
 publish = false
 
 [features]
-default = ["luajit", "vendored"]
+default = ["lua51", "vendored"]
 lua54 = ["mlua/lua54"]
 lua53 = ["mlua/lua53"]
 lua52 = ["mlua/lua52"]
@@ -16,9 +16,11 @@ luajit = ["mlua/luajit"]
 vendored = ["mlua/vendored"]
 
 [dependencies]
+assert_fs = "1.0.4"
 distant-core = { path = "../distant-core" }
 futures = "0.3.17"
 mlua = { version = "0.6.4", features = ["async", "macros", "serialize"] }
 once_cell = "1.8.0"
+predicates = "2.0.2"
 rstest = "0.11.0"
 tokio = { version = "1.12.0", features = ["rt", "sync"] }

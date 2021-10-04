@@ -1,48 +1,41 @@
 use super::fixtures::DistantServerCtx;
 use mlua::{chunk, prelude::*};
 
-/// Creates a new session within the provided Lua environment
+/// Creates a function that produces a session within the provided Lua environment
 /// using the given distant server context, returning the session's id
-pub fn make(lua: &Lua, ctx: &'_ DistantServerCtx) -> LuaResult<usize> {
+pub fn make_function<'a>(lua: &'a Lua, ctx: &'_ DistantServerCtx) -> LuaResult<LuaFunction<'a>> {
     let addr = ctx.addr;
     let host = addr.ip().to_string();
     let port = addr.port();
     let key = ctx.key.clone();
 
     lua.load(chunk! {
-        (function()
-            local distant = require("distant_lua")
-            local connect = coroutine.wrap(distant.connect)
+        local distant = require("distant_lua")
+        local thread = coroutine.create(distant.session.connect)
 
-            local status, res = pcall(connect, {
-                host = "127.0.0.1",
-                port = 22,
-                key = "Bad key",
-                timeout = 15000,
-            })
-        end)()
-    })
-    .eval()
+        local status, res = coroutine.resume(thread, {
+            host = $host,
+            port = $port,
+            key = $key,
+            timeout = 15000,
+        })
 
-    /* local status, res = coroutine.resume(thread, {
-        host = $host,
-        port = $port,
-        key = $key,
-        timeout = 15000,
-    })
+        // Block until the connection finishes
+        local session = nil
+        while status do
+            if status and res ~= distant.PENDING then
+                session = res
+                break
+            end
 
-    // Block until the connection finishes
-    local session = nil
-    while status do
-        if status and res ~= distant.PENDING then
-            session = res
-            break
+            status, res = coroutine.resume(thread)
         end
 
-        status, res = coroutine.resume(thread)
-    end
-
-    if session then
-        return session.id
-    end */
+        if session then
+            return session
+        else
+            error(res)
+        end
+    })
+    .into_function()
 }

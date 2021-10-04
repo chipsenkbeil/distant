@@ -15,7 +15,7 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib"]
 
 [features]
-default = ["luajit", "vendored"]
+default = ["lua51", "vendored"]
 lua54 = ["mlua/lua54"]
 lua53 = ["mlua/lua53"]
 lua52 = ["mlua/lua52"]
