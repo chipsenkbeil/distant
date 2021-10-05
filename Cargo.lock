@@ -486,7 +486,6 @@ dependencies = [
 name = "distant-lua"
 version = "0.15.0-alpha.6"
 dependencies = [
- "async-compat",
  "distant-core",
  "distant-ssh2",
  "futures",
@@ -507,6 +506,7 @@ dependencies = [
  "assert_fs",
  "distant-core",
  "futures",
+ "indoc",
  "mlua",
  "once_cell",
  "predicates",

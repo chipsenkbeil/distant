@@ -16,7 +16,7 @@ fn should_return_error_if_fails_to_read_file(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local status, _ = pcall(session.read_file_text_sync, session, { path = $file_path_str })
+            local status, _ = pcall(session.read_file_text, session, { path = $file_path_str })
             assert(not status, "Unexpectedly succeeded!")
         })
         .exec();
@@ -37,7 +37,7 @@ fn should_return_file_contents_as_text(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local contents = session:read_file_text_sync({ path = $file_path_str })
+            local contents = session:read_file_text({ path = $file_path_str })
             assert(contents == "some file contents", "Unexpected file contents: " .. contents)
         })
         .exec();

@@ -16,7 +16,7 @@ fn should_send_true_if_path_exists(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local exists = session:exists_sync({ path = $file_path })
+            local exists = session:exists({ path = $file_path })
             assert(exists, "File unexpectedly missing")
         })
         .exec();
@@ -35,7 +35,7 @@ fn should_send_false_if_path_does_not_exist(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local exists = session:exists_sync({ path = $file_path })
+            local exists = session:exists({ path = $file_path })
             assert(not exists, "File unexpectedly found")
         })
         .exec();

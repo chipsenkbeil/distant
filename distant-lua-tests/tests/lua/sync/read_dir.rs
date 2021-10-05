@@ -36,7 +36,7 @@ fn should_return_error_if_directory_does_not_exist(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local status, _ = pcall(session.read_dir_sync, session, { path = $dir_path })
+            local status, _ = pcall(session.read_dir, session, { path = $dir_path })
             assert(not status, "Unexpectedly succeeded")
         })
         .exec();
@@ -55,7 +55,7 @@ fn should_have_depth_default_to_1(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local tbl = session:read_dir_sync({ path = $root_dir_path })
+            local tbl = session:read_dir({ path = $root_dir_path })
 
             local entries = tbl.entries
             assert(entries[1].file_type == "file", "Wrong file type: " .. entries[1].file_type)
@@ -86,7 +86,7 @@ fn should_support_depth_limits(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local tbl = session:read_dir_sync({ path = $root_dir_path, depth = 1 })
+            local tbl = session:read_dir({ path = $root_dir_path, depth = 1 })
 
             local entries = tbl.entries
             assert(entries[1].file_type == "file", "Wrong file type: " .. entries[1].file_type)
@@ -117,7 +117,7 @@ fn should_support_unlimited_depth_using_zero(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local tbl = session:read_dir_sync({ path = $root_dir_path, depth = 0 })
+            local tbl = session:read_dir({ path = $root_dir_path, depth = 0 })
 
             local entries = tbl.entries
             assert(entries[1].file_type == "file", "Wrong file type: " .. entries[1].file_type)
@@ -154,7 +154,7 @@ fn should_support_including_directory_in_returned_entries(ctx: &'_ DistantServer
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local tbl = session:read_dir_sync({ path = $root_dir_path, include_root = true })
+            local tbl = session:read_dir({ path = $root_dir_path, include_root = true })
 
             local entries = tbl.entries
             assert(entries[1].file_type == "dir", "Wrong file type: " .. entries[1].file_type)
@@ -198,7 +198,7 @@ fn should_support_returning_absolute_paths(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local tbl = session:read_dir_sync({ path = $root_dir_path, absolute = true })
+            local tbl = session:read_dir({ path = $root_dir_path, absolute = true })
 
             local entries = tbl.entries
             assert(entries[1].file_type == "file", "Wrong file type: " .. entries[1].file_type)
@@ -229,7 +229,7 @@ fn should_support_returning_canonicalized_paths(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local tbl = session:read_dir_sync({ path = $root_dir_path, canonicalize = true })
+            local tbl = session:read_dir({ path = $root_dir_path, canonicalize = true })
 
             local entries = tbl.entries
             assert(entries[1].file_type == "file", "Wrong file type: " .. entries[1].file_type)

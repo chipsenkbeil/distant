@@ -1,5 +1,4 @@
-use crate::{runtime::get_runtime, utils};
-use async_compat::CompatExt;
+use crate::{runtime, utils};
 use distant_core::{
     SecretKey32, Session as DistantSession, SessionChannel, XChaCha20Poly1305Codec,
 };
@@ -26,39 +25,30 @@ pub fn make_session_tbl(lua: &Lua) -> LuaResult<LuaTable> {
         })?,
     )?;
 
-    // launch(opts: LaunchOpts) -> Future<Session>
+    // launch(opts: LaunchOpts) -> Session
     tbl.set(
         "launch",
-        lua.create_async_function(|lua, opts: LuaValue| async move {
-            let opts = LaunchOpts::from_lua(opts, lua)?;
-            Session::launch(opts).compat().await
-        })?,
-    )?;
-
-    // launch_sync(opts: LaunchOpts) -> Session
-    tbl.set(
-        "launch_sync",
         lua.create_function(|lua, opts: LuaValue| {
             let opts = LaunchOpts::from_lua(opts, lua)?;
-            get_runtime()?.block_on(Session::launch(opts))
+            runtime::block_on(Session::launch(opts))
         })?,
     )?;
 
-    // connect(opts: ConnectOpts) -> Future<Session>
+    // connect_async(opts: ConnectOpts) -> Future<Session>
+    tbl.set(
+        "connect_async",
+        lua.create_async_function(|lua, opts: LuaValue| async move {
+            let opts = ConnectOpts::from_lua(opts, lua)?;
+            runtime::spawn(Session::connect(opts)).await
+        })?,
+    )?;
+
+    // connect(opts: ConnectOpts) -> Session
     tbl.set(
         "connect",
-        lua.create_async_function(|lua, opts: LuaValue| async move {
-            let opts = ConnectOpts::from_lua(opts, lua)?;
-            Session::connect(opts).compat().await
-        })?,
-    )?;
-
-    // connect_sync(opts: ConnectOpts) -> Session
-    tbl.set(
-        "connect_sync",
         lua.create_function(|lua, opts: LuaValue| {
             let opts = ConnectOpts::from_lua(opts, lua)?;
-            get_runtime()?.block_on(Session::connect(opts))
+            runtime::block_on(Session::connect(opts))
         })?,
     )?;
 
@@ -68,25 +58,27 @@ pub fn make_session_tbl(lua: &Lua) -> LuaResult<LuaTable> {
 /// try_timeout!(timeout: Duration, Future<Output = Result<T, E>>) -> LuaResult<T>
 macro_rules! try_timeout {
     ($timeout:expr, $f:expr) => {{
-        use async_compat::CompatExt;
         use futures::future::FutureExt;
         use mlua::prelude::*;
         let timeout: std::time::Duration = $timeout;
-        let fut = ($f).fuse().compat();
-        let sleep = tokio::time::sleep(timeout).fuse().compat();
+        crate::runtime::spawn(async move {
+            let fut = ($f).fuse();
+            let sleep = tokio::time::sleep(timeout).fuse();
 
-        tokio::select! {
-            _ = sleep => {
-                let err = std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("Reached timeout of {}s", timeout.as_secs_f32())
-                );
-                Err(err.to_lua_err())
+            tokio::select! {
+                _ = sleep => {
+                    let err = std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("Reached timeout of {}s", timeout.as_secs_f32())
+                    );
+                    Err(err.to_lua_err())
+                }
+                res = fut => {
+                    res.to_lua_err()
+                }
             }
-            res = fut => {
-                res.to_lua_err()
-            }
-        }
+        })
+        .await
     }};
 }
 
@@ -148,11 +140,7 @@ impl Session {
         let mut ssh_session = Ssh2Session::connect(host, ssh.into()).to_lua_err()?;
 
         // Second, authenticate with the server
-        ssh_session
-            .authenticate(handler)
-            .compat()
-            .await
-            .to_lua_err()?;
+        ssh_session.authenticate(handler).await.to_lua_err()?;
 
         // Third, convert our ssh session into a distant session based on desired method
         let session = match mode {
@@ -161,7 +149,6 @@ impl Session {
                     timeout,
                     ..Default::default()
                 })
-                .compat()
                 .await
                 .to_lua_err()?,
             Mode::Ssh => ssh_session.into_ssh_client_session().to_lua_err()?,
@@ -179,7 +166,6 @@ impl Session {
     /// Connects to an already-running remote distant server
     pub async fn connect(opts: ConnectOpts) -> LuaResult<Self> {
         let addr = tokio::net::lookup_host(format!("{}:{}", opts.host, opts.port))
-            .compat()
             .await
             .to_lua_err()?
             .next()
@@ -195,7 +181,6 @@ impl Session {
         let codec = XChaCha20Poly1305Codec::from(key);
 
         let session = DistantSession::tcp_connect_timeout(addr, codec, opts.timeout)
-            .compat()
             .await
             .to_lua_err()?;
 
@@ -215,17 +200,26 @@ macro_rules! impl_methods {
     };
     ($methods:expr, $name:ident, |$lua:ident, $data:ident| $block:block) => {{
         paste! {
-            $methods.add_method(stringify!([<$name:snake _sync>]), |$lua, this, params: LuaValue| {
+            $methods.add_method(stringify!([<$name:snake>]), |$lua, this, params: LuaValue| {
                 let params: api::[<$name:camel Params>] = $lua.from_value(params)?;
-                let $data = api::[<$name:snake _sync>](get_session_channel(this.id)?, params)?;
+                let $data = api::[<$name:snake>](get_session_channel(this.id)?, params)?;
 
                 #[allow(unused_braces)]
                 $block
             });
-            $methods.add_async_method(stringify!([<$name:snake>]), |$lua, this, params: LuaValue| async move {
-                use async_compat::CompatExt;
+            $methods.add_async_method(stringify!([<$name:snake _async>]), |$lua, this, params: LuaValue| async move {
+                let rt = crate::runtime::get_runtime()?;
                 let params: api::[<$name:camel Params>] = $lua.from_value(params)?;
-                let $data = api::[<$name:snake>](get_session_channel(this.id)?, params).compat().await?;
+                let $data = {
+                    let tmp = rt.spawn(
+                        api::[<$name:snake _async>](get_session_channel(this.id)?, params)
+                    ).await;
+
+                    match tmp {
+                        Ok(x) => x.to_lua_err(),
+                        Err(x) => Err(x).to_lua_err(),
+                    }
+                }?;
 
                 #[allow(unused_braces)]
                 $block

@@ -38,7 +38,7 @@ fn should_send_error_if_fails(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local status, _ = pcall(session.create_dir_sync, session, { path = $path_str })
+            local status, _ = pcall(session.create_dir, session, { path = $path_str })
             assert(not status, "Unexpectedly succeeded")
         })
         .exec();
@@ -60,7 +60,7 @@ fn should_send_ok_when_successful(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:create_dir_sync({ path = $path_str })
+            session:create_dir({ path = $path_str })
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -81,7 +81,7 @@ fn should_support_creating_multiple_dir_components(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:create_dir_sync({ path = $path_str, all = true })
+            session:create_dir({ path = $path_str, all = true })
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());

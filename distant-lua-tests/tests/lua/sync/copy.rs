@@ -19,7 +19,7 @@ fn should_send_error_on_failure(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local status, _ = pcall(session.copy_sync, session, {
+            local status, _ = pcall(session.copy, session, {
                 src = $src_path,
                 dst = $dst_path
             })
@@ -52,7 +52,7 @@ fn should_support_copying_an_entire_directory(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:copy_sync({
+            session:copy({
                 src = $src_path,
                 dst = $dst_path
             })
@@ -83,7 +83,7 @@ fn should_support_copying_an_empty_directory(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:copy_sync({
+            session:copy({
                 src = $src_path,
                 dst = $dst_path
             })
@@ -116,7 +116,7 @@ fn should_support_copying_a_directory_that_only_contains_directories(ctx: &'_ Di
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:copy_sync({
+            session:copy({
                 src = $src_path,
                 dst = $dst_path
             })
@@ -147,7 +147,7 @@ fn should_support_copying_a_single_file(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:copy_sync({
+            session:copy({
                 src = $src_path,
                 dst = $dst_path
             })

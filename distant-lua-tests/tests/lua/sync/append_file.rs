@@ -19,7 +19,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local status, _ = pcall(session.append_file_sync, session, {
+            local status, _ = pcall(session.append_file, session, {
                 path = $file_path,
                 data = $data
             })
@@ -37,8 +37,6 @@ fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
 
-    // Create a temporary path and add to it to ensure that there are
-    // extra components that don't exist to cause writing to fail
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("line 1").unwrap();
@@ -49,7 +47,7 @@ fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            session:append_file_sync({
+            session:append_file({
                 path = $file_path,
                 data = $data
             })

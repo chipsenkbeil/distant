@@ -15,7 +15,7 @@ fn should_send_error_on_failure(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local status, _ = pcall(session.metadata_sync, session, { path = $file_path })
+            local status, _ = pcall(session.metadata, session, { path = $file_path })
             assert(not status, "Unexpectedly succeeded")
         })
         .exec();
@@ -35,7 +35,7 @@ fn should_return_metadata_on_file_if_exists(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local metadata = session:metadata_sync({ path = $file_path })
+            local metadata = session:metadata({ path = $file_path })
             assert(not metadata.canonicalized_path, "Unexpectedly got canonicalized path")
             assert(metadata.file_type == "file", "Got wrong file type: " .. metadata.file_type)
             assert(metadata.len == 9, "Got wrong len: " .. metadata.len)
@@ -58,7 +58,7 @@ fn should_return_metadata_on_dir_if_exists(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local metadata = session:metadata_sync({ path = $dir_path })
+            local metadata = session:metadata({ path = $dir_path })
             assert(not metadata.canonicalized_path, "Unexpectedly got canonicalized path")
             assert(metadata.file_type == "dir", "Got wrong file type: " .. metadata.file_type)
             assert(not metadata.readonly, "Unexpectedly readonly")
@@ -83,7 +83,7 @@ fn should_return_metadata_on_symlink_if_exists(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local metadata = session:metadata_sync({ path = $symlink_path })
+            local metadata = session:metadata({ path = $symlink_path })
             assert(not metadata.canonicalized_path, "Unexpectedly got canonicalized path")
             assert(metadata.file_type == "symlink", "Got wrong file type: " .. metadata.file_type)
             assert(not metadata.readonly, "Unexpectedly readonly")
@@ -110,7 +110,7 @@ fn should_include_canonicalized_path_if_flag_specified(ctx: &'_ DistantServerCtx
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local metadata = session:metadata_sync({
+            local metadata = session:metadata({
                 path = $symlink_path,
                 canonicalize = true,
             })
@@ -141,7 +141,7 @@ fn should_resolve_file_type_of_symlink_if_flag_specified(ctx: &'_ DistantServerC
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local metadata = session:metadata_sync({
+            local metadata = session:metadata({
                 path = $symlink_path,
                 resolve_file_type = true,
             })

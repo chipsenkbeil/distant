@@ -11,7 +11,7 @@ pub fn make_function<'a>(lua: &'a Lua, ctx: &'_ DistantServerCtx) -> LuaResult<L
 
     lua.load(chunk! {
         local distant = require("distant_lua")
-        local thread = coroutine.create(distant.session.connect)
+        local thread = coroutine.create(distant.session.connect_async)
 
         local status, res = coroutine.resume(thread, {
             host = $host,

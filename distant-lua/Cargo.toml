@@ -24,7 +24,6 @@ luajit = ["mlua/luajit"]
 vendored = ["mlua/vendored"]
 
 [dependencies]
-async-compat = "0.2.1"
 distant-core = { version = "=0.15.0-alpha.6", path = "../distant-core" }
 distant-ssh2 = { version = "=0.15.0-alpha.6", features = ["serde"], path = "../distant-ssh2" }
 futures = "0.3.17"

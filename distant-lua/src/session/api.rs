@@ -1,4 +1,4 @@
-use crate::runtime::get_runtime;
+use crate::runtime;
 use distant_core::{
     DirEntry, Error as Failure, Metadata, RemoteLspProcess, RemoteProcess, SessionChannel,
     SessionChannelExt,
@@ -43,14 +43,14 @@ macro_rules! make_api {
                 }
             }
 
-            pub fn [<$name:snake _sync>](
+            pub fn [<$name:snake>](
                 channel: SessionChannel,
                 params: [<$name:camel Params>],
             ) -> LuaResult<$ret> {
-                get_runtime()?.block_on([<$name:snake>](channel, params))
+                runtime::block_on([<$name:snake _async>](channel, params))
             }
 
-            pub async fn [<$name:snake>](
+            pub async fn [<$name:snake _async>](
                 channel: SessionChannel,
                 params: [<$name:camel Params>],
             ) -> LuaResult<$ret> {
