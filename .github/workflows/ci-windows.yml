@@ -55,12 +55,12 @@ jobs:
       - name: Build distant-ssh2 (all features)
         run: cargo build --verbose --all-features -p distant-ssh2
         if: steps.changes.outputs.ssh2 == 'true'
-      - name: Test CLI
-        run: cargo test --verbose
+      - name: Build CLI
+        run: cargo build --verbose
         shell: bash
         if: steps.changes.outputs.cli == 'true'
-      - name: Test CLI (no default features)
-        run: cargo test --verbose --no-default-features
+      - name: Build CLI (no default features)
+        run: cargo build --verbose --no-default-features
         shell: bash
         if: steps.changes.outputs.cli == 'true'
       - name: Install Lua 5.1
