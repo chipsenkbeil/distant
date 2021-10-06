@@ -39,6 +39,7 @@ pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn run_daemon(_cmd: ListenSubcommand, _opt: CommonOpt) -> Result<(), Error> {
     use std::process::{Command, Stdio};
     let mut args = std::env::args_os().filter(|arg| arg != "--daemon");
