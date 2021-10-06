@@ -1,0 +1,45 @@
+name: CI (All)
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  clippy:
+    name: Lint with clippy
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (clippy)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v1
+      - name: Check Cargo availability
+        run: cargo --version
+      - run: cargo clippy --workspace --all-targets --verbose
+      - run: cargo clippy --workspace --all-targets --verbose --all-features
+
+  rustfmt:
+    name: Verify code formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (rustfmt)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v1
+      - name: Check Cargo availability
+        run: cargo --version
+      - run: cargo fmt --all -- --check

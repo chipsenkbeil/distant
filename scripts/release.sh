@@ -6,6 +6,7 @@
 CRATES=(
   distant-core
   distant-ssh2
+  distant-lua
   distant
 )
 

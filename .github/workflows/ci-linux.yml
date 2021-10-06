@@ -1,4 +1,4 @@
-name: CI
+name: CI (Linux)
 
 on:
   push:
@@ -17,8 +17,6 @@ jobs:
       matrix:
         include:
           - { rust: stable, os: ubuntu-latest }
-          - { rust: stable, os: macos-latest }
-          - { rust: stable, os: windows-latest }
           - { rust: 1.51.0, os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v2
@@ -30,8 +28,6 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
-      - uses: Vampire/setup-wsl@v1
-        if: ${{ matrix.os == 'windows-latest' }}
       - uses: dorny/paths-filter@v2
         id: changes
         with:
@@ -55,69 +51,22 @@ jobs:
         if: steps.changes.outputs.core == 'true'
       - name: Ensure /run/sshd exists on Unix
         run: mkdir -p /run/sshd
-        if: |
-          matrix.os != 'windows-latest' &&
-          matrix.os != 'macos-latest' &&
-          steps.changes.outputs.ssh2 == 'true'
+        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (default features)
         run: cargo test --verbose -p distant-ssh2
-        if: |
-          matrix.os != 'windows-latest' &&
-          steps.changes.outputs.ssh2 == 'true'
+        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (all features)
         run: cargo test --verbose --all-features -p distant-ssh2
-        if: |
-          matrix.os != 'windows-latest' &&
-          steps.changes.outputs.ssh2 == 'true'
+        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run CLI tests
         run: cargo test --verbose
         shell: bash
-        if: |
-          matrix.os != 'windows-latest' &&
-          steps.changes.outputs.cli == 'true'
+        if: steps.changes.outputs.cli == 'true'
       - name: Run CLI tests (no default features)
         run: cargo test --verbose --no-default-features
         shell: bash
-        if: |
-          matrix.os != 'windows-latest' &&
-          steps.changes.outputs.cli == 'true'
+        if: steps.changes.outputs.cli == 'true'
       - name: Run Lua tests
         run: (cd distant-lua && cargo build) && (cd distant-lua-tests && cargo test --verbose)
         shell: bash
-        if: |
-          steps.changes.outputs.lua == 'true'
-
-  clippy:
-    name: Lint with clippy
-    runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: -Dwarnings
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install Rust (clippy)
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@v1
-      - name: Check Cargo availability
-        run: cargo --version
-      - run: cargo clippy --workspace --all-targets --verbose
-      - run: cargo clippy --workspace --all-targets --verbose --all-features
-
-  rustfmt:
-    name: Verify code formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install Rust (rustfmt)
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v1
-      - name: Check Cargo availability
-        run: cargo --version
-      - run: cargo fmt --all -- --check
+        if: steps.changes.outputs.lua == 'true'
