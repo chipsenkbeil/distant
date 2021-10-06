@@ -243,7 +243,7 @@ impl UserData for Session {
         impl_methods!(methods, copy);
         impl_methods!(methods, create_dir);
         impl_methods!(methods, exists);
-        impl_methods!(methods, metadata, |lua, m| { lua.to_value(&m) });
+        impl_methods!(methods, metadata, |lua, m| { to_value!(lua, &m) });
         impl_methods!(methods, read_dir, |lua, results| {
             let (entries, errors) = results;
             let tbl = lua.create_table()?;
@@ -251,7 +251,7 @@ impl UserData for Session {
                 "entries",
                 entries
                     .iter()
-                    .map(|x| lua.to_value(x))
+                    .map(|x| to_value!(lua, x))
                     .collect::<LuaResult<Vec<LuaValue>>>()?,
             )?;
             tbl.set(

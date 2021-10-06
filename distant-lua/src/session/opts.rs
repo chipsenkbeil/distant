@@ -108,8 +108,7 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
                     on_authenticate: {
                         let f: LuaFunction = tbl.get("on_authenticate")?;
                         Box::new(move |ev| {
-                            let value = lua
-                                .to_value(&ev)
+                            let value = to_value!(lua, &ev)
                                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
                             f.call::<LuaValue, Vec<String>>(value)
                                 .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
