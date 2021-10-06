@@ -62,6 +62,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
             debug!("Piping session to stdout");
             println!("{}", session.to_unprotected_string())
         }
+        #[cfg(unix)]
         SessionOutput::Socket if is_daemon => {
             debug!(
                 "Forking and entering interactive loop over unix socket {:?}",
@@ -107,22 +108,6 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
         }
     }
 
-    Ok(())
-}
-
-#[cfg(windows)]
-fn run_daemon_socket(
-    _session_socket: impl AsRef<Path>,
-    _session: SessionInfo,
-    _timeout: Duration,
-    _fail_if_socket_exists: bool,
-    _shutdown_after: Option<Duration>,
-) -> Result<(), Error> {
-    use std::process::Command;
-    let mut args = std::env::args_os().filter(|arg| arg != "--daemon");
-    let program = args.next().ok_or(Error::Fork(1))?;
-
-    let _ = Command::new(program).args(args).spawn()?;
     Ok(())
 }
 
