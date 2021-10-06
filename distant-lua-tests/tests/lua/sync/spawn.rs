@@ -39,12 +39,7 @@ static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(
         .write_str(indoc::indoc!(
             r#"
                 #/usr/bin/env bash
-                echo "<<STARTING>>" > /tmp/fish.txt
-                while IFS= read; do 
-                    echo "$REPLY"
-                    echo "$REPLY" >> /tmp/fish.txt
-                done
-                echo "<<ENDING>>" >> /tmp/fish.txt
+                while IFS= read; do echo "$REPLY"; done
             "#
         ))
         .unwrap();
@@ -280,13 +275,13 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local proc = session:spawn({ cmd = $cmd, args = $args })
-            proc:write_stdin("some text")
+            proc:write_stdin("some text\n")
 
             // Wait briefly to ensure the process echoes stdin
             $wait_fn()
 
             local stdout = proc:read_stdout()
-            assert(stdout == "some text", "Unexpected stdin sent: " .. stdout)
+            assert(stdout == "some text\n", "Unexpected stdin sent: " .. stdout)
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());

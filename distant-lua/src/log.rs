@@ -1,7 +1,7 @@
 use mlua::prelude::*;
 use serde::{Deserialize, Serialize};
 use simplelog::{
-    ColorChoice, CombinedLogger, Config, ConfigBuilder, LevelFilter, SharedLogger, TermLogger,
+    ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, TermLogger,
     TerminalMode, WriteLogger,
 };
 use std::{fs::File, path::PathBuf};
@@ -43,6 +43,7 @@ impl From<LogLevel> for LevelFilter {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
 struct LogOpts {
     /// Indicating whether or not to log to terminal
     terminal: bool,
