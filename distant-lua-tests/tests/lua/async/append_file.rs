@@ -20,7 +20,10 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local f = require("distant_lua").utils.wrap_async(session.append_file, $schedule_fn)
+            local f = require("distant_lua").utils.wrap_async(
+                session.append_file_async,
+                $schedule_fn
+            )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
@@ -54,7 +57,10 @@ fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local f = require("distant_lua").utils.wrap_async(session.append_file, $schedule_fn)
+            local f = require("distant_lua").utils.wrap_async(
+                session.append_file_async,
+                $schedule_fn
+            )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err

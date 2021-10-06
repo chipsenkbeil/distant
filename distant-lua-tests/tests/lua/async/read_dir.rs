@@ -38,7 +38,7 @@ fn should_return_error_if_directory_does_not_exist(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 
@@ -69,7 +69,7 @@ fn should_have_depth_default_to_1(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 
@@ -116,7 +116,7 @@ fn should_support_depth_limits(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 
@@ -163,7 +163,7 @@ fn should_support_unlimited_depth_using_zero(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 
@@ -216,7 +216,7 @@ fn should_support_including_directory_in_returned_entries(ctx: &'_ DistantServer
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 
@@ -276,7 +276,7 @@ fn should_support_returning_absolute_paths(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 
@@ -323,7 +323,7 @@ fn should_support_returning_canonicalized_paths(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.read_dir,
+                session.read_dir_async,
                 $schedule_fn
             )
 

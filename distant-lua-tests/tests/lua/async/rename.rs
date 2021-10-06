@@ -1,52 +1,32 @@
 use crate::common::{fixtures::*, lua, poll, session};
 use assert_fs::prelude::*;
 use mlua::chunk;
+use predicates::prelude::*;
 use rstest::*;
 
-// /root/
-// /root/file1
-// /root/link1 -> /root/sub1/file2
-// /root/sub1/
-// /root/sub1/file2
-fn setup_dir() -> assert_fs::TempDir {
-    let root_dir = assert_fs::TempDir::new().unwrap();
-    root_dir.child("file1").touch().unwrap();
-
-    let sub1 = root_dir.child("sub1");
-    sub1.create_dir_all().unwrap();
-
-    let file2 = sub1.child("file2");
-    file2.touch().unwrap();
-
-    let link1 = root_dir.child("link1");
-    link1.symlink_to_file(file2.path()).unwrap();
-
-    root_dir
-}
-
 #[rstest]
-fn should_send_error_if_fails(ctx: &'_ DistantServerCtx) {
+fn should_return_error_on_failure(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
     let schedule_fn = poll::make_function(&lua).unwrap();
 
-    // Make a path that has multiple non-existent components
-    // so the creation will fail
-    let root_dir = setup_dir();
-    let path = root_dir.path().join("nested").join("new-dir");
-    let path_str = path.to_str().unwrap();
+    let temp = assert_fs::TempDir::new().unwrap();
+    let src = temp.child("src");
+    let dst = temp.child("dst");
+    let src_path = src.path().to_str().unwrap();
+    let dst_path = dst.path().to_str().unwrap();
 
     let result = lua
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.create_dir_async,
+                session.rename_async,
                 $schedule_fn
             )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $path_str }, function(success, res)
+            f(session, { src = $src_path, dst = $dst_path }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -56,31 +36,40 @@ fn should_send_error_if_fails(ctx: &'_ DistantServerCtx) {
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
 
-    // Also verify that the directory was not actually created
-    assert!(!path.exists(), "Path unexpectedly exists");
+    // Also, verify that destination does not exist
+    dst.assert(predicate::path::missing());
 }
 
 #[rstest]
-fn should_send_ok_when_successful(ctx: &'_ DistantServerCtx) {
+fn should_support_renaming_an_entire_directory(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
     let schedule_fn = poll::make_function(&lua).unwrap();
 
-    let root_dir = setup_dir();
-    let path = root_dir.path().join("new-dir");
-    let path_str = path.to_str().unwrap();
+    let temp = assert_fs::TempDir::new().unwrap();
+
+    let src = temp.child("src");
+    src.create_dir_all().unwrap();
+    let src_file = src.child("file");
+    src_file.write_str("some contents").unwrap();
+
+    let dst = temp.child("dst");
+    let dst_file = dst.child("file");
+
+    let src_path = src.path().to_str().unwrap();
+    let dst_path = dst.path().to_str().unwrap();
 
     let result = lua
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.create_dir_async,
+                session.rename_async,
                 $schedule_fn
             )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $path_str }, function(success, res)
+            f(session, { src = $src_path, dst = $dst_path }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -90,31 +79,38 @@ fn should_send_ok_when_successful(ctx: &'_ DistantServerCtx) {
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
 
-    // Also verify that the directory was actually created
-    assert!(path.exists(), "Directory not created");
+    // Verify that we moved the contents
+    src.assert(predicate::path::missing());
+    src_file.assert(predicate::path::missing());
+    dst.assert(predicate::path::is_dir());
+    dst_file.assert("some contents");
 }
 
 #[rstest]
-fn should_support_creating_multiple_dir_components(ctx: &'_ DistantServerCtx) {
+fn should_support_renaming_a_single_file(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
     let schedule_fn = poll::make_function(&lua).unwrap();
 
-    let root_dir = setup_dir();
-    let path = root_dir.path().join("nested").join("new-dir");
-    let path_str = path.to_str().unwrap();
+    let temp = assert_fs::TempDir::new().unwrap();
+    let src = temp.child("src");
+    src.write_str("some text").unwrap();
+    let dst = temp.child("dst");
+
+    let src_path = src.path().to_str().unwrap();
+    let dst_path = dst.path().to_str().unwrap();
 
     let result = lua
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.create_dir_async,
+                session.rename_async,
                 $schedule_fn
             )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $path_str, all = true }, function(success, res)
+            f(session, { src = $src_path, dst = $dst_path }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -124,6 +120,7 @@ fn should_support_creating_multiple_dir_components(ctx: &'_ DistantServerCtx) {
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
 
-    // Also verify that the directory was actually created
-    assert!(path.exists(), "Directory not created");
+    // Verify that we moved the file
+    src.assert(predicate::path::missing());
+    dst.assert("some text");
 }

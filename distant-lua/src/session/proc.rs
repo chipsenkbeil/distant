@@ -4,7 +4,8 @@ use distant_core::{
 };
 use mlua::{prelude::*, UserData, UserDataFields, UserDataMethods};
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, io, sync::RwLock};
+use std::{collections::HashMap, io};
+use tokio::sync::RwLock;
 
 /// Contains mapping of id -> remote process for use in maintaining active processes
 static PROC_MAP: Lazy<RwLock<HashMap<usize, DistantRemoteProcess>>> =
@@ -17,7 +18,22 @@ static LSP_PROC_MAP: Lazy<RwLock<HashMap<usize, DistantRemoteLspProcess>>> =
 macro_rules! with_proc {
     ($map_name:ident, $id:expr, $proc:ident -> $f:expr) => {{
         let id = $id;
-        let mut lock = $map_name.write().map_err(|x| x.to_string().to_lua_err())?;
+        let mut lock = runtime::get_runtime()?.block_on($map_name.write());
+        let $proc = lock.get_mut(&id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("No remote process found with id {}", id),
+            )
+            .to_lua_err()
+        })?;
+        $f
+    }};
+}
+
+macro_rules! with_proc_async {
+    ($map_name:ident, $id:expr, $proc:ident -> $f:expr) => {{
+        let id = $id;
+        let mut lock = $map_name.write().await;
         let $proc = lock.get_mut(&id).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -43,26 +59,20 @@ macro_rules! impl_process {
 
             pub fn from_distant(proc: $type) -> LuaResult<Self> {
                 let id = proc.id();
-                $map_name
-                    .write()
-                    .map_err(|x| x.to_string().to_lua_err())?
-                    .insert(id, proc);
+                runtime::get_runtime()?.block_on($map_name.write()).insert(id, proc);
                 Ok(Self::new(id))
             }
 
-            pub fn is_active(&self) -> LuaResult<bool> {
-                Ok($map_name
-                    .read()
-                    .map_err(|x| x.to_string().to_lua_err())?
-                    .contains_key(&self.id))
+            fn is_active(id: usize) -> LuaResult<bool> {
+                Ok(runtime::get_runtime()?.block_on($map_name.read()).contains_key(&id))
             }
 
-            pub fn write_stdin(&self, data: String) -> LuaResult<()> {
-                runtime::block_on(self.write_stdin_async(data))
+            fn write_stdin(id: usize, data: String) -> LuaResult<()> {
+                runtime::block_on(Self::write_stdin_async(id, data))
             }
 
-            async fn write_stdin_async(&self, data: String) -> LuaResult<()> {
-                with_proc!($map_name, self.id, proc -> {
+            async fn write_stdin_async(id: usize, data: String) -> LuaResult<()> {
+                with_proc_async!($map_name, id, proc -> {
                     proc.stdin
                         .as_mut()
                         .ok_or_else(|| {
@@ -74,15 +84,15 @@ macro_rules! impl_process {
                 })
             }
 
-            pub fn close_stdin(&self) -> LuaResult<()> {
-                with_proc!($map_name, self.id, proc -> {
+            fn close_stdin(id: usize) -> LuaResult<()> {
+                with_proc!($map_name, id, proc -> {
                     let _ = proc.stdin.take();
                     Ok(())
                 })
             }
 
-            pub fn read_stdout(&self) -> LuaResult<Option<String>> {
-                with_proc!($map_name, self.id, proc -> {
+            fn read_stdout(id: usize) -> LuaResult<Option<String>> {
+                with_proc!($map_name, id, proc -> {
                     proc.stdout
                         .as_mut()
                         .ok_or_else(|| {
@@ -93,8 +103,21 @@ macro_rules! impl_process {
                 })
             }
 
-            pub fn read_stderr(&self) -> LuaResult<Option<String>> {
-                with_proc!($map_name, self.id, proc -> {
+            async fn read_stdout_async(id: usize) -> LuaResult<String> {
+                with_proc_async!($map_name, id, proc -> {
+                    proc.stdout
+                        .as_mut()
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::BrokenPipe, "Stdout closed").to_lua_err()
+                        })?
+                        .read()
+                        .await
+                        .to_lua_err()
+                })
+            }
+
+            fn read_stderr(id: usize) -> LuaResult<Option<String>> {
+                with_proc!($map_name, id, proc -> {
                     proc.stderr
                         .as_mut()
                         .ok_or_else(|| {
@@ -105,18 +128,31 @@ macro_rules! impl_process {
                 })
             }
 
-            pub fn kill(&self) -> LuaResult<()> {
-                runtime::block_on(self.kill_async())
+            async fn read_stderr_async(id: usize) -> LuaResult<String> {
+                with_proc_async!($map_name, id, proc -> {
+                    proc.stderr
+                        .as_mut()
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::BrokenPipe, "Stderr closed").to_lua_err()
+                        })?
+                        .read()
+                        .await
+                        .to_lua_err()
+                })
             }
 
-            async fn kill_async(&self) -> LuaResult<()> {
-                with_proc!($map_name, self.id, proc -> {
+            fn kill(id: usize) -> LuaResult<()> {
+                runtime::block_on(Self::kill_async(id))
+            }
+
+            async fn kill_async(id: usize) -> LuaResult<()> {
+                with_proc_async!($map_name, id, proc -> {
                     proc.kill().await.to_lua_err()
                 })
             }
 
-            pub fn abort(&self) -> LuaResult<()> {
-                with_proc!($map_name, self.id, proc -> {
+            fn abort(id: usize) -> LuaResult<()> {
+                with_proc!($map_name, id, proc -> {
                     Ok(proc.abort())
                 })
             }
@@ -128,15 +164,27 @@ macro_rules! impl_process {
             }
 
             fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-                methods.add_method("is_active", |_, this, ()| this.is_active());
-                methods.add_method("close_stdin", |_, this, ()| this.close_stdin());
+                methods.add_method("is_active", |_, this, ()| Self::is_active(this.id));
+                methods.add_method("close_stdin", |_, this, ()| Self::close_stdin(this.id));
                 methods.add_method("write_stdin", |_, this, data: String| {
-                    this.write_stdin(data)
+                    Self::write_stdin(this.id, data)
                 });
-                methods.add_method("read_stdout", |_, this, ()| this.read_stdout());
-                methods.add_method("read_stderr", |_, this, ()| this.read_stderr());
-                methods.add_method("kill", |_, this, ()| this.kill());
-                methods.add_method("abort", |_, this, ()| this.abort());
+                methods.add_async_method("write_stdin_async", |_, this, data: String| {
+                    runtime::spawn(Self::write_stdin_async(this.id, data))
+                });
+                methods.add_method("read_stdout", |_, this, ()| Self::read_stdout(this.id));
+                methods.add_async_method("read_stdout_async", |_, this, ()| {
+                    runtime::spawn(Self::read_stdout_async(this.id))
+                });
+                methods.add_method("read_stderr", |_, this, ()| Self::read_stderr(this.id));
+                methods.add_async_method("read_stderr_async", |_, this, ()| {
+                    runtime::spawn(Self::read_stderr_async(this.id))
+                });
+                methods.add_method("kill", |_, this, ()| Self::kill(this.id));
+                methods.add_async_method("kill_async", |_, this, ()| {
+                    runtime::spawn(Self::kill_async(this.id))
+                });
+                methods.add_method("abort", |_, this, ()| Self::abort(this.id));
             }
         }
     };

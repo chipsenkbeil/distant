@@ -18,7 +18,7 @@ fn should_send_true_if_path_exists(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.exists,
+                session.exists_async,
                 $schedule_fn
             )
 
@@ -52,7 +52,7 @@ fn should_send_false_if_path_does_not_exist(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.exists,
+                session.exists_async,
                 $schedule_fn
             )
 

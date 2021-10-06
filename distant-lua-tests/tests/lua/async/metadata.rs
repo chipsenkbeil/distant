@@ -17,7 +17,7 @@ fn should_send_error_on_failure(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.metadata,
+                session.metadata_async,
                 $schedule_fn
             )
 
@@ -49,7 +49,7 @@ fn should_return_metadata_on_file_if_exists(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.metadata,
+                session.metadata_async,
                 $schedule_fn
             )
 
@@ -88,7 +88,7 @@ fn should_return_metadata_on_dir_if_exists(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.metadata,
+                session.metadata_async,
                 $schedule_fn
             )
 
@@ -129,7 +129,7 @@ fn should_return_metadata_on_symlink_if_exists(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.metadata,
+                session.metadata_async,
                 $schedule_fn
             )
 
@@ -172,7 +172,7 @@ fn should_include_canonicalized_path_if_flag_specified(ctx: &'_ DistantServerCtx
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.metadata,
+                session.metadata_async,
                 $schedule_fn
             )
 
@@ -216,7 +216,7 @@ fn should_resolve_file_type_of_symlink_if_flag_specified(ctx: &'_ DistantServerC
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.metadata,
+                session.metadata_async,
                 $schedule_fn
             )
 

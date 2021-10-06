@@ -21,7 +21,7 @@ fn should_send_error_on_failure(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.copy,
+                session.copy_async,
                 $schedule_fn
             )
 
@@ -63,7 +63,7 @@ fn should_support_copying_an_entire_directory(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.copy,
+                session.copy_async,
                 $schedule_fn
             )
 
@@ -104,7 +104,7 @@ fn should_support_copying_an_empty_directory(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.copy,
+                session.copy_async,
                 $schedule_fn
             )
 
@@ -147,7 +147,7 @@ fn should_support_copying_a_directory_that_only_contains_directories(ctx: &'_ Di
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.copy,
+                session.copy_async,
                 $schedule_fn
             )
 
@@ -188,7 +188,7 @@ fn should_support_copying_a_single_file(ctx: &'_ DistantServerCtx) {
         .load(chunk! {
             local session = $new_session()
             local f = require("distant_lua").utils.wrap_async(
-                session.copy,
+                session.copy_async,
                 $schedule_fn
             )
 
