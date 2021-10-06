@@ -74,7 +74,7 @@ fn run_daemon(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 Ok(())
             }
         }
-        Err(_) => return Err(Error::Fork),
+        Err(_) => Err(Error::Fork),
     }
 }
 
