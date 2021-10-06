@@ -33,6 +33,11 @@ pub fn nvim_wrap_async<'a>(lua: &'a Lua, async_fn: LuaFunction<'a>) -> LuaResult
 /// a new function is returned that takes a callback when the async
 /// function completes as well as zero or more arguments to provide
 /// to the async function when first executing it
+///
+/// ```lua
+/// local f = wrap_async(some_async_fn, schedule_fn)
+/// f(function(success, res) end, arg1, arg2, ...)
+/// ```
 pub fn wrap_async<'a>(
     lua: &'a Lua,
     async_fn: LuaFunction<'a>,
@@ -40,11 +45,12 @@ pub fn wrap_async<'a>(
 ) -> LuaResult<LuaFunction<'a>> {
     let pending = pending(lua)?;
     lua.load(chunk! {
-        function(cb, ...)
+        return function(cb, ...)
             assert(type(cb) == "function", "Invalid type for cb")
+            local schedule = function(...) $schedule_fn(...) end
 
             // Wrap the async function in a coroutine so we can poll it
-            local thread = coroutine.create($async_fn)
+            local thread = coroutine.create(function(...) $async_fn(...) end)
 
             // Start the future by peforming the first poll
             local status, res = coroutine.resume(thread, ...)
@@ -53,19 +59,19 @@ pub fn wrap_async<'a>(
             inner_fn = function()
                 // Thread has exited already, so res is an error
                 if not status then
-                    cb(res)
+                    cb(false, res)
                 // Got pending status on success, so we are still waiting
-                else if res == $pending then
+                elseif res == $pending then
                     // Resume the coroutine and then schedule a followup
                     // once it has completed another round
                     status, res = coroutine.resume(thread)
-                    $schedule_fn(inner_fn)
+                    schedule(inner_fn)
                 // Got success with non-pending status, so this should be the result
                 else
-                    cb(nil, res)
+                    cb(true, res)
                 end
             end
-            $schedule_fn(inner_fn)
+            schedule(inner_fn)
         end
     })
     .eval()
