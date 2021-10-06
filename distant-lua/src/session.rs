@@ -137,7 +137,7 @@ impl Session {
         } = opts;
 
         // First, establish a connection to an SSH server
-        let mut ssh_session = Ssh2Session::connect(host, ssh.into()).to_lua_err()?;
+        let mut ssh_session = Ssh2Session::connect(host, ssh).to_lua_err()?;
 
         // Second, authenticate with the server
         ssh_session.authenticate(handler).await.to_lua_err()?;

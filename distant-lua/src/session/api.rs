@@ -9,7 +9,7 @@ use paste::paste;
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 
-static TENANT: Lazy<String> = Lazy::new(|| format!("{}", whoami::hostname()));
+static TENANT: Lazy<String> = Lazy::new(whoami::hostname);
 
 /// Default depth for reading directory
 const fn default_depth() -> usize {
