@@ -39,7 +39,12 @@ static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(
         .write_str(indoc::indoc!(
             r#"
                 #/usr/bin/env bash
-                while IFS= read; do echo "$REPLY"; done
+                echo "<<STARTING>>" > /tmp/fish.txt
+                while IFS= read; do 
+                    echo "$REPLY"
+                    echo "$REPLY" >> /tmp/fish.txt
+                done
+                echo "<<ENDING>>" >> /tmp/fish.txt
             "#
         ))
         .unwrap();
@@ -264,13 +269,22 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()];
 
+    let wait_fn = lua
+        .create_function(|_, ()| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            Ok(())
+        })
+        .unwrap();
+
     let result = lua
         .load(chunk! {
             local session = $new_session()
             local proc = session:spawn({ cmd = $cmd, args = $args })
             proc:write_stdin("some text")
 
-            // Our process echos back the stdin, so we can verify it was sent
+            // Wait briefly to ensure the process echoes stdin
+            $wait_fn()
+
             local stdout = proc:read_stdout()
             assert(stdout == "some text", "Unexpected stdin sent: " .. stdout)
         })
