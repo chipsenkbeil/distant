@@ -63,10 +63,9 @@ jobs:
         run: cargo build --verbose --no-default-features
         shell: bash
         if: steps.changes.outputs.cli == 'true'
-      - name: Install Lua 5.1
-        uses: leafo/gh-actions-lua@master
+      - uses: xpol/setup-lua@v0.3
         with:
-          luaVersion: 5.1
+          lua-version: "5.1.5"
         if: steps.changes.outputs.lua == 'true'
       - name: Run Lua tests (Lua 5.1)
         run: |
