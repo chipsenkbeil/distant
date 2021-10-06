@@ -21,7 +21,7 @@ use strum::{EnumString, EnumVariantNames, IntoStaticStr, VariantNames};
 static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 
 /// Options and commands to apply to binary
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 #[structopt(name = "distant")]
 pub struct Opt {
     #[structopt(flatten)]
@@ -74,7 +74,7 @@ impl LogLevel {
 }
 
 /// Contains options that are common across subcommands
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 pub struct CommonOpt {
     /// Quiet mode, suppresses all logging (shortcut for log level off)
     #[structopt(short, long, global = true)]
@@ -108,7 +108,7 @@ impl CommonOpt {
 }
 
 /// Contains options related sessions
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 pub struct SessionOpt {
     /// Represents the location of the file containing session information,
     /// only useful when the session is set to "file"
@@ -137,7 +137,7 @@ pub struct SshConnectionOpts {
     pub user: Option<String>,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 pub enum Subcommand {
     /// Performs some action on a remote machine
     Action(ActionSubcommand),
@@ -232,7 +232,7 @@ pub enum Format {
 }
 
 /// Represents subcommand to execute some operation remotely
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
 pub struct ActionSubcommand {
     /// Represents the format that results should be returned
@@ -441,7 +441,7 @@ impl Default for SessionInput {
 }
 
 /// Represents subcommand to launch a remote server
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 pub struct LaunchSubcommand {
     /// Represents the medium for sharing the session upon launching on a remote machine
     #[structopt(
@@ -551,7 +551,7 @@ impl LaunchSubcommand {
 }
 
 /// Represents subcommand to operate in listen mode for incoming requests
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 pub struct ListenSubcommand {
     /// Runs in background via daemon-mode (does nothing on windows)
     #[structopt(short, long)]
@@ -613,7 +613,7 @@ impl ListenSubcommand {
 }
 
 /// Represents subcommand to execute some LSP server on a remote machine
-#[derive(Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
 pub struct LspSubcommand {
     /// Represents the format that results should be returned

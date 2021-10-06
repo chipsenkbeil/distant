@@ -6,7 +6,6 @@ use derive_more::{Display, Error, From};
 use distant_core::{
     DistantServer, DistantServerOptions, SecretKey32, UnprotectedToHexKey, XChaCha20Poly1305Codec,
 };
-use fork::{daemon, Fork};
 use log::*;
 use tokio::{io, task::JoinError};
 
@@ -31,26 +30,51 @@ impl ExitCodeError for Error {
 
 pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
     if cmd.daemon {
-        // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
-        match daemon(false, true) {
-            Ok(Fork::Child) => {
-                let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(async { run_async(cmd, opt, true).await })?;
-            }
-            Ok(Fork::Parent(pid)) => {
-                info!("[distant detached, pid = {}]", pid);
-                if fork::close_fd().is_err() {
-                    return Err(Error::Fork);
-                }
-            }
-            Err(_) => return Err(Error::Fork),
-        }
+        run_daemon(cmd, opt)?;
     } else {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async { run_async(cmd, opt, false).await })?;
     }
 
     Ok(())
+}
+
+fn run_daemon(_cmd: ListenSubcommand, _opt: CommonOpt) -> Result<(), Error> {
+    use std::process::{Command, Stdio};
+    let mut args = std::env::args_os().filter(|arg| arg != "--daemon");
+    let program = args.next().ok_or(Error::Fork)?;
+
+    let child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+    info!("[distant detached, pid = {}]", child.id());
+    Ok(())
+}
+
+#[cfg(unix)]
+fn run_daemon(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
+    use fork::{daemon, Fork};
+
+    // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
+    match daemon(false, true) {
+        Ok(Fork::Child) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(async { run_async(cmd, opt, true).await })?;
+            Ok(())
+        }
+        Ok(Fork::Parent(pid)) => {
+            info!("[distant detached, pid = {}]", pid);
+            if fork::close_fd().is_err() {
+                Err(Error::Fork)
+            } else {
+                Ok(())
+            }
+        }
+        Err(_) => return Err(Error::Fork),
+    }
 }
 
 async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> Result<(), Error> {
@@ -83,6 +107,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     println!("DISTANT DATA -- {} {}", port, key_hex_string);
 
     // For the child, we want to fully disconnect it from pipes, which we do now
+    #[cfg(unix)]
     if is_forked && fork::close_fd().is_err() {
         return Err(Error::Fork);
     }
