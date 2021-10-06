@@ -84,6 +84,7 @@ impl CommandRunner {
                             .map_err(wrap_err)?;
                         (session, lsp_data)
                     }
+                    #[cfg(unix)]
                     SessionParams::Socket { path, codec } => {
                         let session = Session::unix_connect_timeout(path, codec, timeout)
                             .await
@@ -104,10 +105,8 @@ enum SessionParams {
         codec: XChaCha20Poly1305Codec,
         lsp_data: Option<LspData>,
     },
-    Socket {
-        path: PathBuf,
-        codec: PlainCodec,
-    },
+    #[cfg(unix)]
+    Socket { path: PathBuf, codec: PlainCodec },
 }
 
 async fn retrieve_session_params(

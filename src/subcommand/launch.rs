@@ -98,14 +98,6 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 .await
             })?
         }
-        #[cfg(not(unix))]
-        SessionOutput::Socket => {
-            debug!(concat!(
-                "Trying to enter interactive loop over unix socket, ",
-                "but not on unix platform!"
-            ));
-            unreachable!()
-        }
     }
 
     Ok(())
@@ -156,6 +148,7 @@ async fn keep_loop(info: SessionInfo, format: Format, duration: Duration) -> io:
     }
 }
 
+#[cfg(unix)]
 async fn socket_loop(
     socket_path: impl AsRef<Path>,
     info: SessionInfo,
