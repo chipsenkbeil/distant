@@ -36,7 +36,7 @@ pub fn nvim_wrap_async<'a>(lua: &'a Lua, async_fn: LuaFunction<'a>) -> LuaResult
 ///
 /// ```lua
 /// local f = wrap_async(some_async_fn, schedule_fn)
-/// f(function(success, res) end, arg1, arg2, ...)
+/// f(arg1, arg2, ..., function(success, res) end)
 /// ```
 pub fn wrap_async<'a>(
     lua: &'a Lua,
@@ -45,15 +45,18 @@ pub fn wrap_async<'a>(
 ) -> LuaResult<LuaFunction<'a>> {
     let pending = pending(lua)?;
     lua.load(chunk! {
-        return function(cb, ...)
+        return function(...)
+            local args = {...}
+            local cb = table.remove(args)
+
             assert(type(cb) == "function", "Invalid type for cb")
-            local schedule = function(...) $schedule_fn(...) end
+            local schedule = function(...) return $schedule_fn(...) end
 
             // Wrap the async function in a coroutine so we can poll it
-            local thread = coroutine.create(function(...) $async_fn(...) end)
+            local thread = coroutine.create(function(...) return $async_fn(...) end)
 
             // Start the future by peforming the first poll
-            local status, res = coroutine.resume(thread, ...)
+            local status, res = coroutine.resume(thread, unpack(args))
 
             local inner_fn
             inner_fn = function()

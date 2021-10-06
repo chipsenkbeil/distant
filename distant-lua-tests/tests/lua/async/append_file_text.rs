@@ -15,16 +15,19 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("dir").child("test-file");
     let file_path = file.path().to_str().unwrap();
-    let data = b"some text".to_vec();
+    let text = "some text".to_string();
 
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local f = require("distant_lua").utils.wrap_async(session.append_file, $schedule_fn)
+            local f = require("distant_lua").utils.wrap_async(
+                session.append_file_text,
+                $schedule_fn
+            )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $file_path, data = $data }, function(success, res)
+            f(session, { path = $file_path, data = $text }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -49,16 +52,19 @@ fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
     file.write_str("line 1").unwrap();
 
     let file_path = file.path().to_str().unwrap();
-    let data = b"some text".to_vec();
+    let text = "some text".to_string();
 
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local f = require("distant_lua").utils.wrap_async(session.append_file, $schedule_fn)
+            local f = require("distant_lua").utils.wrap_async(
+                session.append_file_text,
+                $schedule_fn
+            )
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $file_path, data = $data }, function(success, res)
+            f(session, { path = $file_path, data = $text }, function(success, res)
                 if not success then
                     err = res
                 end
