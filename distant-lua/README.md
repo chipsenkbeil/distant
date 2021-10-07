@@ -25,21 +25,40 @@ Rename `libdistant_lua.so` or `libdistant_lua.dylib` to `distant_lua.so`
 ```lua
 local distant = require("distant_lua")
 
--- Distant functions are async by design and need to be wrapped in a coroutine
--- in order to be used
-local thread = coroutine.wrap(distant.launch)
+-- The majority of the distant lua module provides async and sync variants
+-- of methods; however, launching a session is currently only synchronous
+local session = distant.session.launch({ host = "127.0.0.1" })
 
--- Initialize the thread
-thread({ host = "127.0.0.1" })
-
--- Continually check if launch has completed
-local res
-while true do
-    res = thread()
-    if res ~= distant.PENDING then
-        break
+-- Sync methods are executed in a blocking fashion, returning the result of
+-- the operation if successful or throwing an error if failing. Use `pcall`
+-- if you want to capture the error
+local success, result = pcall(session.read_dir, session, { path = "path/to/dir" })
+if success then
+    for _, entry in ipairs(result.entries) do
+        print("Entry", entry.file_type, entry.path, entry.depth)
     end
+else
+    print(result)
 end
+
+-- Async methods have _async as a suffix and need to be polled from
+-- Lua in some manner; the `wrap_async` function provides a convience
+-- to do so taking an async distant function and a scheduling function
+local schedule_fn = function(cb) end
+local read_dir = distant.utils.wrap_async(session.read_dir_async, schedule_fn)
+read_dir(session, { path = "path/to/dir" }, function(success, result)
+    -- success: Returns true if ok and false if err
+    -- result: If success is true, then is the resulting value,
+    --         otherwise is the error
+    print("Success", success)
+    if success then
+        for _, entry in ipairs(result.entries) do
+            print("Entry", entry.file_type, entry.path, entry.depth)
+        end
+    else
+        print(result)
+    end
+end)
 ```
 
 ## Tests
