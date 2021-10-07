@@ -68,12 +68,10 @@ jobs:
         with:
           lua-version: "5.1.5"
         if: steps.changes.outputs.lua == 'true'
-      - name: Run Lua tests (Lua 5.1)
+      - name: Build Lua (Lua 5.1)
         run: |
           cd ${{ github.workspace }}\distant-lua
           cargo build --verbose --no-default-features --features lua51
-          cd ${{ github.workspace }}\distant-lua-tests
-          cargo test --verbose --no-default-features --features lua51
         shell: cmd
         env:
           LUA_INC: ${{ github.workspace }}\.lua\include
