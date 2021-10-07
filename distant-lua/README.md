@@ -59,6 +59,24 @@ read_dir(session, { path = "path/to/dir" }, function(success, result)
         print(result)
     end
 end)
+
+-- For neovim, there exists a helper function that converts async functions
+-- into functions that take callbacks, executing the asynchronous logic
+-- using neovim's event loop powered by libuv
+local read_dir = distant.utils.nvim_wrap_async(session.read_dir_async)
+read_dir(session, { path = "path/to/dir" }, function(success, result)
+    -- success: Returns true if ok and false if err
+    -- result: If success is true, then is the resulting value,
+    --         otherwise is the error
+    print("Success", success)
+    if success then
+        for _, entry in ipairs(result.entries) do
+            print("Entry", entry.file_type, entry.path, entry.depth)
+        end
+    else
+        print(result)
+    end
+end)
 ```
 
 ## Tests
