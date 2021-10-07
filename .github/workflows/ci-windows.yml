@@ -77,6 +77,6 @@ jobs:
         shell: cmd
         env:
           LUA_INC: ${{ github.workspace }}\.lua\include
-          LUA_LIB: ${{ github.workspace }}\.lua\bin
-          LUA_LIB_NAME: lua.dll
+          LUA_LIB: ${{ github.workspace }}\.lua\lib
+          LUA_LIB_NAME: lua
         if: steps.changes.outputs.lua == 'true'
