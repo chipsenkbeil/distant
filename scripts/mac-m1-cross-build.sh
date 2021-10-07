@@ -29,7 +29,7 @@ popd () {
 }
 
 ###############################################################################
-# TARGET GENERATION
+# TARGET GENERATION FOR DISTANT BIN
 #
 # Note: This is running on an M1 Mac and expects tooling like `lipo`
 ###############################################################################
@@ -42,13 +42,13 @@ mkdir -p "${PACKAGE_DIR}"
 
 # Apple x86-64 on M1 Mac
 TARGET="x86_64-apple-darwin"
-echo "Building ${TARGET}"
+echo "Building ${TARGET} distant binary"
 cargo build --release --target "${TARGET}"
 strip "${TARGET_DIR}/${TARGET}/release/distant"
 
 # Apple ARM on M1 Mac
 TARGET="aarch64-apple-darwin"
-echo "Building ${TARGET}"
+echo "Building ${TARGET} distant binary"
 cargo build --release --target "${TARGET}"
 strip "${TARGET_DIR}/${TARGET}/release/distant"
 
@@ -61,14 +61,14 @@ lipo -create \
 
 # Linux x86-64 (libc) on M1 Mac
 TARGET="x86_64-unknown-linux-gnu"
-echo "Building ${TARGET}"
+echo "Building ${TARGET} distant binary"
 cargo build --release --target "${TARGET}"
 cp "${TARGET_DIR}/${TARGET}/release/distant" "${PACKAGE_DIR}/distant-linux64-gnu"
 x86_64-unknown-linux-musl-strip "${PACKAGE_DIR}/distant-linux64-gnu"
 
 # Linux x86-64 (musl) on M1 Mac
 TARGET="x86_64-unknown-linux-musl"
-echo "Building ${TARGET}"
+echo "Building ${TARGET} distant binary"
 cargo build --release --target "${TARGET}"
 cp "${TARGET_DIR}/${TARGET}/release/distant" "${PACKAGE_DIR}/distant-linux64-musl"
 x86_64-unknown-linux-musl-strip "${PACKAGE_DIR}/distant-linux64-musl"
@@ -81,6 +81,31 @@ pushd "${PACKAGE_DIR}";
 for bin in *; do
     echo "Marking ${bin} executable"
     chmod +x "${bin}"
+done
+popd
+
+###############################################################################
+# TARGET GENERATION FOR DISTANT LUA MODULE
+###############################################################################
+
+# Apple x86-64 on M1 Mac
+TARGETS=(
+    "x86_64-apple-darwin" 
+    "aarch64-apple-darwin" 
+    "x86_64-unknown-linux-gnu" 
+)
+pushd "distant-lua";
+for TARGET in "${TARGETS[@]}"; do
+    echo "Building ${TARGET} for Lua"
+    cargo build --release --target "${TARGET}"
+
+    if [ "$TARGET" == "x86_64-apple-darwin" ]; then
+        cp "${TARGET_DIR}/${TARGET}/release/libdistant_lua.dylib" "${PACKAGE_DIR}/distant_lua-macos-x86_64.so"
+    elif [ "$TARGET" == "aarch64-apple-darwin" ]; then
+        cp "${TARGET_DIR}/${TARGET}/release/libdistant_lua.dylib" "${PACKAGE_DIR}/distant_lua-macos-aarch64.so"
+    else
+        cp "${TARGET_DIR}/${TARGET}/release/libdistant_lua.so" "${PACKAGE_DIR}/distant_lua-linux-x86_64.so"
+    fi
 done
 popd
 

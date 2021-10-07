@@ -9,7 +9,7 @@ use std::{
     collections::HashMap,
     future::Future,
     io::{self, Read, Write},
-    path::{Component, Path, PathBuf},
+    path::{Component, PathBuf},
     pin::Pin,
     sync::Arc,
 };
@@ -215,7 +215,7 @@ async fn file_append(
     use smol::io::AsyncWriteExt;
     let mut file = session
         .sftp()
-        .open_mode(
+        .open_with_mode(
             path,
             OpenOptions {
                 read: false,
@@ -246,7 +246,12 @@ async fn dir_read(
     let sftp = session.sftp();
 
     // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
-    let root_path = sftp.realpath(path).compat().await.map_err(to_other_error)?;
+    let root_path = sftp
+        .canonicalize(path)
+        .compat()
+        .await
+        .map_err(to_other_error)?
+        .into_std_path_buf();
 
     // Build up our entry list
     let mut entries = Vec::new();
@@ -277,8 +282,8 @@ async fn dir_read(
         let is_dir = match ft {
             FileType::Dir => true,
             FileType::File => false,
-            FileType::Symlink => match sftp.stat(&path).await {
-                Ok(stat) => stat.is_dir(),
+            FileType::Symlink => match sftp.metadata(path.to_path_buf()).await {
+                Ok(metadata) => metadata.is_dir(),
                 Err(x) => {
                     errors.push(DistantError::from(to_other_error(x)));
                     continue;
@@ -288,13 +293,18 @@ async fn dir_read(
 
         // Determine if we continue traversing or stop
         if is_dir && (depth == 0 || next_depth <= depth) {
-            match sftp.readdir(&path).compat().await.map_err(to_other_error) {
+            match sftp
+                .read_dir(path.to_path_buf())
+                .compat()
+                .await
+                .map_err(to_other_error)
+            {
                 Ok(entries) => {
-                    for (mut path, stat) in entries {
+                    for (mut path, metadata) in entries {
                         // Canonicalize the path if specified, otherwise just return
                         // the path as is
                         path = if canonicalize {
-                            match sftp.realpath(path).compat().await {
+                            match sftp.canonicalize(path).compat().await {
                                 Ok(path) => path,
                                 Err(x) => {
                                     errors.push(DistantError::from(to_other_error(x)));
@@ -313,13 +323,13 @@ async fn dir_read(
                             // the path if the strip_prefix fails
                             path = path
                                 .strip_prefix(root_path.as_path())
-                                .map(Path::to_path_buf)
+                                .map(|p| p.to_path_buf())
                                 .unwrap_or(path);
                         };
 
-                        let ft = stat.ty;
+                        let ft = metadata.ty;
                         to_traverse.push(DirEntry {
-                            path,
+                            path: path.into_std_path_buf(),
                             file_type: if ft.is_dir() {
                                 FileType::Dir
                             } else if ft.is_file() {
@@ -350,7 +360,7 @@ async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result
     async fn mkdir(sftp: &wezterm_ssh::Sftp, path: PathBuf) -> io::Result<()> {
         // Using 755 as this mirrors "ssh <host> mkdir ..."
         // 755: rwxr-xr-x
-        sftp.mkdir(path, 0o755)
+        sftp.create_dir(path, 0o755)
             .compat()
             .await
             .map_err(to_other_error)
@@ -391,20 +401,20 @@ async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<O
 
     // Determine if we are dealing with a file or directory
     let stat = sftp
-        .stat(path.to_path_buf())
+        .metadata(path.to_path_buf())
         .compat()
         .await
         .map_err(to_other_error)?;
 
     // If a file or symlink, we just unlink (easy)
     if stat.is_file() || stat.is_symlink() {
-        sftp.unlink(path)
+        sftp.remove_file(path)
             .compat()
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
     // If directory and not forcing, we just rmdir (easy)
     } else if !force {
-        sftp.rmdir(path)
+        sftp.remove_dir(path)
             .compat()
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
@@ -426,9 +436,9 @@ async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<O
 
                 entries.push(entry);
 
-                for (path, stat) in sftp.readdir(path).await.map_err(to_other_error)? {
+                for (path, stat) in sftp.read_dir(path).await.map_err(to_other_error)? {
                     to_traverse.push(DirEntry {
-                        path,
+                        path: path.into_std_path_buf(),
                         file_type: if stat.is_dir() {
                             FileType::Dir
                         } else if stat.is_file() {
@@ -450,12 +460,12 @@ async fn remove(session: WezSession, path: PathBuf, force: bool) -> io::Result<O
 
         while let Some(entry) = entries.pop() {
             if entry.file_type == FileType::Dir {
-                sftp.rmdir(entry.path)
+                sftp.remove_dir(entry.path)
                     .compat()
                     .await
                     .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
             } else {
-                sftp.unlink(entry.path)
+                sftp.remove_file(entry.path)
                     .compat()
                     .await
                     .map_err(|x| io::Error::new(io::ErrorKind::PermissionDenied, x))?;
@@ -521,7 +531,7 @@ async fn exists(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
     // NOTE: SFTP does not provide a means to check if a path exists that can be performed
     // separately from getting permission errors; so, we just assume any error means that the path
     // does not exist
-    let exists = session.sftp().lstat(path).compat().await.is_ok();
+    let exists = session.sftp().symlink_metadata(path).compat().await.is_ok();
 
     Ok(Outgoing::from(ResponseData::Exists(exists)))
 }
@@ -535,24 +545,28 @@ async fn metadata(
     let sftp = session.sftp();
     let canonicalized_path = if canonicalize {
         Some(
-            sftp.realpath(path.to_path_buf())
+            sftp.canonicalize(path.to_path_buf())
                 .compat()
                 .await
-                .map_err(to_other_error)?,
+                .map_err(to_other_error)?
+                .into_std_path_buf(),
         )
     } else {
         None
     };
 
-    let stat = if resolve_file_type {
-        sftp.stat(path).compat().await.map_err(to_other_error)?
+    let metadata = if resolve_file_type {
+        sftp.metadata(path).compat().await.map_err(to_other_error)?
     } else {
-        sftp.lstat(path).compat().await.map_err(to_other_error)?
+        sftp.symlink_metadata(path)
+            .compat()
+            .await
+            .map_err(to_other_error)?
     };
 
-    let file_type = if stat.is_dir() {
+    let file_type = if metadata.is_dir() {
         FileType::Dir
-    } else if stat.is_file() {
+    } else if metadata.is_file() {
         FileType::File
     } else {
         FileType::Symlink
@@ -561,11 +575,11 @@ async fn metadata(
     Ok(Outgoing::from(ResponseData::Metadata(Metadata {
         canonicalized_path,
         file_type,
-        len: stat.len(),
+        len: metadata.len(),
         // Check that owner, group, or other has write permission (if not, then readonly)
-        readonly: stat.is_readonly(),
-        accessed: stat.accessed.map(u128::from),
-        modified: stat.modified.map(u128::from),
+        readonly: metadata.is_readonly(),
+        accessed: metadata.accessed.map(u128::from),
+        modified: metadata.modified.map(u128::from),
         created: None,
     })))
 }
@@ -852,10 +866,11 @@ async fn proc_list(_session: WezSession, state: Arc<Mutex<State>>) -> io::Result
 async fn system_info(session: WezSession) -> io::Result<Outgoing> {
     let current_dir = session
         .sftp()
-        .realpath(".")
+        .canonicalize(".")
         .compat()
         .await
-        .map_err(to_other_error)?;
+        .map_err(to_other_error)?
+        .into_std_path_buf();
 
     let first_component = current_dir.components().next();
     let is_windows =

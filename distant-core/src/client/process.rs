@@ -1,6 +1,6 @@
 use crate::{
     client::{Mailbox, SessionChannel},
-    constants::CLIENT_MAILBOX_CAPACITY,
+    constants::CLIENT_PIPE_CAPACITY,
     data::{Request, RequestData, ResponseData},
     net::TransportError,
 };
@@ -8,7 +8,10 @@ use derive_more::{Display, Error, From};
 use log::*;
 use tokio::{
     io,
-    sync::mpsc,
+    sync::mpsc::{
+        self,
+        error::{TryRecvError, TrySendError},
+    },
     task::{JoinError, JoinHandle},
 };
 
@@ -105,9 +108,9 @@ impl RemoteProcess {
         };
 
         // Create channels for our stdin/stdout/stderr
-        let (stdin_tx, stdin_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
-        let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
-        let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_MAILBOX_CAPACITY);
+        let (stdin_tx, stdin_rx) = mpsc::channel(CLIENT_PIPE_CAPACITY);
+        let (stdout_tx, stdout_rx) = mpsc::channel(CLIENT_PIPE_CAPACITY);
+        let (stderr_tx, stderr_rx) = mpsc::channel(CLIENT_PIPE_CAPACITY);
 
         // Used to terminate request task, either explicitly by the process or internally
         // by the response task when it terminates
@@ -173,12 +176,26 @@ impl RemoteProcess {
 pub struct RemoteStdin(mpsc::Sender<String>);
 
 impl RemoteStdin {
+    /// Tries to write to the stdin of the remote process
+    pub fn try_write(&mut self, data: impl Into<String>) -> io::Result<()> {
+        match self.0.try_send(data.into()) {
+            Ok(data) => Ok(data),
+            Err(TrySendError::Full(_)) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
+            Err(TrySendError::Closed(_)) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+
     /// Writes data to the stdin of a specific remote process
     pub async fn write(&mut self, data: impl Into<String>) -> io::Result<()> {
         self.0
             .send(data.into())
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))
+    }
+
+    /// Checks if stdin has been closed
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
     }
 }
 
@@ -187,6 +204,16 @@ impl RemoteStdin {
 pub struct RemoteStdout(mpsc::Receiver<String>);
 
 impl RemoteStdout {
+    /// Tries to receive latest stdout for a remote process, yielding `None`
+    /// if no stdout is available
+    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+        match self.0.try_recv() {
+            Ok(data) => Ok(Some(data)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+
     /// Retrieves the latest stdout for a specific remote process
     pub async fn read(&mut self) -> io::Result<String> {
         self.0
@@ -201,6 +228,16 @@ impl RemoteStdout {
 pub struct RemoteStderr(mpsc::Receiver<String>);
 
 impl RemoteStderr {
+    /// Tries to receive latest stderr for a remote process, yielding `None`
+    /// if no stderr is available
+    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+        match self.0.try_recv() {
+            Ok(data) => Ok(Some(data)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+
     /// Retrieves the latest stderr for a specific remote process
     pub async fn read(&mut self) -> io::Result<String> {
         self.0

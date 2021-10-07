@@ -9,7 +9,6 @@ use distant_core::{
     PlainCodec, RelayServer, Session, SessionInfo, SessionInfoFile, Transport, TransportListener,
     XChaCha20Poly1305Codec,
 };
-use fork::{daemon, Fork};
 use log::*;
 use std::{path::Path, string::FromUtf8Error};
 use tokio::{io, process::Command, runtime::Runtime, time::Duration};
@@ -63,6 +62,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
             debug!("Piping session to stdout");
             println!("{}", session.to_unprotected_string())
         }
+        #[cfg(unix)]
         SessionOutput::Socket if is_daemon => {
             debug!(
                 "Forking and entering interactive loop over unix socket {:?}",
@@ -73,26 +73,13 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
             // this produces a garbage process that won't die
             drop(rt);
 
-            match daemon(false, false) {
-                Ok(Fork::Child) => {
-                    // NOTE: We need to create a runtime within the forked process as
-                    //       tokio's runtime doesn't support being transferred from
-                    //       parent to child in a fork
-                    let rt = Runtime::new()?;
-                    rt.block_on(async {
-                        socket_loop(
-                            session_socket,
-                            session,
-                            timeout,
-                            fail_if_socket_exists,
-                            shutdown_after,
-                        )
-                        .await
-                    })?
-                }
-                Ok(_) => {}
-                Err(x) => return Err(Error::Fork(x)),
-            }
+            run_daemon_socket(
+                session_socket,
+                session,
+                timeout,
+                fail_if_socket_exists,
+                shutdown_after,
+            )?;
         }
         #[cfg(unix)]
         SessionOutput::Socket => {
@@ -111,14 +98,39 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
                 .await
             })?
         }
-        #[cfg(not(unix))]
-        SessionOutput::Socket => {
-            debug!(concat!(
-                "Trying to enter interactive loop over unix socket, ",
-                "but not on unix platform!"
-            ));
-            unreachable!()
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn run_daemon_socket(
+    session_socket: impl AsRef<Path>,
+    session: SessionInfo,
+    timeout: Duration,
+    fail_if_socket_exists: bool,
+    shutdown_after: Option<Duration>,
+) -> Result<(), Error> {
+    use fork::{daemon, Fork};
+    match daemon(false, false) {
+        Ok(Fork::Child) => {
+            // NOTE: We need to create a runtime within the forked process as
+            //       tokio's runtime doesn't support being transferred from
+            //       parent to child in a fork
+            let rt = Runtime::new()?;
+            rt.block_on(async {
+                socket_loop(
+                    session_socket,
+                    session,
+                    timeout,
+                    fail_if_socket_exists,
+                    shutdown_after,
+                )
+                .await
+            })?
         }
+        Ok(_) => {}
+        Err(x) => return Err(Error::Fork(x)),
     }
 
     Ok(())
@@ -136,6 +148,7 @@ async fn keep_loop(info: SessionInfo, format: Format, duration: Duration) -> io:
     }
 }
 
+#[cfg(unix)]
 async fn socket_loop(
     socket_path: impl AsRef<Path>,
     info: SessionInfo,

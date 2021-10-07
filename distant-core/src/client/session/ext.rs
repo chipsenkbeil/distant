@@ -154,10 +154,10 @@ pub trait SessionChannelExt {
 macro_rules! make_body {
     ($self:expr, $tenant:expr, $data:expr, @ok) => {
         make_body!($self, $tenant, $data, |data| {
-            if data.is_ok() {
-                Ok(())
-            } else {
-                Err(SessionChannelExtError::MismatchedResponse)
+            match data {
+                ResponseData::Ok => Ok(()),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
+                _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         })
     };

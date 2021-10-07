@@ -6,7 +6,10 @@ use std::{
     io::{self, Cursor, Read},
     ops::{Deref, DerefMut},
 };
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::mpsc::{self, error::TryRecvError},
+    task::JoinHandle,
+};
 
 mod data;
 pub use data::*;
@@ -74,18 +77,24 @@ impl RemoteLspStdin {
         Self { inner, buf: None }
     }
 
-    /// Writes data to the stdin of a specific remote process
-    pub async fn write(&mut self, data: &str) -> io::Result<()> {
-        // Create or insert into our buffer
-        match &mut self.buf {
-            Some(buf) => buf.push_str(data),
-            None => self.buf = Some(data.to_string()),
+    /// Tries to write data to the stdin of a specific remote process
+    pub fn try_write(&mut self, data: &str) -> io::Result<()> {
+        let queue = self.update_and_read_messages(data)?;
+
+        // Process and then send out each LSP message in our queue
+        for mut data in queue {
+            // Convert distant:// to file://
+            data.mut_content().convert_distant_scheme_to_local();
+            data.refresh_content_length();
+            self.inner.try_write(&data.to_string())?;
         }
 
-        // Read LSP messages from our internal buffer
-        let buf = self.buf.take().unwrap();
-        let (remainder, queue) = read_lsp_messages(buf)?;
-        self.buf = remainder;
+        Ok(())
+    }
+
+    /// Writes data to the stdin of a specific remote process
+    pub async fn write(&mut self, data: &str) -> io::Result<()> {
+        let queue = self.update_and_read_messages(data)?;
 
         // Process and then send out each LSP message in our queue
         for mut data in queue {
@@ -96,6 +105,30 @@ impl RemoteLspStdin {
         }
 
         Ok(())
+    }
+
+    fn update_and_read_messages(&mut self, data: &str) -> io::Result<Vec<LspData>> {
+        // Create or insert into our buffer
+        match &mut self.buf {
+            Some(buf) => buf.push_str(data),
+            None => self.buf = Some(data.to_string()),
+        }
+
+        // Read LSP messages from our internal buffer
+        let buf = self.buf.take().unwrap();
+        match read_lsp_messages(&buf) {
+            // If we succeed, update buf with our remainder and return messages
+            Ok((remainder, queue)) => {
+                self.buf = remainder;
+                Ok(queue)
+            }
+
+            // Otherwise, if failed, reset buf back to what it was
+            Err(x) => {
+                self.buf = Some(buf);
+                Err(x)
+            }
+        }
     }
 }
 
@@ -121,6 +154,18 @@ impl RemoteLspStdout {
         Self { read_task, rx }
     }
 
+    /// Tries to read a complete LSP message over stdout, returning `None` if no complete message
+    /// is available
+    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+        match self.rx.try_recv() {
+            Ok(Ok(data)) => Ok(Some(data)),
+            Ok(Err(x)) => Err(x),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+
+    /// Reads a complete LSP message over stdout
     pub async fn read(&mut self) -> io::Result<String> {
         self.rx
             .recv()
@@ -158,6 +203,18 @@ impl RemoteLspStderr {
         Self { read_task, rx }
     }
 
+    /// Tries to read a complete LSP message over stderr, returning `None` if no complete message
+    /// is available
+    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+        match self.rx.try_recv() {
+            Ok(Ok(data)) => Ok(Some(data)),
+            Ok(Err(x)) => Err(x),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        }
+    }
+
+    /// Reads a complete LSP message over stderr
     pub async fn read(&mut self) -> io::Result<String> {
         self.rx
             .recv()
@@ -190,7 +247,7 @@ where
 
             // Read LSP messages from our internal buffer
             let buf = task_buf.take().unwrap();
-            let (remainder, queue) = match read_lsp_messages(buf) {
+            let (remainder, queue) = match read_lsp_messages(&buf) {
                 Ok(x) => x,
                 Err(x) => {
                     let _ = tx.send(Err(x)).await;
@@ -218,7 +275,7 @@ where
     (read_task, rx)
 }
 
-fn read_lsp_messages(input: String) -> io::Result<(Option<String>, Vec<LspData>)> {
+fn read_lsp_messages(input: &str) -> io::Result<(Option<String>, Vec<LspData>)> {
     let mut queue = Vec::new();
 
     // Continue to read complete messages from the input until we either fail to parse or we reach

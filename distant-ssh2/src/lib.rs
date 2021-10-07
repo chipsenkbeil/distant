@@ -1,5 +1,7 @@
 use async_compat::CompatExt;
-use distant_core::{Request, Session, Transport};
+use distant_core::{
+    Request, Session, SessionChannelExt, SessionInfo, Transport, XChaCha20Poly1305Codec,
+};
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
 use std::{
@@ -7,12 +9,14 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use tokio::sync::{mpsc, Mutex};
 use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
 
 mod handler;
 
+/// Represents a singular authentication prompt for a new ssh session
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ssh2AuthPrompt {
@@ -24,6 +28,8 @@ pub struct Ssh2AuthPrompt {
     pub echo: bool,
 }
 
+/// Represents an authentication request that needs to be handled before an ssh session can be
+/// established
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ssh2AuthEvent {
@@ -37,6 +43,7 @@ pub struct Ssh2AuthEvent {
     pub prompts: Vec<Ssh2AuthPrompt>,
 }
 
+/// Represents options to be provided when establishing an ssh session
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ssh2SessionOpts {
@@ -74,10 +81,46 @@ pub struct Ssh2SessionOpts {
     pub other: BTreeMap<String, String>,
 }
 
+/// Represents options to be provided when converting an ssh session into a distant session
+#[derive(Clone, Debug)]
+pub struct IntoDistantSessionOpts {
+    /// Binary to use for distant server
+    pub binary: String,
+
+    /// Arguments to supply to the distant server when starting it
+    pub args: String,
+
+    /// Timeout to use when connecting to the distant server
+    pub timeout: Duration,
+}
+
+impl Default for IntoDistantSessionOpts {
+    fn default() -> Self {
+        Self {
+            binary: String::from("distant"),
+            args: String::new(),
+            timeout: Duration::from_secs(15),
+        }
+    }
+}
+
+/// Represents callback functions to be invoked during authentication of an ssh session
 pub struct Ssh2AuthHandler<'a> {
+    /// Invoked whenever a series of authentication prompts need to be displayed and responded to,
+    /// receiving one event at a time and returning a collection of answers matching the total
+    /// prompts provided in the event
     pub on_authenticate: Box<dyn FnMut(Ssh2AuthEvent) -> io::Result<Vec<String>> + 'a>,
+
+    /// Invoked when receiving a banner from the ssh server, receiving the banner as a str, useful
+    /// to display to the user
     pub on_banner: Box<dyn FnMut(&str) + 'a>,
+
+    /// Invoked when the host is unknown for a new ssh connection, receiving the host as a str and
+    /// returning true if the host is acceptable or false if the host (and thereby ssh session)
+    /// should be declined
     pub on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool> + 'a>,
+
+    /// Invoked when an error is encountered, receiving the error as a str
     pub on_error: Box<dyn FnMut(&str) + 'a>,
 }
 
@@ -134,9 +177,11 @@ impl Default for Ssh2AuthHandler<'static> {
     }
 }
 
+/// Represents an ssh2 session
 pub struct Ssh2Session {
     session: WezSession,
     events: SmolReceiver<WezSessionEvent>,
+    authenticated: bool,
 }
 
 impl Ssh2Session {
@@ -196,11 +241,25 @@ impl Ssh2Session {
         let (session, events) =
             WezSession::connect(config).map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
-        Ok(Self { session, events })
+        Ok(Self {
+            session,
+            events,
+            authenticated: false,
+        })
     }
 
-    /// Authenticates the [`Ssh2Session`] and produces a [`Session`]
-    pub async fn authenticate(self, mut handler: Ssh2AuthHandler<'_>) -> io::Result<Session> {
+    #[inline]
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated
+    }
+
+    /// Authenticates the [`Ssh2Session`] if not already authenticated
+    pub async fn authenticate(&mut self, mut handler: Ssh2AuthHandler<'_>) -> io::Result<()> {
+        // If already authenticated, exit
+        if self.authenticated {
+            return Ok(());
+        }
+
         // Perform the authentication by listening for events and continuing to handle them
         // until authenticated
         while let Ok(event) = self.events.recv().await {
@@ -246,12 +305,92 @@ impl Ssh2Session {
             }
         }
 
-        // We are now authenticated, so convert into a distant session that wraps our ssh2 session
-        self.into_session()
+        // Mark as authenticated
+        self.authenticated = true;
+
+        Ok(())
     }
 
-    /// Consume [`Ssh2Session`] and produce a distant [`Session`]
-    fn into_session(self) -> io::Result<Session> {
+    /// Consume [`Ssh2Session`] and produce a distant [`Session`] that is connected to a remote
+    /// distant server that is spawned using the ssh session
+    pub async fn into_distant_session(self, opts: IntoDistantSessionOpts) -> io::Result<Session> {
+        // Exit early if not authenticated as this is a requirement
+        if !self.authenticated {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Not authenticated",
+            ));
+        }
+
+        let mut session = self.into_ssh_client_session()?;
+
+        // Build arguments for distant
+        let mut args = vec![String::from("listen"), String::from("--daemon")];
+        args.extend(
+            shell_words::split(&opts.args)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+        );
+
+        // Spawn distant server
+        let mut proc = session
+            .spawn("<ssh-launch>", opts.binary, args)
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        let mut stdout = proc.stdout.take().unwrap();
+        let (success, code) = proc
+            .wait()
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))?;
+
+        // Close out ssh session
+        session.abort();
+        let _ = session.wait().await;
+
+        // If successful, grab the session information and establish a connection
+        // with the distant server
+        if success {
+            let mut out = String::new();
+            while let Ok(data) = stdout.read().await {
+                out.push_str(&data);
+            }
+            let maybe_info = out
+                .lines()
+                .find_map(|line| line.parse::<SessionInfo>().ok());
+            match maybe_info {
+                Some(info) => {
+                    let addr = info.to_socket_addr().await?;
+                    let key = info.key;
+                    let codec = XChaCha20Poly1305Codec::from(key);
+                    Session::tcp_connect_timeout(addr, codec, opts.timeout).await
+                }
+                None => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Missing session data",
+                )),
+            }
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Spawning distant failed: {}",
+                    code.map(|x| x.to_string())
+                        .unwrap_or_else(|| String::from("???"))
+                ),
+            ))
+        }
+    }
+
+    /// Consume [`Ssh2Session`] and produce a distant [`Session`] that is powered by an ssh client
+    /// underneath
+    pub fn into_ssh_client_session(self) -> io::Result<Session> {
+        // Exit early if not authenticated as this is a requirement
+        if !self.authenticated {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Not authenticated",
+            ));
+        }
+
         let (t1, t2) = Transport::pair(1);
         let session = Session::initialize(t1)?;
 

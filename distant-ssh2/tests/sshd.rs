@@ -404,7 +404,7 @@ pub fn sshd() -> &'static Sshd {
 pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> Session {
     let port = sshd.port;
 
-    Ssh2Session::connect(
+    let mut ssh2_session = Ssh2Session::connect(
         "127.0.0.1",
         Ssh2SessionOpts {
             port: Some(port),
@@ -415,18 +415,22 @@ pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) ->
             ..Default::default()
         },
     )
-    .unwrap()
-    .authenticate(Ssh2AuthHandler {
-        on_authenticate: Box::new(|ev| {
-            println!("on_authenticate: {:?}", ev);
-            Ok(vec![String::new(); ev.prompts.len()])
-        }),
-        on_host_verify: Box::new(|host| {
-            println!("on_host_verify: {}", host);
-            Ok(true)
-        }),
-        ..Default::default()
-    })
-    .await
-    .unwrap()
+    .unwrap();
+
+    ssh2_session
+        .authenticate(Ssh2AuthHandler {
+            on_authenticate: Box::new(|ev| {
+                println!("on_authenticate: {:?}", ev);
+                Ok(vec![String::new(); ev.prompts.len()])
+            }),
+            on_host_verify: Box::new(|host| {
+                println!("on_host_verify: {}", host);
+                Ok(true)
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    ssh2_session.into_ssh_client_session().unwrap()
 }
