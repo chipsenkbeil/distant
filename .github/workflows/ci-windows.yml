@@ -70,11 +70,13 @@ jobs:
         if: steps.changes.outputs.lua == 'true'
       - name: Run Lua tests (Lua 5.1)
         run: |
-          (cd distant-lua && cargo build --verbose --no-default-features --features lua51) && 
-          (cd distant-lua-tests && cargo test --verbose --no-default-features --features lua51)
-        shell: bash
+          cd ${{ github.workspace }}\distant-lua
+          cargo build --verbose --no-default-features --features lua51
+          cd ${{ github.workspace }}\distant-lua-tests
+          cargo test --verbose --no-default-features --features lua51
+        shell: cmd
         env:
-          LUA_INC: .lua/include
-          LUA_LIB: .lua/bin
+          LUA_INC: ${{ github.workspace }}\.lua\include
+          LUA_LIB: ${{ github.workspace }}\.lua\bin
           LUA_LIB_NAME: lua.dll
         if: steps.changes.outputs.lua == 'true'
