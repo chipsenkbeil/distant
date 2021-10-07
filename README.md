@@ -1,17 +1,26 @@
-# distant
+# distant - remotely edit files and run programs
 
-[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![CI][distant_rustc_img]][distant_rustc_lnk] [![CI][distant_ci_img]][distant_ci_lnk]
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![RustC 1.51+][distant_rustc_img]][distant_rustc_lnk] 
+
+| Operating System | Status                                                             |
+| ---------------- | ------------------------------------------------------------------ |
+| MacOS (x86, ARM) | [![MacOS CI][distant_ci_macos_img]][distant_ci_macos_lnk]          |
+| Linux (x86)      | [![Linux CI][distant_ci_linux_img]][distant_ci_linux_lnk]          |
+| Windows (x86)    | [![Windows CI][distant_ci_windows_img]][distant_ci_windows_lnk]    |
 
 [distant_crates_img]: https://img.shields.io/crates/v/distant.svg
 [distant_crates_lnk]: https://crates.io/crates/distant
 [distant_doc_img]: https://docs.rs/distant/badge.svg
 [distant_doc_lnk]: https://docs.rs/distant
-[distant_ci_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci.yml/badge.svg
-[distant_ci_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci.yml
 [distant_rustc_img]: https://img.shields.io/badge/distant-rustc_1.51+-lightgray.svg
 [distant_rustc_lnk]: https://blog.rust-lang.org/2021/03/25/Rust-1.51.0.html
 
-Binary to connect with a remote machine to edit files and run programs.
+[distant_ci_macos_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-macos.yml/badge.svg
+[distant_ci_macos_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-macos.yml
+[distant_ci_linux_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-linux.yml/badge.svg
+[distant_ci_linux_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-linux.yml
+[distant_ci_windows_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-windows.yml/badge.svg
+[distant_ci_windows_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-windows.yml
 
 🚧 **(Alpha stage software) This program is in rapid development and may break or change frequently!** 🚧
 
