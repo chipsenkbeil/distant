@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { rust: stable, os: windows-latest }
+          - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust ${{ matrix.rust }}
@@ -24,6 +24,7 @@ jobs:
         with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
@@ -63,13 +64,9 @@ jobs:
         run: cargo build --verbose --no-default-features
         shell: bash
         if: steps.changes.outputs.cli == 'true'
-      - uses: xpol/setup-lua@v0.3
-        with:
-          lua-version: "5.1.5"
-        if: steps.changes.outputs.lua == 'true'
       - name: Run Lua tests (Lua 5.1)
         run: |
-          (cd distant-lua && cargo build --verbose --no-default-features --features lua51) && 
-          (cd distant-lua-tests && cargo test --verbose --no-default-features --features lua51)
+          (cd distant-lua && cargo build --verbose --no-default-features --features "lua51,vendored") && 
+          (cd distant-lua-tests && cargo test --verbose --no-default-features --features "lua51,vendored")
         shell: bash
         if: steps.changes.outputs.lua == 'true'
