@@ -64,9 +64,17 @@ jobs:
         run: cargo build --verbose --no-default-features
         shell: bash
         if: steps.changes.outputs.cli == 'true'
+      - uses: xpol/setup-lua@v0.3
+        with:
+          lua-version: "5.1.5"
+        if: steps.changes.outputs.lua == 'true'
       - name: Run Lua tests (Lua 5.1)
         run: |
-          (cd distant-lua && cargo build --verbose --no-default-features --features "lua51,vendored") && 
-          (cd distant-lua-tests && cargo test --verbose --no-default-features --features "lua51,vendored")
+          (cd distant-lua && cargo build --verbose --no-default-features --features lua51) && 
+          (cd distant-lua-tests && cargo test --verbose --no-default-features --features lua51)
         shell: bash
+        env:
+          LUA_INC: .lua/include
+          LUA_LIB: .lua/bin
+          LUA_LIB_NAME: lua.dll
         if: steps.changes.outputs.lua == 'true'
