@@ -20,7 +20,10 @@ cargo build --release
 ## Examples
 
 Rename `libdistant_lua.so` or `libdistant_lua.dylib` to `distant_lua.so`
-(yes, **.so** for **.dylib**) and place the library in your Lua path.
+(yes, **.so** for **.dylib**) and place the library in your Lua path at
+the *root*. The library cannot be within any submodule otherwise it fails
+to load appropriate symbols. For neovim, this means directly within the
+`lua/` directory.
 
 ```lua
 local distant = require("distant_lua")
