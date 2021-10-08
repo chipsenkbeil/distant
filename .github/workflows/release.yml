@@ -251,6 +251,15 @@ jobs:
         run: |
           TAG_NAME=${{ github.ref }}
           echo "TAG_NAME=${TAG_NAME#refs/tags/}" >> $GITHUB_ENV
+      - name: Check git tag for pre-release
+        id: check-tag
+        run: |
+          if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-.*$ ]]; then
+              echo ::set-output name=match::true
+          fi
+      - name: Print pre-release status
+        run: |
+          echo "Is ${{ github.ref }} a pre-release: ${{ steps.check-tag.outputs.match }}"
       - name: Publish
         uses: softprops/action-gh-release@v1
         with:
@@ -258,16 +267,13 @@ jobs:
           fail_on_unmatched_files: true
           target_commitish: ${{ github.sha }}
           draft: false
-          prerelease: |
-            contains("${{ env.TAG_NAME }}", 'alpha') || 
-            contains("${{ env.TAG_NAME }}", 'beta') || 
-            contains("${{ env.TAG_NAME }}", 'nightly') ||
-            contains("${{ env.TAG_NAME }}", 'snapshot')
+          prerelease: ${{ steps.check-tag.outputs.match == 'true' }}
+          # NOTE: MacOS universal and aarch64 Lua libs are withheld due to
+          #       https://github.com/khvzak/mlua/issues/82 and must be
+          #       built and added to each release manually
           files: |
             ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_BIN }}
-            ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_LIB }}
             ${{ env.MACOS }}/${{ env.MACOS_X86_LIB }}
-            ${{ env.MACOS }}/${{ env.MACOS_ARM_LIB }}
             ${{ env.WIN64 }}/${{ env.WIN64_BIN }}
             ${{ env.WIN64 }}/${{ env.WIN64_LIB }}
             ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_BIN }}
