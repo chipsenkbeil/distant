@@ -6,6 +6,10 @@ on:
       - v[0-9]+.[0-9]+.[0-9]+
       - v[0-9]+.[0-9]+.[0-9]+-**
 
+env:
+  LUA_VERSION: 5.1.5
+  LUA_FEATURE: lua51
+
 jobs:
   macos:
     name: "Build release on MacOS"
@@ -21,6 +25,8 @@ jobs:
       BUILD_LIB: libdistant_lua.dylib
       UNIVERSAL_REL_BIN: distant-macos
       UNIVERSAL_REL_LIB: distant_lua-macos.dylib
+      X86_REL_LIB: distant_lua-macos-intel.dylib
+      ARM_REL_LIB: distant_lua-macos-arm.dylib
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (x86)
@@ -36,16 +42,18 @@ jobs:
           toolchain: stable
           target: ${{ env.ARM_ARCH }}
       - uses: Swatinem/rust-cache@v1
-      - name: Build Lua 5.1 library (x86_64)
+      - name: Build Lua ${{ env.LUA_VERSION }} library (x86_64)
         run: |
           cd distant-lua
-          cargo build --release --no-default-features --features lua51,vendored --target ${{ env.X86_ARCH }}
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_ARCH }}
           ls -l ../${{ env.X86_DIR }}
-      - name: Build Lua 5.1 library (aarch64)
+          cp ../${{ env.X86_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_REL_LIB }}
+      - name: Build Lua ${{ env.LUA_VERSION }} library (aarch64)
         run: |
           cd distant-lua
-          cargo build --release --no-default-features --features lua51,vendored --target ${{ env.ARM_ARCH }}
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.ARM_ARCH }}
           ls -l ../${{ env.ARM_DIR }}
+          cp ../${{ env.ARM_DIR }}/${{ env.BUILD_LIB }} ../${{ env.ARM_REL_LIB }}
       - name: Unify libraries
         run: |
           lipo -create -output ${{ env.UNIVERSAL_REL_LIB }} \
@@ -75,6 +83,8 @@ jobs:
           path: |
             ${{ env.UNIVERSAL_REL_BIN }}
             ${{ env.UNIVERSAL_REL_LIB }}
+            ${{ env.X86_REL_LIB }}
+            ${{ env.ARM_REL_LIB }}
 
   windows:
     name: "Build release on Windows"
@@ -99,11 +109,11 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - uses: xpol/setup-lua@v0.3
         with:
-          lua-version: "5.1.5"
-      - name: Build Lua 5.1 library (x86_64)
+          lua-version: "${{ env.LUA_VERSION }}"
+      - name: Build Lua ${{ env.LUA_VERSION }} library (x86_64)
         run: |
           cd distant-lua
-          cargo build --release --no-default-features --features lua51 --target ${{ env.X86_ARCH }}
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }}" --target ${{ env.X86_ARCH }}
           ls -l ../${{ env.X86_DIR }}
           mv ../${{ env.X86_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_REL_LIB }}
         env:
@@ -159,10 +169,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
       - uses: Swatinem/rust-cache@v1
-      - name: Build Lua 5.1 library (GNU x86_64)
+      - name: Build Lua ${{ env.LUA_VERSION }} library (GNU x86_64)
         run: |
           cd distant-lua
-          cargo build --release --no-default-features --features lua51,vendored --target ${{ env.X86_GNU_ARCH }}
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_GNU_ARCH }}
           ls -l ../${{ env.X86_GNU_DIR }}
           mv ../${{ env.X86_GNU_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_GNU_REL_LIB }}
       - name: Build binary (GNU x86_64)
@@ -198,6 +208,8 @@ jobs:
       MACOS: macos
       MACOS_UNIVERSAL_BIN: distant-macos
       MACOS_UNIVERSAL_LIB: distant_lua-macos.dylib
+      MACOS_X86_LIB: distant_lua-macos-intel.dylib
+      MACOS_ARM_LIB: distant_lua-macos-arm.dylib
       WIN64: win64
       WIN64_BIN: distant-win64.exe
       WIN64_LIB: distant_lua-win64.dll
@@ -212,6 +224,10 @@ jobs:
           cd ${{ env.MACOS }}
           sha256sum ${{ env.MACOS_UNIVERSAL_LIB }} > ${{ env.MACOS_UNIVERSAL_LIB }}.sha256sum
           echo "SHA_MACOS_LUA_LIB=$(cat ${{ env.MACOS_UNIVERSAL_LIB }}.sha256sum)" >> $GITHUB_ENV
+          sha256sum ${{ env.MACOS_X86_LIB }} > ${{ env.MACOS_X86_LIB }}.sha256sum
+          echo "SHA_MACOS_X86_LUA_LIB=$(cat ${{ env.MACOS_X86_LIB }}.sha256sum)" >> $GITHUB_ENV
+          sha256sum ${{ env.MACOS_ARM_LIB }} > ${{ env.MACOS_ARM_LIB }}.sha256sum
+          echo "SHA_MACOS_ARM_LUA_LIB=$(cat ${{ env.MACOS_ARM_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.MACOS_UNIVERSAL_BIN }} > ${{ env.MACOS_UNIVERSAL_BIN }}.sha256sum
           echo "SHA_MACOS_BIN=$(cat ${{ env.MACOS_UNIVERSAL_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Win64 SHA256 checksums
@@ -243,12 +259,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: |
-            contains(env.TAG_NAME, 'alpha') || 
-            contains(env.TAG_NAME, 'beta') || 
-            contains(env.TAG_NAME, 'nightly')
+            contains("${{ env.TAG_NAME }}", 'alpha') || 
+            contains("${{ env.TAG_NAME }}", 'beta') || 
+            contains("${{ env.TAG_NAME }}", 'nightly') ||
+            contains("${{ env.TAG_NAME }}", 'snapshot')
           files: |
             ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_BIN }}
             ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_LIB }}
+            ${{ env.MACOS }}/${{ env.MACOS_X86_LIB }}
+            ${{ env.MACOS }}/${{ env.MACOS_ARM_LIB }}
             ${{ env.WIN64 }}/${{ env.WIN64_BIN }}
             ${{ env.WIN64 }}/${{ env.WIN64_LIB }}
             ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_BIN }}
@@ -262,7 +281,7 @@ jobs:
             2. Rename to `distant_lua.dll`
             3. Import via `distant = require("distant_lua")`
             ### macOS
-            1. Download **${{ env.MACOS_UNIVERSAL_LIB }}**
+            1. Download **${{ env.MACOS_UNIVERSAL_LIB }}** (or **${{ env.MACOS_X86_LIB }}** or **${{ env.MACOS_ARM_LIB }}**)
             2. Rename to `distant_lua.so` (still works on Mac for Lua)
               - Alternatively, you can rename to `distant_lua.dylib` and add 
                 `package.cpath = package.cpath .. ";?.dylib"` within your Lua code before
@@ -275,7 +294,7 @@ jobs:
             ## Artifacts
             A Lua library is built out to provide bindings to `distant-core` and `distant-ssh2` within Lua.
             While this is geared towards usage in neovim, this Lua binding is generic and can be used in Lua
-            anyway. The library is built against Lua 5.1 (compatible with Luajit). Make sure to rename the
+            anyway. The library is built against Lua ${{ env.LUA_VERSION }}. Make sure to rename the
             library to `distant_lua.{dll,dylib,so}` prior to importing as that is the expected name!
             - **linux64** is the Linux library that supports the x86-64 platform using libc
             - **macos** is the universal MacOS library that supports x86-64 and aarch64 (ARM) platforms
@@ -289,6 +308,8 @@ jobs:
             ## SHA256 Checksums
             ```
             ${{ env.SHA_MACOS_LUA_LIB }}
+            ${{ env.SHA_MACOS_X86_LUA_LIB }}
+            ${{ env.SHA_MACOS_ARM_LUA_LIB }}
             ${{ env.SHA_MACOS_BIN }}
             ${{ env.SHA_WIN64_LUA_LIB }}
             ${{ env.SHA_WIN64_BIN }}
