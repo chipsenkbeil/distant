@@ -46,6 +46,7 @@ pub struct Ssh2AuthEvent {
 /// Represents options to be provided when establishing an ssh session
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct Ssh2SessionOpts {
     /// List of files from which the user's DSA, ECDSA, Ed25519, or RSA authentication identity
     /// is read, defaulting to

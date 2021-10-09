@@ -90,6 +90,11 @@ impl RemoteProcess {
                 let origin_id = res.origin_id;
                 match res.payload.into_iter().next().unwrap() {
                     ResponseData::ProcStart { id } => (id, origin_id),
+                    ResponseData::Error(x) => {
+                        return Err(RemoteProcessError::TransportError(TransportError::IoError(
+                            x.into(),
+                        )))
+                    }
                     x => {
                         return Err(RemoteProcessError::TransportError(TransportError::IoError(
                             io::Error::new(

@@ -114,7 +114,7 @@ fn should_return_back_process_on_success(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to spawn process")
+            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
             assert(proc.id >= 0, "Invalid process returned")
         })
         .exec();
@@ -158,7 +158,7 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to spawn process")
+            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
             assert(proc, "Missing proc")
 
             // Wait briefly to ensure the process sends stdout
@@ -173,7 +173,7 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed reading stdout")
+            assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
             assert(stdout == "some stdout", "Unexpected stdout: " .. stdout)
         })
         .exec();
@@ -217,7 +217,7 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to spawn process")
+            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
             assert(proc, "Missing proc")
 
             // Wait briefly to ensure the process sends stdout
@@ -232,7 +232,7 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed reading stdout")
+            assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
             assert(stderr == "some stderr", "Unexpected stderr: " .. stderr)
         })
         .exec();
@@ -271,7 +271,7 @@ fn should_return_error_when_killing_dead_process(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to spawn process")
+            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
             assert(proc, "Missing proc")
 
             // Wait briefly to ensure the process dies
@@ -314,7 +314,7 @@ fn should_support_killing_processing(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to spawn process")
+            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
             assert(proc, "Missing proc")
 
             local f = distant.utils.wrap_async(proc.kill_async, $schedule_fn)
@@ -324,7 +324,7 @@ fn should_support_killing_processing(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to kill process")
+            assert(not err, "Unexpectedly failed to kill process: " .. tostring(err))
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -362,7 +362,7 @@ fn should_return_error_if_sending_stdin_to_dead_process(ctx: &'_ DistantServerCt
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed to spawn process")
+            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
             assert(proc, "Missing proc")
 
             // Wait briefly to ensure the process dies
@@ -408,7 +408,7 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed spawning process")
+            assert(not err, "Unexpectedly failed spawning process: " .. tostring(err))
             assert(proc, "Missing proc")
 
             local f = distant.utils.wrap_async(proc.write_stdin_async, $schedule_fn)
@@ -418,7 +418,7 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed writing stdin")
+            assert(not err, "Unexpectedly failed writing stdin: " .. tostring(err))
 
             local f = distant.utils.wrap_async(proc.read_stdout_async, $schedule_fn)
             local err, stdout
@@ -429,7 +429,7 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed reading stdout")
+            assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
             assert(stdout == "some text\n", "Unexpected stdout received: " .. stdout)
         })
         .exec();

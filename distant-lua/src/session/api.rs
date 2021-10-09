@@ -1,7 +1,10 @@
-use crate::runtime;
+use crate::{
+    runtime,
+    session::proc::{Output, RemoteProcess as LuaRemoteProcess},
+};
 use distant_core::{
     DirEntry, Error as Failure, Metadata, RemoteLspProcess, RemoteProcess, SessionChannel,
-    SessionChannelExt,
+    SessionChannelExt, SystemInfo,
 };
 use mlua::prelude::*;
 use once_cell::sync::Lazy;
@@ -25,13 +28,13 @@ macro_rules! make_api {
     (
         $name:ident,
         $ret:ty,
-        {$($(#[$pmeta:meta])* $pname:ident: $ptype:ty),*},
+        $({$($(#[$pmeta:meta])* $pname:ident: $ptype:ty),+},)?
         |$channel:ident, $tenant:ident, $params:ident| $block:block $(,)?
     ) => {
         paste! {
             #[derive(Clone, Debug, Deserialize)]
             pub struct [<$name:camel Params>] {
-                $($(#[$pmeta])* $pname: $ptype,)*
+                $($($(#[$pmeta])* $pname: $ptype,)*)?
 
                 #[serde(default = "default_timeout")]
                 timeout: u64,
@@ -166,11 +169,26 @@ make_api!(
 );
 
 make_api!(
+    spawn_wait,
+    Output,
+    { cmd: String, args: Vec<String> },
+    |channel, tenant, params| {
+        let proc = channel.spawn(tenant, params.cmd, params.args).await.to_lua_err()?;
+        let id = LuaRemoteProcess::from_distant(proc)?.id;
+        LuaRemoteProcess::output_async(id).await
+    }
+);
+
+make_api!(
     spawn_lsp,
     RemoteLspProcess,
     { cmd: String, args: Vec<String> },
     |channel, tenant, params| { channel.spawn_lsp(tenant, params.cmd, params.args).await }
 );
+
+make_api!(system_info, SystemInfo, |channel, tenant, _params| {
+    channel.system_info(tenant).await
+});
 
 make_api!(
     write_file,

@@ -49,7 +49,7 @@ macro_rules! impl_process {
     ($name:ident, $type:ty, $map_name:ident) => {
         #[derive(Copy, Clone, Debug)]
         pub struct $name {
-            id: usize,
+            pub(crate) id: usize,
         }
 
         impl $name {
@@ -151,6 +151,60 @@ macro_rules! impl_process {
                 })
             }
 
+            fn wait(id: usize) -> LuaResult<(bool, Option<i32>)> {
+                runtime::block_on(Self::wait_async(id))
+            }
+
+            async fn wait_async(id: usize) -> LuaResult<(bool, Option<i32>)> {
+                let proc = $map_name.write().await.remove(&id).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("No remote process found with id {}", id),
+                    )
+                    .to_lua_err()
+                })?;
+
+                proc.wait().await.to_lua_err()
+            }
+
+            fn output(id: usize) -> LuaResult<Output> {
+                runtime::block_on(Self::output_async(id))
+            }
+
+            pub(crate) async fn output_async(id: usize) -> LuaResult<Output> {
+                let mut proc = $map_name.write().await.remove(&id).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("No remote process found with id {}", id),
+                    )
+                    .to_lua_err()
+                })?;
+
+                // Remove the stdout and stderr streams before letting process run to completion
+                let mut stdout = proc.stdout.take().unwrap();
+                let mut stderr = proc.stderr.take().unwrap();
+
+                // Gather stdout and stderr after process completes
+                let (success, exit_code) = proc.wait().await.to_lua_err()?;
+
+                let mut stdout_buf = String::new();
+                while let Ok(Some(data)) = stdout.try_read() {
+                    stdout_buf.push_str(&data);
+                }
+
+                let mut stderr_buf = String::new();
+                while let Ok(Some(data)) = stderr.try_read() {
+                    stderr_buf.push_str(&data);
+                }
+
+                Ok(Output {
+                    success,
+                    exit_code,
+                    stdout: stdout_buf,
+                    stderr: stderr_buf,
+                })
+            }
+
             fn abort(id: usize) -> LuaResult<()> {
                 with_proc!($map_name, id, proc -> {
                     Ok(proc.abort())
@@ -180,6 +234,14 @@ macro_rules! impl_process {
                 methods.add_async_method("read_stderr_async", |_, this, ()| {
                     runtime::spawn(Self::read_stderr_async(this.id))
                 });
+                methods.add_method("wait", |_, this, ()| Self::wait(this.id));
+                methods.add_async_method("wait_async", |_, this, ()| {
+                    runtime::spawn(Self::wait_async(this.id))
+                });
+                methods.add_method("output", |_, this, ()| Self::output(this.id));
+                methods.add_async_method("output_async", |_, this, ()| {
+                    runtime::spawn(Self::output_async(this.id))
+                });
                 methods.add_method("kill", |_, this, ()| Self::kill(this.id));
                 methods.add_async_method("kill_async", |_, this, ()| {
                     runtime::spawn(Self::kill_async(this.id))
@@ -188,6 +250,35 @@ macro_rules! impl_process {
             }
         }
     };
+}
+
+/// Represents process output
+#[derive(Clone, Debug)]
+pub struct Output {
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl UserData for Output {
+    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("success", |_, this| Ok(this.success));
+        fields.add_field_method_get("exit_code", |_, this| Ok(this.exit_code));
+        fields.add_field_method_get("stdout", |_, this| Ok(this.stdout.to_string()));
+        fields.add_field_method_get("stderr", |_, this| Ok(this.stderr.to_string()));
+    }
+
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("to_tbl", |lua, this, ()| {
+            let tbl = lua.create_table()?;
+            tbl.set("success", this.success)?;
+            tbl.set("exit_code", this.exit_code)?;
+            tbl.set("stdout", this.stdout.to_string())?;
+            tbl.set("stderr", this.stdout.to_string())?;
+            Ok(tbl)
+        });
+    }
 }
 
 impl_process!(RemoteProcess, DistantRemoteProcess, PROC_MAP);

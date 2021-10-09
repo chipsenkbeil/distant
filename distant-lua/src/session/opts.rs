@@ -1,3 +1,4 @@
+use crate::constants::TIMEOUT_MILLIS;
 use distant_ssh2::{Ssh2AuthHandler, Ssh2SessionOpts};
 use mlua::prelude::*;
 use serde::Deserialize;
@@ -19,8 +20,8 @@ impl<'lua> FromLua<'lua> for ConnectOpts {
                 port: tbl.get("port")?,
                 key: tbl.get("key")?,
                 timeout: {
-                    let milliseconds: u64 = tbl.get("timeout")?;
-                    Duration::from_millis(milliseconds)
+                    let milliseconds: Option<u64> = tbl.get("timeout")?;
+                    Duration::from_millis(milliseconds.unwrap_or(TIMEOUT_MILLIS))
                 },
             }),
             LuaValue::Nil => Err(LuaError::FromLuaConversionError {
@@ -100,44 +101,75 @@ impl fmt::Debug for LaunchOpts<'_> {
 
 impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
     fn from_lua(lua_value: LuaValue<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+        let Ssh2AuthHandler {
+            on_authenticate,
+            on_banner,
+            on_error,
+            on_host_verify,
+        } = Default::default();
+
         match lua_value {
             LuaValue::Table(tbl) => Ok(Self {
                 host: tbl.get("host")?,
-                mode: lua.from_value(tbl.get("mode")?)?,
+                mode: {
+                    let mode: Option<LuaValue> = tbl.get("mode")?;
+                    match mode {
+                        Some(value) => lua.from_value(value)?,
+                        None => Default::default(),
+                    }
+                },
                 handler: Ssh2AuthHandler {
                     on_authenticate: {
-                        let f: LuaFunction = tbl.get("on_authenticate")?;
-                        Box::new(move |ev| {
-                            let value = to_value!(lua, &ev)
-                                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
-                            f.call::<LuaValue, Vec<String>>(value)
-                                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
-                        })
+                        let f: Option<LuaFunction> = tbl.get("on_authenticate")?;
+                        match f {
+                            Some(f) => Box::new(move |ev| {
+                                let value = to_value!(lua, &ev)
+                                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+                                f.call::<LuaValue, Vec<String>>(value)
+                                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+                            }),
+                            None => on_authenticate,
+                        }
                     },
                     on_banner: {
-                        let f: LuaFunction = tbl.get("on_banner")?;
-                        Box::new(move |banner| {
-                            let _ = f.call::<String, ()>(banner.to_string());
-                        })
+                        let f: Option<LuaFunction> = tbl.get("on_banner")?;
+                        match f {
+                            Some(f) => Box::new(move |banner| {
+                                let _ = f.call::<String, ()>(banner.to_string());
+                            }),
+                            None => on_banner,
+                        }
                     },
                     on_host_verify: {
-                        let f: LuaFunction = tbl.get("on_host_verify")?;
-                        Box::new(move |host| {
-                            f.call::<String, bool>(host.to_string())
-                                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
-                        })
+                        let f: Option<LuaFunction> = tbl.get("on_host_verify")?;
+                        match f {
+                            Some(f) => Box::new(move |host| {
+                                f.call::<String, bool>(host.to_string())
+                                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+                            }),
+                            None => on_host_verify,
+                        }
                     },
                     on_error: {
-                        let f: LuaFunction = tbl.get("on_error")?;
-                        Box::new(move |err| {
-                            let _ = f.call::<String, ()>(err.to_string());
-                        })
+                        let f: Option<LuaFunction> = tbl.get("on_error")?;
+                        match f {
+                            Some(f) => Box::new(move |err| {
+                                let _ = f.call::<String, ()>(err.to_string());
+                            }),
+                            None => on_error,
+                        }
                     },
                 },
-                ssh: lua.from_value(tbl.get("ssh")?)?,
+                ssh: {
+                    let ssh_tbl: Option<LuaValue> = tbl.get("ssh")?;
+                    match ssh_tbl {
+                        Some(value) => lua.from_value(value)?,
+                        None => Default::default(),
+                    }
+                },
                 timeout: {
-                    let milliseconds: u64 = tbl.get("timeout")?;
-                    Duration::from_millis(milliseconds)
+                    let milliseconds: Option<u64> = tbl.get("timeout")?;
+                    Duration::from_millis(milliseconds.unwrap_or(TIMEOUT_MILLIS))
                 },
             }),
             LuaValue::Nil => Err(LuaError::FromLuaConversionError {

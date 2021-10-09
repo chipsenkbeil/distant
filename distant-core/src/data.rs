@@ -501,12 +501,20 @@ pub struct Error {
     pub description: String,
 }
 
+impl std::error::Error for Error {}
+
 impl From<io::Error> for Error {
     fn from(x: io::Error) -> Self {
         Self {
             kind: ErrorKind::from(x.kind()),
             description: format!("{}", x),
         }
+    }
+}
+
+impl From<Error> for io::Error {
+    fn from(x: Error) -> Self {
+        Self::new(x.kind.into(), x.description)
     }
 }
 
@@ -634,6 +642,32 @@ impl From<io::ErrorKind> for ErrorKind {
 
             // This exists because io::ErrorKind is non_exhaustive
             _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<ErrorKind> for io::ErrorKind {
+    fn from(kind: ErrorKind) -> Self {
+        match kind {
+            ErrorKind::NotFound => Self::NotFound,
+            ErrorKind::PermissionDenied => Self::PermissionDenied,
+            ErrorKind::ConnectionRefused => Self::ConnectionRefused,
+            ErrorKind::ConnectionReset => Self::ConnectionReset,
+            ErrorKind::ConnectionAborted => Self::ConnectionAborted,
+            ErrorKind::NotConnected => Self::NotConnected,
+            ErrorKind::AddrInUse => Self::AddrInUse,
+            ErrorKind::AddrNotAvailable => Self::AddrNotAvailable,
+            ErrorKind::BrokenPipe => Self::BrokenPipe,
+            ErrorKind::AlreadyExists => Self::AlreadyExists,
+            ErrorKind::WouldBlock => Self::WouldBlock,
+            ErrorKind::InvalidInput => Self::InvalidInput,
+            ErrorKind::InvalidData => Self::InvalidData,
+            ErrorKind::TimedOut => Self::TimedOut,
+            ErrorKind::WriteZero => Self::WriteZero,
+            ErrorKind::Interrupted => Self::Interrupted,
+            ErrorKind::Other => Self::Other,
+            ErrorKind::UnexpectedEof => Self::UnexpectedEof,
+            _ => Self::Other,
         }
     }
 }

@@ -3,6 +3,7 @@ use distant_core::{
     SecretKey32, Session as DistantSession, SessionChannel, XChaCha20Poly1305Codec,
 };
 use distant_ssh2::{IntoDistantSessionOpts, Ssh2Session};
+use log::*;
 use mlua::{prelude::*, LuaSerdeExt, UserData, UserDataFields, UserDataMethods};
 use once_cell::sync::Lazy;
 use paste::paste;
@@ -11,6 +12,9 @@ use std::{collections::HashMap, io, sync::RwLock};
 /// Makes a Lua table containing the session functions
 pub fn make_session_tbl(lua: &Lua) -> LuaResult<LuaTable> {
     let tbl = lua.create_table()?;
+
+    // get_all() -> Vec<Session>
+    tbl.set("get_all", lua.create_function(|_, ()| Session::all())?)?;
 
     // get_by_id(id: usize) -> Option<Session>
     tbl.set(
@@ -30,7 +34,9 @@ pub fn make_session_tbl(lua: &Lua) -> LuaResult<LuaTable> {
         "launch",
         lua.create_function(|lua, opts: LuaValue| {
             let opts = LaunchOpts::from_lua(opts, lua)?;
-            runtime::block_on(Session::launch(opts))
+            let x = runtime::block_on(Session::launch(opts))?;
+            trace!("launch: {:?}", x);
+            Ok(x)
         })?,
     )?;
 
@@ -101,7 +107,7 @@ fn has_session(id: usize) -> LuaResult<bool> {
         .contains_key(&id))
 }
 
-fn get_session_channel(id: usize) -> LuaResult<SessionChannel> {
+fn with_session<T>(id: usize, f: impl FnOnce(&DistantSession) -> T) -> LuaResult<T> {
     let lock = SESSION_MAP.read().map_err(|x| x.to_string().to_lua_err())?;
     let session = lock.get(&id).ok_or_else(|| {
         io::Error::new(
@@ -111,7 +117,15 @@ fn get_session_channel(id: usize) -> LuaResult<SessionChannel> {
         .to_lua_err()
     })?;
 
-    Ok(session.clone_channel())
+    Ok(f(session))
+}
+
+fn get_session_connection_tag(id: usize) -> LuaResult<String> {
+    with_session(id, |session| session.connection_tag().to_string())
+}
+
+fn get_session_channel(id: usize) -> LuaResult<SessionChannel> {
+    with_session(id, |session| session.clone_channel())
 }
 
 /// Holds a reference to the session to perform remote operations
@@ -126,8 +140,20 @@ impl Session {
         Self { id }
     }
 
+    /// Retrieves all sessions
+    pub fn all() -> LuaResult<Vec<Self>> {
+        Ok(SESSION_MAP
+            .read()
+            .map_err(|x| x.to_string().to_lua_err())?
+            .keys()
+            .copied()
+            .map(Self::new)
+            .collect())
+    }
+
     /// Launches a new distant session on a remote machine
     pub async fn launch(opts: LaunchOpts<'_>) -> LuaResult<Self> {
+        trace!("Session::launch({:?})", opts);
         let LaunchOpts {
             host,
             mode,
@@ -137,12 +163,15 @@ impl Session {
         } = opts;
 
         // First, establish a connection to an SSH server
-        let mut ssh_session = Ssh2Session::connect(host, ssh).to_lua_err()?;
+        debug!("Connecting to {} {:#?}", host, ssh);
+        let mut ssh_session = Ssh2Session::connect(host.as_str(), ssh).to_lua_err()?;
 
         // Second, authenticate with the server
+        debug!("Authenticating against {}", host);
         ssh_session.authenticate(handler).await.to_lua_err()?;
 
         // Third, convert our ssh session into a distant session based on desired method
+        debug!("Mapping session for {} into {:?}", host, mode);
         let session = match mode {
             Mode::Distant => ssh_session
                 .into_distant_session(IntoDistantSessionOpts {
@@ -156,6 +185,7 @@ impl Session {
 
         // Fourth, store our current session in our global map and then return a reference
         let id = utils::rand_u32()? as usize;
+        debug!("Session {} established against {}", id, host);
         SESSION_MAP
             .write()
             .map_err(|x| x.to_string().to_lua_err())?
@@ -165,6 +195,9 @@ impl Session {
 
     /// Connects to an already-running remote distant server
     pub async fn connect(opts: ConnectOpts) -> LuaResult<Self> {
+        trace!("Session::connect({:?})", opts);
+
+        debug!("Looking up {}", opts.host);
         let addr = tokio::net::lookup_host(format!("{}:{}", opts.host, opts.port))
             .await
             .to_lua_err()?
@@ -177,14 +210,17 @@ impl Session {
             })
             .to_lua_err()?;
 
+        debug!("Constructing codec");
         let key: SecretKey32 = opts.key.parse().to_lua_err()?;
         let codec = XChaCha20Poly1305Codec::from(key);
 
+        debug!("Connecting to {}", addr);
         let session = DistantSession::tcp_connect_timeout(addr, codec, opts.timeout)
             .await
             .to_lua_err()?;
 
         let id = utils::rand_u32()? as usize;
+        debug!("Session {} established against {}", id, opts.host);
         SESSION_MAP
             .write()
             .map_err(|x| x.to_string().to_lua_err())?
@@ -200,15 +236,23 @@ macro_rules! impl_methods {
     };
     ($methods:expr, $name:ident, |$lua:ident, $data:ident| $block:block) => {{
         paste! {
-            $methods.add_method(stringify!([<$name:snake>]), |$lua, this, params: LuaValue| {
+            $methods.add_method(stringify!([<$name:snake>]), |$lua, this, params: Option<LuaValue>| {
+                let params: LuaValue = match params {
+                    Some(params) => params,
+                    None => LuaValue::Table($lua.create_table()?),
+                };
                 let params: api::[<$name:camel Params>] = $lua.from_value(params)?;
                 let $data = api::[<$name:snake>](get_session_channel(this.id)?, params)?;
 
                 #[allow(unused_braces)]
                 $block
             });
-            $methods.add_async_method(stringify!([<$name:snake _async>]), |$lua, this, params: LuaValue| async move {
+            $methods.add_async_method(stringify!([<$name:snake _async>]), |$lua, this, params: Option<LuaValue>| async move {
                 let rt = crate::runtime::get_runtime()?;
+                let params: LuaValue = match params {
+                    Some(params) => params,
+                    None => LuaValue::Table($lua.create_table()?),
+                };
                 let params: api::[<$name:camel Params>] = $lua.from_value(params)?;
                 let $data = {
                     let tmp = rt.spawn(
@@ -231,10 +275,13 @@ macro_rules! impl_methods {
 impl UserData for Session {
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
         fields.add_field_method_get("id", |_, this| Ok(this.id));
+        fields.add_field_method_get("connection_tag", |_, this| {
+            get_session_connection_tag(this.id)
+        });
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("is_active", |_, this, _: LuaValue| {
+        methods.add_method("is_active", |_, this, ()| {
             Ok(get_session_channel(this.id).is_ok())
         });
 
@@ -271,8 +318,12 @@ impl UserData for Session {
         impl_methods!(methods, spawn, |_lua, proc| {
             Ok(RemoteProcess::from_distant(proc))
         });
+        impl_methods!(methods, spawn_wait);
         impl_methods!(methods, spawn_lsp, |_lua, proc| {
             Ok(RemoteLspProcess::from_distant(proc))
+        });
+        impl_methods!(methods, system_info, |lua, info| {
+            Ok(lua.to_value(&info)?)
         });
         impl_methods!(methods, write_file);
         impl_methods!(methods, write_file_text);

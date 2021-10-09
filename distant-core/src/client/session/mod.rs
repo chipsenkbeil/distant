@@ -34,6 +34,9 @@ pub struct Session {
     /// Used to send requests to a server
     channel: SessionChannel,
 
+    /// Textual description of the underlying connection
+    connection_tag: String,
+
     /// Contains the task that is running to send requests to a server
     request_task: JoinHandle<()>,
 
@@ -116,6 +119,7 @@ impl Session {
         T: DataStream,
         U: Codec + Send + 'static,
     {
+        let connection_tag = transport.to_connection_tag();
         let (mut t_read, mut t_write) = transport.into_split();
         let post_office = Arc::new(Mutex::new(PostOffice::new()));
         let weak_post_office = Arc::downgrade(&post_office);
@@ -186,6 +190,7 @@ impl Session {
 
         Ok(Self {
             channel,
+            connection_tag,
             request_task,
             response_task,
             prune_task,
@@ -194,6 +199,11 @@ impl Session {
 }
 
 impl Session {
+    /// Returns a textual description of the underlying connection
+    pub fn connection_tag(&self) -> &str {
+        &self.connection_tag
+    }
+
     /// Waits for the session to terminate, which results when the receiving end of the network
     /// connection is closed (or the session is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {

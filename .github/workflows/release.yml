@@ -273,7 +273,9 @@ jobs:
           #       built and added to each release manually
           files: |
             ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_BIN }}
+            ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_LIB }}
             ${{ env.MACOS }}/${{ env.MACOS_X86_LIB }}
+            ${{ env.MACOS }}/${{ env.MACOS_ARM_LIB }}
             ${{ env.WIN64 }}/${{ env.WIN64_BIN }}
             ${{ env.WIN64 }}/${{ env.WIN64_LIB }}
             ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_BIN }}
