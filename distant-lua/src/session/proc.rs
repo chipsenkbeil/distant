@@ -58,8 +58,12 @@ macro_rules! impl_process {
             }
 
             pub fn from_distant(proc: $type) -> LuaResult<Self> {
+                runtime::get_runtime()?.block_on(Self::from_distant_async(proc))
+            }
+
+            pub async fn from_distant_async(proc: $type) -> LuaResult<Self> {
                 let id = proc.id();
-                runtime::get_runtime()?.block_on($map_name.write()).insert(id, proc);
+                $map_name.write().await.insert(id, proc);
                 Ok(Self::new(id))
             }
 

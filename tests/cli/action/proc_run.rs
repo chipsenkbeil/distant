@@ -158,7 +158,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
         .args(&["proc-run", "--"])
         .arg(DOES_NOT_EXIST_BIN.to_str().unwrap())
         .assert()
-        .code(ExitCode::DataErr.to_i32())
+        .code(ExitCode::IoError.to_i32())
         .stdout("")
         .stderr("");
 }

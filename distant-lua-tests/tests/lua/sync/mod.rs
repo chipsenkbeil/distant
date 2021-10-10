@@ -10,6 +10,7 @@ mod read_file_text;
 mod remove;
 mod rename;
 mod spawn;
+mod spawn_wait;
 mod system_info;
 mod write_file;
 mod write_file_text;

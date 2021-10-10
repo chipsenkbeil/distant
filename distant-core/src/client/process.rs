@@ -416,7 +416,7 @@ mod tests {
                 "test-tenant",
                 req.id,
                 vec![ResponseData::Error(Error {
-                    kind: ErrorKind::Other,
+                    kind: ErrorKind::BrokenPipe,
                     description: String::from("some error"),
                 })],
             ))
@@ -429,7 +429,7 @@ mod tests {
             matches!(
                 &result,
                 Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
-                    if x.kind() == io::ErrorKind::InvalidData
+                    if x.kind() == io::ErrorKind::BrokenPipe
             ),
             "Unexpected result: {:?}",
             result

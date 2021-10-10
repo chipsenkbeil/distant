@@ -174,7 +174,7 @@ make_api!(
     { cmd: String, args: Vec<String> },
     |channel, tenant, params| {
         let proc = channel.spawn(tenant, params.cmd, params.args).await.to_lua_err()?;
-        let id = LuaRemoteProcess::from_distant(proc)?.id;
+        let id = LuaRemoteProcess::from_distant_async(proc).await?.id;
         LuaRemoteProcess::output_async(id).await
     }
 );

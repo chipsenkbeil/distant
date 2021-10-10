@@ -323,7 +323,7 @@ impl UserData for Session {
             Ok(RemoteLspProcess::from_distant(proc))
         });
         impl_methods!(methods, system_info, |lua, info| {
-            Ok(lua.to_value(&info)?)
+            lua.to_value(&info)
         });
         impl_methods!(methods, write_file);
         impl_methods!(methods, write_file_text);
