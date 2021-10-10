@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.15.0-alpha.9"
+version = "0.15.0-alpha.10"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.15.0-alpha.9"
+version = "0.15.0-alpha.10"
 dependencies = [
  "assert_fs",
  "bytes",
@@ -484,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "distant-lua"
-version = "0.15.0-alpha.9"
+version = "0.15.0-alpha.10"
 dependencies = [
  "distant-core",
  "distant-ssh2",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh2"
-version = "0.15.0-alpha.9"
+version = "0.15.0-alpha.10"
 dependencies = [
  "assert_cmd",
  "assert_fs",
