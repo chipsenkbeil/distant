@@ -222,6 +222,11 @@ pub enum RequestData {
 
         /// Arguments for the command
         args: Vec<String>,
+
+        /// Whether or not the process should be detached, meaning that the process will not be
+        /// killed when the associated client disconnects
+        #[cfg_attr(feature = "structopt", structopt(long))]
+        detached: bool,
     },
 
     /// Kills a process running on the remote machine
@@ -464,6 +469,9 @@ pub struct RunningProcess {
 
     /// Arguments for the command
     pub args: Vec<String>,
+
+    /// Whether or not the process was run in detached mode
+    pub detached: bool,
 
     /// Arbitrary id associated with running process
     ///

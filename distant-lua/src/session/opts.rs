@@ -92,14 +92,11 @@ pub struct LaunchOpts<'a> {
     /// Miscellaneous ssh configuration options
     pub ssh: Ssh2SessionOpts,
 
+    /// Options specific to launching the distant binary on the remote machine
+    pub distant: LaunchDistantOpts,
+
     /// Maximum time to wait for launch to complete
     pub timeout: Duration,
-
-    /// Binary representing the distant server on the remote machine
-    pub distant_bin: String,
-
-    /// Additional CLI options to pass to the distant server when starting
-    pub distant_args: String,
 }
 
 impl fmt::Debug for LaunchOpts<'_> {
@@ -109,6 +106,7 @@ impl fmt::Debug for LaunchOpts<'_> {
             .field("mode", &self.mode)
             .field("handler", &"...")
             .field("ssh", &self.ssh)
+            .field("distant", &self.distant)
             .field("timeout", &self.timeout)
             .finish()
     }
@@ -182,24 +180,16 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
                         None => Default::default(),
                     }
                 },
+                distant: {
+                    let distant_tbl: Option<LuaValue> = tbl.get("distant")?;
+                    match distant_tbl {
+                        Some(value) => LaunchDistantOpts::from_lua(value, lua)?,
+                        None => Default::default(),
+                    }
+                },
                 timeout: {
                     let milliseconds: Option<u64> = tbl.get("timeout")?;
                     Duration::from_millis(milliseconds.unwrap_or(TIMEOUT_MILLIS))
-                },
-                distant_bin: {
-                    let distant_bin: Option<String> = tbl.get("distant_bin")?;
-                    distant_bin.unwrap_or_else(|| String::from("distant"))
-                },
-                distant_args: {
-                    let value: LuaValue = tbl.get("distant_args")?;
-                    match value {
-                        LuaValue::Nil => String::new(),
-                        LuaValue::String(args) => args.to_str()?.to_string(),
-                        x => {
-                            let args: Vec<String> = lua.from_value(x)?;
-                            args.join(" ")
-                        }
-                    }
                 },
             }),
             LuaValue::Nil => Err(LuaError::FromLuaConversionError {
@@ -250,6 +240,120 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
             LuaValue::Error(_) => Err(LuaError::FromLuaConversionError {
                 from: "Error",
                 to: "LaunchOpts",
+                message: None,
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct LaunchDistantOpts {
+    /// Binary representing the distant server on the remote machine
+    pub bin: String,
+
+    /// Additional CLI options to pass to the distant server when starting
+    pub args: String,
+
+    /// If true, will run distant via `echo <CMD> | $SHELL -l`, which will spawn a login shell to
+    /// execute distant
+    pub use_login_shell: bool,
+}
+
+impl Default for LaunchDistantOpts {
+    /// Create default options
+    ///
+    /// * bin = "distant"
+    /// * args = ""
+    /// * use_login_shell = false
+    fn default() -> Self {
+        Self {
+            bin: String::from("distant"),
+            args: String::new(),
+            use_login_shell: false,
+        }
+    }
+}
+
+impl<'lua> FromLua<'lua> for LaunchDistantOpts {
+    fn from_lua(lua_value: LuaValue<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+        let LaunchDistantOpts {
+            bin: default_bin,
+            args: default_args,
+            use_login_shell: default_use_login_shell,
+        } = Default::default();
+
+        match lua_value {
+            LuaValue::Table(tbl) => Ok(Self {
+                bin: {
+                    let bin: Option<String> = tbl.get("bin")?;
+                    bin.unwrap_or(default_bin)
+                },
+
+                // Allows "--some --args" or {"--some", "--args"}
+                args: {
+                    let value: LuaValue = tbl.get("args")?;
+                    match value {
+                        LuaValue::Nil => default_args,
+                        LuaValue::String(args) => args.to_str()?.to_string(),
+                        x => {
+                            let args: Vec<String> = lua.from_value(x)?;
+                            args.join(" ")
+                        }
+                    }
+                },
+
+                use_login_shell: tbl
+                    .get::<_, Option<bool>>("use_login_shell")?
+                    .unwrap_or(default_use_login_shell),
+            }),
+            LuaValue::Nil => Err(LuaError::FromLuaConversionError {
+                from: "Nil",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::Boolean(_) => Err(LuaError::FromLuaConversionError {
+                from: "Boolean",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::LightUserData(_) => Err(LuaError::FromLuaConversionError {
+                from: "LightUserData",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::Integer(_) => Err(LuaError::FromLuaConversionError {
+                from: "Integer",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::Number(_) => Err(LuaError::FromLuaConversionError {
+                from: "Number",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::String(_) => Err(LuaError::FromLuaConversionError {
+                from: "String",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::Function(_) => Err(LuaError::FromLuaConversionError {
+                from: "Function",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::Thread(_) => Err(LuaError::FromLuaConversionError {
+                from: "Thread",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::UserData(_) => Err(LuaError::FromLuaConversionError {
+                from: "UserData",
+                to: "LaunchDistantOpts",
+                message: None,
+            }),
+            LuaValue::Error(_) => Err(LuaError::FromLuaConversionError {
+                from: "Error",
+                to: "LaunchDistantOpts",
                 message: None,
             }),
         }

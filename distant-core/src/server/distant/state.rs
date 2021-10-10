@@ -68,14 +68,22 @@ impl State {
         if let Some(ids) = self.client_processes.remove(&conn_id) {
             for id in ids {
                 if let Some(process) = self.processes.remove(&id) {
-                    trace!(
-                        "<Conn @ {:?}> Requesting proc {} be killed",
-                        conn_id,
-                        process.id
-                    );
-                    let pid = process.id;
-                    if !process.kill() {
-                        error!("Conn {} failed to send process {} kill signal", id, pid);
+                    if !process.detached {
+                        trace!(
+                            "<Conn @ {:?}> Requesting proc {} be killed",
+                            conn_id,
+                            process.id
+                        );
+                        let pid = process.id;
+                        if !process.kill() {
+                            error!("Conn {} failed to send process {} kill signal", id, pid);
+                        }
+                    } else {
+                        trace!(
+                            "<Conn @ {:?}> Proc {} is detached and will not be killed",
+                            conn_id,
+                            process.id
+                        );
                     }
                 }
             }
@@ -94,6 +102,9 @@ pub struct Process {
     /// Arguments associated with the process
     pub args: Vec<String>,
 
+    /// Whether or not this process was run detached
+    pub detached: bool,
+
     /// Transport channel to send new input to the stdin of the process,
     /// one line at a time
     stdin_tx: Option<mpsc::Sender<String>>,
@@ -106,11 +117,12 @@ pub struct Process {
 }
 
 impl Process {
-    pub fn new(id: usize, cmd: String, args: Vec<String>) -> Self {
+    pub fn new(id: usize, cmd: String, args: Vec<String>, detached: bool) -> Self {
         Self {
             id,
             cmd,
             args,
+            detached,
             stdin_tx: None,
             kill_tx: None,
             wait_task: None,

@@ -121,6 +121,7 @@ pub trait SessionChannelExt {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
+        detached: bool,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError>;
 
     /// Spawns an LSP process on the remote machine
@@ -129,6 +130,7 @@ pub trait SessionChannelExt {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
+        detached: bool,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError>;
 
     /// Retrieves information about the remote system
@@ -367,11 +369,14 @@ impl SessionChannelExt for SessionChannel {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
+        detached: bool,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
         let args = args.into_iter().map(Into::into).collect();
-        Box::pin(async move { RemoteProcess::spawn(tenant, self.clone(), cmd, args).await })
+        Box::pin(
+            async move { RemoteProcess::spawn(tenant, self.clone(), cmd, args, detached).await },
+        )
     }
 
     fn spawn_lsp(
@@ -379,11 +384,14 @@ impl SessionChannelExt for SessionChannel {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
+        detached: bool,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
         let args = args.into_iter().map(Into::into).collect();
-        Box::pin(async move { RemoteLspProcess::spawn(tenant, self.clone(), cmd, args).await })
+        Box::pin(
+            async move { RemoteLspProcess::spawn(tenant, self.clone(), cmd, args, detached).await },
+        )
     }
 
     fn system_info(&mut self, tenant: impl Into<String>) -> AsyncReturn<'_, SystemInfo> {

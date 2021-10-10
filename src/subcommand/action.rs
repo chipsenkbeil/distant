@@ -86,10 +86,22 @@ async fn start(
     match (cmd.interactive, cmd.operation) {
         // ProcRun request w/ shell format is specially handled and we ignore interactive as
         // the stdin will be used for sending ProcStdin to remote process
-        (_, Some(RequestData::ProcRun { cmd, args })) if is_shell_format => {
-            let mut proc =
-                RemoteProcess::spawn(utils::new_tenant(), session.clone_channel(), cmd, args)
-                    .await?;
+        (
+            _,
+            Some(RequestData::ProcRun {
+                cmd,
+                args,
+                detached,
+            }),
+        ) if is_shell_format => {
+            let mut proc = RemoteProcess::spawn(
+                utils::new_tenant(),
+                session.clone_channel(),
+                cmd,
+                args,
+                detached,
+            )
+            .await?;
 
             // If we also parsed an LSP's initialize request for its session, we want to forward
             // it along in the case of a process call

@@ -31,8 +31,9 @@ impl RemoteLspProcess {
         channel: SessionChannel,
         cmd: impl Into<String>,
         args: Vec<String>,
+        detached: bool,
     ) -> Result<Self, RemoteProcessError> {
-        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args).await?;
+        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args, detached).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
@@ -324,6 +325,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });

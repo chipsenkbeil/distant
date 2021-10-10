@@ -91,6 +91,10 @@ pub struct IntoDistantSessionOpts {
     /// Arguments to supply to the distant server when starting it
     pub args: String,
 
+    /// If true, launches via `echo distant listen ... | $SHELL -l`, otherwise attempts to launch
+    /// by directly invoking distant
+    pub use_login_shell: bool,
+
     /// Timeout to use when connecting to the distant server
     pub timeout: Duration,
 }
@@ -100,6 +104,7 @@ impl Default for IntoDistantSessionOpts {
         Self {
             binary: String::from("distant"),
             args: String::new(),
+            use_login_shell: false,
             timeout: Duration::from_secs(15),
         }
     }
@@ -332,12 +337,33 @@ impl Ssh2Session {
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         );
 
-        // Spawn distant server
+        // If we are using a login shell, we need to make the binary be sh
+        // so we can appropriately pipe into the login shell
+        let (bin, args) = if opts.use_login_shell {
+            (
+                String::from("sh"),
+                vec![
+                    String::from("-c"),
+                    shell_words::quote(&format!(
+                        "echo {} {} | $SHELL -l",
+                        opts.binary,
+                        args.join(" ")
+                    ))
+                    .to_string(),
+                ],
+            )
+        } else {
+            (opts.binary, args)
+        };
+
+        // Spawn distant server and detach it so that we don't kill it when the
+        // ssh session is closed
         let mut proc = session
-            .spawn("<ssh-launch>", opts.binary, args)
+            .spawn("<ssh-launch>", bin, args, true)
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
         let mut stdout = proc.stdout.take().unwrap();
+        let mut stderr = proc.stderr.take().unwrap();
         let (success, code) = proc
             .wait()
             .await
@@ -370,12 +396,18 @@ impl Ssh2Session {
                 )),
             }
         } else {
+            let mut err = String::new();
+            while let Ok(data) = stderr.read().await {
+                err.push_str(&data);
+            }
+
             Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!(
-                    "Spawning distant failed: {}",
+                    "Spawning distant failed [{}]: {}",
                     code.map(|x| x.to_string())
-                        .unwrap_or_else(|| String::from("???"))
+                        .unwrap_or_else(|| String::from("???")),
+                    err
                 ),
             ))
         }

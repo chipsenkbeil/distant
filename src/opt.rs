@@ -659,6 +659,11 @@ pub struct LspSubcommand {
     #[structopt(flatten)]
     pub ssh_connection: SshConnectionOpts,
 
+    /// If provided, will run in detached mode, meaning that the process will not be killed if the
+    /// client disconnects from the server
+    #[structopt(long)]
+    pub detached: bool,
+
     /// Command to run on the remote machine that represents an LSP server
     pub cmd: String,
 

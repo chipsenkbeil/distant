@@ -67,6 +67,7 @@ impl RemoteProcess {
         mut channel: SessionChannel,
         cmd: impl Into<String>,
         args: Vec<String>,
+        detached: bool,
     ) -> Result<Self, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
@@ -75,7 +76,11 @@ impl RemoteProcess {
         let mut mailbox = channel
             .mail(Request::new(
                 tenant.as_str(),
-                vec![RequestData::ProcRun { cmd, args }],
+                vec![RequestData::ProcRun {
+                    cmd,
+                    args,
+                    detached,
+                }],
             ))
             .await?;
 
@@ -365,6 +370,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -403,6 +409,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -448,6 +455,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -493,6 +501,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -549,6 +558,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -604,6 +614,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -653,6 +664,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -702,6 +714,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -744,6 +757,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });
@@ -793,6 +807,7 @@ mod tests {
                 session.clone_channel(),
                 String::from("cmd"),
                 vec![String::from("arg")],
+                false,
             )
             .await
         });

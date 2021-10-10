@@ -73,6 +73,7 @@ async fn start(
         session.clone_channel(),
         cmd.cmd,
         cmd.args,
+        cmd.detached,
     )
     .await?;
 

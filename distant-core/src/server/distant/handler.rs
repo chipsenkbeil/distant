@@ -98,7 +98,11 @@ pub(super) async fn process(
                 canonicalize,
                 resolve_file_type,
             } => metadata(path, canonicalize, resolve_file_type).await,
-            RequestData::ProcRun { cmd, args } => proc_run(conn_id, state, reply, cmd, args).await,
+            RequestData::ProcRun {
+                cmd,
+                args,
+                detached,
+            } => proc_run(conn_id, state, reply, cmd, args, detached).await,
             RequestData::ProcKill { id } => proc_kill(state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(state, id, data).await,
             RequestData::ProcList {} => proc_list(state).await,
@@ -424,6 +428,7 @@ async fn proc_run<F>(
     reply: F,
     cmd: String,
     args: Vec<String>,
+    detached: bool,
 ) -> Result<Outgoing, ServerError>
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
@@ -439,7 +444,7 @@ where
     state
         .lock()
         .await
-        .push_process(conn_id, Process::new(id, cmd, args));
+        .push_process(conn_id, Process::new(id, cmd, args, detached));
 
     let post_hook = Box::new(move |mut state_lock: MutexGuard<'_, State>| {
         // Spawn a task that sends stdout as a response
@@ -656,6 +661,7 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
             .map(|p| RunningProcess {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
+                detached: p.detached,
                 id: p.id,
             })
             .collect(),
@@ -2096,6 +2102,7 @@ mod tests {
             vec![RequestData::ProcRun {
                 cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
                 args: Vec::new(),
+                detached: false,
             }],
         );
 
@@ -2121,6 +2128,7 @@ mod tests {
             vec![RequestData::ProcRun {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
+                detached: false,
             }],
         );
 
@@ -2153,6 +2161,7 @@ mod tests {
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
                     String::from("some stdout"),
                 ],
+                detached: false,
             }],
         );
 
@@ -2218,6 +2227,7 @@ mod tests {
                     ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
                     String::from("some stderr"),
                 ],
+                detached: false,
             }],
         );
 
@@ -2280,6 +2290,7 @@ mod tests {
             vec![RequestData::ProcRun {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
+                detached: false,
             }],
         );
 
@@ -2322,6 +2333,7 @@ mod tests {
             vec![RequestData::ProcRun {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+                detached: false,
             }],
         );
 
@@ -2396,6 +2408,7 @@ mod tests {
             vec![RequestData::ProcRun {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+                detached: false,
             }],
         );
 
@@ -2491,6 +2504,7 @@ mod tests {
             vec![RequestData::ProcRun {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
+                detached: false,
             }],
         );
 
@@ -2563,6 +2577,7 @@ mod tests {
                 RequestData::ProcRun {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+                    detached: false,
                 },
                 RequestData::ProcList {},
             ],
@@ -2586,6 +2601,7 @@ mod tests {
                 entries: vec![RunningProcess {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+                    detached: false,
                     id,
                 }],
             },

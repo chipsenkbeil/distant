@@ -35,6 +35,7 @@ struct Process {
     id: usize,
     cmd: String,
     args: Vec<String>,
+    detached: bool,
     stdin_tx: mpsc::Sender<String>,
     kill_tx: mpsc::Sender<()>,
 }
@@ -96,7 +97,11 @@ pub(super) async fn process(
                 canonicalize,
                 resolve_file_type,
             } => metadata(session, path, canonicalize, resolve_file_type).await,
-            RequestData::ProcRun { cmd, args } => proc_run(session, state, reply, cmd, args).await,
+            RequestData::ProcRun {
+                cmd,
+                args,
+                detached,
+            } => proc_run(session, state, reply, cmd, args, detached).await,
             RequestData::ProcKill { id } => proc_kill(session, state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(session, state, id, data).await,
             RequestData::ProcList {} => proc_list(session, state).await,
@@ -598,6 +603,7 @@ async fn proc_run<F>(
     reply: F,
     cmd: String,
     args: Vec<String>,
+    detached: bool,
 ) -> io::Result<Outgoing>
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
@@ -644,6 +650,7 @@ where
             id,
             cmd,
             args,
+            detached,
             stdin_tx,
             kill_tx,
         },
@@ -865,6 +872,7 @@ async fn proc_list(_session: WezSession, state: Arc<Mutex<State>>) -> io::Result
             .map(|p| RunningProcess {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
+                detached: p.detached,
                 id: p.id,
             })
             .collect(),

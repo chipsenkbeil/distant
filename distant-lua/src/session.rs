@@ -34,9 +34,7 @@ pub fn make_session_tbl(lua: &Lua) -> LuaResult<LuaTable> {
         "launch",
         lua.create_function(|lua, opts: LuaValue| {
             let opts = LaunchOpts::from_lua(opts, lua)?;
-            let x = runtime::block_on(Session::launch(opts))?;
-            trace!("launch: {:?}", x);
-            Ok(x)
+            runtime::block_on(Session::launch(opts))
         })?,
     )?;
 
@@ -159,9 +157,8 @@ impl Session {
             mode,
             handler,
             ssh,
+            distant,
             timeout,
-            distant_bin,
-            distant_args,
         } = opts;
 
         // First, establish a connection to an SSH server
@@ -177,8 +174,9 @@ impl Session {
         let session = match mode {
             Mode::Distant => ssh_session
                 .into_distant_session(IntoDistantSessionOpts {
-                    binary: distant_bin,
-                    args: distant_args,
+                    binary: distant.bin,
+                    args: distant.args,
+                    use_login_shell: distant.use_login_shell,
                     timeout,
                 })
                 .await
