@@ -21,7 +21,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
             local session = $new_session()
             local status, _ = pcall(session.write_file_text, session, {
                 path = $file_path,
-                data = $text
+                text = $text
             })
             assert(not status, "Unexpectedly succeeded!")
         })
@@ -49,7 +49,7 @@ fn should_overwrite_existing_file(ctx: &'_ DistantServerCtx) {
             local session = $new_session()
             session:write_file_text({
                 path = $file_path,
-                data = $text
+                text = $text
             })
         })
         .exec();

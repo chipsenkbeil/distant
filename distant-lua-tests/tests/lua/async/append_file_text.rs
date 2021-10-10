@@ -27,7 +27,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $file_path, data = $text }, function(success, res)
+            f(session, { path = $file_path, text = $text }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -42,7 +42,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
 }
 
 #[rstest]
-fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
+fn should_append_text_to_existing_file(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
     let schedule_fn = poll::make_function(&lua).unwrap();
@@ -64,7 +64,7 @@ fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $file_path, data = $text }, function(success, res)
+            f(session, { path = $file_path, text = $text }, function(success, res)
                 if not success then
                     err = res
                 end

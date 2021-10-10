@@ -21,7 +21,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
             local session = $new_session()
             local status, _ = pcall(session.append_file_text, session, {
                 path = $file_path,
-                data = $text
+                text = $text
             })
             assert(not status, "Unexpectedly succeeded!")
         })
@@ -33,7 +33,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
 }
 
 #[rstest]
-fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
+fn should_append_text_to_existing_file(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
 
@@ -49,7 +49,7 @@ fn should_append_data_to_existing_file(ctx: &'_ DistantServerCtx) {
             local session = $new_session()
             session:append_file_text({
                 path = $file_path,
-                data = $text
+                text = $text
             })
         })
         .exec();

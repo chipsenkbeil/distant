@@ -74,8 +74,8 @@ make_api!(append_file, (), { path: PathBuf, data: Vec<u8> }, |channel, tenant, p
     channel.append_file(tenant, params.path, params.data).await
 });
 
-make_api!(append_file_text, (), { path: PathBuf, data: String }, |channel, tenant, params| {
-    channel.append_file_text(tenant, params.path, params.data).await
+make_api!(append_file_text, (), { path: PathBuf, text: String }, |channel, tenant, params| {
+    channel.append_file_text(tenant, params.path, params.text).await
 });
 
 make_api!(copy, (), { src: PathBuf, dst: PathBuf }, |channel, tenant, params| {
@@ -200,6 +200,6 @@ make_api!(
 make_api!(
     write_file_text,
     (),
-    { path: PathBuf, data: String },
-    |channel, tenant, params| { channel.write_file_text(tenant, params.path, params.data).await }
+    { path: PathBuf, text: String },
+    |channel, tenant, params| { channel.write_file_text(tenant, params.path, params.text).await }
 );

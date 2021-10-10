@@ -27,7 +27,7 @@ fn should_yield_error_if_fails_to_create_file(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $file_path, data = $text }, function(success, res)
+            f(session, { path = $file_path, text = $text }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -64,7 +64,7 @@ fn should_overwrite_existing_file(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { path = $file_path, data = $text }, function(success, res)
+            f(session, { path = $file_path, text = $text }, function(success, res)
                 if not success then
                     err = res
                 end
