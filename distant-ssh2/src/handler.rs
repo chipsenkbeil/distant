@@ -370,17 +370,25 @@ async fn dir_create(session: WezSession, path: PathBuf, all: bool) -> io::Result
         // Keep trying to create a directory, moving up to parent each time a failure happens
         let mut failed_paths = Vec::new();
         let mut cur_path = path.as_path();
+        let mut first_err = None;
         loop {
-            let failed = mkdir(&sftp, cur_path.to_path_buf()).await.is_err();
-            if failed {
-                failed_paths.push(cur_path);
-                if let Some(path) = cur_path.parent() {
-                    cur_path = path;
-                } else {
-                    return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            match mkdir(&sftp, cur_path.to_path_buf()).await {
+                Ok(_) => break,
+                Err(x) => {
+                    failed_paths.push(cur_path);
+                    if let Some(path) = cur_path.parent() {
+                        cur_path = path;
+
+                        if first_err.is_none() {
+                            first_err = Some(x);
+                        }
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            first_err.unwrap_or(x),
+                        ));
+                    }
                 }
-            } else {
-                break;
             }
         }
 
