@@ -27,6 +27,8 @@ impl Codec for PlainCodec {
             ));
         }
 
+        dst.reserve(8 + item.len());
+
         // Add data in form of {LEN}{ITEM}
         dst.put_u64((item.len()) as u64);
         dst.put_slice(item);

@@ -60,6 +60,8 @@ impl Codec for XChaCha20Poly1305Codec {
             .encrypt(nonce, item)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Encryption failed"))?;
 
+        dst.reserve(8 + nonce.len() + ciphertext.len());
+
         // Add data in form of {LEN}{NONCE}{CIPHER TEXT}
         dst.put_u64((nonce_key.len() + ciphertext.len()) as u64);
         dst.put_slice(nonce.as_slice());
