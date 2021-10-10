@@ -3,7 +3,7 @@ name = "distant-lua"
 description = "Lua bindings to the distant Rust crates"
 categories = ["api-bindings", "network-programming"]
 keywords = ["api", "async"]
-version = "0.15.0-alpha.7"
+version = "0.15.0-alpha.8"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2018"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -24,8 +24,8 @@ luajit = ["mlua/luajit"]
 vendored = ["mlua/vendored"]
 
 [dependencies]
-distant-core = { version = "=0.15.0-alpha.7", path = "../distant-core" }
-distant-ssh2 = { version = "=0.15.0-alpha.7", features = ["serde"], path = "../distant-ssh2" }
+distant-core = { version = "=0.15.0-alpha.8", path = "../distant-core" }
+distant-ssh2 = { version = "=0.15.0-alpha.8", features = ["serde"], path = "../distant-ssh2" }
 futures = "0.3.17"
 log = "0.4.14"
 mlua = { git = "https://github.com/khvzak/mlua.git", features = ["async", "macros", "module", "serialize"] }
