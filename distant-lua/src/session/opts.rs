@@ -193,6 +193,7 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
                 distant_args: {
                     let value: LuaValue = tbl.get("distant_args")?;
                     match value {
+                        LuaValue::Nil => String::new(),
                         LuaValue::String(args) => args.to_str()?.to_string(),
                         x => {
                             let args: Vec<String> = lua.from_value(x)?;
