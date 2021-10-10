@@ -164,14 +164,14 @@ make_api!(
 make_api!(
     spawn,
     RemoteProcess,
-    { cmd: String, args: Vec<String> },
+    { cmd: String, #[serde(default)] args: Vec<String> },
     |channel, tenant, params| { channel.spawn(tenant, params.cmd, params.args).await }
 );
 
 make_api!(
     spawn_wait,
     Output,
-    { cmd: String, args: Vec<String> },
+    { cmd: String, #[serde(default)] args: Vec<String> },
     |channel, tenant, params| {
         let proc = channel.spawn(tenant, params.cmd, params.args).await.to_lua_err()?;
         let id = LuaRemoteProcess::from_distant_async(proc).await?.id;
@@ -182,7 +182,7 @@ make_api!(
 make_api!(
     spawn_lsp,
     RemoteLspProcess,
-    { cmd: String, args: Vec<String> },
+    { cmd: String, #[serde(default)] args: Vec<String> },
     |channel, tenant, params| { channel.spawn_lsp(tenant, params.cmd, params.args).await }
 );
 
