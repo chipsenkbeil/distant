@@ -120,10 +120,8 @@ impl AsyncRead for InmemoryStreamReadHalf {
             Some(mut x) => {
                 if x.len() > buf.remaining() {
                     self.overflow = x.split_off(buf.remaining());
-                    buf.put_slice(&x);
-                } else {
-                    buf.put_slice(&x);
                 }
+                buf.put_slice(&x);
                 Ok(())
             }
             None => Ok(()),
