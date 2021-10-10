@@ -80,11 +80,26 @@ impl<'lua> FromLua<'lua> for ConnectOpts {
 
 #[derive(Default)]
 pub struct LaunchOpts<'a> {
+    /// Host to connect to remotely (e.g. example.com)
     pub host: String,
+
+    /// Mode to use for communication (ssh or distant server)
     pub mode: Mode,
+
+    /// Callbacks to be triggered on various authentication events
     pub handler: Ssh2AuthHandler<'a>,
+
+    /// Miscellaneous ssh configuration options
     pub ssh: Ssh2SessionOpts,
+
+    /// Maximum time to wait for launch to complete
     pub timeout: Duration,
+
+    /// Binary representing the distant server on the remote machine
+    pub distant_bin: String,
+
+    /// Additional CLI options to pass to the distant server when starting
+    pub distant_args: String,
 }
 
 impl fmt::Debug for LaunchOpts<'_> {
@@ -170,6 +185,20 @@ impl<'lua> FromLua<'lua> for LaunchOpts<'lua> {
                 timeout: {
                     let milliseconds: Option<u64> = tbl.get("timeout")?;
                     Duration::from_millis(milliseconds.unwrap_or(TIMEOUT_MILLIS))
+                },
+                distant_bin: {
+                    let distant_bin: Option<String> = tbl.get("distant_bin")?;
+                    distant_bin.unwrap_or_else(|| String::from("distant"))
+                },
+                distant_args: {
+                    let value: LuaValue = tbl.get("distant_args")?;
+                    match value {
+                        LuaValue::String(args) => args.to_str()?.to_string(),
+                        x => {
+                            let args: Vec<String> = lua.from_value(x)?;
+                            args.join(" ")
+                        }
+                    }
                 },
             }),
             LuaValue::Nil => Err(LuaError::FromLuaConversionError {

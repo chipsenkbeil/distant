@@ -160,6 +160,8 @@ impl Session {
             handler,
             ssh,
             timeout,
+            distant_bin,
+            distant_args,
         } = opts;
 
         // First, establish a connection to an SSH server
@@ -175,8 +177,9 @@ impl Session {
         let session = match mode {
             Mode::Distant => ssh_session
                 .into_distant_session(IntoDistantSessionOpts {
+                    binary: distant_bin,
+                    args: distant_args,
                     timeout,
-                    ..Default::default()
                 })
                 .await
                 .to_lua_err()?,
