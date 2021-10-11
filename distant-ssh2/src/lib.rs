@@ -412,16 +412,16 @@ impl Ssh2Session {
         // Close out ssh session
         session.abort();
         let _ = session.wait().await;
+        let mut output = String::new();
 
         // If successful, grab the session information and establish a connection
         // with the distant server
         if success {
-            let mut out = String::new();
             while let Ok(data) = stdout.read().await {
-                out.push_str(&data);
+                output.push_str(&data);
             }
 
-            let maybe_info = out
+            let maybe_info = output
                 .lines()
                 .find_map(|line| line.parse::<SessionInfo>().ok());
             match maybe_info {
@@ -450,9 +450,8 @@ impl Ssh2Session {
                 )),
             }
         } else {
-            let mut err = String::new();
             while let Ok(data) = stderr.read().await {
-                err.push_str(&data);
+                output.push_str(&data);
             }
 
             Err(io::Error::new(
@@ -461,7 +460,7 @@ impl Ssh2Session {
                     "Spawning distant failed [{}]: {}",
                     code.map(|x| x.to_string())
                         .unwrap_or_else(|| String::from("???")),
-                    err
+                    output
                 ),
             ))
         }
