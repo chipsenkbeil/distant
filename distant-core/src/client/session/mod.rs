@@ -5,10 +5,12 @@ use crate::{
     net::{Codec, DataStream, Transport, TransportError},
 };
 use log::*;
+use serde::{Deserialize, Serialize};
 use std::{
     convert,
     net::SocketAddr,
     ops::{Deref, DerefMut},
+    path::{Path, PathBuf},
     sync::{Arc, Weak},
 };
 use tokio::{
@@ -29,13 +31,54 @@ mod mailbox;
 pub use mailbox::Mailbox;
 use mailbox::PostOffice;
 
+/// Details about the session
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionDetails {
+    /// Indicates session is a TCP type
+    Tcp { addr: SocketAddr, tag: String },
+
+    /// Indicates session is a Unix socket type
+    Socket { path: PathBuf, tag: String },
+
+    /// Indicates session type is inmemory
+    Inmemory { tag: String },
+}
+
+impl SessionDetails {
+    /// Represents the tag associated with the session
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Tcp { tag, .. } => tag.as_str(),
+            Self::Socket { tag, .. } => tag.as_str(),
+            Self::Inmemory { tag } => tag.as_str(),
+        }
+    }
+
+    /// Represents the socket address associated with the session, if it has one
+    pub fn addr(&self) -> Option<SocketAddr> {
+        match self {
+            Self::Tcp { addr, .. } => Some(*addr),
+            _ => None,
+        }
+    }
+
+    /// Represents the path associated with the session, if it has one
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Socket { path, .. } => Some(path.as_path()),
+            _ => None,
+        }
+    }
+}
+
 /// Represents a session with a remote server that can be used to send requests & receive responses
 pub struct Session {
     /// Used to send requests to a server
     channel: SessionChannel,
 
-    /// Textual description of the underlying connection
-    connection_tag: String,
+    /// Details about the session
+    details: Option<SessionDetails>,
 
     /// Contains the task that is running to send requests to a server
     request_task: JoinHandle<()>,
@@ -54,6 +97,10 @@ impl Session {
         U: Codec + Send + 'static,
     {
         let transport = Transport::<TcpStream, U>::connect(addr, codec).await?;
+        let details = SessionDetails::Tcp {
+            addr,
+            tag: transport.to_connection_tag(),
+        };
         debug!(
             "Session has been established with {}",
             transport
@@ -61,7 +108,7 @@ impl Session {
                 .map(|x| x.to_string())
                 .unwrap_or_else(|_| String::from("???"))
         );
-        Self::initialize(transport)
+        Self::initialize_with_details(transport, Some(details))
     }
 
     /// Connect to a remote TCP server, timing out after duration has passed
@@ -86,7 +133,12 @@ impl Session {
     where
         U: Codec + Send + 'static,
     {
-        let transport = Transport::<tokio::net::UnixStream, U>::connect(path, codec).await?;
+        let p = path.as_ref();
+        let transport = Transport::<tokio::net::UnixStream, U>::connect(p, codec).await?;
+        let details = SessionDetails::Socket {
+            path: p.to_path_buf(),
+            tag: transport.to_connection_tag(),
+        };
         debug!(
             "Session has been established with {}",
             transport
@@ -94,7 +146,7 @@ impl Session {
                 .map(|x| format!("{:?}", x))
                 .unwrap_or_else(|_| String::from("???"))
         );
-        Self::initialize(transport)
+        Self::initialize_with_details(transport, Some(details))
     }
 
     /// Connect to a proxy unix socket, timing out after duration has passed
@@ -113,13 +165,24 @@ impl Session {
 }
 
 impl Session {
-    /// Initializes a session using the provided transport
+    /// Initializes a session using the provided transport and no extra details
     pub fn initialize<T, U>(transport: Transport<T, U>) -> io::Result<Self>
     where
         T: DataStream,
         U: Codec + Send + 'static,
     {
-        let connection_tag = transport.to_connection_tag();
+        Self::initialize_with_details(transport, None)
+    }
+
+    /// Initializes a session using the provided transport and extra details
+    pub fn initialize_with_details<T, U>(
+        transport: Transport<T, U>,
+        details: Option<SessionDetails>,
+    ) -> io::Result<Self>
+    where
+        T: DataStream,
+        U: Codec + Send + 'static,
+    {
         let (mut t_read, mut t_write) = transport.into_split();
         let post_office = Arc::new(Mutex::new(PostOffice::new()));
         let weak_post_office = Arc::downgrade(&post_office);
@@ -190,7 +253,7 @@ impl Session {
 
         Ok(Self {
             channel,
-            connection_tag,
+            details,
             request_task,
             response_task,
             prune_task,
@@ -199,9 +262,9 @@ impl Session {
 }
 
 impl Session {
-    /// Returns a textual description of the underlying connection
-    pub fn connection_tag(&self) -> &str {
-        &self.connection_tag
+    /// Returns details about the session, if it has any
+    pub fn details(&self) -> Option<&SessionDetails> {
+        self.details.as_ref()
     }
 
     /// Waits for the session to terminate, which results when the receiving end of the network

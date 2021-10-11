@@ -1,12 +1,14 @@
 use async_compat::CompatExt;
 use distant_core::{
-    Request, Session, SessionChannelExt, SessionInfo, Transport, XChaCha20Poly1305Codec,
+    Request, Session, SessionChannelExt, SessionDetails, SessionInfo, Transport,
+    XChaCha20Poly1305Codec,
 };
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
 use std::{
     collections::BTreeMap,
     io::{self, Write},
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -187,6 +189,8 @@ impl Default for Ssh2AuthHandler<'static> {
 pub struct Ssh2Session {
     session: WezSession,
     events: SmolReceiver<WezSessionEvent>,
+    host: String,
+    port: u16,
     authenticated: bool,
 }
 
@@ -243,6 +247,13 @@ impl Ssh2Session {
         // Add in any of the other options provided
         config.extend(opts.other);
 
+        // Port should always exist, otherwise WezSession will panic from unwrap()
+        let port = config
+            .get("port")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing port"))?
+            .parse::<u16>()
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+
         // Establish a connection
         let (session, events) =
             WezSession::connect(config).map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
@@ -250,8 +261,20 @@ impl Ssh2Session {
         Ok(Self {
             session,
             events,
+            host: host.as_ref().to_string(),
+            port,
             authenticated: false,
         })
+    }
+
+    /// Host this session is connected to
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Port this session is connected to on remote host
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     #[inline]
@@ -328,7 +351,23 @@ impl Ssh2Session {
             ));
         }
 
-        let mut session = self.into_ssh_client_session()?;
+        // Determine distinct candidate ip addresses for connecting
+        let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
+            .await?
+            .into_iter()
+            .map(|addr| addr.ip())
+            .collect::<Vec<IpAddr>>();
+        candidate_ips.sort_unstable();
+        candidate_ips.dedup();
+        if candidate_ips.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("Unable to resolve {}:{}", self.host, self.port),
+            ));
+        }
+
+        // Turn our ssh connection into a client session so we can use it to spawn our server
+        let mut session = self.into_ssh_client_session().await?;
 
         // Build arguments for distant
         let mut args = vec![String::from("listen"), String::from("--daemon")];
@@ -358,6 +397,7 @@ impl Ssh2Session {
 
         // Spawn distant server and detach it so that we don't kill it when the
         // ssh session is closed
+        debug!("Executing {} {}", bin, args.join(" "));
         let mut proc = session
             .spawn("<ssh-launch>", bin, args, true)
             .await
@@ -380,15 +420,29 @@ impl Ssh2Session {
             while let Ok(data) = stdout.read().await {
                 out.push_str(&data);
             }
+
             let maybe_info = out
                 .lines()
                 .find_map(|line| line.parse::<SessionInfo>().ok());
             match maybe_info {
                 Some(info) => {
-                    let addr = info.to_socket_addr().await?;
                     let key = info.key;
                     let codec = XChaCha20Poly1305Codec::from(key);
-                    Session::tcp_connect_timeout(addr, codec, opts.timeout).await
+
+                    // Try each IP address with the same port to see if one works
+                    let mut err = None;
+                    for ip in candidate_ips {
+                        let addr = SocketAddr::new(ip, info.port);
+                        debug!("Attempting to connect to distant server @ {}", addr);
+                        match Session::tcp_connect_timeout(addr, codec.clone(), opts.timeout).await
+                        {
+                            Ok(session) => return Ok(session),
+                            Err(x) => err = Some(x),
+                        }
+                    }
+
+                    // If all failed, return the last error we got
+                    Err(err.expect("Err set above"))
                 }
                 None => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -415,7 +469,7 @@ impl Ssh2Session {
 
     /// Consume [`Ssh2Session`] and produce a distant [`Session`] that is powered by an ssh client
     /// underneath
-    pub fn into_ssh_client_session(self) -> io::Result<Session> {
+    pub async fn into_ssh_client_session(self) -> io::Result<Session> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -425,7 +479,19 @@ impl Ssh2Session {
         }
 
         let (t1, t2) = Transport::pair(1);
-        let session = Session::initialize(t1)?;
+        let addr = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
+            .await?
+            .next()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    format!("Failed to resolve host: {}", self.host),
+                )
+            })?;
+        let tag = t1.to_connection_tag();
+
+        let session =
+            Session::initialize_with_details(t1, Some(SessionDetails::Tcp { addr, tag }))?;
 
         // Spawn tasks that forward requests to the ssh session
         // and send back responses from the ssh session

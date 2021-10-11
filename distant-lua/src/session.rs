@@ -1,6 +1,6 @@
 use crate::{runtime, utils};
 use distant_core::{
-    SecretKey32, Session as DistantSession, SessionChannel, XChaCha20Poly1305Codec,
+    SecretKey32, Session as DistantSession, SessionChannel, SessionDetails, XChaCha20Poly1305Codec,
 };
 use distant_ssh2::{IntoDistantSessionOpts, Ssh2Session};
 use log::*;
@@ -118,8 +118,8 @@ fn with_session<T>(id: usize, f: impl FnOnce(&DistantSession) -> T) -> LuaResult
     Ok(f(session))
 }
 
-fn get_session_connection_tag(id: usize) -> LuaResult<String> {
-    with_session(id, |session| session.connection_tag().to_string())
+fn get_session_details(id: usize) -> LuaResult<Option<SessionDetails>> {
+    with_session(id, |session| session.details().cloned())
 }
 
 fn get_session_channel(id: usize) -> LuaResult<SessionChannel> {
@@ -181,7 +181,7 @@ impl Session {
                 })
                 .await
                 .to_lua_err()?,
-            Mode::Ssh => ssh_session.into_ssh_client_session().to_lua_err()?,
+            Mode::Ssh => ssh_session.into_ssh_client_session().await.to_lua_err()?,
         };
 
         // Fourth, store our current session in our global map and then return a reference
@@ -276,8 +276,8 @@ macro_rules! impl_methods {
 impl UserData for Session {
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
         fields.add_field_method_get("id", |_, this| Ok(this.id));
-        fields.add_field_method_get("connection_tag", |_, this| {
-            get_session_connection_tag(this.id)
+        fields.add_field_method_get("details", |lua, this| {
+            get_session_details(this.id).and_then(|x| to_value!(lua, &x))
         });
     }
 

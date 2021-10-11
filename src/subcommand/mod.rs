@@ -66,7 +66,10 @@ impl CommandRunner {
                     .await
                     .map_err(wrap_err)?;
 
-                (session.into_ssh_client_session().map_err(wrap_err)?, None)
+                (
+                    session.into_ssh_client_session().await.map_err(wrap_err)?,
+                    None,
+                )
             }
 
             Method::Distant => {

@@ -14,7 +14,9 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{mpsc, Mutex};
-use wezterm_ssh::{Child, ExecResult, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
+use wezterm_ssh::{
+    Child, ExecResult, FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode,
+};
 
 const MAX_PIPE_CHUNK_SIZE: usize = 8192;
 const READ_PAUSE_MILLIS: u64 = 50;
@@ -588,9 +590,12 @@ async fn metadata(
     Ok(Outgoing::from(ResponseData::Metadata(Metadata {
         canonicalized_path,
         file_type,
-        len: metadata.len(),
+        len: metadata.size.unwrap_or(0),
         // Check that owner, group, or other has write permission (if not, then readonly)
-        readonly: metadata.is_readonly(),
+        readonly: metadata
+            .permissions
+            .map(FilePermissions::is_readonly)
+            .unwrap_or(true),
         accessed: metadata.accessed.map(u128::from),
         modified: metadata.modified.map(u128::from),
         created: None,

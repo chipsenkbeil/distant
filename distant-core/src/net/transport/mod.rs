@@ -89,6 +89,30 @@ where
         self.0.get_ref().to_connection_tag()
     }
 
+    /// Returns a reference to the underlying I/O stream
+    ///
+    /// Note that care should be taken to not tamper with the underlying stream of data coming in
+    /// as it may corrupt the stream of frames otherwise being worked with
+    pub fn get_ref(&self) -> &T {
+        self.0.get_ref()
+    }
+
+    /// Returns a reference to the underlying I/O stream
+    ///
+    /// Note that care should be taken to not tamper with the underlying stream of data coming in
+    /// as it may corrupt the stream of frames otherwise being worked with
+    pub fn get_mut(&mut self) -> &mut T {
+        self.0.get_mut()
+    }
+
+    /// Consumes the transport, returning its underlying I/O stream
+    ///
+    /// Note that care should be taken to not tamper with the underlying stream of data coming in
+    /// as it may corrupt the stream of frames otherwise being worked with.
+    pub fn into_inner(self) -> T {
+        self.0.into_inner()
+    }
+
     /// Splits transport into read and write halves
     pub fn into_split(
         self,

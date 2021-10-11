@@ -432,5 +432,5 @@ pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) ->
         .await
         .unwrap();
 
-    ssh2_session.into_ssh_client_session().unwrap()
+    ssh2_session.into_ssh_client_session().await.unwrap()
 }
