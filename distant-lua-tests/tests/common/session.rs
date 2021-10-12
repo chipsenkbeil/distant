@@ -23,7 +23,7 @@ pub fn make_function<'a>(lua: &'a Lua, ctx: &'_ DistantServerCtx) -> LuaResult<L
         // Block until the connection finishes
         local session = nil
         while status do
-            if status and res ~= distant.PENDING then
+            if status and res ~= distant.pending then
                 session = res
                 break
             end
