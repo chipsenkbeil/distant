@@ -149,7 +149,8 @@ jobs:
       BUILD_LIB: libdistant_lua.so
       X86_GNU_REL_BIN: distant-linux64-gnu
       X86_MUSL_REL_BIN: distant-linux64-musl
-      X86_GNU_REL_LIB: distant_lua-linux64.so
+      X86_GNU_REL_LIB: distant_lua-linux64-gnu.so
+      X86_MUSL_REL_LIB: distant_lua-linux64-musl.so
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (GNU)
@@ -175,6 +176,14 @@ jobs:
           cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_GNU_ARCH }}
           ls -l ../${{ env.X86_GNU_DIR }}
           mv ../${{ env.X86_GNU_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_GNU_REL_LIB }}
+      - name: Build Lua ${{ env.LUA_VERSION }} library (MUSL x86_64)
+        run: |
+          cd distant-lua
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_MUSL_ARCH }}
+          ls -l ../${{ env.X86_MUSL_DIR }}
+          mv ../${{ env.X86_MUSL_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_MUSL_REL_LIB }}
+        env:
+          RUSTFLAGS: -C target-feature=-crt-static
       - name: Build binary (GNU x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_GNU_ARCH }}
@@ -195,6 +204,7 @@ jobs:
           name: ${{ env.UPLOAD_NAME }}
           path: |
             ${{ env.X86_GNU_REL_LIB }}
+            ${{ env.X86_MUSL_REL_LIB }}
             ${{ env.X86_GNU_REL_BIN }}
             ${{ env.X86_MUSL_REL_BIN }}
 
@@ -216,7 +226,8 @@ jobs:
       LINUX64: linux64
       LINUX64_GNU_BIN: distant-linux64-gnu
       LINUX64_MUSL_BIN: distant-linux64-musl
-      LINUX64_GNU_LIB: distant_lua-linux64.so
+      LINUX64_GNU_LIB: distant_lua-linux64-gnu.so
+      LINUX64_MUSL_LIB: distant_lua-linux64-musl.so
     steps:
       - uses: actions/download-artifact@v2
       - name: Generate MacOS SHA256 checksums
@@ -241,7 +252,9 @@ jobs:
         run: |
           cd ${{ env.LINUX64 }}
           sha256sum ${{ env.LINUX64_GNU_LIB }} > ${{ env.LINUX64_GNU_LIB }}.sha256sum
-          echo "SHA_LINUX64_LUA_LIB=$(cat ${{ env.LINUX64_GNU_LIB }}.sha256sum)" >> $GITHUB_ENV
+          echo "SHA_LINUX64_GNU_LUA_LIB=$(cat ${{ env.LINUX64_GNU_LIB }}.sha256sum)" >> $GITHUB_ENV
+          sha256sum ${{ env.LINUX64_MUSL_LIB }} > ${{ env.LINUX64_MUSL_LIB }}.sha256sum
+          echo "SHA_LINUX64_MUSL_LUA_LIB=$(cat ${{ env.LINUX64_MUSL_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.LINUX64_GNU_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
           echo "SHA_LINUX64_GNU_BIN=$(cat ${{ env.LINUX64_GNU_BIN }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.LINUX64_MUSL_BIN }} > ${{ env.LINUX64_MUSL_BIN }}.sha256sum
@@ -281,6 +294,7 @@ jobs:
             ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_BIN }}
             ${{ env.LINUX64 }}/${{ env.LINUX64_MUSL_BIN }}
             ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_LIB }}
+            ${{ env.LINUX64 }}/${{ env.LINUX64_MUSL_LIB }}
             **/*.sha256sum
           body: |
             ## Install Lua library
@@ -296,7 +310,7 @@ jobs:
                 requiring the library
             3. Import via `distant = require("distant_lua")`
             ### Linux
-            1. Download **${{ env.LINUX64_GNU_LIB }}**
+            1. Download **${{ env.LINUX64_GNU_LIB }}** (or **${{ env.LINUX64_MUSL_LIB }}**)
             2. Rename to `distant_lua.so`
             3. Import via `distant = require("distant_lua")`
             ## Artifacts
@@ -321,7 +335,8 @@ jobs:
             ${{ env.SHA_MACOS_BIN }}
             ${{ env.SHA_WIN64_LUA_LIB }}
             ${{ env.SHA_WIN64_BIN }}
-            ${{ env.SHA_LINUX64_LUA_LIB }}
+            ${{ env.SHA_LINUX64_GNU_LUA_LIB }}
+            ${{ env.SHA_LINUX64_MUSL_LUA_LIB }}
             ${{ env.SHA_LINUX64_GNU_BIN }}
             ${{ env.SHA_LINUX64_MUSL_BIN }}
             ```
