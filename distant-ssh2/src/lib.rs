@@ -507,17 +507,20 @@ impl Ssh2Session {
                 if let Err(x) =
                     handler::process(wez_session.clone(), Arc::clone(&state), req, tx.clone()).await
                 {
-                    error!("{}", x);
+                    error!("Ssh session receiver handler failed: {}", x);
                 }
             }
+            debug!("Ssh receiver task is now closed");
         });
 
         tokio::spawn(async move {
             while let Some(res) = rx.recv().await {
-                if t_write.send(res).await.is_err() {
+                if let Err(x) = t_write.send(res).await {
+                    error!("Ssh session sender failed: {}", x);
                     break;
                 }
             }
+            debug!("Ssh sender task is now closed");
         });
 
         Ok(session)

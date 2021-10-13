@@ -5,7 +5,7 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncRead, AsyncWrite, ReadBuf},
-    sync::mpsc,
+    sync::mpsc::{self, error::TrySendError},
 };
 
 /// Represents a data stream comprised of two inmemory channels
@@ -147,7 +147,8 @@ impl AsyncWrite for InmemoryStreamWriteHalf {
     ) -> Poll<io::Result<usize>> {
         match self.0.try_send(buf.to_vec()) {
             Ok(_) => Poll::Ready(Ok(buf.len())),
-            Err(_) => Poll::Ready(Ok(0)),
+            Err(TrySendError::Full(_)) => Poll::Pending,
+            Err(TrySendError::Closed(_)) => Poll::Ready(Ok(0)),
         }
     }
 
@@ -308,5 +309,234 @@ mod tests {
         assert_eq!(rx.recv().await, Some(b"test msg 3".to_vec()));
 
         assert_eq!(rx.recv().await, None, "Unexpectedly got more data");
+    }
+
+    #[tokio::test]
+    async fn read_half_should_fail_if_buf_has_no_space_remaining() {
+        let (_tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        let mut buf = [0u8; 0];
+        match t_read.read(&mut buf).await {
+            Err(x) if x.kind() == io::ErrorKind::Other => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_half_should_update_buf_with_all_overflow_from_last_read_if_it_all_fits() {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        tx.send(vec![1, 2, 3]).await.expect("Failed to send");
+
+        let mut buf = [0u8; 2];
+
+        // First, read part of the data (first two bytes)
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 2 => assert_eq!(&buf[..n], &[1, 2]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Second, we send more data because the last message was placed in overflow
+        tx.send(vec![4, 5, 6]).await.expect("Failed to send");
+
+        // Third, read remainder of the overflow from first message (third byte)
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 1 => assert_eq!(&buf[..n], &[3]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Fourth, verify that we start to receive the next overflow
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 2 => assert_eq!(&buf[..n], &[4, 5]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Fifth, verify that we get the last bit of overflow
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 1 => assert_eq!(&buf[..n], &[6]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_half_should_update_buf_with_some_of_overflow_that_can_fit() {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        tx.send(vec![1, 2, 3, 4, 5]).await.expect("Failed to send");
+
+        let mut buf = [0u8; 2];
+
+        // First, read part of the data (first two bytes)
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 2 => assert_eq!(&buf[..n], &[1, 2]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Second, we send more data because the last message was placed in overflow
+        tx.send(vec![6]).await.expect("Failed to send");
+
+        // Third, read next chunk of the overflow from first message (next two byte)
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 2 => assert_eq!(&buf[..n], &[3, 4]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Fourth, read last chunk of the overflow from first message (fifth byte)
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 1 => assert_eq!(&buf[..n], &[5]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_half_should_update_buf_with_all_of_inner_channel_when_it_fits() {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        let mut buf = [0u8; 5];
+
+        tx.send(vec![1, 2, 3, 4, 5]).await.expect("Failed to send");
+
+        // First, read all of data that fits exactly
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 5 => assert_eq!(&buf[..n], &[1, 2, 3, 4, 5]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        tx.send(vec![6, 7, 8]).await.expect("Failed to send");
+
+        // Second, read data that fits within buf
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 3 => assert_eq!(&buf[..n], &[6, 7, 8]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_half_should_update_buf_with_some_of_inner_channel_that_can_fit_and_add_rest_to_overflow(
+    ) {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        let mut buf = [0u8; 1];
+
+        tx.send(vec![1, 2, 3, 4, 5]).await.expect("Failed to send");
+
+        // Attempt a read that places more in overflow
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 1 => assert_eq!(&buf[..n], &[1]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Verify overflow contains the rest
+        assert_eq!(&t_read.overflow, &[2, 3, 4, 5]);
+
+        // Queue up extra data that will not be read until overflow is finished
+        tx.send(vec![6, 7, 8]).await.expect("Failed to send");
+
+        // Read next data point
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 1 => assert_eq!(&buf[..n], &[2]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+
+        // Verify overflow contains the rest without having added extra data
+        assert_eq!(&t_read.overflow, &[3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn read_half_should_yield_pending_if_no_data_available_on_inner_channel() {
+        let (_tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        let mut buf = [0u8; 1];
+
+        // Attempt a read that should yield ok with no change, which is what should
+        // happen when nothing is read into buf
+        let f = t_read.read(&mut buf);
+        tokio::pin!(f);
+        match futures::poll!(f) {
+            Poll::Pending => {}
+            x => panic!("Unexpected poll result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_half_should_not_update_buf_if_inner_channel_closed() {
+        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (mut t_read, _t_write) = stream.into_split();
+
+        let mut buf = [0u8; 1];
+
+        // Drop the channel that would be sending data to the transport
+        drop(tx);
+
+        // Attempt a read that should yield ok with no change, which is what should
+        // happen when nothing is read into buf
+        match t_read.read(&mut buf).await {
+            Ok(n) if n == 0 => assert_eq!(&buf, &[0]),
+            x => panic!("Unexpected result: {:?}", x),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_half_should_return_buf_len_if_can_send_immediately() {
+        let (_tx, mut rx, stream) = InmemoryStream::make(1);
+        let (_t_read, mut t_write) = stream.into_split();
+
+        // Write that is not waiting should always succeed with full contents
+        let n = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
+        assert_eq!(n, 3, "Unexpected byte count returned");
+
+        // Verify we actually had the data sent
+        let data = rx.try_recv().expect("Failed to recv data");
+        assert_eq!(data, &[1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn write_half_should_return_support_eventually_sending_by_retrying_when_not_ready() {
+        let (_tx, mut rx, stream) = InmemoryStream::make(1);
+        let (_t_read, mut t_write) = stream.into_split();
+
+        // Queue a write already so that we block on the next one
+        t_write.write(&[1, 2, 3]).await.expect("Failed to write");
+
+        // Verify that the next write is pending
+        let f = t_write.write(&[4, 5]);
+        tokio::pin!(f);
+        match futures::poll!(&mut f) {
+            Poll::Pending => {}
+            x => panic!("Unexpected poll result: {:?}", x),
+        }
+
+        // Consume first batch of data so future of second can continue
+        let data = rx.try_recv().expect("Failed to recv data");
+        assert_eq!(data, &[1, 2, 3]);
+
+        // Verify that poll now returns success
+        match futures::poll!(f) {
+            Poll::Ready(Ok(n)) if n == 2 => {}
+            x => panic!("Unexpected poll result: {:?}", x),
+        }
+
+        // Consume second batch of data
+        let data = rx.try_recv().expect("Failed to recv data");
+        assert_eq!(data, &[4, 5]);
+    }
+
+    #[tokio::test]
+    async fn write_half_should_zero_if_inner_channel_closed() {
+        let (_tx, rx, stream) = InmemoryStream::make(1);
+        let (_t_read, mut t_write) = stream.into_split();
+
+        // Drop receiving end that transport would talk to
+        drop(rx);
+
+        // Channel is dropped, so return 0 to indicate no bytes sent
+        let n = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
+        assert_eq!(n, 0, "Unexpected byte count returned");
     }
 }

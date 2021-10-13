@@ -103,8 +103,8 @@ pub(super) async fn process(
                 args,
                 detached,
             } => proc_run(conn_id, state, reply, cmd, args, detached).await,
-            RequestData::ProcKill { id } => proc_kill(state, id).await,
-            RequestData::ProcStdin { id, data } => proc_stdin(state, id, data).await,
+            RequestData::ProcKill { id } => proc_kill(conn_id, state, id).await,
+            RequestData::ProcStdin { id, data } => proc_stdin(conn_id, state, id, data).await,
             RequestData::ProcList {} => proc_list(state).await,
             RequestData::SystemInfo {} => system_info().await,
         }
@@ -458,7 +458,7 @@ where
                         Ok(data) => {
                             let payload = vec![ResponseData::ProcStdout { id, data }];
                             if !reply_2(payload).await {
-                                error!("<Conn @ {}> Stdout channel closed", conn_id);
+                                error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
                                 break;
                             }
 
@@ -470,12 +470,21 @@ where
                             .await;
                         }
                         Err(x) => {
-                            error!("Invalid data read from stdout pipe: {}", x);
+                            error!(
+                                "<Conn @ {} | Proc {}> Invalid data read from stdout pipe: {}",
+                                conn_id, id, x
+                            );
                             break;
                         }
                     },
                     Ok(_) => break,
-                    Err(_) => break,
+                    Err(x) => {
+                        error!(
+                            "<Conn @ {} | Proc {}> Reading stdout failed: {}",
+                            conn_id, id, x
+                        );
+                        break;
+                    }
                 }
             }
         });
@@ -491,7 +500,7 @@ where
                         Ok(data) => {
                             let payload = vec![ResponseData::ProcStderr { id, data }];
                             if !reply_2(payload).await {
-                                error!("<Conn @ {}> Stderr channel closed", conn_id);
+                                error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
                                 break;
                             }
 
@@ -503,12 +512,21 @@ where
                             .await;
                         }
                         Err(x) => {
-                            error!("Invalid data read from stdout pipe: {}", x);
+                            error!(
+                                "<Conn @ {} | Proc {}> Invalid data read from stdout pipe: {}",
+                                conn_id, id, x
+                            );
                             break;
                         }
                     },
                     Ok(_) => break,
-                    Err(_) => break,
+                    Err(x) => {
+                        error!(
+                            "<Conn @ {} | Proc {}> Reading stderr failed: {}",
+                            conn_id, id, x
+                        );
+                        break;
+                    }
                 }
             }
         });
@@ -520,7 +538,7 @@ where
             while let Some(line) = stdin_rx.recv().await {
                 if let Err(x) = stdin.write_all(line.as_bytes()).await {
                     error!(
-                        "<Conn @ {}> Failed to send stdin to process {}: {}",
+                        "<Conn @ {} | Proc {}> Failed to send stdin: {}",
                         conn_id, id, x
                     );
                     break;
@@ -536,18 +554,22 @@ where
         let wait_task = tokio::spawn(async move {
             tokio::select! {
                 status = child.wait() => {
-                    debug!("<Conn @ {}> Process {} done", conn_id, id);
+                    debug!(
+                        "<Conn @ {} | Proc {}> Completed and waiting on stdout & stderr tasks",
+                        conn_id,
+                        id,
+                    );
 
                     // Force stdin task to abort if it hasn't exited as there is no
                     // point to sending any more stdin
                     stdin_task.abort();
 
                     if let Err(x) = stderr_task.await {
-                        error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
+                        error!("<Conn @ {} | Proc {}> Join on stderr task failed: {}", conn_id, id, x);
                     }
 
                     if let Err(x) = stdout_task.await {
-                        error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
+                        error!("<Conn @ {} | Proc {}> Join on stdout task failed: {}", conn_id, id, x);
                     }
 
                     state_2.lock().await.remove_process(conn_id, id);
@@ -559,7 +581,7 @@ where
                             let payload = vec![ResponseData::ProcDone { id, success, code }];
                             if !reply_2(payload).await {
                                 error!(
-                                    "<Conn @ {}> Failed to send done for process {}!",
+                                    "<Conn @ {} | Proc {}> Failed to send done",
                                     conn_id,
                                     id,
                                 );
@@ -569,7 +591,7 @@ where
                             let payload = vec![ResponseData::from(x)];
                             if !reply_2(payload).await {
                                 error!(
-                                    "<Conn @ {}> Failed to send error for waiting on process {}!",
+                                    "<Conn @ {} | Proc {}> Failed to send error for waiting",
                                     conn_id,
                                     id,
                                 );
@@ -579,10 +601,10 @@ where
 
                 },
                 _ = kill_rx => {
-                    debug!("<Conn @ {}> Process {} killed", conn_id, id);
+                    debug!("<Conn @ {} | Proc {}> Killing", conn_id, id);
 
                     if let Err(x) = child.kill().await {
-                        error!("<Conn @ {}> Unable to kill process {}: {}", conn_id, id, x);
+                        error!("<Conn @ {} | Proc {}> Unable to kill: {}", conn_id, id, x);
                     }
 
                     // Force stdin task to abort if it hasn't exited as there is no
@@ -590,24 +612,24 @@ where
                     stdin_task.abort();
 
                     if let Err(x) = stderr_task.await {
-                        error!("<Conn @ {}> Join on stderr task failed: {}", conn_id, x);
+                        error!("<Conn @ {} | Proc {}> Join on stderr task failed: {}", conn_id, id, x);
                     }
 
                     if let Err(x) = stdout_task.await {
-                        error!("<Conn @ {}> Join on stdout task failed: {}", conn_id, x);
+                        error!("<Conn @ {} | Proc {}> Join on stdout task failed: {}", conn_id, id, x);
                     }
 
                     // Wait for the child after being killed to ensure that it has been cleaned
                     // up at the operating system level
                     if let Err(x) = child.wait().await {
-                        error!("<Conn @ {}> Failed to wait on killed process {}: {}", conn_id, id, x);
+                        error!("<Conn @ {} | Proc {}> Failed to wait after killed: {}", conn_id, id, x);
                     }
 
                     state_2.lock().await.remove_process(conn_id, id);
 
                     let payload = vec![ResponseData::ProcDone { id, success: false, code: None }];
                     if !reply_2(payload).await {
-                        error!("<Conn @ {}> Failed to send done for process {}!", conn_id, id);
+                        error!("<Conn @ {} | Proc {}> Failed to send done", conn_id, id);
                     }
                 }
             }
@@ -625,7 +647,7 @@ where
     })
 }
 
-async fn proc_kill(state: HState, id: usize) -> Result<Outgoing, ServerError> {
+async fn proc_kill(conn_id: usize, state: HState, id: usize) -> Result<Outgoing, ServerError> {
     if let Some(process) = state.lock().await.processes.remove(&id) {
         if process.kill() {
             return Ok(Outgoing::from(ResponseData::Ok));
@@ -634,11 +656,19 @@ async fn proc_kill(state: HState, id: usize) -> Result<Outgoing, ServerError> {
 
     Err(ServerError::IoError(io::Error::new(
         io::ErrorKind::BrokenPipe,
-        "Unable to send kill signal to process",
+        format!(
+            "<Conn @ {} | Proc {}> Unable to send kill signal to process",
+            conn_id, id
+        ),
     )))
 }
 
-async fn proc_stdin(state: HState, id: usize, data: String) -> Result<Outgoing, ServerError> {
+async fn proc_stdin(
+    conn_id: usize,
+    state: HState,
+    id: usize,
+    data: String,
+) -> Result<Outgoing, ServerError> {
     if let Some(process) = state.lock().await.processes.get(&id) {
         if process.send_stdin(data).await {
             return Ok(Outgoing::from(ResponseData::Ok));
@@ -647,7 +677,10 @@ async fn proc_stdin(state: HState, id: usize, data: String) -> Result<Outgoing, 
 
     Err(ServerError::IoError(io::Error::new(
         io::ErrorKind::BrokenPipe,
-        "Unable to send stdin to process",
+        format!(
+            "<Conn @ {} | Proc {}> Unable to send stdin to process",
+            conn_id, id,
+        ),
     )))
 }
 

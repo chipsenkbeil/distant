@@ -672,7 +672,7 @@ where
                         Ok(data) => {
                             let payload = vec![ResponseData::ProcStdout { id, data }];
                             if !reply_2(payload).await {
-                                error!("<Ssh: Proc {}> Stdout channel closed", id);
+                                error!("<Ssh | Proc {}> Stdout channel closed", id);
                                 break;
                             }
 
@@ -685,7 +685,7 @@ where
                         }
                         Err(x) => {
                             error!(
-                                "<Ssh: Proc {}> Invalid data read from stdout pipe: {}",
+                                "<Ssh | Proc {}> Invalid data read from stdout pipe: {}",
                                 id, x
                             );
                             break;
@@ -698,7 +698,10 @@ where
                         tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
                             .await;
                     }
-                    Err(_) => break,
+                    Err(x) => {
+                        error!("<Ssh | Proc {}> Stdout unexpectedly closed: {}", id, x);
+                        break;
+                    }
                 }
             }
         });
@@ -713,7 +716,7 @@ where
                         Ok(data) => {
                             let payload = vec![ResponseData::ProcStderr { id, data }];
                             if !reply_2(payload).await {
-                                error!("<Ssh: Proc {}> Stderr channel closed", id);
+                                error!("<Ssh | Proc {}> Stderr channel closed", id);
                                 break;
                             }
 
@@ -726,7 +729,7 @@ where
                         }
                         Err(x) => {
                             error!(
-                                "<Ssh: Proc {}> Invalid data read from stderr pipe: {}",
+                                "<Ssh | Proc {}> Invalid data read from stderr pipe: {}",
                                 id, x
                             );
                             break;
@@ -739,7 +742,10 @@ where
                         tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
                             .await;
                     }
-                    Err(_) => break,
+                    Err(x) => {
+                        error!("<Ssh | Proc {}> Stderr unexpectedly closed: {}", id, x);
+                        break;
+                    }
                 }
             }
         });
@@ -747,7 +753,7 @@ where
         let stdin_task = tokio::spawn(async move {
             while let Some(line) = stdin_rx.recv().await {
                 if let Err(x) = stdin.write_all(line.as_bytes()) {
-                    error!("<Ssh: Proc {}> Failed to send stdin: {}", id, x);
+                    error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
                     break;
                 }
             }
@@ -770,7 +776,7 @@ where
                             success = status.success();
                         }
                         Err(x) => {
-                            error!("<Ssh: Proc {}> Waiting on process failed: {}", id, x);
+                            error!("<Ssh | Proc {}> Waiting on process failed: {}", id, x);
                         }
                     }
                 }
@@ -781,10 +787,10 @@ where
             stdin_task.abort();
 
             if should_kill {
-                debug!("<Ssh: Proc {}> Process killed", id);
+                debug!("<Ssh | Proc {}> Killing", id);
 
                 if let Err(x) = child.kill() {
-                    error!("<Ssh: Proc {}> Unable to kill process: {}", id, x);
+                    error!("<Ssh | Proc {}> Unable to kill process: {}", id, x);
                 }
 
                 // NOTE: At the moment, child.kill does nothing for wezterm_ssh::SshChildProcess;
@@ -801,15 +807,18 @@ where
                         .await;
                 }
             } else {
-                debug!("<Ssh: Proc {}> Process done", id);
+                debug!(
+                    "<Ssh | Proc {}> Completed and waiting on stdout & stderr tasks",
+                    id
+                );
             }
 
             if let Err(x) = stderr_task.await {
-                error!("<Ssh: Proc {}> Join on stderr task failed: {}", id, x);
+                error!("<Ssh | Proc {}> Join on stderr task failed: {}", id, x);
             }
 
             if let Err(x) = stdout_task.await {
-                error!("<Ssh: Proc {}> Join on stdout task failed: {}", id, x);
+                error!("<Ssh | Proc {}> Join on stdout task failed: {}", id, x);
             }
 
             state_2.lock().await.processes.remove(&id);
@@ -821,7 +830,7 @@ where
             }];
 
             if !reply_2(payload).await {
-                error!("<Ssh: Proc {}> Failed to send done!", id,);
+                error!("<Ssh | Proc {}> Failed to send done", id,);
             }
         });
     });
@@ -845,7 +854,7 @@ async fn proc_kill(
 
     Err(io::Error::new(
         io::ErrorKind::BrokenPipe,
-        "Unable to send kill signal to process",
+        format!("<Ssh | Proc {}> Unable to send kill signal to process", id),
     ))
 }
 
@@ -863,7 +872,7 @@ async fn proc_stdin(
 
     Err(io::Error::new(
         io::ErrorKind::BrokenPipe,
-        "Unable to send stdin to process",
+        format!("<Ssh | Proc {}> Unable to send stdin to process", id),
     ))
 }
 
