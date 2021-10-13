@@ -135,22 +135,18 @@ jobs:
             ${{ env.X86_REL_LIB }}
             ${{ env.X86_REL_BIN }}
 
-  linux:
-    name: "Build release on Linux"
+  linux_gnu:
+    name: "Build release on Linux (gnu)"
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     env:
-      UPLOAD_NAME: linux64
+      UPLOAD_NAME: linux64-gnu
       X86_GNU_ARCH: x86_64-unknown-linux-gnu
       X86_GNU_DIR: target/x86_64-unknown-linux-gnu/release
-      X86_MUSL_ARCH: x86_64-unknown-linux-musl
-      X86_MUSL_DIR: target/x86_64-unknown-linux-musl/release
       BUILD_BIN: distant
       BUILD_LIB: libdistant_lua.so
       X86_GNU_REL_BIN: distant-linux64-gnu
-      X86_MUSL_REL_BIN: distant-linux64-musl
       X86_GNU_REL_LIB: distant_lua-linux64-gnu.so
-      X86_MUSL_REL_LIB: distant_lua-linux64-musl.so
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (GNU)
@@ -159,16 +155,6 @@ jobs:
           profile: minimal
           toolchain: stable
           target: ${{ env.X86_GNU_ARCH }}
-      - name: Install Rust (MUSL)
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          target: ${{ env.X86_MUSL_ARCH }}
-      - name: Install MUSL Tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools libgcc-s1
       - uses: Swatinem/rust-cache@v1
       - name: Build Lua ${{ env.LUA_VERSION }} library (GNU x86_64)
         run: |
@@ -176,14 +162,6 @@ jobs:
           cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_GNU_ARCH }}
           ls -l ../${{ env.X86_GNU_DIR }}
           mv ../${{ env.X86_GNU_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_GNU_REL_LIB }}
-      - name: Build Lua ${{ env.LUA_VERSION }} library (MUSL x86_64)
-        run: |
-          cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_MUSL_ARCH }}
-          ls -l ../${{ env.X86_MUSL_DIR }}
-          mv ../${{ env.X86_MUSL_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_MUSL_REL_LIB }}
-        env:
-          RUSTFLAGS: -C target-feature=-crt-static -C linker=musl-gcc -L /lib/x86_64-linux-gnu
       - name: Build binary (GNU x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_GNU_ARCH }}
@@ -191,8 +169,49 @@ jobs:
           strip ./${{ env.X86_GNU_DIR }}/${{ env.BUILD_BIN }}
           mv ./${{ env.X86_GNU_DIR }}/${{ env.BUILD_BIN }} ./${{ env.X86_GNU_REL_BIN }}
           chmod +x ./${{ env.X86_GNU_REL_BIN }}
+      - name: Upload 
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.UPLOAD_NAME }}
+          path: |
+            ${{ env.X86_GNU_REL_LIB }}
+            ${{ env.X86_GNU_REL_BIN }}
+
+  linux_musl:
+    name: "Build release on Linux (musl)"
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.14
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      UPLOAD_NAME: linux64-musl
+      X86_MUSL_ARCH: x86_64-unknown-linux-musl
+      X86_MUSL_DIR: target/x86_64-unknown-linux-musl/release
+      BUILD_BIN: distant
+      BUILD_LIB: libdistant_lua.so
+      X86_MUSL_REL_BIN: distant-linux64-musl
+      X86_MUSL_REL_LIB: distant_lua-linux64-musl.so
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install base dependencies
+        run: |
+          apk add --update --no-cache build-base libc6-compat curl perl
+      - name: Install Rust (MUSL)
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+      - uses: Swatinem/rust-cache@v1
+      - name: Build Lua ${{ env.LUA_VERSION }} library (MUSL x86_64)
+        run: |
+          cd distant-lua
+          source $HOME/.cargo/env
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_MUSL_ARCH }}
+          ls -l ../${{ env.X86_MUSL_DIR }}
+          mv ../${{ env.X86_MUSL_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_MUSL_REL_LIB }}
+        env:
+          RUSTFLAGS: -C target-feature=-crt-static -C linker=x86_64-alpine-linux-musl-gcc
       - name: Build binary (MUSL x86_64)
         run: |
+          source $HOME/.cargo/env
           cargo build --release --all-features --target ${{ env.X86_MUSL_ARCH }}
           ls -l ./${{ env.X86_MUSL_DIR }}
           strip ./${{ env.X86_MUSL_DIR }}/${{ env.BUILD_BIN }}
@@ -203,13 +222,11 @@ jobs:
         with:
           name: ${{ env.UPLOAD_NAME }}
           path: |
-            ${{ env.X86_GNU_REL_LIB }}
             ${{ env.X86_MUSL_REL_LIB }}
-            ${{ env.X86_GNU_REL_BIN }}
             ${{ env.X86_MUSL_REL_BIN }}
 
   publish:
-    needs: [macos, windows, linux]
+    needs: [macos, windows, linux_gnu, linux_musl]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -223,10 +240,11 @@ jobs:
       WIN64: win64
       WIN64_BIN: distant-win64.exe
       WIN64_LIB: distant_lua-win64.dll
-      LINUX64: linux64
+      LINUX64_GNU: linux64-gnu
       LINUX64_GNU_BIN: distant-linux64-gnu
-      LINUX64_MUSL_BIN: distant-linux64-musl
       LINUX64_GNU_LIB: distant_lua-linux64-gnu.so
+      LINUX64_MUSL: linux64-musl
+      LINUX64_MUSL_BIN: distant-linux64-musl
       LINUX64_MUSL_LIB: distant_lua-linux64-musl.so
     steps:
       - uses: actions/download-artifact@v2
@@ -248,15 +266,18 @@ jobs:
           echo "SHA_WIN64_LUA_LIB=$(cat ${{ env.WIN64_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.WIN64_BIN }} > ${{ env.WIN64_BIN }}.sha256sum
           echo "SHA_WIN64_BIN=$(cat ${{ env.WIN64_BIN }}.sha256sum)" >> $GITHUB_ENV
-      - name: Generate Linux64 SHA256 checksums
+      - name: Generate Linux64 (gnu) SHA256 checksums
         run: |
-          cd ${{ env.LINUX64 }}
+          cd ${{ env.LINUX64_GNU }}
           sha256sum ${{ env.LINUX64_GNU_LIB }} > ${{ env.LINUX64_GNU_LIB }}.sha256sum
           echo "SHA_LINUX64_GNU_LUA_LIB=$(cat ${{ env.LINUX64_GNU_LIB }}.sha256sum)" >> $GITHUB_ENV
-          sha256sum ${{ env.LINUX64_MUSL_LIB }} > ${{ env.LINUX64_MUSL_LIB }}.sha256sum
-          echo "SHA_LINUX64_MUSL_LUA_LIB=$(cat ${{ env.LINUX64_MUSL_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.LINUX64_GNU_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
           echo "SHA_LINUX64_GNU_BIN=$(cat ${{ env.LINUX64_GNU_BIN }}.sha256sum)" >> $GITHUB_ENV
+      - name: Generate Linux64 (musl) SHA256 checksums
+        run: |
+          cd ${{ env.LINUX64_MUSL }}
+          sha256sum ${{ env.LINUX64_MUSL_LIB }} > ${{ env.LINUX64_MUSL_LIB }}.sha256sum
+          echo "SHA_LINUX64_MUSL_LUA_LIB=$(cat ${{ env.LINUX64_MUSL_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.LINUX64_MUSL_BIN }} > ${{ env.LINUX64_MUSL_BIN }}.sha256sum
           echo "SHA_LINUX64_MUSL_BIN=$(cat ${{ env.LINUX64_MUSL_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Determine git tag
@@ -291,10 +312,10 @@ jobs:
             ${{ env.MACOS }}/${{ env.MACOS_ARM_LIB }}
             ${{ env.WIN64 }}/${{ env.WIN64_BIN }}
             ${{ env.WIN64 }}/${{ env.WIN64_LIB }}
-            ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_BIN }}
-            ${{ env.LINUX64 }}/${{ env.LINUX64_MUSL_BIN }}
-            ${{ env.LINUX64 }}/${{ env.LINUX64_GNU_LIB }}
-            ${{ env.LINUX64 }}/${{ env.LINUX64_MUSL_LIB }}
+            ${{ env.LINUX64_GNU }}/${{ env.LINUX64_GNU_BIN }}
+            ${{ env.LINUX64_GNU }}/${{ env.LINUX64_GNU_LIB }}
+            ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_BIN }}
+            ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_LIB }}
             **/*.sha256sum
           body: |
             ## Install Lua library
