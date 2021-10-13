@@ -251,6 +251,7 @@ impl SessionChannelExt for SessionChannel {
             RequestData::Exists { path: path.into() },
             |data| match data {
                 ResponseData::Exists(x) => Ok(x),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
@@ -273,6 +274,7 @@ impl SessionChannelExt for SessionChannel {
             },
             |data| match data {
                 ResponseData::Metadata(x) => Ok(x),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
@@ -299,6 +301,7 @@ impl SessionChannelExt for SessionChannel {
             },
             |data| match data {
                 ResponseData::DirEntries { entries, errors } => Ok((entries, errors)),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
@@ -315,6 +318,7 @@ impl SessionChannelExt for SessionChannel {
             RequestData::FileRead { path: path.into() },
             |data| match data {
                 ResponseData::Blob { data } => Ok(data),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
@@ -331,6 +335,7 @@ impl SessionChannelExt for SessionChannel {
             RequestData::FileReadText { path: path.into() },
             |data| match data {
                 ResponseData::Text { data } => Ok(data),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
@@ -401,6 +406,7 @@ impl SessionChannelExt for SessionChannel {
             RequestData::SystemInfo {},
             |data| match data {
                 ResponseData::SystemInfo(x) => Ok(x),
+                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }
         )
