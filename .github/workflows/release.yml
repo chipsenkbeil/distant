@@ -168,7 +168,7 @@ jobs:
       - name: Install MUSL Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
+          sudo apt-get install -y --no-install-recommends musl-tools libgcc-s1
       - uses: Swatinem/rust-cache@v1
       - name: Build Lua ${{ env.LUA_VERSION }} library (GNU x86_64)
         run: |
@@ -183,7 +183,7 @@ jobs:
           ls -l ../${{ env.X86_MUSL_DIR }}
           mv ../${{ env.X86_MUSL_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_MUSL_REL_LIB }}
         env:
-          RUSTFLAGS: -C target-feature=-crt-static -C linker=musl-cc
+          RUSTFLAGS: -C target-feature=-crt-static -C linker=musl-gcc -L /lib/x86_64-linux-gnu
       - name: Build binary (GNU x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_GNU_ARCH }}
