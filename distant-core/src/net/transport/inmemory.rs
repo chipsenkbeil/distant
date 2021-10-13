@@ -5,7 +5,7 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncRead, AsyncWrite, ReadBuf},
-    sync::mpsc::{self, error::TrySendError},
+    sync::mpsc,
 };
 
 /// Represents a data stream comprised of two inmemory channels
@@ -142,14 +142,17 @@ impl InmemoryStreamWriteHalf {
 impl AsyncWrite for InmemoryStreamWriteHalf {
     fn poll_write(
         self: Pin<&mut Self>,
-        _: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        match self.0.try_send(buf.to_vec()) {
-            Ok(_) => Poll::Ready(Ok(buf.len())),
-            Err(TrySendError::Full(_)) => Poll::Pending,
-            Err(TrySendError::Closed(_)) => Poll::Ready(Ok(0)),
-        }
+        use futures::FutureExt;
+        let n = buf.len();
+        let f = self.0.send(buf.to_vec()).map(|x| match x {
+            Ok(_) => Ok(n),
+            Err(_) => Ok(0),
+        });
+        tokio::pin!(f);
+        f.poll_unpin(cx)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
