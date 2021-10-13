@@ -50,13 +50,13 @@ impl FromStr for SessionInfo {
     type Err = SessionInfoParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut tokens = s.split(' ').take(5);
+        let mut tokens = s.trim().split(' ').take(5);
 
         // First, validate that we have the appropriate prefix
         if tokens.next().ok_or(SessionInfoParseError::BadPrefix)? != "DISTANT" {
             return Err(SessionInfoParseError::BadPrefix);
         }
-        if tokens.next().ok_or(SessionInfoParseError::BadPrefix)? != "DATA" {
+        if tokens.next().ok_or(SessionInfoParseError::BadPrefix)? != "CONNECT" {
             return Err(SessionInfoParseError::BadPrefix);
         }
 
@@ -101,7 +101,7 @@ impl SessionInfo {
         let host = env::var("DISTANT_HOST").map_err(to_err)?;
         let port = env::var("DISTANT_PORT").map_err(to_err)?;
         let key = env::var("DISTANT_KEY").map_err(to_err)?;
-        Ok(format!("DISTANT DATA {} {} {}", host, port, key).parse()?)
+        Ok(format!("DISTANT CONNECT {} {} {}", host, port, key).parse()?)
     }
 
     /// Loads session from the next line available in this program's stdin
@@ -138,10 +138,10 @@ impl SessionInfo {
     }
 
     /// Converts to unprotected string that exposes the key in the form of
-    /// `DISTANT DATA <host> <port> <key>`
+    /// `DISTANT CONNECT <host> <port> <key>`
     pub fn to_unprotected_string(&self) -> String {
         format!(
-            "DISTANT DATA {} {} {}",
+            "DISTANT CONNECT {} {} {}",
             self.host,
             self.port,
             self.key.unprotected_to_hex_key()

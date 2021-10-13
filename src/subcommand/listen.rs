@@ -7,7 +7,10 @@ use distant_core::{
     DistantServer, DistantServerOptions, SecretKey32, UnprotectedToHexKey, XChaCha20Poly1305Codec,
 };
 use log::*;
-use tokio::{io, task::JoinError};
+use tokio::{
+    io::{self, AsyncWriteExt},
+    task::JoinError,
+};
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
@@ -105,7 +108,11 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     .await?;
 
     // Print information about port, key, etc.
-    println!("DISTANT DATA -- {} {}", port, key_hex_string);
+    // NOTE: Following mosh approach of printing to make sure there's no garbage floating around
+    println!("\r");
+    println!("DISTANT CONNECT -- {} {}", port, key_hex_string);
+    println!("\r");
+    io::stdout().flush().await?;
 
     // For the child, we want to fully disconnect it from pipes, which we do now
     #[cfg(unix)]

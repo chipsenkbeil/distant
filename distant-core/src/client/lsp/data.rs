@@ -397,7 +397,7 @@ impl LspContent {
                 let key = key
                     .as_str()
                     .ok_or(LspSessionInfoError::InvalidSessionInfoParams)?;
-                Ok(format!("DISTANT DATA {} {} {}", host, port, key).parse()?)
+                Ok(format!("DISTANT CONNECT {} {} {}", host, port, key).parse()?)
             }
             _ => Err(LspSessionInfoError::MissingSessionInfoParams),
         }

@@ -355,7 +355,7 @@ impl FromStr for BindAddress {
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum SessionOutput {
-    /// Session is in a file in the form of `DISTANT DATA <host> <port> <key>`
+    /// Session is in a file in the form of `DISTANT CONNECT <host> <port> <key>`
     File,
 
     /// Special scenario where the session is not shared but is instead kept within the
@@ -364,7 +364,7 @@ pub enum SessionOutput {
     Keep,
 
     /// Session is stored and retrieved over anonymous pipes (stdout/stdin)
-    /// in form of `DISTANT DATA <host> <port> <key>`
+    /// in form of `DISTANT CONNECT <host> <port> <key>`
     Pipe,
 
     /// Special scenario where the session is not shared but is instead kept within the
@@ -409,11 +409,11 @@ pub enum SessionInput {
     /// * `DISTANT_KEY=<key>`
     Environment,
 
-    /// Session is in a file in the form of `DISTANT DATA <host> <port> <key>`
+    /// Session is in a file in the form of `DISTANT CONNECT <host> <port> <key>`
     File,
 
     /// Session is stored and retrieved over anonymous pipes (stdout/stdin)
-    /// in form of `DISTANT DATA <host> <port> <key>`
+    /// in form of `DISTANT CONNECT <host> <port> <key>`
     Pipe,
 
     /// Session is stored and retrieved from the initializeOptions of the initialize request
