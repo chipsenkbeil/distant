@@ -1,10 +1,10 @@
-use crate::runtime;
+use crate::{constants::PROC_POLL_TIMEOUT, runtime};
 use distant_core::{
     RemoteLspProcess as DistantRemoteLspProcess, RemoteProcess as DistantRemoteProcess,
 };
 use mlua::{prelude::*, UserData, UserDataFields, UserDataMethods};
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, io};
+use std::{collections::HashMap, io, time::Duration};
 use tokio::sync::RwLock;
 
 /// Contains mapping of id -> remote process for use in maintaining active processes
@@ -76,16 +76,33 @@ macro_rules! impl_process {
             }
 
             async fn write_stdin_async(id: usize, data: String) -> LuaResult<()> {
-                with_proc_async!($map_name, id, proc -> {
-                    proc.stdin
-                        .as_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::BrokenPipe, "Stdin closed").to_lua_err()
-                        })?
-                        .write(data.as_str())
-                        .await
-                        .to_lua_err()
-                })
+                // NOTE: We must spawn a task that continually tries to send stdin as
+                //       if we wait until successful then we hold the lock the entire time
+                runtime::spawn(async move {
+                    loop {
+                        let is_done = with_proc_async!($map_name, id, proc -> {
+                            let res = proc.stdin
+                                .as_mut()
+                                .ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::BrokenPipe, "Stdin closed").to_lua_err()
+                                })?
+                                .try_write(data.as_str());
+                            match res {
+                                Ok(_) => Ok(true),
+                                Err(x) if x.kind() == io::ErrorKind::WouldBlock => Ok(false),
+                                Err(x) => Err(x),
+                            }
+                        })?;
+
+                        if is_done {
+                            break;
+                        }
+
+                        tokio::time::sleep(Duration::from_millis(PROC_POLL_TIMEOUT)).await;
+                    }
+
+                    Ok(())
+                }).await
             }
 
             fn close_stdin(id: usize) -> LuaResult<()> {
@@ -108,16 +125,25 @@ macro_rules! impl_process {
             }
 
             async fn read_stdout_async(id: usize) -> LuaResult<String> {
-                with_proc_async!($map_name, id, proc -> {
-                    proc.stdout
-                        .as_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::BrokenPipe, "Stdout closed").to_lua_err()
-                        })?
-                        .read()
-                        .await
-                        .to_lua_err()
-                })
+                // NOTE: We must spawn a task that continually tries to read stdout as
+                //       if we wait until successful then we hold the lock the entire time
+                runtime::spawn(async move {
+                    loop {
+                        let data = with_proc_async!($map_name, id, proc -> {
+                            proc.stdout
+                                .as_mut()
+                                .ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::BrokenPipe, "Stdout closed").to_lua_err()
+                                })?
+                                .try_read()
+                                .to_lua_err()?
+                        });
+
+                        if let Some(data) = data {
+                            break Ok(data);
+                        }
+                    }
+                }).await
             }
 
             fn read_stderr(id: usize) -> LuaResult<Option<String>> {
@@ -133,16 +159,25 @@ macro_rules! impl_process {
             }
 
             async fn read_stderr_async(id: usize) -> LuaResult<String> {
-                with_proc_async!($map_name, id, proc -> {
-                    proc.stderr
-                        .as_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::BrokenPipe, "Stderr closed").to_lua_err()
-                        })?
-                        .read()
-                        .await
-                        .to_lua_err()
-                })
+                // NOTE: We must spawn a task that continually tries to read stdout as
+                //       if we wait until successful then we hold the lock the entire time
+                runtime::spawn(async move {
+                    loop {
+                        let data = with_proc_async!($map_name, id, proc -> {
+                            proc.stderr
+                                .as_mut()
+                                .ok_or_else(|| {
+                                    io::Error::new(io::ErrorKind::BrokenPipe, "Stderr closed").to_lua_err()
+                                })?
+                                .try_read()
+                                .to_lua_err()?
+                        });
+
+                        if let Some(data) = data {
+                            break Ok(data);
+                        }
+                    }
+                }).await
             }
 
             fn kill(id: usize) -> LuaResult<()> {
@@ -160,12 +195,18 @@ macro_rules! impl_process {
             }
 
             async fn status_async(id: usize) -> LuaResult<Option<Status>> {
-                with_proc_async!($map_name, id, proc -> {
-                    Ok(proc.status().await.map(|(success, exit_code)| Status {
-                        success,
-                        exit_code,
-                    }))
-                })
+                let lock = $map_name.read().await;
+                let proc = lock.get(&id).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("No remote process found with id {}", id),
+                    )
+                    .to_lua_err()
+                })?;
+                Ok(proc.status().await.map(|(success, exit_code)| Status {
+                    success,
+                    exit_code,
+                }))
             }
 
             fn wait(id: usize) -> LuaResult<(bool, Option<i32>)> {

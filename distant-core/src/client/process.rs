@@ -239,7 +239,9 @@ impl RemoteProcess {
 pub struct RemoteStdin(mpsc::Sender<String>);
 
 impl RemoteStdin {
-    /// Tries to write to the stdin of the remote process
+    /// Tries to write to the stdin of the remote process, returning ok if immediately
+    /// successful, `WouldBlock` if would need to wait to send data, and `BrokenPipe`
+    /// if stdin has been closed
     pub fn try_write(&mut self, data: impl Into<String>) -> io::Result<()> {
         match self.0.try_send(data.into()) {
             Ok(data) => Ok(data),
@@ -268,7 +270,7 @@ pub struct RemoteStdout(mpsc::Receiver<String>);
 
 impl RemoteStdout {
     /// Tries to receive latest stdout for a remote process, yielding `None`
-    /// if no stdout is available
+    /// if no stdout is available, and `BrokenPipe` if stdout has been closed
     pub fn try_read(&mut self) -> io::Result<Option<String>> {
         match self.0.try_recv() {
             Ok(data) => Ok(Some(data)),
@@ -277,7 +279,8 @@ impl RemoteStdout {
         }
     }
 
-    /// Retrieves the latest stdout for a specific remote process
+    /// Retrieves the latest stdout for a specific remote process, and `BrokenPipe` if stdout has
+    /// been closed
     pub async fn read(&mut self) -> io::Result<String> {
         self.0
             .recv()
@@ -292,7 +295,7 @@ pub struct RemoteStderr(mpsc::Receiver<String>);
 
 impl RemoteStderr {
     /// Tries to receive latest stderr for a remote process, yielding `None`
-    /// if no stderr is available
+    /// if no stderr is available, and `BrokenPipe` if stderr has been closed
     pub fn try_read(&mut self) -> io::Result<Option<String>> {
         match self.0.try_recv() {
             Ok(data) => Ok(Some(data)),
@@ -301,7 +304,8 @@ impl RemoteStderr {
         }
     }
 
-    /// Retrieves the latest stderr for a specific remote process
+    /// Retrieves the latest stderr for a specific remote process, and `BrokenPipe` if stderr has
+    /// been closed
     pub async fn read(&mut self) -> io::Result<String> {
         self.0
             .recv()
