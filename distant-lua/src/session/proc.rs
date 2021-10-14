@@ -155,6 +155,19 @@ macro_rules! impl_process {
                 })
             }
 
+            fn status(id: usize) -> LuaResult<Option<Status>> {
+                runtime::block_on(Self::status_async(id))
+            }
+
+            async fn status_async(id: usize) -> LuaResult<Option<Status>> {
+                with_proc_async!($map_name, id, proc -> {
+                    Ok(proc.status().await.map(|(success, exit_code)| Status {
+                        success,
+                        exit_code,
+                    }))
+                })
+            }
+
             fn wait(id: usize) -> LuaResult<(bool, Option<i32>)> {
                 runtime::block_on(Self::wait_async(id))
             }
@@ -238,6 +251,10 @@ macro_rules! impl_process {
                 methods.add_async_method("read_stderr_async", |_, this, ()| {
                     runtime::spawn(Self::read_stderr_async(this.id))
                 });
+                methods.add_method("status", |_, this, ()| Self::status(this.id));
+                methods.add_async_method("status_async", |_, this, ()| {
+                    runtime::spawn(Self::status_async(this.id))
+                });
                 methods.add_method("wait", |_, this, ()| Self::wait(this.id));
                 methods.add_async_method("wait_async", |_, this, ()| {
                     runtime::spawn(Self::wait_async(this.id))
@@ -254,6 +271,29 @@ macro_rules! impl_process {
             }
         }
     };
+}
+
+/// Represents process status
+#[derive(Clone, Debug)]
+pub struct Status {
+    pub success: bool,
+    pub exit_code: Option<i32>,
+}
+
+impl UserData for Status {
+    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("success", |_, this| Ok(this.success));
+        fields.add_field_method_get("exit_code", |_, this| Ok(this.exit_code));
+    }
+
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("to_tbl", |lua, this, ()| {
+            let tbl = lua.create_table()?;
+            tbl.set("success", this.success)?;
+            tbl.set("exit_code", this.exit_code)?;
+            Ok(tbl)
+        });
+    }
 }
 
 /// Represents process output
