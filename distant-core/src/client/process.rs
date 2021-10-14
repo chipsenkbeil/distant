@@ -19,6 +19,8 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
+type StatusResult = Result<(bool, Option<i32>), RemoteProcessError>;
+
 #[derive(Debug, Display, Error, From)]
 pub enum RemoteProcessError {
     /// When attempting to relay stdout/stderr over channels, but the channels fail
@@ -66,7 +68,7 @@ pub struct RemoteProcess {
     wait_task: JoinHandle<()>,
 
     /// Handles the success and exit code for a completed process
-    status: Arc<RwLock<Option<Result<(bool, Option<i32>), RemoteProcessError>>>>,
+    status: Arc<RwLock<Option<StatusResult>>>,
 }
 
 impl RemoteProcess {
@@ -213,7 +215,7 @@ impl RemoteProcess {
             .write()
             .await
             .take()
-            .unwrap_or_else(|| Err(RemoteProcessError::UnexpectedEof))
+            .unwrap_or(Err(RemoteProcessError::UnexpectedEof))
     }
 
     /// Aborts the process by forcing its response task to shutdown, which means that a call
