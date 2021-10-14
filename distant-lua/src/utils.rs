@@ -1,3 +1,4 @@
+use crate::constants::NVIM_POLL_TIMEOUT;
 use mlua::{chunk, prelude::*};
 use once_cell::sync::OnceCell;
 use oorandom::Rand32;
@@ -12,7 +13,9 @@ pub fn make_utils_tbl(lua: &Lua) -> LuaResult<LuaTable> {
 
     tbl.set(
         "nvim_wrap_async",
-        lua.create_function(|lua, async_fn| nvim_wrap_async(lua, async_fn))?,
+        lua.create_function(|lua, (async_fn, millis): (LuaFunction, Option<u64>)| {
+            nvim_wrap_async(lua, async_fn, millis.unwrap_or(NVIM_POLL_TIMEOUT))
+        })?,
     )?;
     tbl.set(
         "wrap_async",
@@ -23,9 +26,19 @@ pub fn make_utils_tbl(lua: &Lua) -> LuaResult<LuaTable> {
     Ok(tbl)
 }
 
-/// Specialty function that performs wrap_async using `vim.schedule` from neovim
-pub fn nvim_wrap_async<'a>(lua: &'a Lua, async_fn: LuaFunction<'a>) -> LuaResult<LuaFunction<'a>> {
-    let schedule_fn = lua.load("vim.schedule").eval()?;
+/// Specialty function that performs wrap_async using `vim.defer_fn` from neovim
+pub fn nvim_wrap_async<'a>(
+    lua: &'a Lua,
+    async_fn: LuaFunction<'a>,
+    millis: u64,
+) -> LuaResult<LuaFunction<'a>> {
+    let schedule_fn = lua
+        .load(chunk! {
+            function(cb)
+                return vim.defer_fn(cb, $millis)
+            end
+        })
+        .eval()?;
     wrap_async(lua, async_fn, schedule_fn)
 }
 
