@@ -32,7 +32,7 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-core = "0.14"
+distant-core = "0.15"
 ```
 
 ## Features
@@ -49,25 +49,23 @@ By default, no features are enabled on the library.
 Below is an example of connecting to a distant server over TCP:
 
 ```rust
-use distant_core::{Request, RequestData, Session, SessionInfo};
-use std::path::PathBuf;
+use distant_core::{Session, SessionChannelExt, SecretKey32, XChaCha20Poly1305Codec};
+use std::net::SocketAddr;
 
-// Load our session using the environment variables
-//
-// DISTANT_HOST     = "..."
-// DISTANT_PORT     = "..."
-// DISTANT_KEY = "..."
-let mut session = Session::tcp_connect(SessionInfo::from_environment()?).await.unwrap();
+// 32-byte secret key paresd from hex, used for a specific codec
+let key: SecretKey32 = "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF".parse().unwrap();
+let codec = XChaCha20Poly1305Codec::from(key);
 
-// Send a request under a specific name and wait for a response
-let tenant = "my name";
-let req = Request::new(
-  tenant, 
-  vec![RequestData::FileReadText { path: PathBuf::from("some/path") }]
-);
+let addr: SocketAddr = "example.com:8080".parse().unwrap();
+let mut session = Session::tcp_connect(addr, codec).await.unwrap();
 
-let res = session.send(req).await.unwrap();
-println!("Response: {:?}", res);
+// Append text to a file, representing request as <tenant>
+// NOTE: This method comes from SessionChannelExt
+session.append_file_text(
+    "<tenant>", 
+    "path/to/file.txt".to_string(), 
+    "new contents"
+).await.expect("Failed to append to file");
 ```
 
 ## License
