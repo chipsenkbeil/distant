@@ -38,7 +38,7 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = Runtime::new()?;
     let session_output = cmd.session;
     let format = cmd.format;
-    let is_daemon = cmd.daemon;
+    let is_daemon = !cmd.foreground;
 
     let session_file = cmd.session_data.session_file.clone();
     let session_socket = cmd.session_data.session_socket.clone();
@@ -190,7 +190,7 @@ async fn socket_loop(
 /// Returns the session associated with the server
 async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<SessionInfo, Error> {
     let distant_command = format!(
-        "{} listen --daemon --host {} {}",
+        "{} listen --host {} {}",
         cmd.distant,
         cmd.bind_server,
         cmd.extra_server_args.unwrap_or_default(),

@@ -32,11 +32,11 @@ impl ExitCodeError for Error {
 }
 
 pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
-    if cmd.daemon {
-        run_daemon(cmd, opt)?;
-    } else {
+    if cmd.foreground {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async { run_async(cmd, opt, false).await })?;
+    } else {
+        run_daemon(cmd, opt)?;
     }
 
     Ok(())
@@ -44,9 +44,16 @@ pub fn run(cmd: ListenSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
 #[cfg(windows)]
 fn run_daemon(_cmd: ListenSubcommand, _opt: CommonOpt) -> Result<(), Error> {
-    use std::process::{Command, Stdio};
-    let mut args = std::env::args_os().filter(|arg| arg != "--daemon");
+    use std::{
+        ffi::OsString,
+        iter,
+        process::{Command, Stdio},
+    };
+    let mut args = std::env::args_os();
     let program = args.next().ok_or(Error::Fork)?;
+
+    // Ensure that forked server runs in foreground, otherwise we would fork bomb ourselves
+    let args = args.chain(iter::once(OsString::from("--foreground")));
 
     let child = Command::new(program)
         .args(args)

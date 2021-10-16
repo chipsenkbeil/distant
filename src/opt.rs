@@ -474,10 +474,9 @@ pub struct LaunchSubcommand {
     #[structopt(long)]
     pub shutdown_after: Option<f32>,
 
-    /// Runs in background via daemon-mode (does nothing on windows); only applies
-    /// when session is socket
-    #[structopt(short, long)]
-    pub daemon: bool,
+    /// When session is socket, runs in foreground instead of spawning a background process
+    #[structopt(long)]
+    pub foreground: bool,
 
     /// Represents the format that results should be returned when session is "keep",
     /// causing the launcher to enter an interactive loop to handle input and output
@@ -553,9 +552,9 @@ impl LaunchSubcommand {
 /// Represents subcommand to operate in listen mode for incoming requests
 #[derive(Clone, Debug, StructOpt)]
 pub struct ListenSubcommand {
-    /// Runs in background via daemon-mode (does nothing on windows)
-    #[structopt(short, long)]
-    pub daemon: bool,
+    /// Runs in foreground instead of spawning a background process
+    #[structopt(long)]
+    pub foreground: bool,
 
     /// Control the IP address that the distant binds to
     ///

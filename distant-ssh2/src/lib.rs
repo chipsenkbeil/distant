@@ -370,7 +370,7 @@ impl Ssh2Session {
         let mut session = self.into_ssh_client_session().await?;
 
         // Build arguments for distant
-        let mut args = vec![String::from("listen"), String::from("--daemon")];
+        let mut args = vec![String::from("listen")];
         args.extend(
             shell_words::split(&opts.args)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
