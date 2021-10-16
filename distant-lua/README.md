@@ -13,7 +13,7 @@ including:
 directory.*
 
 ```bash
-# Outputs a library file (*.so for Linux, *.dylib for MacOS)
+# Outputs a library file (*.so for Linux, *.dylib for MacOS, *.dll for Windows)
 cargo build --release
 ```
 

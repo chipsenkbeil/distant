@@ -37,6 +37,11 @@ talk to the server.
   encryption scheme via
   [RustCrypto/ChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305)
 
+Additionally, the core of the distant client and server codebase can be pulled
+in to be used with your own Rust crates via the `distant-core` crate.
+Separately, Lua bindings can be found within `distant-lua`, exported as a
+shared library that can be imported into lua using `require("distant_lua")`.
+
 ## Installation
 
 ### Prebuilt Binaries
@@ -58,8 +63,13 @@ the [build guide](./BUILDING.md).
 
 ## Examples
 
-Launch a remote instance of `distant` by SSHing into another machine and
-starting the `distant` executable:
+Launch a remote instance of `distant`. Calling `launch` will do the following:
+
+1. Ssh into the specified host (in the below example, `my.example.com`)
+2. Execute `distant listen --host ssh` on the remote machine
+3. Receive on the local machine the credentials needed to connect to the server
+4. Depending on the options specified, store/use the session settings so
+   future calls to `distant action` can connect
 
 ```bash
 # Connects to my.example.com on port 22 via SSH to start a new session
