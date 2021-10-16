@@ -197,6 +197,11 @@ pub struct Ssh2Session {
 impl Ssh2Session {
     /// Connect to a remote TCP server using SSH
     pub fn connect(host: impl AsRef<str>, opts: Ssh2SessionOpts) -> io::Result<Self> {
+        debug!(
+            "Establishing ssh connection to {} using {:?}",
+            host.as_ref(),
+            opts
+        );
         let mut config = WezConfig::new();
         config.add_default_config_files();
 
@@ -255,6 +260,7 @@ impl Ssh2Session {
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
 
         // Establish a connection
+        trace!("WezSession::connect({:?})", config);
         let (session, events) =
             WezSession::connect(config).map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 

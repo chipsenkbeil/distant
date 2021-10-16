@@ -182,6 +182,7 @@ async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, S
 
 async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
     let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
         .append(true)
         .open(path)
         .await?;
@@ -1043,6 +1044,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_append_should_create_file_if_missing() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Don't create the file directly, but define path
+        // where the file should be
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileAppend {
+                path: file.path().to_path_buf(),
+                data: b"some extra contents".to_vec(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Yield to allow chance to finish appending to file
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Also verify that we actually did create to the file
+        file.assert("some extra contents");
+    }
+
+    #[tokio::test]
     async fn file_append_should_send_ok_when_successful() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
@@ -1105,6 +1140,40 @@ mod tests {
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
+    }
+
+    #[tokio::test]
+    async fn file_append_text_should_create_file_if_missing() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+
+        // Don't create the file directly, but define path
+        // where the file should be
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::FileAppendText {
+                path: file.path().to_path_buf(),
+                text: "some extra contents".to_string(),
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Yield to allow chance to finish appending to file
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Also verify that we actually did create to the file
+        file.assert("some extra contents");
     }
 
     #[tokio::test]
