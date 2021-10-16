@@ -369,8 +369,12 @@ impl Ssh2Session {
         // Turn our ssh connection into a client session so we can use it to spawn our server
         let mut session = self.into_ssh_client_session().await?;
 
-        // Build arguments for distant
-        let mut args = vec![String::from("listen")];
+        // Build arguments for distant to execute listen subcommand
+        let mut args = vec![
+            String::from("listen"),
+            String::from("--host"),
+            String::from("ssh"),
+        ];
         args.extend(
             shell_words::split(&opts.args)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
