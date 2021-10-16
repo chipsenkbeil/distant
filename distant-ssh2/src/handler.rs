@@ -826,7 +826,7 @@ where
             let payload = vec![ResponseData::ProcDone {
                 id,
                 success: !should_kill && success,
-                code: None,
+                code: if success { Some(0) } else { None },
             }];
 
             if !reply_2(payload).await {

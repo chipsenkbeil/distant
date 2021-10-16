@@ -578,7 +578,14 @@ where
                     match status {
                         Ok(status) => {
                             let success = status.success();
-                            let code = status.code();
+                            let mut code = status.code();
+
+                            // If we succeeded and have no exit code, automatically populate
+                            // with success exit code
+                            if success && code.is_none() {
+                                code = Some(0);
+                            }
+
                             let payload = vec![ResponseData::ProcDone { id, success, code }];
                             if !reply_2(payload).await {
                                 error!(
