@@ -436,6 +436,13 @@ where
 {
     let id = rand::random();
 
+    debug!(
+        "<Conn @ {} | Proc {}> Spawning {} {}",
+        conn_id,
+        id,
+        cmd,
+        args.join(" ")
+    );
     let mut child = Command::new(cmd.to_string())
         .args(args.clone())
         .stdin(Stdio::piped())
@@ -649,6 +656,10 @@ where
         }
     });
 
+    debug!(
+        "<Conn @ {} | Proc {}> Spawned successfully! Will enter post hook later",
+        conn_id, id
+    );
     Ok(Outgoing {
         data: ResponseData::ProcStart { id },
         post_hook: Some(post_hook),

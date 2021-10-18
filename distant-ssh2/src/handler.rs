@@ -616,6 +616,7 @@ where
     let id = rand::random();
     let cmd_string = format!("{} {}", cmd, args.join(" "));
 
+    debug!("<Ssh | Proc {}> Spawning {}", id, cmd_string);
     let ExecResult {
         mut stdin,
         mut stdout,
@@ -835,6 +836,10 @@ where
         });
     });
 
+    debug!(
+        "<Ssh | Proc {}> Spawned successfully! Will enter post hook later",
+        id
+    );
     Ok(Outgoing {
         data: ResponseData::ProcStart { id },
         post_hook: Some(post_hook),
