@@ -43,6 +43,9 @@ pub enum SessionDetails {
 
     /// Indicates session type is inmemory
     Inmemory { tag: String },
+
+    /// Indicates session type is a custom type (such as ssh)
+    Custom { tag: String },
 }
 
 impl SessionDetails {
@@ -52,6 +55,7 @@ impl SessionDetails {
             Self::Tcp { tag, .. } => tag.as_str(),
             Self::Socket { tag, .. } => tag.as_str(),
             Self::Inmemory { tag } => tag.as_str(),
+            Self::Custom { tag } => tag.as_str(),
         }
     }
 

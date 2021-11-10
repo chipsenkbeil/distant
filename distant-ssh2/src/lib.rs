@@ -358,8 +358,21 @@ impl Ssh2Session {
         }
 
         // Determine distinct candidate ip addresses for connecting
+        //
+        // NOTE: This breaks when the host is an alias defined within an ssh config; however,
+        //       we need to be able to resolve the IP address(es) for use in TCP connect. The
+        //       end solution would be to have wezterm-ssh provide some means to determine the
+        //       IP address of the end machine it is connected to, but that probably isn't
+        //       possible with ssh. So, for now, connecting to a distant server from an
+        //       established ssh connection requires that we can resolve the specified host
         let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
-            .await?
+            .await
+            .map_err(|x| {
+                io::Error::new(
+                    x.kind(),
+                    format!("{} needs to be resolvable outside of ssh: {}", self.host, x),
+                )
+            })?
             .into_iter()
             .map(|addr| addr.ip())
             .collect::<Vec<IpAddr>>();
@@ -488,19 +501,8 @@ impl Ssh2Session {
         }
 
         let (t1, t2) = Transport::pair(1);
-        let addr = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
-            .await?
-            .next()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    format!("Failed to resolve host: {}", self.host),
-                )
-            })?;
-        let tag = t1.to_connection_tag();
-
-        let session =
-            Session::initialize_with_details(t1, Some(SessionDetails::Tcp { addr, tag }))?;
+        let tag = format!("ssh {}:{}", self.host, self.port);
+        let session = Session::initialize_with_details(t1, Some(SessionDetails::Custom { tag }))?;
 
         // Spawn tasks that forward requests to the ssh session
         // and send back responses from the ssh session
