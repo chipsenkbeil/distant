@@ -580,6 +580,12 @@ pub struct ListenSubcommand {
     #[structopt(long, default_value = &SERVER_CONN_MSG_CAPACITY_STR)]
     pub max_msg_capacity: u16,
 
+    /// If specified, the server will not generate a key but instead listen on stdin for the next
+    /// 32 bytes that it will use as the key instead. Receiving less than 32 bytes before stdin
+    /// is closed is considered an error and any bytes after the first 32 are not used for the key
+    #[structopt(long)]
+    pub key_from_stdin: bool,
+
     /// The time in seconds before shutting down the server if there are no active
     /// connections. The countdown begins once all connections have closed and
     /// stops when a new connection is made. In not specified, the server will not

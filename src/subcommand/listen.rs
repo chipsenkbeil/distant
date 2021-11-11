@@ -8,12 +8,13 @@ use distant_core::{
 };
 use log::*;
 use tokio::{
-    io::{self, AsyncWriteExt},
+    io::{self, AsyncReadExt, AsyncWriteExt},
     task::JoinError,
 };
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
+    BadKey,
     ConverToIpAddr(ConvertToIpAddrError),
     Fork,
     Io(io::Error),
@@ -23,6 +24,7 @@ pub enum Error {
 impl ExitCodeError for Error {
     fn to_exit_code(&self) -> ExitCode {
         match self {
+            Self::BadKey => ExitCode::Usage,
             Self::ConverToIpAddr(_) => ExitCode::NoHost,
             Self::Fork => ExitCode::OsErr,
             Self::Io(x) => x.to_exit_code(),
@@ -99,7 +101,16 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     }
 
     // Bind & start our server
-    let key = SecretKey32::default();
+    let key = if cmd.key_from_stdin {
+        let mut buf = [0u8; 32];
+        let n = io::stdin().read_exact(&mut buf).await?;
+        if n < buf.len() {
+            return Err(Error::BadKey);
+        }
+        SecretKey32::from(buf)
+    } else {
+        SecretKey32::default()
+    };
     let key_hex_string = key.unprotected_to_hex_key();
     let codec = XChaCha20Poly1305Codec::from(key);
 

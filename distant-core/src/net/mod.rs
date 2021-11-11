@@ -81,6 +81,12 @@ impl<const N: usize> SecretKey<N> {
     }
 }
 
+impl<const N: usize> From<[u8; N]> for SecretKey<N> {
+    fn from(arr: [u8; N]) -> Self {
+        Self(arr)
+    }
+}
+
 impl<const N: usize> FromStr for SecretKey<N> {
     type Err = SecretKeyError;
 
