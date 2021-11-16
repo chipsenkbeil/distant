@@ -76,5 +76,5 @@ jobs:
         env:
           LUA_INC: ${{ github.workspace }}\.lua\include
           LUA_LIB: ${{ github.workspace }}\.lua\lib
-          LUA_LIB_NAME: lua
+          LUA_LIB_NAME: lua51
         if: steps.changes.outputs.lua == 'true'

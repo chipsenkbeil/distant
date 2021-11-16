@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.15.1] - 2021-11-15
 ### Added
 - `--key-from-stdin` option to listen cli command to read key from stdin
   instead of generating
@@ -67,5 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/chipsenkbeil/distant/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/chipsenkbeil/distant/compare/v0.14.0...v0.15.0
