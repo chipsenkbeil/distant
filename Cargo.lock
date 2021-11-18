@@ -442,6 +442,7 @@ dependencies = [
  "predicates",
  "rand",
  "rstest",
+ "serde",
  "serde_json",
  "structopt",
  "strum",

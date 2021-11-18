@@ -185,10 +185,107 @@ async fn socket_loop(
         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
 }
 
-/// Spawns a remote server that listens for requests
+async fn spawn_remote_server(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<SessionInfo, Error> {
+    #[cfg(feature = "ssh2")]
+    if cmd.external_ssh {
+        external_spawn_remote_server(cmd, opt).await
+    } else {
+        native_spawn_remote_server(cmd, opt).await
+    }
+
+    #[cfg(not(feature = "ssh2"))]
+    external_spawn_remote_server(cmd, opt).await
+}
+
+/// Spawns a remote server using native ssh library that listens for requests
 ///
 /// Returns the session associated with the server
-async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<SessionInfo, Error> {
+#[cfg(feature = "ssh2")]
+async fn native_spawn_remote_server(
+    cmd: LaunchSubcommand,
+    _opt: CommonOpt,
+) -> Result<SessionInfo, Error> {
+    trace!("native_spawn_remote_server({:?})", cmd);
+    use distant_ssh2::{
+        IntoDistantSessionOpts, Ssh2AuthEvent, Ssh2AuthHandler, Ssh2Session, Ssh2SessionOpts,
+    };
+    use std::io::Write;
+
+    let host = cmd.host;
+
+    // Build our options based on cli input
+    let mut opts = Ssh2SessionOpts::default();
+    if let Some(path) = cmd.identity_file {
+        opts.identity_files.push(path);
+    }
+    opts.port = Some(cmd.port);
+    opts.user = Some(cmd.username);
+
+    debug!("Connecting to {} {:#?}", host, opts);
+    let mut ssh_session = Ssh2Session::connect(host.as_str(), opts)?;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    enum SshMsg {
+        Authenticate(Ssh2AuthEvent),
+        Banner { text: String },
+        HostVerify { host: String },
+        Error { msg: String },
+    }
+
+    debug!("Authenticating against {}", host);
+    ssh_session
+        .authenticate(match cmd.format {
+            Format::Shell => Ssh2AuthHandler::default(),
+            Format::Json => Ssh2AuthHandler {
+                on_authenticate: Box::new(|ev| {
+                    // TODO: We need something like { type: "ssh_authenticate", ... }
+                    std::io::stdout()
+                        .lock()
+                        .write_all(serde_json::to_string(&ev)?)?;
+                    Ok()
+                }),
+                on_banner: Box::new(|banner| {
+                    // TODO: We need something like { type: "ssh_banner", ... }
+                    std::io::stdout()
+                        .lock()
+                        .write_all(serde_json::to_string())?;
+                }),
+                on_host_verify: Box::new(|host| {
+                    // TODO: We need something like { type: "ssh_host_verify", ... }
+                    std::io::stdout()
+                        .lock()
+                        .write_all(serde_json::to_string())?;
+                    Ok(true)
+                }),
+                on_error: Box::new(|err| {
+                    // TODO: We need something like { type: "ssh_error", ... }
+                    std::io::stdout()
+                        .lock()
+                        .write_all(serde_json::to_string())?;
+                }),
+            },
+        })
+        .await?;
+
+    debug!("Mapping session for {}", host);
+    let session_info = ssh_session
+        .into_distant_session_info(IntoDistantSessionOpts {
+            binary: cmd.distant,
+            args: cmd.extra_server_args.unwrap_or_default(),
+            ..Default::default()
+        })
+        .await?;
+
+    Ok(session_info)
+}
+
+/// Spawns a remote server using external ssh command that listens for requests
+///
+/// Returns the session associated with the server
+async fn external_spawn_remote_server(
+    cmd: LaunchSubcommand,
+    _opt: CommonOpt,
+) -> Result<SessionInfo, Error> {
     let distant_command = format!(
         "{} listen --host {} {}",
         cmd.distant,

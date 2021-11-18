@@ -481,6 +481,9 @@ pub struct LaunchSubcommand {
     /// Represents the format that results should be returned when session is "keep",
     /// causing the launcher to enter an interactive loop to handle input and output
     /// itself rather than enabling other clients to connect
+    ///
+    /// Additionally, for all session types, dictates how authentication questions
+    /// and answers should be communicated (over shell, or using json if ssh2 feature enabled)
     #[structopt(
         short,
         long,
@@ -496,9 +499,15 @@ pub struct LaunchSubcommand {
     #[structopt(long, default_value = "distant")]
     pub distant: String,
 
-    /// Path to ssh program on local machine to execute
+    /// Path to ssh program on local machine to execute when using external ssh
     #[structopt(long, default_value = "ssh")]
     pub ssh: String,
+
+    /// If specified, will use the external ssh program to launch the server
+    /// instead of the native integration; does nothing if the ssh2 feature is
+    /// not enabled as there is no other option than external ssh
+    #[structopt(long)]
+    pub external_ssh: bool,
 
     /// Control the IP address that the server binds to.
     ///
