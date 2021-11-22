@@ -37,7 +37,7 @@ strum = { version = "0.21.0", features = ["derive"] }
 whoami = "1.1.2"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.15.1", path = "distant-ssh2", optional = true }
+distant-ssh2 = { version = "=0.15.1", path = "distant-ssh2", features = ["serde"], optional = true }
 serde = { version = "1.0.126", features = ["derive"], optional = true }
 
 [target.'cfg(unix)'.dependencies]

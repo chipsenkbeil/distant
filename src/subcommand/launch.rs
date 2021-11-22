@@ -224,11 +224,20 @@ async fn native_spawn_remote_server(
     debug!("Connecting to {} {:#?}", host, opts);
     let mut ssh_session = Ssh2Session::connect(host.as_str(), opts)?;
 
-    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    #[serde(tag = "type")]
     enum SshMsg {
+        #[serde(rename = "ssh_authenticate")]
         Authenticate(Ssh2AuthEvent),
+        #[serde(rename = "ssh_authenticate_answer")]
+        AuthenticateAnswer { answers: Vec<String> },
+        #[serde(rename = "ssh_banner")]
         Banner { text: String },
+        #[serde(rename = "ssh_host_verify")]
         HostVerify { host: String },
+        #[serde(rename = "ssh_host_verify_answer")]
+        HostVerifyAnswer { answer: bool },
+        #[serde(rename = "ssh_error")]
         Error { msg: String },
     }
 
@@ -238,30 +247,56 @@ async fn native_spawn_remote_server(
             Format::Shell => Ssh2AuthHandler::default(),
             Format::Json => Ssh2AuthHandler {
                 on_authenticate: Box::new(|ev| {
-                    // TODO: We need something like { type: "ssh_authenticate", ... }
-                    std::io::stdout()
-                        .lock()
-                        .write_all(serde_json::to_string(&ev)?)?;
-                    Ok()
+                    let msg = SshMsg::Authenticate(ev);
+                    std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
+
+                    // TODO: Support json reader that can handle json on multiple lines
+                    let mut json_string = String::new();
+                    std::io::stdin().read_line(&mut json_string)?;
+
+                    let msg: SshMsg = serde_json::from_str(&json_string)?;
+                    match msg {
+                        SshMsg::AuthenticateAnswer { answers } => Ok(answers),
+                        x => Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!("Invalid response received: {:?}", x),
+                        ))?,
+                    }
                 }),
                 on_banner: Box::new(|banner| {
-                    // TODO: We need something like { type: "ssh_banner", ... }
-                    std::io::stdout()
-                        .lock()
-                        .write_all(serde_json::to_string())?;
+                    let msg = SshMsg::Banner {
+                        text: banner.to_string(),
+                    };
+                    if let Ok(json_string) = serde_json::to_string(&msg) {
+                        let _ = std::io::stdout().write_all(json_string.as_bytes());
+                    }
                 }),
                 on_host_verify: Box::new(|host| {
-                    // TODO: We need something like { type: "ssh_host_verify", ... }
-                    std::io::stdout()
-                        .lock()
-                        .write_all(serde_json::to_string())?;
-                    Ok(true)
+                    let msg = SshMsg::HostVerify {
+                        host: host.to_string(),
+                    };
+                    std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
+
+                    // TODO: Support json reader that can handle json on multiple lines
+                    let mut json_string = String::new();
+                    std::io::stdin().read_line(&mut json_string)?;
+
+                    let msg: SshMsg = serde_json::from_str(&json_string)?;
+                    match msg {
+                        SshMsg::HostVerifyAnswer { answer } => Ok(answer),
+                        x => Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!("Invalid response received: {:?}", x),
+                        ))?,
+                    }
                 }),
                 on_error: Box::new(|err| {
-                    // TODO: We need something like { type: "ssh_error", ... }
-                    std::io::stdout()
-                        .lock()
-                        .write_all(serde_json::to_string())?;
+                    let msg = SshMsg::Error {
+                        msg: err.to_string(),
+                    };
+                    if let Ok(json_string) = serde_json::to_string(&msg) {
+                        let _ = std::io::stdout().write_all(json_string.as_bytes());
+                    }
                 }),
             },
         })

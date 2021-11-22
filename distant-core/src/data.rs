@@ -52,12 +52,7 @@ impl Request {
 /// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
 #[cfg_attr(feature = "structopt", derive(structopt::StructOpt))]
-#[serde(
-    rename_all = "snake_case",
-    deny_unknown_fields,
-    tag = "type",
-    content = "data"
-)]
+#[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[strum(serialize_all = "snake_case")]
 pub enum RequestData {
     /// Reads a file from the specified path on the remote machine
@@ -294,12 +289,7 @@ impl Response {
 
 /// Represents the payload of a successful response
 #[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
-#[serde(
-    rename_all = "snake_case",
-    deny_unknown_fields,
-    tag = "type",
-    content = "data"
-)]
+#[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[strum(serialize_all = "snake_case")]
 pub enum ResponseData {
     /// General okay with no extra data, returned in cases like

@@ -2,6 +2,7 @@ mod buf;
 mod constants;
 mod exit;
 mod link;
+mod msg;
 mod opt;
 mod output;
 mod session;
