@@ -1,142 +1,104 @@
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    future::Future,
     io::{self, Write},
-    pin::Pin,
+    sync::{Arc, Mutex},
+    thread,
 };
-use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt},
-    runtime::Handle,
-};
+use tokio::sync::mpsc;
 
 /// Sends JSON messages over stdout
-pub struct MsgSender(InnerMsgSender);
+#[derive(Clone)]
+pub struct MsgSender {
+    send: Arc<Mutex<Box<dyn FnMut(&[u8]) -> io::Result<()>>>>,
+}
+
+impl<F> From<F> for MsgSender
+where
+    F: FnMut(&[u8]) -> io::Result<()> + 'static,
+{
+    fn from(f: F) -> Self {
+        Self {
+            send: Arc::new(Mutex::new(Box::new(f))),
+        }
+    }
+}
 
 impl MsgSender {
-    /// Creates a new sender from the asynchronous writer
-    pub fn from_async<F>(f: F) -> Self
-    where
-        F: Fn(&[u8]) -> Pin<Box<dyn Future<Output = io::Result<()>>>> + 'static,
-    {
-        Self(InnerMsgSender::AsyncSender(Box::new(f)))
-    }
-
-    pub fn from_async_stdout() -> Self {
-        let mut writer = tokio::io::stdout();
-
-        async fn do_write(writer: &mut tokio::io::Stdout, output: &[u8]) -> io::Result<()> {
-            let _ = writer.write_all(output).await?;
-            let _ = writer.flush().await?;
-            Ok(())
-        }
-
-        Self::from_async(move |output| Box::pin(do_write(&mut writer, output)))
-    }
-
-    /// Creates a new sender from the synchronous writer
-    pub fn from_sync<F>(f: F) -> Self
-    where
-        F: Fn(&[u8]) -> io::Result<()> + 'static,
-    {
-        Self(InnerMsgSender::SyncSender(Box::new(f)))
-    }
-
-    pub fn from_sync_stdout() -> Self {
+    pub fn from_stdout() -> Self {
         let mut writer = std::io::stdout();
-        Self::from_sync(move |output| {
+        Self::from(Box::new(move |output: &'_ [u8]| {
             let _ = writer.write_all(output)?;
             let _ = writer.flush()?;
             Ok(())
-        })
+        }))
     }
 
-    pub fn send_blocking<T>(&mut self, ser: &T) -> io::Result<()>
-    where
-        T: Serialize,
-    {
-        self.0.send_blocking(ser)
-    }
-}
-
-enum InnerMsgSender {
-    AsyncSender(Box<dyn FnMut(&[u8]) -> Pin<Box<dyn Future<Output = io::Result<()>>>>>),
-    SyncSender(Box<dyn FnMut(&[u8]) -> io::Result<()>>),
-}
-
-impl InnerMsgSender {
-    pub fn send_blocking<T>(&mut self, ser: &T) -> io::Result<()>
+    pub fn send_blocking<T>(&self, ser: &T) -> io::Result<()>
     where
         T: Serialize,
     {
         let msg = format!("{}\n", serde_json::to_string(ser)?);
-
-        match self {
-            InnerMsgSender::AsyncSender(write) => Handle::current().block_on(write(msg.as_bytes())),
-            InnerMsgSender::SyncSender(write) => write(msg.as_bytes()),
-        }
+        self.send.lock().unwrap()(msg.as_bytes())
     }
 }
 
 /// Receives JSON messages over stdin
-pub struct MsgReceiver(InnerMsgReceiver);
+#[derive(Clone)]
+pub struct MsgReceiver {
+    recv: Arc<Mutex<Box<dyn FnMut(&mut String) -> io::Result<()> + Send>>>,
+}
+
+impl<F> From<F> for MsgReceiver
+where
+    F: FnMut(&mut String) -> io::Result<()> + Send + 'static,
+{
+    fn from(f: F) -> Self {
+        Self {
+            recv: Arc::new(Mutex::new(Box::new(f))),
+        }
+    }
+}
 
 impl MsgReceiver {
-    pub fn from_async<F>(f: F) -> Self
-    where
-        F: FnMut(&mut String) -> Pin<Box<dyn Future<Output = io::Result<()>>>> + 'static,
-    {
-        Self(InnerMsgReceiver::AsyncReceiver(Box::new(move |input| {
-            f(input)
-        })))
-    }
-
-    pub fn from_async_stdin() -> Self {
-        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
-
-        async fn do_read<T>(
-            reader: &mut tokio::io::BufReader<T>,
-            buf: &mut String,
-        ) -> io::Result<()>
-        where
-            T: AsyncRead + Unpin,
-        {
-            let _ = reader.read_line(buf).await?;
-            Ok(())
-        }
-
-        Self::from_async(move |input| Box::pin(do_read(&mut reader, input)))
-    }
-
-    pub fn from_sync<F>(f: F) -> Self
-    where
-        F: FnMut(&mut String) -> io::Result<()> + 'static,
-    {
-        Self(InnerMsgReceiver::SyncReceiver(Box::new(f)))
-    }
-
-    pub fn from_sync_stdin() -> Self {
-        let mut reader = std::io::stdin();
-        Self::from_sync(move |input| {
+    pub fn from_stdin() -> Self {
+        let reader = std::io::stdin();
+        Self::from(move |input: &'_ mut String| {
             let _ = reader.read_line(input)?;
             Ok(())
         })
     }
 
-    pub fn recv_blocking<T>(&mut self) -> io::Result<T>
+    /// Spawns a thread to continually poll receiver for new input of the given type
+    pub fn into_rx<T>(self) -> mpsc::Receiver<io::Result<T>>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + Send + 'static,
     {
-        self.0.recv_blocking()
+        let (tx, rx) = mpsc::channel(1);
+
+        thread::spawn(move || {
+            loop {
+                let res = self.recv_blocking();
+                let is_eof = match res.as_ref() {
+                    Err(x) => x.kind() == io::ErrorKind::UnexpectedEof,
+                    Ok(_) => false,
+                };
+
+                // If there is nothing to listen for results, close our thread
+                if tx.blocking_send(res).is_err() {
+                    break;
+                }
+
+                // If stream has reached end, close our thread
+                if is_eof {
+                    break;
+                }
+            }
+        });
+
+        rx
     }
-}
 
-enum InnerMsgReceiver {
-    AsyncReceiver(Box<dyn FnMut(&mut String) -> Pin<Box<dyn Future<Output = io::Result<()>>>>>),
-    SyncReceiver(Box<dyn FnMut(&mut String) -> io::Result<()>>),
-}
-
-impl InnerMsgReceiver {
-    pub fn recv_blocking<T>(&mut self) -> io::Result<T>
+    pub fn recv_blocking<T>(&self) -> io::Result<T>
     where
         T: DeserializeOwned,
     {
@@ -146,12 +108,7 @@ impl InnerMsgReceiver {
         // is a partial match
         let data: T = loop {
             // Read in another line of input
-            match self {
-                InnerMsgReceiver::AsyncReceiver(read) => {
-                    Handle::current().block_on(read(&mut input))?
-                }
-                InnerMsgReceiver::SyncReceiver(read) => read(&mut input)?,
-            };
+            let _ = self.recv.lock().unwrap()(&mut input)?;
 
             // Attempt to parse current input as type, yielding it on success, continuing to read
             // more input if error is unexpected EOF (meaning we are partially reading json), and

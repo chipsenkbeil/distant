@@ -1,5 +1,10 @@
 use crate::{
-    buf::StringBuf, constants::MAX_PIPE_CHUNK_SIZE, opt::Format, output::ResponseOut, stdin,
+    buf::StringBuf,
+    constants::MAX_PIPE_CHUNK_SIZE,
+    msg::{MsgReceiver, MsgSender},
+    opt::Format,
+    output::ResponseOut,
+    stdin,
 };
 use distant_core::{Mailbox, Request, RequestData, Session};
 use log::*;

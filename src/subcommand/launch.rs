@@ -210,7 +210,6 @@ async fn native_spawn_remote_server(
     use distant_ssh2::{
         IntoDistantSessionOpts, Ssh2AuthEvent, Ssh2AuthHandler, Ssh2Session, Ssh2SessionOpts,
     };
-    use std::io::Write;
 
     let host = cmd.host;
 
@@ -247,19 +246,18 @@ async fn native_spawn_remote_server(
         .authenticate(match cmd.format {
             Format::Shell => Ssh2AuthHandler::default(),
             Format::Json => {
-                let tx = MsgSender::from_sync_stdout();
-                let rx = MsgReceiver::from_sync_stdin();
+                let tx = MsgSender::from_stdout();
+                let tx_2 = tx.clone();
+                let tx_3 = tx.clone();
+                let tx_4 = tx.clone();
+                let rx = MsgReceiver::from_stdin();
+                let rx_2 = rx.clone();
 
                 Ssh2AuthHandler {
-                    on_authenticate: Box::new(|ev| {
-                        let msg = SshMsg::Authenticate(ev);
-                        std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
+                    on_authenticate: Box::new(move |ev| {
+                        let _ = tx.send_blocking(&SshMsg::Authenticate(ev));
 
-                        // TODO: Support json reader that can handle json on multiple lines
-                        let mut json_string = String::new();
-                        std::io::stdin().read_line(&mut json_string)?;
-
-                        let msg: SshMsg = serde_json::from_str(&json_string)?;
+                        let msg: SshMsg = rx.recv_blocking()?;
                         match msg {
                             SshMsg::AuthenticateAnswer { answers } => Ok(answers),
                             x => Err(io::Error::new(
@@ -268,25 +266,17 @@ async fn native_spawn_remote_server(
                             ))?,
                         }
                     }),
-                    on_banner: Box::new(|banner| {
-                        let msg = SshMsg::Banner {
+                    on_banner: Box::new(move |banner| {
+                        let _ = tx_2.send_blocking(&SshMsg::Banner {
                             text: banner.to_string(),
-                        };
-                        if let Ok(json_string) = serde_json::to_string(&msg) {
-                            let _ = std::io::stdout().write_all(json_string.as_bytes());
-                        }
+                        });
                     }),
-                    on_host_verify: Box::new(|host| {
-                        let msg = SshMsg::HostVerify {
+                    on_host_verify: Box::new(move |host| {
+                        let _ = tx_3.send_blocking(&SshMsg::HostVerify {
                             host: host.to_string(),
-                        };
-                        std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
+                        })?;
 
-                        // TODO: Support json reader that can handle json on multiple lines
-                        let mut json_string = String::new();
-                        std::io::stdin().read_line(&mut json_string)?;
-
-                        let msg: SshMsg = serde_json::from_str(&json_string)?;
+                        let msg: SshMsg = rx_2.recv_blocking()?;
                         match msg {
                             SshMsg::HostVerifyAnswer { answer } => Ok(answer),
                             x => Err(io::Error::new(
@@ -295,13 +285,10 @@ async fn native_spawn_remote_server(
                             ))?,
                         }
                     }),
-                    on_error: Box::new(|err| {
-                        let msg = SshMsg::Error {
+                    on_error: Box::new(move |err| {
+                        let _ = tx_4.send_blocking(&SshMsg::Error {
                             msg: err.to_string(),
-                        };
-                        if let Ok(json_string) = serde_json::to_string(&msg) {
-                            let _ = std::io::stdout().write_all(json_string.as_bytes());
-                        }
+                        });
                     }),
                 }
             }
