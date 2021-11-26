@@ -1,5 +1,6 @@
 use crate::{
     exit::{ExitCode, ExitCodeError},
+    msg::{MsgReceiver, MsgSender},
     opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
     session::CliSession,
     utils,
@@ -245,60 +246,65 @@ async fn native_spawn_remote_server(
     ssh_session
         .authenticate(match cmd.format {
             Format::Shell => Ssh2AuthHandler::default(),
-            Format::Json => Ssh2AuthHandler {
-                on_authenticate: Box::new(|ev| {
-                    let msg = SshMsg::Authenticate(ev);
-                    std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
+            Format::Json => {
+                let tx = MsgSender::from_sync_stdout();
+                let rx = MsgReceiver::from_sync_stdin();
 
-                    // TODO: Support json reader that can handle json on multiple lines
-                    let mut json_string = String::new();
-                    std::io::stdin().read_line(&mut json_string)?;
+                Ssh2AuthHandler {
+                    on_authenticate: Box::new(|ev| {
+                        let msg = SshMsg::Authenticate(ev);
+                        std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
 
-                    let msg: SshMsg = serde_json::from_str(&json_string)?;
-                    match msg {
-                        SshMsg::AuthenticateAnswer { answers } => Ok(answers),
-                        x => Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("Invalid response received: {:?}", x),
-                        ))?,
-                    }
-                }),
-                on_banner: Box::new(|banner| {
-                    let msg = SshMsg::Banner {
-                        text: banner.to_string(),
-                    };
-                    if let Ok(json_string) = serde_json::to_string(&msg) {
-                        let _ = std::io::stdout().write_all(json_string.as_bytes());
-                    }
-                }),
-                on_host_verify: Box::new(|host| {
-                    let msg = SshMsg::HostVerify {
-                        host: host.to_string(),
-                    };
-                    std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
+                        // TODO: Support json reader that can handle json on multiple lines
+                        let mut json_string = String::new();
+                        std::io::stdin().read_line(&mut json_string)?;
 
-                    // TODO: Support json reader that can handle json on multiple lines
-                    let mut json_string = String::new();
-                    std::io::stdin().read_line(&mut json_string)?;
+                        let msg: SshMsg = serde_json::from_str(&json_string)?;
+                        match msg {
+                            SshMsg::AuthenticateAnswer { answers } => Ok(answers),
+                            x => Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid response received: {:?}", x),
+                            ))?,
+                        }
+                    }),
+                    on_banner: Box::new(|banner| {
+                        let msg = SshMsg::Banner {
+                            text: banner.to_string(),
+                        };
+                        if let Ok(json_string) = serde_json::to_string(&msg) {
+                            let _ = std::io::stdout().write_all(json_string.as_bytes());
+                        }
+                    }),
+                    on_host_verify: Box::new(|host| {
+                        let msg = SshMsg::HostVerify {
+                            host: host.to_string(),
+                        };
+                        std::io::stdout().write_all(serde_json::to_string(&msg)?.as_bytes())?;
 
-                    let msg: SshMsg = serde_json::from_str(&json_string)?;
-                    match msg {
-                        SshMsg::HostVerifyAnswer { answer } => Ok(answer),
-                        x => Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("Invalid response received: {:?}", x),
-                        ))?,
-                    }
-                }),
-                on_error: Box::new(|err| {
-                    let msg = SshMsg::Error {
-                        msg: err.to_string(),
-                    };
-                    if let Ok(json_string) = serde_json::to_string(&msg) {
-                        let _ = std::io::stdout().write_all(json_string.as_bytes());
-                    }
-                }),
-            },
+                        // TODO: Support json reader that can handle json on multiple lines
+                        let mut json_string = String::new();
+                        std::io::stdin().read_line(&mut json_string)?;
+
+                        let msg: SshMsg = serde_json::from_str(&json_string)?;
+                        match msg {
+                            SshMsg::HostVerifyAnswer { answer } => Ok(answer),
+                            x => Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid response received: {:?}", x),
+                            ))?,
+                        }
+                    }),
+                    on_error: Box::new(|err| {
+                        let msg = SshMsg::Error {
+                            msg: err.to_string(),
+                        };
+                        if let Ok(json_string) = serde_json::to_string(&msg) {
+                            let _ = std::io::stdout().write_all(json_string.as_bytes());
+                        }
+                    }),
+                }
+            }
         })
         .await?;
 
