@@ -217,7 +217,7 @@ impl Session {
                         break;
                     }
                     Err(x) => {
-                        error!("{}", x);
+                        error!("Failed to receive response from server: {}", x);
                         break;
                     }
                 }

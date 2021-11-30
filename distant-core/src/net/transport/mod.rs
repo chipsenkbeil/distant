@@ -25,7 +25,25 @@ pub use unix::*;
 pub enum TransportError {
     CryptoError(SecretKeyError),
     IoError(io::Error),
-    SerializeError(serde_cbor::Error),
+    SerializeError(TransportSerializeError),
+}
+
+impl From<flexbuffers::SerializationError> for TransportError {
+    fn from(err: flexbuffers::SerializationError) -> Self {
+        Self::SerializeError(TransportSerializeError::from(err))
+    }
+}
+
+impl From<flexbuffers::DeserializationError> for TransportError {
+    fn from(err: flexbuffers::DeserializationError) -> Self {
+        Self::SerializeError(TransportSerializeError::from(err))
+    }
+}
+
+#[derive(Debug, Display, Error, From)]
+pub enum TransportSerializeError {
+    Serialize(flexbuffers::SerializationError),
+    Deserialize(flexbuffers::DeserializationError),
 }
 
 /// Interface representing a two-way data stream
@@ -63,7 +81,7 @@ where
     pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        let data = serde_cbor::to_vec(&data)?;
+        let data = flexbuffers::to_vec(&data)?;
 
         // Use underlying codec to send data (may encrypt, sign, etc.)
         self.0.send(&data).await.map_err(TransportError::from)
@@ -77,7 +95,7 @@ where
             let data = data?;
 
             // Deserialize byte stream into our expected type
-            let data = serde_cbor::from_slice(&data)?;
+            let data = flexbuffers::from_slice(&data)?;
             Ok(Some(data))
         } else {
             Ok(None)
@@ -153,7 +171,7 @@ where
     pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        let data = serde_cbor::to_vec(&data)?;
+        let data = flexbuffers::to_vec(&data)?;
 
         // Use underlying codec to send data (may encrypt, sign, etc.)
         self.0.send(&data).await.map_err(TransportError::from)
@@ -179,7 +197,7 @@ where
             let data = data?;
 
             // Deserialize byte stream into our expected type
-            let data = serde_cbor::from_slice(&data)?;
+            let data = flexbuffers::from_slice(&data)?;
             Ok(Some(data))
         } else {
             Ok(None)
@@ -220,7 +238,7 @@ mod tests {
             value: 123,
         };
 
-        let bytes = serde_cbor::to_vec(&data).unwrap();
+        let bytes = flexbuffers::to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
         frame.extend(len.iter().copied());
@@ -253,7 +271,7 @@ mod tests {
         struct OtherTestData(usize);
 
         let data = OtherTestData(123);
-        let bytes = serde_cbor::to_vec(&data).unwrap();
+        let bytes = flexbuffers::to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
         frame.extend(len.iter().copied());
@@ -277,7 +295,7 @@ mod tests {
             value: 123,
         };
 
-        let bytes = serde_cbor::to_vec(&data).unwrap();
+        let bytes = flexbuffers::to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
         frame.extend(len.iter().copied());
@@ -314,7 +332,7 @@ mod tests {
             struct OtherTestData(usize);
 
             let data = OtherTestData(123);
-            let bytes = serde_cbor::to_vec(&data).unwrap();
+            let bytes = flexbuffers::to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
             frame.extend(len.iter().copied());
@@ -339,7 +357,7 @@ mod tests {
                 value: 123,
             };
 
-            let bytes = serde_cbor::to_vec(&data).unwrap();
+            let bytes = flexbuffers::to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
             frame.extend(len.iter().copied());
@@ -365,7 +383,7 @@ mod tests {
                 value: 123,
             };
 
-            let bytes = serde_cbor::to_vec(&data).unwrap();
+            let bytes = flexbuffers::to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
             frame.extend(len.iter().copied());

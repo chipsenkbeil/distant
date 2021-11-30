@@ -391,15 +391,47 @@ pub struct Metadata {
 
     /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
     /// can be optional as certain systems don't support this
+    #[serde(serialize_with = "serialize_u128_option")]
+    #[serde(deserialize_with = "deserialize_u128_option")]
     pub accessed: Option<u128>,
 
     /// Represents when (in milliseconds) the file/directory/symlink was created;
     /// can be optional as certain systems don't support this
+    #[serde(serialize_with = "serialize_u128_option")]
+    #[serde(deserialize_with = "deserialize_u128_option")]
     pub created: Option<u128>,
 
     /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
     /// can be optional as certain systems don't support this
+    #[serde(serialize_with = "serialize_u128_option")]
+    #[serde(deserialize_with = "deserialize_u128_option")]
     pub modified: Option<u128>,
+}
+
+pub(crate) fn deserialize_u128_option<'de, D>(deserializer: D) -> Result<Option<u128>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        Some(s) => match s.parse::<u128>() {
+            Ok(value) => Ok(Some(value)),
+            Err(error) => Err(serde::de::Error::custom(format!(
+                "Cannot convert to u128 with error: {:?}",
+                error
+            ))),
+        },
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn serialize_u128_option<S: serde::Serializer>(
+    val: &Option<u128>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    match val {
+        Some(v) => format!("{}", *v).serialize(s),
+        None => s.serialize_unit(),
+    }
 }
 
 /// Represents information about a system

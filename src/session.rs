@@ -74,7 +74,7 @@ async fn process_mailbox(mut mailbox: Mailbox, format: Format, exit: oneshot::Re
             match ResponseOut::new(format, res) {
                 Ok(out) => out.print(),
                 Err(x) => {
-                    error!("{}", x);
+                    error!("Repsonse out failed: {}", x);
                     break;
                 }
             }
@@ -132,7 +132,7 @@ async fn process_outgoing_requests<F>(
                                         tokio::spawn(process_mailbox(mailbox, format, rx));
                                     }
                                     Err(x) => {
-                                        error!("{}", x);
+                                        error!("Map line response out failed: {}", x);
                                     }
                                 }
                             }
