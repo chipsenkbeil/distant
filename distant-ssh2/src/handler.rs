@@ -548,7 +548,7 @@ async fn exists(session: WezSession, path: PathBuf) -> io::Result<Outgoing> {
     // does not exist
     let exists = session.sftp().symlink_metadata(path).compat().await.is_ok();
 
-    Ok(Outgoing::from(ResponseData::Exists(exists)))
+    Ok(Outgoing::from(ResponseData::Exists { value: exists }))
 }
 
 async fn metadata(

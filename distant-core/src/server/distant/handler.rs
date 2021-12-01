@@ -366,9 +366,9 @@ async fn exists(path: PathBuf) -> Result<Outgoing, ServerError> {
     // Following experimental `std::fs::try_exists`, which checks the error kind of the
     // metadata lookup to see if it is not found and filters accordingly
     Ok(match tokio::fs::metadata(path.as_path()).await {
-        Ok(_) => Outgoing::from(ResponseData::Exists(true)),
+        Ok(_) => Outgoing::from(ResponseData::Exists { value: true }),
         Err(x) if x.kind() == io::ErrorKind::NotFound => {
-            Outgoing::from(ResponseData::Exists(false))
+            Outgoing::from(ResponseData::Exists { value: false })
         }
         Err(x) => return Err(ServerError::from(x)),
     })

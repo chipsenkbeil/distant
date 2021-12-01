@@ -250,7 +250,7 @@ impl SessionChannelExt for SessionChannel {
             tenant,
             RequestData::Exists { path: path.into() },
             |data| match data {
-                ResponseData::Exists(x) => Ok(x),
+                ResponseData::Exists { value } => Ok(value),
                 ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
                 _ => Err(SessionChannelExtError::MismatchedResponse),
             }

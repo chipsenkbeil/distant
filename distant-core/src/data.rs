@@ -322,7 +322,7 @@ pub enum ResponseData {
     },
 
     /// Response to checking if a path exists
-    Exists(bool),
+    Exists { value: bool },
 
     /// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
     Metadata(Metadata),

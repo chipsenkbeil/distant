@@ -63,7 +63,7 @@ fn should_support_json_true_if_exists(mut action_cmd: Command) {
         .stderr("");
 
     let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(res.payload[0], ResponseData::Exists(true));
+    assert_eq!(res.payload[0], ResponseData::Exists { value: true });
 }
 
 #[rstest]
@@ -91,5 +91,5 @@ fn should_support_json_false_if_not_exists(mut action_cmd: Command) {
         .stderr("");
 
     let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(res.payload[0], ResponseData::Exists(false));
+    assert_eq!(res.payload[0], ResponseData::Exists { value: false });
 }
