@@ -14,8 +14,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 bytes = "1.1.0"
 chacha20poly1305 = "0.9.0"
+ciborium = "0.2.0"
 derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error", "is_variant"] }
-flexbuffers = "2.0.0"
 futures = "0.3.16"
 hex = "0.4.3"
 log = "0.4.14"

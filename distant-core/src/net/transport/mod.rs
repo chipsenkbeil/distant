@@ -22,28 +22,29 @@ mod unix;
 pub use unix::*;
 
 #[derive(Debug, Display, Error, From)]
-pub enum TransportError {
-    CryptoError(SecretKeyError),
-    IoError(io::Error),
-    SerializeError(TransportSerializeError),
+pub struct SerializeError(#[error(not(source))] String);
+
+#[derive(Debug, Display, Error, From)]
+pub struct DeserializeError(#[error(not(source))] String);
+
+fn serialize_to_vec<T: Serialize>(value: &T) -> Result<Vec<u8>, SerializeError> {
+    let mut v = Vec::new();
+
+    let _ = ciborium::ser::into_writer(value, &mut v).map_err(|x| SerializeError(x.to_string()))?;
+
+    Ok(v)
 }
 
-impl From<flexbuffers::SerializationError> for TransportError {
-    fn from(err: flexbuffers::SerializationError) -> Self {
-        Self::SerializeError(TransportSerializeError::from(err))
-    }
-}
-
-impl From<flexbuffers::DeserializationError> for TransportError {
-    fn from(err: flexbuffers::DeserializationError) -> Self {
-        Self::SerializeError(TransportSerializeError::from(err))
-    }
+fn deserialize_from_slice<T: DeserializeOwned>(slice: &[u8]) -> Result<T, DeserializeError> {
+    ciborium::de::from_reader(slice).map_err(|x| DeserializeError(x.to_string()))
 }
 
 #[derive(Debug, Display, Error, From)]
-pub enum TransportSerializeError {
-    Serialize(flexbuffers::SerializationError),
-    Deserialize(flexbuffers::DeserializationError),
+pub enum TransportError {
+    CryptoError(SecretKeyError),
+    IoError(io::Error),
+    SerializeError(SerializeError),
+    DeserializeError(DeserializeError),
 }
 
 /// Interface representing a two-way data stream
@@ -81,7 +82,7 @@ where
     pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        let data = flexbuffers::to_vec(&data)?;
+        let data = serialize_to_vec(&data)?;
 
         // Use underlying codec to send data (may encrypt, sign, etc.)
         self.0.send(&data).await.map_err(TransportError::from)
@@ -95,7 +96,7 @@ where
             let data = data?;
 
             // Deserialize byte stream into our expected type
-            let data = flexbuffers::from_slice(&data)?;
+            let data = deserialize_from_slice(&data)?;
             Ok(Some(data))
         } else {
             Ok(None)
@@ -171,7 +172,7 @@ where
     pub async fn send<D: Serialize>(&mut self, data: D) -> Result<(), TransportError> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
-        let data = flexbuffers::to_vec(&data)?;
+        let data = serialize_to_vec(&data)?;
 
         // Use underlying codec to send data (may encrypt, sign, etc.)
         self.0.send(&data).await.map_err(TransportError::from)
@@ -197,7 +198,7 @@ where
             let data = data?;
 
             // Deserialize byte stream into our expected type
-            let data = flexbuffers::from_slice(&data)?;
+            let data = deserialize_from_slice(&data)?;
             Ok(Some(data))
         } else {
             Ok(None)
@@ -238,7 +239,7 @@ mod tests {
             value: 123,
         };
 
-        let bytes = flexbuffers::to_vec(&data).unwrap();
+        let bytes = serialize_to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
         frame.extend(len.iter().copied());
@@ -271,7 +272,7 @@ mod tests {
         struct OtherTestData(usize);
 
         let data = OtherTestData(123);
-        let bytes = flexbuffers::to_vec(&data).unwrap();
+        let bytes = serialize_to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
         frame.extend(len.iter().copied());
@@ -295,7 +296,7 @@ mod tests {
             value: 123,
         };
 
-        let bytes = flexbuffers::to_vec(&data).unwrap();
+        let bytes = serialize_to_vec(&data).unwrap();
         let len = (bytes.len() as u64).to_be_bytes();
         let mut frame = Vec::new();
         frame.extend(len.iter().copied());
@@ -332,7 +333,7 @@ mod tests {
             struct OtherTestData(usize);
 
             let data = OtherTestData(123);
-            let bytes = flexbuffers::to_vec(&data).unwrap();
+            let bytes = serialize_to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
             frame.extend(len.iter().copied());
@@ -357,7 +358,7 @@ mod tests {
                 value: 123,
             };
 
-            let bytes = flexbuffers::to_vec(&data).unwrap();
+            let bytes = serialize_to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
             frame.extend(len.iter().copied());
@@ -383,7 +384,7 @@ mod tests {
                 value: 123,
             };
 
-            let bytes = flexbuffers::to_vec(&data).unwrap();
+            let bytes = serialize_to_vec(&data).unwrap();
             let len = (bytes.len() as u64).to_be_bytes();
             let mut frame = Vec::new();
             frame.extend(len.iter().copied());
