@@ -281,7 +281,7 @@ mod tests {
         tx.send(frame).await.unwrap();
         let result = transport.receive::<TestData>().await;
         match result {
-            Err(TransportError::SerializeError(_)) => {}
+            Err(TransportError::DeserializeError(_)) => {}
             x => panic!("Unexpected result: {:?}", x),
         }
     }
@@ -342,7 +342,7 @@ mod tests {
             tx.send(frame).await.unwrap();
             let result = rh.receive::<TestData>().await;
             match result {
-                Err(TransportError::SerializeError(_)) => {}
+                Err(TransportError::DeserializeError(_)) => {}
                 x => panic!("Unexpected result: {:?}", x),
             }
         }

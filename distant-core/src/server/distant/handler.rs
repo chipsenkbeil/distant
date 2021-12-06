@@ -1985,7 +1985,7 @@ mod tests {
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert_eq!(res.payload[0], ResponseData::Exists(true));
+        assert_eq!(res.payload[0], ResponseData::Exists { value: true });
     }
 
     #[tokio::test]
@@ -2005,7 +2005,7 @@ mod tests {
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert_eq!(res.payload[0], ResponseData::Exists(false));
+        assert_eq!(res.payload[0], ResponseData::Exists { value: false });
     }
 
     #[tokio::test]
