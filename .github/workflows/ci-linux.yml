@@ -28,45 +28,22 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
-      - uses: dorny/paths-filter@v2
-        id: changes
-        with:
-          base: ${{ github.ref }}
-          filters: |
-            cli:
-              - 'src/**'
-              - 'Cargo.*'
-            core:
-              - 'distant-core/**'
-            ssh2:
-              - 'distant-ssh2/**'
-            lua:
-              - 'distant-lua/**'
-              - 'distant-lua-tests/**'
       - name: Run core tests (default features)
         run: cargo test --verbose -p distant-core
-        if: steps.changes.outputs.core == 'true'
       - name: Run core tests (all features)
         run: cargo test --verbose --all-features -p distant-core
-        if: steps.changes.outputs.core == 'true'
       - name: Ensure /run/sshd exists on Unix
         run: mkdir -p /run/sshd
-        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (default features)
         run: cargo test --verbose -p distant-ssh2
-        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run ssh2 tests (all features)
         run: cargo test --verbose --all-features -p distant-ssh2
-        if: steps.changes.outputs.ssh2 == 'true'
       - name: Run CLI tests
         run: cargo test --verbose
         shell: bash
-        if: steps.changes.outputs.cli == 'true'
       - name: Run CLI tests (no default features)
         run: cargo test --verbose --no-default-features
         shell: bash
-        if: steps.changes.outputs.cli == 'true'
       - name: Run Lua tests
         run: (cd distant-lua && cargo build) && (cd distant-lua-tests && cargo test --verbose)
         shell: bash
-        if: steps.changes.outputs.lua == 'true'

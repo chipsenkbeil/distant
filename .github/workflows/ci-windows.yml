@@ -29,45 +29,23 @@ jobs:
       - name: Check Cargo availability
         run: cargo --version
       - uses: Vampire/setup-wsl@v1
-      - uses: dorny/paths-filter@v2
-        id: changes
-        with:
-          base: ${{ github.ref }}
-          filters: |
-            cli:
-              - 'src/**'
-              - 'Cargo.*'
-            core:
-              - 'distant-core/**'
-            ssh2:
-              - 'distant-ssh2/**'
-            lua:
-              - 'distant-lua/**'
-              - 'distant-lua-tests/**'
       - name: Run distant-core tests (default features)
         run: cargo test --verbose -p distant-core
-        if: steps.changes.outputs.core == 'true'
       - name: Run distant-core tests (all features)
         run: cargo test --verbose --all-features -p distant-core
-        if: steps.changes.outputs.core == 'true'
       - name: Build distant-ssh2 (default features)
         run: cargo build --verbose -p distant-ssh2
-        if: steps.changes.outputs.ssh2 == 'true'
       - name: Build distant-ssh2 (all features)
         run: cargo build --verbose --all-features -p distant-ssh2
-        if: steps.changes.outputs.ssh2 == 'true'
       - name: Build CLI
         run: cargo build --verbose
         shell: bash
-        if: steps.changes.outputs.cli == 'true'
       - name: Build CLI (no default features)
         run: cargo build --verbose --no-default-features
         shell: bash
-        if: steps.changes.outputs.cli == 'true'
       - uses: xpol/setup-lua@v0.3
         with:
           lua-version: "5.1.5"
-        if: steps.changes.outputs.lua == 'true'
       - name: Build Lua (Lua 5.1)
         run: |
           cd ${{ github.workspace }}\distant-lua
@@ -77,4 +55,3 @@ jobs:
           LUA_INC: ${{ github.workspace }}\.lua\include
           LUA_LIB: ${{ github.workspace }}\.lua\lib
           LUA_LIB_NAME: lua51
-        if: steps.changes.outputs.lua == 'true'
