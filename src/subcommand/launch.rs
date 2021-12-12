@@ -260,10 +260,12 @@ async fn native_spawn_remote_server(
                         let msg: SshMsg = rx.recv_blocking()?;
                         match msg {
                             SshMsg::AuthenticateAnswer { answers } => Ok(answers),
-                            x => Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                format!("Invalid response received: {:?}", x),
-                            ))?,
+                            x => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    format!("Invalid response received: {:?}", x),
+                                ))
+                            }
                         }
                     }),
                     on_banner: Box::new(move |banner| {
@@ -279,10 +281,12 @@ async fn native_spawn_remote_server(
                         let msg: SshMsg = rx_2.recv_blocking()?;
                         match msg {
                             SshMsg::HostVerifyAnswer { answer } => Ok(answer),
-                            x => Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                format!("Invalid response received: {:?}", x),
-                            ))?,
+                            x => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    format!("Invalid response received: {:?}", x),
+                                ))
+                            }
                         }
                     }),
                     on_error: Box::new(move |err| {

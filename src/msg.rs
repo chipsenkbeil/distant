@@ -6,10 +6,13 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+type SendFn = Arc<Mutex<Box<dyn FnMut(&[u8]) -> io::Result<()>>>>;
+type RecvFn = Arc<Mutex<Box<dyn FnMut(&mut String) -> io::Result<()> + Send>>>;
+
 /// Sends JSON messages over stdout
 #[derive(Clone)]
 pub struct MsgSender {
-    send: Arc<Mutex<Box<dyn FnMut(&[u8]) -> io::Result<()>>>>,
+    send: SendFn,
 }
 
 impl<F> From<F> for MsgSender
@@ -45,7 +48,7 @@ impl MsgSender {
 /// Receives JSON messages over stdin
 #[derive(Clone)]
 pub struct MsgReceiver {
-    recv: Arc<Mutex<Box<dyn FnMut(&mut String) -> io::Result<()> + Send>>>,
+    recv: RecvFn,
 }
 
 impl<F> From<F> for MsgReceiver
@@ -117,7 +120,7 @@ impl MsgReceiver {
             match serde_json::from_str(&input) {
                 Ok(data) => break data,
                 Err(x) if x.is_eof() => continue,
-                Err(x) => Err(x)?,
+                Err(x) => return Err(x.into()),
             }
         };
 
