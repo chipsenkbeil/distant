@@ -69,6 +69,7 @@ impl MsgReceiver {
     }
 
     /// Spawns a thread to continually poll receiver for new input of the given type
+    #[allow(dead_code)]
     pub fn into_rx<T>(self) -> mpsc::Receiver<io::Result<T>>
     where
         T: DeserializeOwned + Send + 'static,
