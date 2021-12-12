@@ -1,5 +1,6 @@
 use crate::{
     exit::{ExitCode, ExitCodeError},
+    msg::{MsgReceiver, MsgSender},
     opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
     session::CliSession,
     utils,
@@ -185,10 +186,138 @@ async fn socket_loop(
         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
 }
 
-/// Spawns a remote server that listens for requests
+async fn spawn_remote_server(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<SessionInfo, Error> {
+    #[cfg(feature = "ssh2")]
+    if cmd.external_ssh {
+        external_spawn_remote_server(cmd, opt).await
+    } else {
+        native_spawn_remote_server(cmd, opt).await
+    }
+
+    #[cfg(not(feature = "ssh2"))]
+    external_spawn_remote_server(cmd, opt).await
+}
+
+/// Spawns a remote server using native ssh library that listens for requests
 ///
 /// Returns the session associated with the server
-async fn spawn_remote_server(cmd: LaunchSubcommand, _opt: CommonOpt) -> Result<SessionInfo, Error> {
+#[cfg(feature = "ssh2")]
+async fn native_spawn_remote_server(
+    cmd: LaunchSubcommand,
+    _opt: CommonOpt,
+) -> Result<SessionInfo, Error> {
+    trace!("native_spawn_remote_server({:?})", cmd);
+    use distant_ssh2::{
+        IntoDistantSessionOpts, Ssh2AuthEvent, Ssh2AuthHandler, Ssh2Session, Ssh2SessionOpts,
+    };
+
+    let host = cmd.host;
+
+    // Build our options based on cli input
+    let mut opts = Ssh2SessionOpts::default();
+    if let Some(path) = cmd.identity_file {
+        opts.identity_files.push(path);
+    }
+    opts.port = Some(cmd.port);
+    opts.user = Some(cmd.username);
+
+    debug!("Connecting to {} {:#?}", host, opts);
+    let mut ssh_session = Ssh2Session::connect(host.as_str(), opts)?;
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    #[serde(tag = "type")]
+    enum SshMsg {
+        #[serde(rename = "ssh_authenticate")]
+        Authenticate(Ssh2AuthEvent),
+        #[serde(rename = "ssh_authenticate_answer")]
+        AuthenticateAnswer { answers: Vec<String> },
+        #[serde(rename = "ssh_banner")]
+        Banner { text: String },
+        #[serde(rename = "ssh_host_verify")]
+        HostVerify { host: String },
+        #[serde(rename = "ssh_host_verify_answer")]
+        HostVerifyAnswer { answer: bool },
+        #[serde(rename = "ssh_error")]
+        Error { msg: String },
+    }
+
+    debug!("Authenticating against {}", host);
+    ssh_session
+        .authenticate(match cmd.format {
+            Format::Shell => Ssh2AuthHandler::default(),
+            Format::Json => {
+                let tx = MsgSender::from_stdout();
+                let tx_2 = tx.clone();
+                let tx_3 = tx.clone();
+                let tx_4 = tx.clone();
+                let rx = MsgReceiver::from_stdin();
+                let rx_2 = rx.clone();
+
+                Ssh2AuthHandler {
+                    on_authenticate: Box::new(move |ev| {
+                        let _ = tx.send_blocking(&SshMsg::Authenticate(ev));
+
+                        let msg: SshMsg = rx.recv_blocking()?;
+                        match msg {
+                            SshMsg::AuthenticateAnswer { answers } => Ok(answers),
+                            x => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    format!("Invalid response received: {:?}", x),
+                                ))
+                            }
+                        }
+                    }),
+                    on_banner: Box::new(move |banner| {
+                        let _ = tx_2.send_blocking(&SshMsg::Banner {
+                            text: banner.to_string(),
+                        });
+                    }),
+                    on_host_verify: Box::new(move |host| {
+                        let _ = tx_3.send_blocking(&SshMsg::HostVerify {
+                            host: host.to_string(),
+                        })?;
+
+                        let msg: SshMsg = rx_2.recv_blocking()?;
+                        match msg {
+                            SshMsg::HostVerifyAnswer { answer } => Ok(answer),
+                            x => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    format!("Invalid response received: {:?}", x),
+                                ))
+                            }
+                        }
+                    }),
+                    on_error: Box::new(move |err| {
+                        let _ = tx_4.send_blocking(&SshMsg::Error {
+                            msg: err.to_string(),
+                        });
+                    }),
+                }
+            }
+        })
+        .await?;
+
+    debug!("Mapping session for {}", host);
+    let session_info = ssh_session
+        .into_distant_session_info(IntoDistantSessionOpts {
+            binary: cmd.distant,
+            args: cmd.extra_server_args.unwrap_or_default(),
+            ..Default::default()
+        })
+        .await?;
+
+    Ok(session_info)
+}
+
+/// Spawns a remote server using external ssh command that listens for requests
+///
+/// Returns the session associated with the server
+async fn external_spawn_remote_server(
+    cmd: LaunchSubcommand,
+    _opt: CommonOpt,
+) -> Result<SessionInfo, Error> {
     let distant_command = format!(
         "{} listen --host {} {}",
         cmd.distant,

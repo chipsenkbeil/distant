@@ -580,7 +580,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -617,7 +617,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_a.to_string(),
@@ -636,7 +636,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_b.to_string(),
@@ -671,7 +671,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", msg, extra),
@@ -715,7 +715,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", msg_1, msg_2),
@@ -750,7 +750,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -781,7 +781,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -818,7 +818,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_a.to_string(),
@@ -837,7 +837,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_b.to_string(),
@@ -872,7 +872,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", msg, extra),
@@ -916,7 +916,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", msg_1, msg_2),
@@ -951,7 +951,7 @@ mod tests {
         transport
             .send(Response::new(
                 "test-tenant",
-                proc.origin_id,
+                proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({

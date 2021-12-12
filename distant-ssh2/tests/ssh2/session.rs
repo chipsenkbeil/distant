@@ -1123,7 +1123,7 @@ async fn exists_should_send_true_if_path_exists(#[future] session: Session) {
 
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
-    assert_eq!(res.payload[0], ResponseData::Exists(true));
+    assert_eq!(res.payload[0], ResponseData::Exists { value: true });
 }
 
 #[rstest]
@@ -1142,7 +1142,7 @@ async fn exists_should_send_false_if_path_does_not_exist(#[future] session: Sess
 
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
-    assert_eq!(res.payload[0], ResponseData::Exists(false));
+    assert_eq!(res.payload[0], ResponseData::Exists { value: false });
 }
 
 #[rstest]

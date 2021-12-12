@@ -357,6 +357,8 @@ impl Ssh2Session {
             ));
         }
 
+        let timeout = opts.timeout;
+
         // Determine distinct candidate ip addresses for connecting
         //
         // NOTE: This breaks when the host is an alias defined within an ssh config; however,
@@ -384,6 +386,41 @@ impl Ssh2Session {
                 format!("Unable to resolve {}:{}", self.host, self.port),
             ));
         }
+
+        let info = self.into_distant_session_info(opts).await?;
+        let key = info.key;
+        let codec = XChaCha20Poly1305Codec::from(key);
+
+        // Try each IP address with the same port to see if one works
+        let mut err = None;
+        for ip in candidate_ips {
+            let addr = SocketAddr::new(ip, info.port);
+            debug!("Attempting to connect to distant server @ {}", addr);
+            match Session::tcp_connect_timeout(addr, codec.clone(), timeout).await {
+                Ok(session) => return Ok(session),
+                Err(x) => err = Some(x),
+            }
+        }
+
+        // If all failed, return the last error we got
+        Err(err.expect("Err set above"))
+    }
+
+    /// Consume [`Ssh2Session`] and produce a distant [`SessionInfo`] representing a remote
+    /// distant server that is spawned using the ssh session
+    pub async fn into_distant_session_info(
+        self,
+        opts: IntoDistantSessionOpts,
+    ) -> io::Result<SessionInfo> {
+        // Exit early if not authenticated as this is a requirement
+        if !self.authenticated {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Not authenticated",
+            ));
+        }
+
+        let host = self.host().to_string();
 
         // Turn our ssh connection into a client session so we can use it to spawn our server
         let mut session = self.into_ssh_client_session().await?;
@@ -448,24 +485,9 @@ impl Ssh2Session {
                 .lines()
                 .find_map(|line| line.parse::<SessionInfo>().ok());
             match maybe_info {
-                Some(info) => {
-                    let key = info.key;
-                    let codec = XChaCha20Poly1305Codec::from(key);
-
-                    // Try each IP address with the same port to see if one works
-                    let mut err = None;
-                    for ip in candidate_ips {
-                        let addr = SocketAddr::new(ip, info.port);
-                        debug!("Attempting to connect to distant server @ {}", addr);
-                        match Session::tcp_connect_timeout(addr, codec.clone(), opts.timeout).await
-                        {
-                            Ok(session) => return Ok(session),
-                            Err(x) => err = Some(x),
-                        }
-                    }
-
-                    // If all failed, return the last error we got
-                    Err(err.expect("Err set above"))
+                Some(mut info) => {
+                    info.host = host;
+                    Ok(info)
                 }
                 None => Err(io::Error::new(
                     io::ErrorKind::InvalidData,

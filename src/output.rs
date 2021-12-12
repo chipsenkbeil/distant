@@ -102,7 +102,7 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         ),
-        ResponseData::Exists(exists) => {
+        ResponseData::Exists { value: exists } => {
             if exists {
                 ResponseOut::StdoutLine("true".to_string())
             } else {
