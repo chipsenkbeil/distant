@@ -44,7 +44,7 @@ pub struct RemoteProcess {
     id: usize,
 
     /// Id used to map back to mailbox
-    pub(crate) origin_id: usize,
+    origin_id: usize,
 
     // Sender to abort req task
     abort_req_task_tx: mpsc::Sender<()>,
@@ -192,6 +192,11 @@ impl RemoteProcess {
     /// Returns the id of the running process
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    /// Returns the id of the request that spawned this process
+    pub fn origin_id(&self) -> usize {
+        self.origin_id
     }
 
     /// Checks if the process has completed, returning the exit status if it has, without
