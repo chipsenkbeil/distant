@@ -1,6 +1,9 @@
 use crate::{
     client::{RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel},
-    data::{DirEntry, Error as Failure, Metadata, Request, RequestData, ResponseData, SystemInfo},
+    data::{
+        DirEntry, Error as Failure, Metadata, PtySize, Request, RequestData, ResponseData,
+        SystemInfo,
+    },
     net::TransportError,
 };
 use derive_more::{Display, Error, From};
@@ -122,6 +125,7 @@ pub trait SessionChannelExt {
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
         detached: bool,
+        pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError>;
 
     /// Spawns an LSP process on the remote machine
@@ -131,6 +135,7 @@ pub trait SessionChannelExt {
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
         detached: bool,
+        pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError>;
 
     /// Retrieves information about the remote system
@@ -375,13 +380,14 @@ impl SessionChannelExt for SessionChannel {
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
         detached: bool,
+        pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
         let args = args.into_iter().map(Into::into).collect();
-        Box::pin(
-            async move { RemoteProcess::spawn(tenant, self.clone(), cmd, args, detached).await },
-        )
+        Box::pin(async move {
+            RemoteProcess::spawn(tenant, self.clone(), cmd, args, detached, pty).await
+        })
     }
 
     fn spawn_lsp(
@@ -390,13 +396,14 @@ impl SessionChannelExt for SessionChannel {
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
         detached: bool,
+        pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
         let args = args.into_iter().map(Into::into).collect();
-        Box::pin(
-            async move { RemoteLspProcess::spawn(tenant, self.clone(), cmd, args, detached).await },
-        )
+        Box::pin(async move {
+            RemoteLspProcess::spawn(tenant, self.clone(), cmd, args, detached, pty).await
+        })
     }
 
     fn system_info(&mut self, tenant: impl Into<String>) -> AsyncReturn<'_, SystemInfo> {

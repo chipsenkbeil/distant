@@ -1352,7 +1352,7 @@ async fn proc_run_should_send_error_over_stderr_on_failure(#[future] session: Se
     let mut session = session.await;
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             args: Vec::new(),
             detached: false,
@@ -1367,7 +1367,7 @@ async fn proc_run_should_send_error_over_stderr_on_failure(#[future] session: Se
     let res = mailbox.next().await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     let proc_id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -1398,7 +1398,7 @@ async fn proc_run_should_send_back_proc_start_on_success(#[future] session: Sess
     let mut session = session.await;
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
@@ -1408,7 +1408,7 @@ async fn proc_run_should_send_back_proc_start_on_success(#[future] session: Sess
     let res = session.send(req).await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     assert!(
-        matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+        matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
         "Unexpected response: {:?}",
         res.payload[0]
     );
@@ -1424,7 +1424,7 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] 
     // Run a program that echoes to stdout
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
@@ -1439,7 +1439,7 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] 
     let res = mailbox.next().await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     assert!(
-        matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+        matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
         "Unexpected response: {:?}",
         res.payload[0]
     );
@@ -1488,7 +1488,7 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] 
     // Run a program that echoes to stderr
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![
                 ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
@@ -1503,7 +1503,7 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] 
     let res = mailbox.next().await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     assert!(
-        matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+        matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
         "Unexpected response: {:?}",
         res.payload[0]
     );
@@ -1552,7 +1552,7 @@ async fn proc_run_should_clear_process_from_state_when_done(#[future] session: S
     // Run a program that ends after a little bit
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
             detached: false,
@@ -1563,7 +1563,7 @@ async fn proc_run_should_clear_process_from_state_when_done(#[future] session: S
     let res = mailbox.next().await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     let id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -1600,7 +1600,7 @@ async fn proc_run_should_clear_process_from_state_when_killed(#[future] session:
     // Run a program that ends slowly
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
             detached: false,
@@ -1612,7 +1612,7 @@ async fn proc_run_should_clear_process_from_state_when_killed(#[future] session:
     let res = mailbox.next().await.unwrap();
     assert_eq!(res.payload.len(), 1, "Wrong payload size");
     let id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -1674,7 +1674,7 @@ async fn proc_kill_should_send_ok_and_done_responses_on_success(#[future] sessio
     // First, run a program that sits around (sleep for 1 second)
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
             detached: false,
@@ -1688,7 +1688,7 @@ async fn proc_kill_should_send_ok_and_done_responses_on_success(#[future] sessio
 
     // Second, grab the id of the started process
     let id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -1749,7 +1749,7 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
     // First, run a program that listens for stdin
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
@@ -1762,7 +1762,7 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
 
     // Second, grab the id of the started process
     let id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -1798,7 +1798,7 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
     let mut session = session.await;
     let req = Request::new(
         "test-tenant",
-        vec![RequestData::ProcRun {
+        vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
             detached: false,
@@ -1810,7 +1810,7 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
 
     // Grab the id of the started process
     let id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 

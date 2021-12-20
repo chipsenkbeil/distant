@@ -1,7 +1,7 @@
 use crate::{
     constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
     data::{
-        self, DirEntry, FileType, Metadata, Request, RequestData, Response, ResponseData,
+        self, DirEntry, FileType, Metadata, PtySize, Request, RequestData, Response, ResponseData,
         RunningProcess, SystemInfo,
     },
     server::distant::state::{Process, State},
@@ -98,13 +98,17 @@ pub(super) async fn process(
                 canonicalize,
                 resolve_file_type,
             } => metadata(path, canonicalize, resolve_file_type).await,
-            RequestData::ProcRun {
+            RequestData::ProcSpawn {
                 cmd,
                 args,
                 detached,
-            } => proc_run(conn_id, state, reply, cmd, args, detached).await,
+                pty,
+            } => proc_spawn(conn_id, state, reply, cmd, args, detached, pty).await,
             RequestData::ProcKill { id } => proc_kill(conn_id, state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(conn_id, state, id, data).await,
+            RequestData::ProcResizePty { id, size } => {
+                proc_resize_pty(conn_id, state, id, size).await
+            }
             RequestData::ProcList {} => proc_list(state).await,
             RequestData::SystemInfo {} => system_info().await,
         }
@@ -423,13 +427,14 @@ async fn metadata(
     })))
 }
 
-async fn proc_run<F>(
+async fn proc_spawn<F>(
     conn_id: usize,
     state: HState,
     reply: F,
     cmd: String,
     args: Vec<String>,
     detached: bool,
+    pty: Option<PtySize>,
 ) -> Result<Outgoing, ServerError>
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
@@ -452,7 +457,7 @@ where
     state
         .lock()
         .await
-        .push_process(conn_id, Process::new(id, cmd, args, detached));
+        .push_process(conn_id, Process::new(id, cmd, args, detached, pty));
 
     let post_hook = Box::new(move |mut state_lock: MutexGuard<'_, State>| {
         // Spawn a task that sends stdout as a response
@@ -462,29 +467,21 @@ where
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
                 match stdout.read(&mut buf).await {
-                    Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
-                        Ok(data) => {
-                            let payload = vec![ResponseData::ProcStdout { id, data }];
-                            if !reply_2(payload).await {
-                                error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
-                                break;
-                            }
-
-                            // Pause to allow buffer to fill up a little bit, avoiding
-                            // spamming with a lot of smaller responses
-                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                READ_PAUSE_MILLIS,
-                            ))
-                            .await;
-                        }
-                        Err(x) => {
-                            error!(
-                                "<Conn @ {} | Proc {}> Invalid data read from stdout pipe: {}",
-                                conn_id, id, x
-                            );
+                    Ok(n) if n > 0 => {
+                        let payload = vec![ResponseData::ProcStdout {
+                            id,
+                            data: buf[..n].to_vec(),
+                        }];
+                        if !reply_2(payload).await {
+                            error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
                             break;
                         }
-                    },
+
+                        // Pause to allow buffer to fill up a little bit, avoiding
+                        // spamming with a lot of smaller responses
+                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
+                            .await;
+                    }
                     Ok(_) => break,
                     Err(x) => {
                         error!(
@@ -504,29 +501,21 @@ where
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
                 match stderr.read(&mut buf).await {
-                    Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
-                        Ok(data) => {
-                            let payload = vec![ResponseData::ProcStderr { id, data }];
-                            if !reply_2(payload).await {
-                                error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
-                                break;
-                            }
-
-                            // Pause to allow buffer to fill up a little bit, avoiding
-                            // spamming with a lot of smaller responses
-                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                READ_PAUSE_MILLIS,
-                            ))
-                            .await;
-                        }
-                        Err(x) => {
-                            error!(
-                                "<Conn @ {} | Proc {}> Invalid data read from stdout pipe: {}",
-                                conn_id, id, x
-                            );
+                    Ok(n) if n > 0 => {
+                        let payload = vec![ResponseData::ProcStderr {
+                            id,
+                            data: buf[..n].to_vec(),
+                        }];
+                        if !reply_2(payload).await {
+                            error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
                             break;
                         }
-                    },
+
+                        // Pause to allow buffer to fill up a little bit, avoiding
+                        // spamming with a lot of smaller responses
+                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
+                            .await;
+                    }
                     Ok(_) => break,
                     Err(x) => {
                         error!(
@@ -541,10 +530,10 @@ where
 
         // Spawn a task that sends stdin to the process
         let mut stdin = child.stdin.take().unwrap();
-        let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1);
+        let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(1);
         let stdin_task = tokio::spawn(async move {
             while let Some(line) = stdin_rx.recv().await {
-                if let Err(x) = stdin.write_all(line.as_bytes()).await {
+                if let Err(x) = stdin.write_all(&line).await {
                     error!(
                         "<Conn @ {} | Proc {}> Failed to send stdin: {}",
                         conn_id, id, x
@@ -661,7 +650,7 @@ where
         conn_id, id
     );
     Ok(Outgoing {
-        data: ResponseData::ProcStart { id },
+        data: ResponseData::ProcSpawned { id },
         post_hook: Some(post_hook),
     })
 }
@@ -686,7 +675,7 @@ async fn proc_stdin(
     conn_id: usize,
     state: HState,
     id: usize,
-    data: String,
+    data: Vec<u8>,
 ) -> Result<Outgoing, ServerError> {
     if let Some(process) = state.lock().await.processes.get(&id) {
         if process.send_stdin(data).await {
@@ -703,6 +692,15 @@ async fn proc_stdin(
     )))
 }
 
+async fn proc_resize_pty(
+    conn_id: usize,
+    state: HState,
+    id: usize,
+    size: PtySize,
+) -> Result<Outgoing, ServerError> {
+    todo!();
+}
+
 async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
     Ok(Outgoing::from(ResponseData::ProcEntries {
         entries: state
@@ -714,6 +712,7 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
                 detached: p.detached,
+                pty: p.pty.clone(),
                 id: p.id,
             })
             .collect(),
@@ -2219,10 +2218,11 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
                 args: Vec::new(),
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2245,10 +2245,11 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2259,7 +2260,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+            matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2275,13 +2276,14 @@ mod tests {
         // Run a program that echoes to stdout
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
                     String::from("some stdout"),
                 ],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2292,7 +2294,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+            matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2314,7 +2316,7 @@ mod tests {
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             match &res.payload[0] {
                 ResponseData::ProcStdout { data, .. } => {
-                    assert_eq!(data, "some stdout", "Got wrong stdout");
+                    assert_eq!(data, b"some stdout", "Got wrong stdout");
                     got_stdout = true;
                 }
                 ResponseData::ProcDone { success, .. } => {
@@ -2341,13 +2343,14 @@ mod tests {
         // Run a program that echoes to stderr
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![
                     ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
                     String::from("some stderr"),
                 ],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2358,7 +2361,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::ProcStart { .. }),
+            matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2380,7 +2383,7 @@ mod tests {
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             match &res.payload[0] {
                 ResponseData::ProcStderr { data, .. } => {
-                    assert_eq!(data, "some stderr", "Got wrong stderr");
+                    assert_eq!(data, b"some stderr", "Got wrong stderr");
                     got_stderr = true;
                 }
                 ResponseData::ProcDone { success, .. } => {
@@ -2407,10 +2410,11 @@ mod tests {
         // Run a program that ends after a little bit
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2421,7 +2425,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         let id = match &res.payload[0] {
-            ResponseData::ProcStart { id } => *id,
+            ResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2450,10 +2454,11 @@ mod tests {
         // Run a program that ends slowly
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2464,7 +2469,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         let id = match &res.payload[0] {
-            ResponseData::ProcStart { id } => *id,
+            ResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2525,10 +2530,11 @@ mod tests {
         // First, run a program that sits around (sleep for 1 second)
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2541,7 +2547,7 @@ mod tests {
 
         // Second, grab the id of the started process
         let id = match &res.payload[0] {
-            ResponseData::ProcStart { id } => *id,
+            ResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2592,7 +2598,7 @@ mod tests {
             "test-tenant",
             vec![RequestData::ProcStdin {
                 id: 0xDEADBEEF,
-                data: String::from("some input"),
+                data: b"some input".to_vec(),
             }],
         );
 
@@ -2621,10 +2627,11 @@ mod tests {
         // First, run a program that listens for stdin
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcRun {
+            vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
                 detached: false,
+                pty: None,
             }],
         );
 
@@ -2637,7 +2644,7 @@ mod tests {
 
         // Second, grab the id of the started process
         let id = match &res.payload[0] {
-            ResponseData::ProcStart { id } => *id,
+            ResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2646,7 +2653,7 @@ mod tests {
             "test-tenant",
             vec![RequestData::ProcStdin {
                 id,
-                data: String::from("hello world\n"),
+                data: b"hello world\n".to_vec(),
             }],
         );
 
@@ -2672,7 +2679,7 @@ mod tests {
             match &res.payload[0] {
                 ResponseData::Ok => got_ok = true,
                 ResponseData::ProcStdout { data, .. } => {
-                    assert_eq!(data, "hello world\n", "Mirrored data didn't match");
+                    assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
                     got_stdout = true;
                 }
                 x => panic!("Unexpected response: {:?}", x),
@@ -2694,10 +2701,11 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![
-                RequestData::ProcRun {
+                RequestData::ProcSpawn {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
                     detached: false,
+                    pty: None,
                 },
                 RequestData::ProcList {},
             ],
@@ -2710,7 +2718,7 @@ mod tests {
 
         // Grab the id of the started process
         let id = match &res.payload[0] {
-            ResponseData::ProcStart { id } => *id,
+            ResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2722,6 +2730,7 @@ mod tests {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
                     detached: false,
+                    pty: None,
                     id,
                 }],
             },

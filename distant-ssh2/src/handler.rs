@@ -99,7 +99,7 @@ pub(super) async fn process(
                 canonicalize,
                 resolve_file_type,
             } => metadata(session, path, canonicalize, resolve_file_type).await,
-            RequestData::ProcRun {
+            RequestData::ProcSpawn {
                 cmd,
                 args,
                 detached,
@@ -841,7 +841,7 @@ where
         id
     );
     Ok(Outgoing {
-        data: ResponseData::ProcStart { id },
+        data: ResponseData::ProcSpawned { id },
         post_hook: Some(post_hook),
     })
 }

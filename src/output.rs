@@ -144,7 +144,7 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 .collect::<Vec<String>>()
                 .join("\n"),
         ),
-        ResponseData::ProcStart { .. } => ResponseOut::None,
+        ResponseData::ProcSpawned { .. } => ResponseOut::None,
         ResponseData::ProcStdout { data, .. } => ResponseOut::Stdout(data),
         ResponseData::ProcStderr { data, .. } => ResponseOut::Stderr(data),
         ResponseData::ProcDone { id, success, code } => {

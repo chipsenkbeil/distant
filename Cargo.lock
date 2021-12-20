@@ -491,6 +491,7 @@ dependencies = [
  "indoc",
  "log",
  "once_cell",
+ "portable-pty 0.7.0",
  "predicates",
  "rand",
  "serde",
@@ -1243,6 +1244,24 @@ name = "portable-pty"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b8383c3934bd6da733223ad1b22f8102c46e8bbced07800b2346cc34326ff83"
+dependencies = [
+ "anyhow",
+ "bitflags",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "serial",
+ "shared_library",
+ "shell-words",
+ "winapi",
+]
+
+[[package]]
+name = "portable-pty"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e4d17ec050a6b7ea4b15c430183772bce8384072d3f328e0967e72b7eec46b5"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -2049,7 +2068,7 @@ dependencies = [
  "filedescriptor",
  "filenamegen",
  "log",
- "portable-pty",
+ "portable-pty 0.5.0",
  "regex",
  "smol",
  "ssh2",

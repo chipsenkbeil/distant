@@ -178,6 +178,11 @@ impl LspData {
 
         Ok(Self { header, content })
     }
+
+    /// Converts into a vec of bytes representing the string format
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
 }
 
 impl fmt::Display for LspData {

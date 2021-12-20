@@ -168,7 +168,7 @@ fn should_support_json_to_execute_program_and_return_exit_status(mut action_cmd:
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),
-        payload: vec![RequestData::ProcRun {
+        payload: vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
@@ -186,7 +186,7 @@ fn should_support_json_to_execute_program_and_return_exit_status(mut action_cmd:
 
     let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
     assert!(
-        matches!(res.payload[0], ResponseData::ProcStart { .. }),
+        matches!(res.payload[0], ResponseData::ProcSpawned { .. }),
         "Unexpected response: {:?}",
         res.payload[0],
     );
@@ -198,7 +198,7 @@ fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),
-        payload: vec![RequestData::ProcRun {
+        payload: vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
@@ -230,7 +230,7 @@ fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
         friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
     let res: Response = serde_json::from_str(&out).unwrap();
     assert!(
-        matches!(res.payload[0], ResponseData::ProcStart { .. }),
+        matches!(res.payload[0], ResponseData::ProcSpawned { .. }),
         "Unexpected response: {:?}",
         res.payload[0]
     );
@@ -267,7 +267,7 @@ fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),
-        payload: vec![RequestData::ProcRun {
+        payload: vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![
                 ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
@@ -299,7 +299,7 @@ fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
         friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
     let res: Response = serde_json::from_str(&out).unwrap();
     assert!(
-        matches!(res.payload[0], ResponseData::ProcStart { .. }),
+        matches!(res.payload[0], ResponseData::ProcSpawned { .. }),
         "Unexpected response: {:?}",
         res.payload[0]
     );
@@ -335,7 +335,7 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),
-        payload: vec![RequestData::ProcRun {
+        payload: vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
@@ -364,7 +364,7 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
         friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
     let res: Response = serde_json::from_str(&out).unwrap();
     let id = match &res.payload[0] {
-        ResponseData::ProcStart { id } => *id,
+        ResponseData::ProcSpawned { id } => *id,
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -429,7 +429,7 @@ fn should_support_json_output_for_error(mut action_cmd: Command) {
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),
-        payload: vec![RequestData::ProcRun {
+        payload: vec![RequestData::ProcSpawn {
             cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             args: Vec::new(),
             detached: false,

@@ -1,7 +1,7 @@
 use crate::{
     client::{Mailbox, SessionChannel},
     constants::CLIENT_PIPE_CAPACITY,
-    data::{Request, RequestData, ResponseData},
+    data::{PtySize, Request, RequestData, ResponseData},
     net::TransportError,
 };
 use derive_more::{Display, Error, From};
@@ -79,6 +79,7 @@ impl RemoteProcess {
         cmd: impl Into<String>,
         args: Vec<String>,
         detached: bool,
+        pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
@@ -87,10 +88,11 @@ impl RemoteProcess {
         let mut mailbox = channel
             .mail(Request::new(
                 tenant.as_str(),
-                vec![RequestData::ProcRun {
+                vec![RequestData::ProcSpawn {
                     cmd,
                     args,
                     detached,
+                    pty,
                 }],
             ))
             .await?;
@@ -105,7 +107,7 @@ impl RemoteProcess {
             Some(res) => {
                 let origin_id = res.origin_id;
                 match res.payload.into_iter().next().unwrap() {
-                    ResponseData::ProcStart { id } => (id, origin_id),
+                    ResponseData::ProcSpawned { id } => (id, origin_id),
                     ResponseData::Error(x) => {
                         return Err(RemoteProcessError::TransportError(TransportError::IoError(
                             x.into(),
@@ -243,13 +245,13 @@ impl RemoteProcess {
 
 /// A handle to a remote process' standard input (stdin)
 #[derive(Debug)]
-pub struct RemoteStdin(mpsc::Sender<String>);
+pub struct RemoteStdin(mpsc::Sender<Vec<u8>>);
 
 impl RemoteStdin {
     /// Tries to write to the stdin of the remote process, returning ok if immediately
     /// successful, `WouldBlock` if would need to wait to send data, and `BrokenPipe`
     /// if stdin has been closed
-    pub fn try_write(&mut self, data: impl Into<String>) -> io::Result<()> {
+    pub fn try_write(&mut self, data: impl Into<Vec<u8>>) -> io::Result<()> {
         match self.0.try_send(data.into()) {
             Ok(data) => Ok(data),
             Err(TrySendError::Full(_)) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
@@ -257,12 +259,22 @@ impl RemoteStdin {
         }
     }
 
+    /// Same as `try_write`, but with a string
+    pub fn try_write_str(&mut self, data: impl Into<String>) -> io::Result<()> {
+        self.try_write(data.into().into_bytes())
+    }
+
     /// Writes data to the stdin of a specific remote process
-    pub async fn write(&mut self, data: impl Into<String>) -> io::Result<()> {
+    pub async fn write(&mut self, data: impl Into<Vec<u8>>) -> io::Result<()> {
         self.0
             .send(data.into())
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))
+    }
+
+    /// Same as `write`, but with a string
+    pub async fn write_str(&mut self, data: impl Into<String>) -> io::Result<()> {
+        self.write(data.into().into_bytes()).await
     }
 
     /// Checks if stdin has been closed
@@ -273,12 +285,12 @@ impl RemoteStdin {
 
 /// A handle to a remote process' standard output (stdout)
 #[derive(Debug)]
-pub struct RemoteStdout(mpsc::Receiver<String>);
+pub struct RemoteStdout(mpsc::Receiver<Vec<u8>>);
 
 impl RemoteStdout {
     /// Tries to receive latest stdout for a remote process, yielding `None`
     /// if no stdout is available, and `BrokenPipe` if stdout has been closed
-    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+    pub fn try_read(&mut self) -> io::Result<Option<Vec<u8>>> {
         match self.0.try_recv() {
             Ok(data) => Ok(Some(data)),
             Err(TryRecvError::Empty) => Ok(None),
@@ -286,24 +298,41 @@ impl RemoteStdout {
         }
     }
 
+    /// Same as `try_read`, but returns a string
+    pub fn try_read_string(&mut self) -> io::Result<Option<String>> {
+        self.try_read().and_then(|x| match x {
+            Some(data) => String::from_utf8(data)
+                .map(Some)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x)),
+            None => Ok(None),
+        })
+    }
+
     /// Retrieves the latest stdout for a specific remote process, and `BrokenPipe` if stdout has
     /// been closed
-    pub async fn read(&mut self) -> io::Result<String> {
+    pub async fn read(&mut self) -> io::Result<Vec<u8>> {
         self.0
             .recv()
             .await
             .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
+    }
+
+    /// Same as `read`, but returns a string
+    pub async fn read_string(&mut self) -> io::Result<String> {
+        self.read().await.and_then(|data| {
+            String::from_utf8(data).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+        })
     }
 }
 
 /// A handle to a remote process' stderr
 #[derive(Debug)]
-pub struct RemoteStderr(mpsc::Receiver<String>);
+pub struct RemoteStderr(mpsc::Receiver<Vec<u8>>);
 
 impl RemoteStderr {
     /// Tries to receive latest stderr for a remote process, yielding `None`
     /// if no stderr is available, and `BrokenPipe` if stderr has been closed
-    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+    pub fn try_read(&mut self) -> io::Result<Option<Vec<u8>>> {
         match self.0.try_recv() {
             Ok(data) => Ok(Some(data)),
             Err(TryRecvError::Empty) => Ok(None),
@@ -311,13 +340,30 @@ impl RemoteStderr {
         }
     }
 
+    /// Same as `try_read`, but returns a string
+    pub fn try_read_string(&mut self) -> io::Result<Option<String>> {
+        self.try_read().and_then(|x| match x {
+            Some(data) => String::from_utf8(data)
+                .map(Some)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x)),
+            None => Ok(None),
+        })
+    }
+
     /// Retrieves the latest stderr for a specific remote process, and `BrokenPipe` if stderr has
     /// been closed
-    pub async fn read(&mut self) -> io::Result<String> {
+    pub async fn read(&mut self) -> io::Result<Vec<u8>> {
         self.0
             .recv()
             .await
             .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
+    }
+
+    /// Same as `read`, but returns a string
+    pub async fn read_string(&mut self) -> io::Result<String> {
+        self.read().await.and_then(|data| {
+            String::from_utf8(data).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+        })
     }
 }
 
@@ -327,7 +373,7 @@ async fn process_outgoing_requests(
     tenant: String,
     id: usize,
     mut channel: SessionChannel,
-    mut stdin_rx: mpsc::Receiver<String>,
+    mut stdin_rx: mpsc::Receiver<Vec<u8>>,
     mut kill_rx: mpsc::Receiver<()>,
 ) -> Result<(), RemoteProcessError> {
     let result = loop {
@@ -365,8 +411,8 @@ async fn process_outgoing_requests(
 async fn process_incoming_responses(
     proc_id: usize,
     mut mailbox: Mailbox,
-    stdout_tx: mpsc::Sender<String>,
-    stderr_tx: mpsc::Sender<String>,
+    stdout_tx: mpsc::Sender<Vec<u8>>,
+    stderr_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
 ) -> Result<(bool, Option<i32>), RemoteProcessError> {
     while let Some(res) = mailbox.next().await {
@@ -436,6 +482,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -475,6 +522,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -521,6 +569,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -534,7 +583,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -567,6 +616,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -580,7 +630,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -624,6 +674,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -637,7 +688,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -661,7 +712,7 @@ mod tests {
         {
             RequestData::ProcStdin { id, data } => {
                 assert_eq!(*id, 12345);
-                assert_eq!(data, "some input");
+                assert_eq!(data, b"some input");
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -680,6 +731,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -693,7 +745,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -707,14 +759,14 @@ mod tests {
                 req.id,
                 vec![ResponseData::ProcStdout {
                     id,
-                    data: String::from("some out"),
+                    data: b"some out".to_vec(),
                 }],
             ))
             .await
             .unwrap();
 
         let out = proc.stdout.as_mut().unwrap().read().await.unwrap();
-        assert_eq!(out, "some out");
+        assert_eq!(out, b"some out");
     }
 
     #[tokio::test]
@@ -730,6 +782,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -743,7 +796,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -757,14 +810,14 @@ mod tests {
                 req.id,
                 vec![ResponseData::ProcStderr {
                     id,
-                    data: String::from("some err"),
+                    data: b"some err".to_vec(),
                 }],
             ))
             .await
             .unwrap();
 
         let out = proc.stderr.as_mut().unwrap().read().await.unwrap();
-        assert_eq!(out, "some err");
+        assert_eq!(out, b"some err");
     }
 
     #[tokio::test]
@@ -780,6 +833,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -793,7 +847,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -818,6 +872,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -831,7 +886,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -864,6 +919,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -877,7 +933,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -919,6 +975,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -932,7 +989,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -962,6 +1019,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -975,7 +1033,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -1012,6 +1070,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -1025,7 +1084,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStart { id }],
+                vec![ResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();

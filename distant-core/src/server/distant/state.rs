@@ -1,3 +1,4 @@
+use crate::data::PtySize;
 use log::*;
 use std::{
     collections::HashMap,
@@ -105,9 +106,12 @@ pub struct Process {
     /// Whether or not this process was run detached
     pub detached: bool,
 
+    /// Dimensions of pty associated with process, if it has one
+    pub pty: Option<PtySize>,
+
     /// Transport channel to send new input to the stdin of the process,
     /// one line at a time
-    stdin_tx: Option<mpsc::Sender<String>>,
+    stdin_tx: Option<mpsc::Sender<Vec<u8>>>,
 
     /// Transport channel to report that the process should be killed
     kill_tx: Option<oneshot::Sender<()>>,
@@ -117,12 +121,19 @@ pub struct Process {
 }
 
 impl Process {
-    pub fn new(id: usize, cmd: String, args: Vec<String>, detached: bool) -> Self {
+    pub fn new(
+        id: usize,
+        cmd: String,
+        args: Vec<String>,
+        detached: bool,
+        pty: Option<PtySize>,
+    ) -> Self {
         Self {
             id,
             cmd,
             args,
             detached,
+            pty,
             stdin_tx: None,
             kill_tx: None,
             wait_task: None,
@@ -132,7 +143,7 @@ impl Process {
     /// Lazy initialization of process state
     pub(crate) fn initialize(
         &mut self,
-        stdin_tx: mpsc::Sender<String>,
+        stdin_tx: mpsc::Sender<Vec<u8>>,
         kill_tx: oneshot::Sender<()>,
         wait_task: JoinHandle<()>,
     ) {
@@ -141,7 +152,7 @@ impl Process {
         self.wait_task = Some(wait_task);
     }
 
-    pub async fn send_stdin(&self, input: impl Into<String>) -> bool {
+    pub async fn send_stdin(&self, input: impl Into<Vec<u8>>) -> bool {
         if let Some(stdin) = self.stdin_tx.as_ref() {
             if stdin.send(input.into()).await.is_ok() {
                 return true;

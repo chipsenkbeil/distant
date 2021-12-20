@@ -172,7 +172,7 @@ where
                                 {
                                     let mut p_lock = processes.lock().await;
                                     for data in res.payload.iter() {
-                                        if let ResponseData::ProcStart { id } = *data {
+                                        if let ResponseData::ProcSpawned { id } = *data {
                                             p_lock.push(id);
                                         }
                                     }

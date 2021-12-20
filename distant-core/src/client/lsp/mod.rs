@@ -1,8 +1,7 @@
 use super::{RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout};
-use crate::client::SessionChannel;
+use crate::{client::SessionChannel, data::PtySize};
 use futures::stream::{Stream, StreamExt};
 use std::{
-    fmt::Write,
     io::{self, Cursor, Read},
     ops::{Deref, DerefMut},
 };
@@ -32,8 +31,9 @@ impl RemoteLspProcess {
         cmd: impl Into<String>,
         args: Vec<String>,
         detached: bool,
+        pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
-        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args, detached).await?;
+        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args, detached, pty).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
@@ -70,7 +70,7 @@ impl DerefMut for RemoteLspProcess {
 #[derive(Debug)]
 pub struct RemoteLspStdin {
     inner: RemoteStdin,
-    buf: Option<String>,
+    buf: Option<Vec<u8>>,
 }
 
 impl RemoteLspStdin {
@@ -79,7 +79,7 @@ impl RemoteLspStdin {
     }
 
     /// Tries to write data to the stdin of a specific remote process
-    pub fn try_write(&mut self, data: &str) -> io::Result<()> {
+    pub fn try_write(&mut self, data: &[u8]) -> io::Result<()> {
         let queue = self.update_and_read_messages(data)?;
 
         // Process and then send out each LSP message in our queue
@@ -87,14 +87,18 @@ impl RemoteLspStdin {
             // Convert distant:// to file://
             data.mut_content().convert_distant_scheme_to_local();
             data.refresh_content_length();
-            self.inner.try_write(&data.to_string())?;
+            self.inner.try_write_str(data.to_string())?;
         }
 
         Ok(())
+    }
+
+    pub fn try_write_str(&mut self, data: &str) -> io::Result<()> {
+        self.try_write(data.as_bytes())
     }
 
     /// Writes data to the stdin of a specific remote process
-    pub async fn write(&mut self, data: &str) -> io::Result<()> {
+    pub async fn write(&mut self, data: &[u8]) -> io::Result<()> {
         let queue = self.update_and_read_messages(data)?;
 
         // Process and then send out each LSP message in our queue
@@ -102,17 +106,21 @@ impl RemoteLspStdin {
             // Convert distant:// to file://
             data.mut_content().convert_distant_scheme_to_local();
             data.refresh_content_length();
-            self.inner.write(&data.to_string()).await?;
+            self.inner.write_str(data.to_string()).await?;
         }
 
         Ok(())
     }
 
-    fn update_and_read_messages(&mut self, data: &str) -> io::Result<Vec<LspData>> {
+    pub async fn write_str(&mut self, data: &str) -> io::Result<()> {
+        self.write(data.as_bytes()).await
+    }
+
+    fn update_and_read_messages(&mut self, data: &[u8]) -> io::Result<Vec<LspData>> {
         // Create or insert into our buffer
         match &mut self.buf {
-            Some(buf) => buf.push_str(data),
-            None => self.buf = Some(data.to_string()),
+            Some(buf) => buf.extend(data),
+            None => self.buf = Some(data.to_vec()),
         }
 
         // Read LSP messages from our internal buffer
@@ -137,7 +145,7 @@ impl RemoteLspStdin {
 #[derive(Debug)]
 pub struct RemoteLspStdout {
     read_task: JoinHandle<()>,
-    rx: mpsc::Receiver<io::Result<String>>,
+    rx: mpsc::Receiver<io::Result<Vec<u8>>>,
 }
 
 impl RemoteLspStdout {
@@ -157,7 +165,7 @@ impl RemoteLspStdout {
 
     /// Tries to read a complete LSP message over stdout, returning `None` if no complete message
     /// is available
-    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+    pub fn try_read(&mut self) -> io::Result<Option<Vec<u8>>> {
         match self.rx.try_recv() {
             Ok(Ok(data)) => Ok(Some(data)),
             Ok(Err(x)) => Err(x),
@@ -166,12 +174,29 @@ impl RemoteLspStdout {
         }
     }
 
+    /// Same as `try_read`, but returns a string
+    pub fn try_read_string(&mut self) -> io::Result<Option<String>> {
+        self.try_read().and_then(|x| match x {
+            Some(data) => String::from_utf8(data)
+                .map(Some)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x)),
+            None => Ok(None),
+        })
+    }
+
     /// Reads a complete LSP message over stdout
-    pub async fn read(&mut self) -> io::Result<String> {
+    pub async fn read(&mut self) -> io::Result<Vec<u8>> {
         self.rx
             .recv()
             .await
             .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?
+    }
+
+    /// Same as `read`, but returns a string
+    pub async fn read_string(&mut self) -> io::Result<String> {
+        self.read().await.and_then(|data| {
+            String::from_utf8(data).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+        })
     }
 }
 
@@ -186,7 +211,7 @@ impl Drop for RemoteLspStdout {
 #[derive(Debug)]
 pub struct RemoteLspStderr {
     read_task: JoinHandle<()>,
-    rx: mpsc::Receiver<io::Result<String>>,
+    rx: mpsc::Receiver<io::Result<Vec<u8>>>,
 }
 
 impl RemoteLspStderr {
@@ -206,7 +231,7 @@ impl RemoteLspStderr {
 
     /// Tries to read a complete LSP message over stderr, returning `None` if no complete message
     /// is available
-    pub fn try_read(&mut self) -> io::Result<Option<String>> {
+    pub fn try_read(&mut self) -> io::Result<Option<Vec<u8>>> {
         match self.rx.try_recv() {
             Ok(Ok(data)) => Ok(Some(data)),
             Ok(Err(x)) => Err(x),
@@ -215,12 +240,29 @@ impl RemoteLspStderr {
         }
     }
 
+    /// Same as `try_read`, but returns a string
+    pub fn try_read_string(&mut self) -> io::Result<Option<String>> {
+        self.try_read().and_then(|x| match x {
+            Some(data) => String::from_utf8(data)
+                .map(Some)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x)),
+            None => Ok(None),
+        })
+    }
+
     /// Reads a complete LSP message over stderr
-    pub async fn read(&mut self) -> io::Result<String> {
+    pub async fn read(&mut self) -> io::Result<Vec<u8>> {
         self.rx
             .recv()
             .await
             .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?
+    }
+
+    /// Same as `read`, but returns a string
+    pub async fn read_string(&mut self) -> io::Result<String> {
+        self.read().await.and_then(|data| {
+            String::from_utf8(data).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+        })
     }
 }
 
@@ -231,18 +273,18 @@ impl Drop for RemoteLspStderr {
     }
 }
 
-fn spawn_read_task<S>(mut stream: S) -> (JoinHandle<()>, mpsc::Receiver<io::Result<String>>)
+fn spawn_read_task<S>(mut stream: S) -> (JoinHandle<()>, mpsc::Receiver<io::Result<Vec<u8>>>)
 where
-    S: Stream<Item = String> + Send + Unpin + 'static,
+    S: Stream<Item = Vec<u8>> + Send + Unpin + 'static,
 {
-    let (tx, rx) = mpsc::channel::<io::Result<String>>(1);
+    let (tx, rx) = mpsc::channel::<io::Result<Vec<u8>>>(1);
     let read_task = tokio::spawn(async move {
-        let mut task_buf: Option<String> = None;
+        let mut task_buf: Option<Vec<u8>> = None;
 
         while let Some(data) = stream.next().await {
             // Create or insert into our buffer
             match &mut task_buf {
-                Some(buf) => buf.push_str(&data),
+                Some(buf) => buf.extend(data),
                 None => task_buf = Some(data),
             }
 
@@ -259,12 +301,12 @@ where
 
             // Process and then add each LSP message as output
             if !queue.is_empty() {
-                let mut out = String::new();
+                let mut out = Vec::new();
                 for mut data in queue {
                     // Convert file:// to distant://
                     data.mut_content().convert_local_scheme_to_distant();
                     data.refresh_content_length();
-                    write!(&mut out, "{}", data).unwrap();
+                    out.extend(data.to_bytes());
                 }
                 if tx.send(Ok(out)).await.is_err() {
                     break;
@@ -276,7 +318,7 @@ where
     (read_task, rx)
 }
 
-fn read_lsp_messages(input: &str) -> io::Result<(Option<String>, Vec<LspData>)> {
+fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspData>)> {
     let mut queue = Vec::new();
 
     // Continue to read complete messages from the input until we either fail to parse or we reach
@@ -290,10 +332,10 @@ fn read_lsp_messages(input: &str) -> io::Result<(Option<String>, Vec<LspData>)> 
     }
     cursor.set_position(pos);
 
-    // Keep remainder of string not processed as LSP message in buffer
+    // Keep remainder of bytes not processed as LSP message in buffer
     let remainder = if (cursor.position() as usize) < cursor.get_ref().len() {
-        let mut buf = String::new();
-        cursor.read_to_string(&mut buf)?;
+        let mut buf = Vec::new();
+        cursor.read_to_end(&mut buf)?;
         Some(buf)
     } else {
         None
@@ -326,6 +368,7 @@ mod tests {
                 String::from("cmd"),
                 vec![String::from("arg")],
                 false,
+                None,
             )
             .await
         });
@@ -337,7 +380,7 @@ mod tests {
         t1.send(Response::new(
             "test-tenant",
             req.id,
-            vec![ResponseData::ProcStart { id: rand::random() }],
+            vec![ResponseData::ProcSpawned { id: rand::random() }],
         ))
         .await
         .unwrap();
@@ -347,12 +390,12 @@ mod tests {
         (t1, proc)
     }
 
-    fn make_lsp_msg<T>(value: T) -> String
+    fn make_lsp_msg<T>(value: T) -> Vec<u8>
     where
         T: serde::Serialize,
     {
         let content = serde_json::to_string_pretty(&value).unwrap();
-        format!("Content-Length: {}\r\n\r\n{}", content.len(), content)
+        format!("Content-Length: {}\r\n\r\n{}", content.len(), content).into_bytes()
     }
 
     async fn timeout<F, R>(duration: Duration, f: F) -> io::Result<R>
@@ -455,7 +498,7 @@ mod tests {
         proc.stdin
             .as_mut()
             .unwrap()
-            .write(&format!("{}{}", msg, extra))
+            .write_str(&format!("{}{}", String::from_utf8(msg).unwrap(), extra))
             .await
             .unwrap();
 
@@ -477,7 +520,7 @@ mod tests {
 
         // Also validate that the internal buffer still contains the extra
         assert_eq!(
-            proc.stdin.unwrap().buf.unwrap(),
+            String::from_utf8(proc.stdin.unwrap().buf.unwrap()).unwrap(),
             extra,
             "Extra was not retained"
         );
@@ -501,7 +544,11 @@ mod tests {
         proc.stdin
             .as_mut()
             .unwrap()
-            .write(&format!("{}{}", msg_1, msg_2))
+            .write_str(&format!(
+                "{}{}",
+                String::from_utf8(msg_1).unwrap(),
+                String::from_utf8(msg_2).unwrap()
+            ))
             .await
             .unwrap();
 
@@ -620,7 +667,7 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
-                    data: msg_a.to_string(),
+                    data: msg_a.to_vec(),
                 }],
             ))
             .await
@@ -639,7 +686,7 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
-                    data: msg_b.to_string(),
+                    data: msg_b.to_vec(),
                 }],
             ))
             .await
@@ -674,7 +721,7 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
-                    data: format!("{}{}", msg, extra),
+                    data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
                 }],
             ))
             .await
@@ -718,7 +765,12 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStdout {
                     id: proc.id(),
-                    data: format!("{}{}", msg_1, msg_2),
+                    data: format!(
+                        "{}{}",
+                        String::from_utf8(msg_1).unwrap(),
+                        String::from_utf8(msg_2).unwrap()
+                    )
+                    .into_bytes(),
                 }],
             ))
             .await
@@ -730,15 +782,18 @@ mod tests {
             out,
             format!(
                 "{}{}",
-                make_lsp_msg(serde_json::json!({
+                String::from_utf8(make_lsp_msg(serde_json::json!({
                     "field1": "a",
                     "field2": "b",
-                })),
-                make_lsp_msg(serde_json::json!({
+                })))
+                .unwrap(),
+                String::from_utf8(make_lsp_msg(serde_json::json!({
                     "field1": "c",
                     "field2": "d",
-                }))
+                })))
+                .unwrap()
             )
+            .into_bytes()
         );
     }
 
@@ -821,7 +876,7 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
-                    data: msg_a.to_string(),
+                    data: msg_a.to_vec(),
                 }],
             ))
             .await
@@ -840,7 +895,7 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
-                    data: msg_b.to_string(),
+                    data: msg_b.to_vec(),
                 }],
             ))
             .await
@@ -875,7 +930,7 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
-                    data: format!("{}{}", msg, extra),
+                    data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
                 }],
             ))
             .await
@@ -919,7 +974,12 @@ mod tests {
                 proc.origin_id(),
                 vec![ResponseData::ProcStderr {
                     id: proc.id(),
-                    data: format!("{}{}", msg_1, msg_2),
+                    data: format!(
+                        "{}{}",
+                        String::from_utf8(msg_1).unwrap(),
+                        String::from_utf8(msg_2).unwrap()
+                    )
+                    .into_bytes(),
                 }],
             ))
             .await
@@ -931,15 +991,18 @@ mod tests {
             err,
             format!(
                 "{}{}",
-                make_lsp_msg(serde_json::json!({
+                String::from_utf8(make_lsp_msg(serde_json::json!({
                     "field1": "a",
                     "field2": "b",
-                })),
-                make_lsp_msg(serde_json::json!({
+                })))
+                .unwrap(),
+                String::from_utf8(make_lsp_msg(serde_json::json!({
                     "field1": "c",
                     "field2": "d",
-                }))
+                })))
+                .unwrap()
             )
+            .into_bytes()
         );
     }
 

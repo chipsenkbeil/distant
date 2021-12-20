@@ -1,6 +1,6 @@
-use derive_more::{Display, IsVariant};
+use derive_more::{Display, Error, IsVariant};
 use serde::{Deserialize, Serialize};
-use std::{io, path::PathBuf};
+use std::{io, num::ParseIntError, path::PathBuf, str::FromStr};
 use strum::AsRefStr;
 
 /// Type alias for a vec of bytes
@@ -209,9 +209,9 @@ pub enum RequestData {
         resolve_file_type: bool,
     },
 
-    /// Runs a process on the remote machine
+    /// Spawns a new process on the remote machine
     #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["run"]))]
-    ProcRun {
+    ProcSpawn {
         /// Name of the command to run
         cmd: String,
 
@@ -222,6 +222,10 @@ pub enum RequestData {
         /// killed when the associated client disconnects
         #[cfg_attr(feature = "structopt", structopt(long))]
         detached: bool,
+
+        /// If provided, will spawn process in a pty, otherwise spawns directly
+        #[cfg_attr(feature = "structopt", structopt(long))]
+        pty: Option<PtySize>,
     },
 
     /// Kills a process running on the remote machine
@@ -237,7 +241,16 @@ pub enum RequestData {
         id: usize,
 
         /// Data to send to a process's stdin pipe
-        data: String,
+        data: Vec<u8>,
+    },
+
+    /// Resize pty of remote process
+    ProcResizePty {
+        /// Id of the actively-running process whose pty to resize
+        id: usize,
+
+        /// The new pty dimensions
+        size: PtySize,
     },
 
     /// Retrieve a list of all processes being managed by the remote server
@@ -328,7 +341,7 @@ pub enum ResponseData {
     Metadata(Metadata),
 
     /// Response to starting a new process
-    ProcStart {
+    ProcSpawned {
         /// Arbitrary id associated with running process
         id: usize,
     },
@@ -339,7 +352,7 @@ pub enum ResponseData {
         id: usize,
 
         /// Data read from a process' stdout pipe
-        data: String,
+        data: Vec<u8>,
     },
 
     /// Actively-transmitted stderr as part of running process
@@ -348,7 +361,7 @@ pub enum ResponseData {
         id: usize,
 
         /// Data read from a process' stderr pipe
-        data: String,
+        data: Vec<u8>,
     },
 
     /// Response to a process finishing
@@ -371,6 +384,83 @@ pub enum ResponseData {
 
     /// Response to retrieving information about the server and the system it is on
     SystemInfo(SystemInfo),
+}
+
+/// Represents the size associated with a remote PTY
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PtySize {
+    /// Number of lines of text
+    pub rows: u16,
+
+    /// Number of columns of text
+    pub cols: u16,
+
+    /// Width of a cell in pixels. Note that some systems never fill this value and ignore it.
+    pub pixel_width: u16,
+
+    /// Height of a cell in pixels. Note that some systems never fill this value and ignore it.
+    pub pixel_height: u16,
+}
+
+impl PtySize {
+    /// Creates new size using just rows and columns
+    pub fn from_rows_and_cols(rows: u16, cols: u16) -> Self {
+        Self {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Display, Error)]
+pub enum PtySizeParseError {
+    MissingRows,
+    MissingColumns,
+    InvalidRows(ParseIntError),
+    InvalidColumns(ParseIntError),
+    InvalidPixelWidth(ParseIntError),
+    InvalidPixelHeight(ParseIntError),
+}
+
+impl FromStr for PtySize {
+    type Err = PtySizeParseError;
+
+    /// Attempts to parse a str into PtySize using one of the following formats:
+    ///
+    /// * rows,cols (defaults to 0 for pixel_width & pixel_height)
+    /// * rows,cols,pixel_width,pixel_height
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut tokens = s.split(',');
+
+        Ok(Self {
+            rows: tokens
+                .next()
+                .ok_or(PtySizeParseError::MissingRows)?
+                .trim()
+                .parse()
+                .map_err(PtySizeParseError::InvalidRows)?,
+            cols: tokens
+                .next()
+                .ok_or(PtySizeParseError::MissingColumns)?
+                .trim()
+                .parse()
+                .map_err(PtySizeParseError::InvalidColumns)?,
+            pixel_width: tokens
+                .next()
+                .map(|s| s.trim().parse())
+                .transpose()
+                .map_err(PtySizeParseError::InvalidPixelWidth)?
+                .unwrap_or(0),
+            pixel_height: tokens
+                .next()
+                .map(|s| s.trim().parse())
+                .transpose()
+                .map_err(PtySizeParseError::InvalidPixelHeight)?
+                .unwrap_or(0),
+        })
+    }
 }
 
 /// Represents metadata about some path on a remote machine
@@ -494,6 +584,9 @@ pub struct RunningProcess {
 
     /// Whether or not the process was run in detached mode
     pub detached: bool,
+
+    /// Pty associated with running process if it has one
+    pub pty: Option<PtySize>,
 
     /// Arbitrary id associated with running process
     ///

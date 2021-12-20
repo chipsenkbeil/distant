@@ -88,7 +88,7 @@ async fn start(
         // the stdin will be used for sending ProcStdin to remote process
         (
             _,
-            Some(RequestData::ProcRun {
+            Some(RequestData::ProcSpawn {
                 cmd,
                 args,
                 detached,
