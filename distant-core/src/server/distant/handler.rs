@@ -4,7 +4,7 @@ use crate::{
         self, DirEntry, FileType, Metadata, PtySize, Request, RequestData, Response, ResponseData,
         RunningProcess, SystemInfo,
     },
-    server::distant::state::{Process, State},
+    server::distant::{process::Process, state::State},
 };
 use derive_more::{Display, Error, From};
 use futures::future;

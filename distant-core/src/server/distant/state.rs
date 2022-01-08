@@ -1,21 +1,12 @@
-use crate::data::PtySize;
+use super::Process;
 use log::*;
-use std::{
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::{JoinError, JoinHandle},
-};
+use std::collections::HashMap;
 
 /// Holds state related to multiple connections managed by a server
 #[derive(Default)]
 pub struct State {
     /// Map of all processes running on the server
-    pub processes: HashMap<usize, Process>,
+    pub processes: HashMap<usize, Box<dyn Process>>,
 
     /// List of processes that will be killed when a connection drops
     client_processes: HashMap<usize, Vec<usize>>,
@@ -23,15 +14,15 @@ pub struct State {
 
 impl State {
     /// Pushes a new process associated with a connection
-    pub fn push_process(&mut self, conn_id: usize, process: Process) {
+    pub fn push_process(&mut self, conn_id: usize, process: impl Process + 'static) {
         self.client_processes
             .entry(conn_id)
             .or_insert_with(Vec::new)
-            .push(process.id);
-        self.processes.insert(process.id, process);
+            .push(process.id());
+        self.processes.insert(process.id(), Box::new(process));
     }
 
-    pub fn mut_process(&mut self, proc_id: usize) -> Option<&mut Process> {
+    pub fn mut_process(&mut self, proc_id: usize) -> Option<&mut Box<dyn Process>> {
         self.processes.get_mut(&proc_id)
     }
 
@@ -54,7 +45,7 @@ impl State {
                     trace!(
                         "<Conn @ {:?}> Closing stdin for proc {}",
                         conn_id,
-                        process.id
+                        process.id()
                     );
 
                     process.close_stdin();
@@ -73,115 +64,24 @@ impl State {
                         trace!(
                             "<Conn @ {:?}> Requesting proc {} be killed",
                             conn_id,
-                            process.id
+                            process.id()
                         );
-                        let pid = process.id;
-                        if !process.kill() {
-                            error!("Conn {} failed to send process {} kill signal", id, pid);
+                        let pid = process.id();
+                        if let Err(x) = process.kill() {
+                            error!(
+                                "Conn {} failed to send process {} kill signal: {}",
+                                id, pid, x
+                            );
                         }
                     } else {
                         trace!(
                             "<Conn @ {:?}> Proc {} is detached and will not be killed",
                             conn_id,
-                            process.id
+                            process.id()
                         );
                     }
                 }
             }
-        }
-    }
-}
-
-/// Represents an actively-running process
-pub struct Process {
-    /// Id of the process
-    pub id: usize,
-
-    /// Command used to start the process
-    pub cmd: String,
-
-    /// Arguments associated with the process
-    pub args: Vec<String>,
-
-    /// Whether or not this process was run detached
-    pub detached: bool,
-
-    /// Dimensions of pty associated with process, if it has one
-    pub pty: Option<PtySize>,
-
-    /// Transport channel to send new input to the stdin of the process,
-    /// one line at a time
-    stdin_tx: Option<mpsc::Sender<Vec<u8>>>,
-
-    /// Transport channel to report that the process should be killed
-    kill_tx: Option<oneshot::Sender<()>>,
-
-    /// Task used to wait on the process to complete or be killed
-    wait_task: Option<JoinHandle<()>>,
-}
-
-impl Process {
-    pub fn new(
-        id: usize,
-        cmd: String,
-        args: Vec<String>,
-        detached: bool,
-        pty: Option<PtySize>,
-    ) -> Self {
-        Self {
-            id,
-            cmd,
-            args,
-            detached,
-            pty,
-            stdin_tx: None,
-            kill_tx: None,
-            wait_task: None,
-        }
-    }
-
-    /// Lazy initialization of process state
-    pub(crate) fn initialize(
-        &mut self,
-        stdin_tx: mpsc::Sender<Vec<u8>>,
-        kill_tx: oneshot::Sender<()>,
-        wait_task: JoinHandle<()>,
-    ) {
-        self.stdin_tx = Some(stdin_tx);
-        self.kill_tx = Some(kill_tx);
-        self.wait_task = Some(wait_task);
-    }
-
-    pub async fn send_stdin(&self, input: impl Into<Vec<u8>>) -> bool {
-        if let Some(stdin) = self.stdin_tx.as_ref() {
-            if stdin.send(input.into()).await.is_ok() {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    pub fn close_stdin(&mut self) {
-        self.stdin_tx.take();
-    }
-
-    pub fn kill(self) -> bool {
-        self.kill_tx
-            .map(|tx| tx.send(()).is_ok())
-            .unwrap_or_default()
-    }
-}
-
-impl Future for Process {
-    type Output = Result<(), JoinError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(task) = self.wait_task.as_mut() {
-            Pin::new(task).poll(cx)
-        } else {
-            // TODO: Does this work?
-            Poll::Pending
         }
     }
 }
