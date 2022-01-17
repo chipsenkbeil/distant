@@ -20,7 +20,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncWriteExt},
     sync::{mpsc, Mutex, MutexGuard},
 };
 use walkdir::WalkDir;
@@ -440,30 +440,33 @@ where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
     debug!("<Conn @ {}> Spawning {} {}", conn_id, cmd, args.join(" "));
-    let process: Box<dyn Process> = match pty {
-        Some(size) => todo!(),
-        None => Box::new(SimpleProcess::spawn(cmd, args)?),
+    let mut child: Box<dyn Process> = match pty {
+        Some(_size) => todo!(),
+        None => Box::new(SimpleProcess::spawn(cmd.clone(), args.clone())?),
     };
-    let id = process.id();
 
-    let mut stdin = process.clone_stdin();
-    let mut stdout = process.clone_stdout();
-    let mut stderr = process.clone_stderr();
-    let mut killer = process.clone_killer();
+    let id = child.id();
+    let stdin = child.take_stdin().unwrap();
+    let mut stdout = child.take_stdout().unwrap();
+    let mut stderr = child.take_stderr().unwrap();
+    let killer = child.clone_killer();
+    let pty = child.clone_pty();
 
-    let post_hook = Box::new(move |mut state_lock: MutexGuard<'_, State>| {
+    let state_2 = Arc::clone(&state);
+    let post_hook = Box::new(move |_: MutexGuard<'_, State>| {
         // Spawn a task that sends stdout as a response
         let mut reply_2 = reply.clone();
-        let stdout_task = tokio::spawn(async move {
+        let _ = tokio::spawn(async move {
             loop {
                 match stdout.recv().await {
-                    Ok(data) => {
+                    Ok(Some(data)) => {
                         let payload = vec![ResponseData::ProcStdout { id, data }];
                         if !reply_2(payload).await {
                             error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
                             break;
                         }
                     }
+                    Ok(None) => break,
                     Err(x) => {
                         error!(
                             "<Conn @ {} | Proc {}> Reading stdout failed: {}",
@@ -477,16 +480,17 @@ where
 
         // Spawn a task that sends stderr as a response
         let mut reply_2 = reply.clone();
-        let stderr_task = tokio::spawn(async move {
+        let _ = tokio::spawn(async move {
             loop {
                 match stderr.recv().await {
-                    Ok(data) => {
+                    Ok(Some(data)) => {
                         let payload = vec![ResponseData::ProcStderr { id, data }];
                         if !reply_2(payload).await {
                             error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
                             break;
                         }
                     }
+                    Ok(None) => break,
                     Err(x) => {
                         error!(
                             "<Conn @ {} | Proc {}> Reading stderr failed: {}",
@@ -500,10 +504,9 @@ where
 
         // Spawn a task that waits on the process to exit but can also
         // kill the process when triggered
-        let state_2 = Arc::clone(&state);
         let mut reply_2 = reply.clone();
-        let wait_task = tokio::spawn(async move {
-            let status = process.wait().await;
+        let _ = tokio::spawn(async move {
+            let status = child.wait().await;
             debug!("<Conn @ {} | Proc {}> Completed {:?}", conn_id, id, status);
 
             state_2.lock().await.remove_process(conn_id, id);
@@ -535,12 +538,13 @@ where
     state.lock().await.push_process_state(
         conn_id,
         ProcessState {
-            id: process.id(),
             cmd,
             args,
             detached,
-            stdin: process.clone_stdin(),
-            killer: process.clone_killer(),
+            id,
+            stdin: Some(stdin),
+            killer,
+            pty,
         },
     );
 
@@ -576,9 +580,11 @@ async fn proc_stdin(
     id: usize,
     data: Vec<u8>,
 ) -> Result<Outgoing, ServerError> {
-    if let Some(mut process) = state.lock().await.processes.get(&id) {
-        if process.stdin.write_stdin(&data).await.is_ok() {
-            return Ok(Outgoing::from(ResponseData::Ok));
+    if let Some(process) = state.lock().await.processes.get_mut(&id) {
+        if let Some(stdin) = process.stdin.as_mut() {
+            if stdin.send(&data).await.is_ok() {
+                return Ok(Outgoing::from(ResponseData::Ok));
+            }
         }
     }
 
@@ -597,7 +603,19 @@ async fn proc_resize_pty(
     id: usize,
     size: PtySize,
 ) -> Result<Outgoing, ServerError> {
-    todo!();
+    if let Some(process) = state.lock().await.processes.get(&id) {
+        let _ = process.pty.resize_pty(size)?;
+
+        return Ok(Outgoing::from(ResponseData::Ok));
+    }
+
+    Err(ServerError::IoError(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        format!(
+            "<Conn @ {} | Proc {}> Unable to resize pty to {:?}",
+            conn_id, id, size,
+        ),
+    )))
 }
 
 async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
@@ -611,7 +629,8 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
                 detached: p.detached,
-                pty: p.pty.clone(),
+                // TODO: Support retrieving current pty size
+                pty: None,
                 id: p.id,
             })
             .collect(),

@@ -1,26 +1,20 @@
 use super::{
-    tasks, ExitStatus, FutureReturn, InputChannel, OutputChannel, Process, ProcessKiller,
-    ProcessStderr, ProcessStdin, ProcessStdout, Wait,
+    tasks, wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process,
+    ProcessKiller, WaitRx,
 };
-use crate::data::PtySize;
-use std::{ffi::OsStr, process::Stdio, sync::Arc};
-use tokio::{
-    io,
-    process::Command,
-    sync::{mpsc, Mutex},
-    task::JoinHandle,
-};
+use std::{ffi::OsStr, process::Stdio};
+use tokio::{io, process::Command, sync::mpsc, task::JoinHandle};
 
 pub struct SimpleProcess {
     id: usize,
-    stdin: SimpleProcessStdin,
-    stdout: SimpleProcessStdout,
-    stderr: SimpleProcessStderr,
+    stdin: Option<Box<dyn InputChannel>>,
+    stdout: Option<Box<dyn OutputChannel>>,
+    stderr: Option<Box<dyn OutputChannel>>,
     stdin_task: Option<JoinHandle<io::Result<()>>>,
     stdout_task: Option<JoinHandle<io::Result<()>>>,
     stderr_task: Option<JoinHandle<io::Result<()>>>,
     kill_tx: mpsc::Sender<()>,
-    wait: Wait,
+    wait: WaitRx,
 }
 
 impl SimpleProcess {
@@ -47,21 +41,21 @@ impl SimpleProcess {
         let stdin = child.stdin.take().unwrap();
         let (stdin_task, stdin_ch) = tasks::spawn_write_task(stdin, 1);
 
-        let (kill_tx, kill_rx) = mpsc::channel(1);
-        let (notifier, wait) = Wait::new_pending();
+        let (kill_tx, mut kill_rx) = mpsc::channel(1);
+        let (mut wait_tx, wait_rx) = wait::channel();
 
         tokio::spawn(async move {
             tokio::select! {
                 _ = kill_rx.recv() => {
                     if child.kill().await.is_ok() {
                         // TODO: Keep track of io error
-                        let _ = notifier.notify(ExitStatus::killed());
+                        let _ = wait_tx.send(ExitStatus::killed());
                     }
                 }
                 exit_status = child.wait() => {
                     // TODO: Keep track of io error
                     if let Ok(status) = exit_status {
-                        let _ = notifier.notify(status);
+                        let _ = wait_tx.send(status);
                     }
                 }
             }
@@ -69,14 +63,14 @@ impl SimpleProcess {
 
         Ok(Self {
             id: rand::random(),
-            stdin: SimpleProcessStdin(Arc::new(Mutex::new(stdin_ch))),
-            stdout: SimpleProcessStdout(Arc::new(Mutex::new(stdout_ch))),
-            stderr: SimpleProcessStderr(Arc::new(Mutex::new(stderr_ch))),
+            stdin: Some(Box::new(stdin_ch)),
+            stdout: Some(Box::new(stdout_ch)),
+            stderr: Some(Box::new(stderr_ch)),
             stdin_task: Some(stdin_task),
             stdout_task: Some(stdout_task),
             stderr_task: Some(stderr_task),
             kill_tx,
-            wait,
+            wait: wait_rx,
         })
     }
 }
@@ -86,20 +80,9 @@ impl Process for SimpleProcess {
         self.id
     }
 
-    /// Resize the pty associated with the process
-    fn resize_pty(&self, _size: PtySize) -> FutureReturn<'_, io::Result<()>> {
-        Box::pin(async {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Process is not within a pty",
-            ))
-        })
-    }
-
     fn wait(&mut self) -> FutureReturn<'_, io::Result<ExitStatus>> {
-        // Box::pin(self.exit_status.resolve())
         async fn inner(this: &mut SimpleProcess) -> io::Result<ExitStatus> {
-            let mut status = this.wait.resolve().await?;
+            let mut status = this.wait.recv().await?;
 
             if let Some(task) = this.stdin_task.take() {
                 task.abort();
@@ -118,37 +101,45 @@ impl Process for SimpleProcess {
         }
         Box::pin(inner(self))
     }
+
+    fn stdin(&self) -> Option<&Box<dyn InputChannel>> {
+        self.stdin.as_ref()
+    }
+
+    fn mut_stdin(&mut self) -> Option<&mut Box<dyn InputChannel>> {
+        self.stdin.as_mut()
+    }
+
+    fn take_stdin(&mut self) -> Option<Box<dyn InputChannel>> {
+        self.stdin.take()
+    }
+
+    fn stdout(&self) -> Option<&Box<dyn OutputChannel>> {
+        self.stdout.as_ref()
+    }
+
+    fn mut_stdout(&mut self) -> Option<&mut Box<dyn OutputChannel>> {
+        self.stdout.as_mut()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn OutputChannel>> {
+        self.stdout.take()
+    }
+
+    fn stderr(&self) -> Option<&Box<dyn OutputChannel>> {
+        self.stderr.as_ref()
+    }
+
+    fn mut_stderr(&mut self) -> Option<&mut Box<dyn OutputChannel>> {
+        self.stderr.as_mut()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn OutputChannel>> {
+        self.stderr.take()
+    }
 }
 
-impl ProcessStdin for SimpleProcess {
-    fn write_stdin<'a>(&'a mut self, data: &[u8]) -> FutureReturn<'a, io::Result<()>> {
-        self.stdin.write_stdin(data)
-    }
-
-    fn clone_stdin(&self) -> Box<dyn InputChannel + Send> {
-        Box::new(self.stdin.clone())
-    }
-}
-
-impl ProcessStdout for SimpleProcess {
-    fn read_stdout(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
-        self.stdout.read_stdout()
-    }
-
-    fn clone_stdout(&self) -> Box<dyn OutputChannel + Send> {
-        Box::new(self.stdout.clone())
-    }
-}
-
-impl ProcessStderr for SimpleProcess {
-    fn read_stderr(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
-        self.stderr.read_stderr()
-    }
-
-    fn clone_stderr(&self) -> Box<dyn OutputChannel + Send> {
-        Box::new(self.stderr.clone())
-    }
-}
+impl NoProcessPty for SimpleProcess {}
 
 impl ProcessKiller for SimpleProcess {
     /// Kill the process
@@ -166,81 +157,8 @@ impl ProcessKiller for SimpleProcess {
     }
 
     /// Clone a process killer to support sending signals independently
-    fn clone_killer(&self) -> Box<dyn ProcessKiller + Send + Sync> {
+    fn clone_killer(&self) -> Box<dyn ProcessKiller> {
         Box::new(self.kill_tx.clone())
-    }
-}
-
-#[derive(Clone)]
-pub struct SimpleProcessStdin(Arc<Mutex<Box<dyn InputChannel>>>);
-
-impl InputChannel for SimpleProcessStdin {
-    fn send<'a>(&'a mut self, data: &[u8]) -> FutureReturn<'a, io::Result<()>> {
-        async fn inner(this: &mut SimpleProcessStdin, data: &[u8]) -> io::Result<()> {
-            this.0.lock().await.send(data).await
-        }
-
-        // TODO: CHIP CHIP CHIP -- Do not clone data! Figure out why there are lifetime problems!
-        let data2 = data.to_vec();
-
-        Box::pin(inner(self, &data2))
-    }
-}
-
-impl ProcessStdin for SimpleProcessStdin {
-    fn write_stdin<'a>(&'a mut self, data: &[u8]) -> FutureReturn<'a, io::Result<()>> {
-        InputChannel::send(self, data)
-    }
-
-    fn clone_stdin(&self) -> Box<dyn InputChannel + Send> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone)]
-pub struct SimpleProcessStdout(Arc<Mutex<Box<dyn OutputChannel>>>);
-
-impl OutputChannel for SimpleProcessStdout {
-    fn recv(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
-        async fn inner(this: &mut SimpleProcessStdout) -> io::Result<Vec<u8>> {
-            this.0.lock().await.recv().await
-        }
-        Box::pin(inner(self))
-    }
-}
-
-impl ProcessStdout for SimpleProcessStdout {
-    fn read_stdout(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
-        OutputChannel::recv(self)
-    }
-
-    fn clone_stdout(&self) -> Box<dyn OutputChannel + Send> {
-        Box::new(self.clone())
-    }
-}
-
-#[derive(Clone)]
-pub struct SimpleProcessStderr(Arc<Mutex<Box<dyn OutputChannel>>>);
-
-impl OutputChannel for SimpleProcessStderr {
-    fn recv(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
-        async fn inner(this: &mut SimpleProcessStderr) -> io::Result<Vec<u8>> {
-            this.0.lock().await.recv().await
-        }
-        Box::pin(inner(self))
-    }
-}
-
-impl ProcessStderr for SimpleProcessStderr {
-    fn read_stderr(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
-        async fn inner(this: &mut SimpleProcessStderr) -> io::Result<Vec<u8>> {
-            this.0.lock().await.recv().await
-        }
-        Box::pin(inner(self))
-    }
-
-    fn clone_stderr(&self) -> Box<dyn OutputChannel + Send> {
-        Box::new(self.clone())
     }
 }
 
@@ -258,7 +176,7 @@ impl ProcessKiller for SimpleProcessKiller {
         Box::pin(inner(self))
     }
 
-    fn clone_killer(&self) -> Box<dyn ProcessKiller + Send + Sync> {
+    fn clone_killer(&self) -> Box<dyn ProcessKiller> {
         Box::new(self.clone())
     }
 }

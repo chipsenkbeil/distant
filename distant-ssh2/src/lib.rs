@@ -459,7 +459,7 @@ impl Ssh2Session {
         // ssh session is closed
         debug!("Executing {} {}", bin, args.join(" "));
         let mut proc = session
-            .spawn("<ssh-launch>", bin, args, true)
+            .spawn("<ssh-launch>", bin, args, true, None)
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
         let mut stdout = proc.stdout.take().unwrap();
@@ -472,17 +472,19 @@ impl Ssh2Session {
         // Close out ssh session
         session.abort();
         let _ = session.wait().await;
-        let mut output = String::new();
+        let mut output = Vec::new();
 
         // If successful, grab the session information and establish a connection
         // with the distant server
         if success {
             while let Ok(data) = stdout.read().await {
-                output.push_str(&data);
+                output.extend(&data);
             }
 
+            // Iterate over output as individual lines, looking for session info
             let maybe_info = output
-                .lines()
+                .split(|&b| b == b'\n')
+                .map(|bytes: &[u8]| String::from_utf8_lossy(bytes))
                 .find_map(|line| line.parse::<SessionInfo>().ok());
             match maybe_info {
                 Some(mut info) => {
@@ -496,7 +498,7 @@ impl Ssh2Session {
             }
         } else {
             while let Ok(data) = stderr.read().await {
-                output.push_str(&data);
+                output.extend(&data);
             }
 
             Err(io::Error::new(
@@ -505,7 +507,10 @@ impl Ssh2Session {
                     "Spawning distant failed [{}]: {}",
                     code.map(|x| x.to_string())
                         .unwrap_or_else(|| String::from("???")),
-                    output
+                    match String::from_utf8(output) {
+                        Ok(output) => output,
+                        Err(x) => x.to_string(),
+                    }
                 ),
             ))
         }

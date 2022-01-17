@@ -1,4 +1,3 @@
-use super::{InputChannel, OutputChannel};
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -9,13 +8,13 @@ use tokio::{
 pub fn spawn_read_task<R>(
     reader: R,
     buf: usize,
-) -> (JoinHandle<io::Result<()>>, Box<dyn OutputChannel>)
+) -> (JoinHandle<io::Result<()>>, mpsc::Receiver<Vec<u8>>)
 where
     R: AsyncRead + Send + Unpin + 'static,
 {
     let (tx, rx) = mpsc::channel(buf);
     let task = tokio::spawn(read_handler(reader, tx));
-    (task, Box::new(rx))
+    (task, rx)
 }
 
 /// Continually reads from some reader and fowards to the provided sender until the reader
@@ -50,13 +49,13 @@ where
 pub fn spawn_write_task<W>(
     writer: W,
     buf: usize,
-) -> (JoinHandle<io::Result<()>>, Box<dyn InputChannel>)
+) -> (JoinHandle<io::Result<()>>, mpsc::Sender<Vec<u8>>)
 where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let (tx, rx) = mpsc::channel(buf);
     let task = tokio::spawn(write_handler(writer, rx));
-    (task, Box::new(tx))
+    (task, tx)
 }
 
 /// Continually writes to some writer by reading data from a provided receiver until the receiver

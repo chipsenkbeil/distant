@@ -1,6 +1,8 @@
 use async_compat::CompatExt;
 use distant_core::{
-    data::{DirEntry, Error as DistantError, FileType, Metadata, RunningProcess, SystemInfo},
+    data::{
+        DirEntry, Error as DistantError, FileType, Metadata, PtySize, RunningProcess, SystemInfo,
+    },
     Request, RequestData, Response, ResponseData,
 };
 use futures::future;
@@ -38,7 +40,7 @@ struct Process {
     cmd: String,
     args: Vec<String>,
     detached: bool,
-    stdin_tx: mpsc::Sender<String>,
+    stdin_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
 }
 
@@ -103,7 +105,11 @@ pub(super) async fn process(
                 cmd,
                 args,
                 detached,
-            } => proc_run(session, state, reply, cmd, args, detached).await,
+                pty,
+            } => proc_run(session, state, reply, cmd, args, detached, pty).await,
+            RequestData::ProcResizePty { id, size } => {
+                proc_resize_pty(session, state, id, size).await
+            }
             RequestData::ProcKill { id } => proc_kill(session, state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(session, state, id, data).await,
             RequestData::ProcList {} => proc_list(session, state).await,
@@ -609,6 +615,7 @@ async fn proc_run<F>(
     cmd: String,
     args: Vec<String>,
     detached: bool,
+    pty: Option<PtySize>,
 ) -> io::Result<Outgoing>
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
@@ -669,29 +676,21 @@ where
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
                 match stdout.read(&mut buf) {
-                    Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
-                        Ok(data) => {
-                            let payload = vec![ResponseData::ProcStdout { id, data }];
-                            if !reply_2(payload).await {
-                                error!("<Ssh | Proc {}> Stdout channel closed", id);
-                                break;
-                            }
-
-                            // Pause to allow buffer to fill up a little bit, avoiding
-                            // spamming with a lot of smaller responses
-                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                READ_PAUSE_MILLIS,
-                            ))
-                            .await;
-                        }
-                        Err(x) => {
-                            error!(
-                                "<Ssh | Proc {}> Invalid data read from stdout pipe: {}",
-                                id, x
-                            );
+                    Ok(n) if n > 0 => {
+                        let payload = vec![ResponseData::ProcStdout {
+                            id,
+                            data: buf[..n].to_vec(),
+                        }];
+                        if !reply_2(payload).await {
+                            error!("<Ssh | Proc {}> Stdout channel closed", id);
                             break;
                         }
-                    },
+
+                        // Pause to allow buffer to fill up a little bit, avoiding
+                        // spamming with a lot of smaller responses
+                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
+                            .await;
+                    }
                     Ok(_) => break,
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                         // Pause to allow buffer to fill up a little bit, avoiding
@@ -713,29 +712,21 @@ where
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
                 match stderr.read(&mut buf) {
-                    Ok(n) if n > 0 => match String::from_utf8(buf[..n].to_vec()) {
-                        Ok(data) => {
-                            let payload = vec![ResponseData::ProcStderr { id, data }];
-                            if !reply_2(payload).await {
-                                error!("<Ssh | Proc {}> Stderr channel closed", id);
-                                break;
-                            }
-
-                            // Pause to allow buffer to fill up a little bit, avoiding
-                            // spamming with a lot of smaller responses
-                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                READ_PAUSE_MILLIS,
-                            ))
-                            .await;
-                        }
-                        Err(x) => {
-                            error!(
-                                "<Ssh | Proc {}> Invalid data read from stderr pipe: {}",
-                                id, x
-                            );
+                    Ok(n) if n > 0 => {
+                        let payload = vec![ResponseData::ProcStderr {
+                            id,
+                            data: buf[..n].to_vec(),
+                        }];
+                        if !reply_2(payload).await {
+                            error!("<Ssh | Proc {}> Stderr channel closed", id);
                             break;
                         }
-                    },
+
+                        // Pause to allow buffer to fill up a little bit, avoiding
+                        // spamming with a lot of smaller responses
+                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
+                            .await;
+                    }
                     Ok(_) => break,
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                         // Pause to allow buffer to fill up a little bit, avoiding
@@ -753,7 +744,7 @@ where
 
         let stdin_task = tokio::spawn(async move {
             while let Some(line) = stdin_rx.recv().await {
-                if let Err(x) = stdin.write_all(line.as_bytes()) {
+                if let Err(x) = stdin.write_all(&line) {
                     error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
                     break;
                 }
@@ -846,6 +837,24 @@ where
     })
 }
 
+async fn proc_resize_pty(
+    _session: WezSession,
+    state: Arc<Mutex<State>>,
+    id: usize,
+    size: PtySize,
+) -> io::Result<Outgoing> {
+    if let Some(process) = state.lock().await.processes.get(&id) {
+        if process.kill_tx.send(()).await.is_ok() {
+            return Ok(Outgoing::from(ResponseData::Ok));
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        format!("<Ssh | Proc {}> Unable to send resize pty", id),
+    ))
+}
+
 async fn proc_kill(
     _session: WezSession,
     state: Arc<Mutex<State>>,
@@ -867,7 +876,7 @@ async fn proc_stdin(
     _session: WezSession,
     state: Arc<Mutex<State>>,
     id: usize,
-    data: String,
+    data: Vec<u8>,
 ) -> io::Result<Outgoing> {
     if let Some(process) = state.lock().await.processes.get_mut(&id) {
         if process.stdin_tx.send(data).await.is_ok() {
@@ -892,6 +901,8 @@ async fn proc_list(_session: WezSession, state: Arc<Mutex<State>>) -> io::Result
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
                 detached: p.detached,
+                // TODO: Support pty size from ssh
+                pty: None,
                 id: p.id,
             })
             .collect(),

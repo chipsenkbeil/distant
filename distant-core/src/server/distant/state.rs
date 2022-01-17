@@ -1,4 +1,4 @@
-use super::{ProcessKiller, ProcessStdin};
+use super::{InputChannel, ProcessKiller, ProcessPty};
 use log::*;
 use std::collections::HashMap;
 
@@ -12,13 +12,16 @@ pub struct State {
     client_processes: HashMap<usize, Vec<usize>>,
 }
 
+/// Holds information related to a spawned process on the server
 pub struct ProcessState {
-    pub id: usize,
     pub cmd: String,
     pub args: Vec<String>,
     pub detached: bool,
-    pub stdin: Box<dyn ProcessStdin>,
+
+    pub id: usize,
+    pub stdin: Option<Box<dyn InputChannel>>,
     pub killer: Box<dyn ProcessKiller>,
+    pub pty: Box<dyn ProcessPty>,
 }
 
 impl State {
@@ -57,7 +60,7 @@ impl State {
                         process.id
                     );
 
-                    process.close_stdin();
+                    let _ = process.stdin.take();
                 }
             }
         }
@@ -68,7 +71,7 @@ impl State {
         debug!("<Conn @ {:?}> Cleaning up state", conn_id);
         if let Some(ids) = self.client_processes.remove(&conn_id) {
             for id in ids {
-                if let Some(process) = self.processes.remove(&id) {
+                if let Some(mut process) = self.processes.remove(&id) {
                     if !process.detached {
                         trace!(
                             "<Conn @ {:?}> Requesting proc {} be killed",
@@ -76,8 +79,7 @@ impl State {
                             process.id
                         );
                         let pid = process.id;
-                        let mut killer = process.killer;
-                        if let Err(x) = killer.kill().await {
+                        if let Err(x) = process.killer.kill().await {
                             error!(
                                 "Conn {} failed to send process {} kill signal: {}",
                                 id, pid, x
