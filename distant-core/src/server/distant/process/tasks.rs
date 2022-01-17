@@ -1,41 +1,10 @@
-use super::{
-    ExitStatus, InputChannel, OutputChannel, Process, ProcessKiller, ProcessStderr, ProcessStdin,
-    ProcessStdout, Wait,
-};
+use super::{InputChannel, OutputChannel};
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS};
-use std::{future::Future, pin::Pin};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
     task::JoinHandle,
 };
-
-pub fn spawn_wait_task<W>(writer: W, buf: usize) -> JoinHandle<io::Result<()>>
-where
-    W: AsyncWrite + Send + Unpin + 'static,
-{
-    let (tx, rx) = mpsc::channel(buf);
-    let task = tokio::spawn(wait_handler(writer, rx));
-    (task, Box::new(tx))
-}
-
-async fn wait_handler(
-    mut wait: Wait,
-    stdin_task: JoinHandle<()>,
-    stdout_task: JoinHandle<()>,
-    stderr_task: JoinHandle<()>,
-) -> io::Result<ExitStatus> {
-    let mut status = wait.resolve().await?;
-
-    stdin_task.abort();
-    let _ = stdout_task.await;
-    let _ = stderr_task.await;
-
-    if status.success && status.code.is_none() {
-        status.code = Some(0);
-    }
-    Ok(status)
-}
 
 pub fn spawn_read_task<R>(
     reader: R,

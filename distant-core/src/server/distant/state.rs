@@ -1,4 +1,4 @@
-use super::Process;
+use super::{ProcessKiller, ProcessStdin};
 use log::*;
 use std::collections::HashMap;
 
@@ -6,23 +6,32 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct State {
     /// Map of all processes running on the server
-    pub processes: HashMap<usize, Box<dyn Process>>,
+    pub processes: HashMap<usize, ProcessState>,
 
     /// List of processes that will be killed when a connection drops
     client_processes: HashMap<usize, Vec<usize>>,
 }
 
+pub struct ProcessState {
+    pub id: usize,
+    pub cmd: String,
+    pub args: Vec<String>,
+    pub detached: bool,
+    pub stdin: Box<dyn ProcessStdin>,
+    pub killer: Box<dyn ProcessKiller>,
+}
+
 impl State {
     /// Pushes a new process associated with a connection
-    pub fn push_process(&mut self, conn_id: usize, process: impl Process + 'static) {
+    pub fn push_process_state(&mut self, conn_id: usize, process_state: ProcessState) {
         self.client_processes
             .entry(conn_id)
             .or_insert_with(Vec::new)
-            .push(process.id());
-        self.processes.insert(process.id(), Box::new(process));
+            .push(process_state.id);
+        self.processes.insert(process_state.id, process_state);
     }
 
-    pub fn mut_process(&mut self, proc_id: usize) -> Option<&mut Box<dyn Process>> {
+    pub fn mut_process(&mut self, proc_id: usize) -> Option<&mut ProcessState> {
         self.processes.get_mut(&proc_id)
     }
 
@@ -45,7 +54,7 @@ impl State {
                     trace!(
                         "<Conn @ {:?}> Closing stdin for proc {}",
                         conn_id,
-                        process.id()
+                        process.id
                     );
 
                     process.close_stdin();
@@ -64,10 +73,11 @@ impl State {
                         trace!(
                             "<Conn @ {:?}> Requesting proc {} be killed",
                             conn_id,
-                            process.id()
+                            process.id
                         );
-                        let pid = process.id();
-                        if let Err(x) = process.kill() {
+                        let pid = process.id;
+                        let mut killer = process.killer;
+                        if let Err(x) = killer.kill().await {
                             error!(
                                 "Conn {} failed to send process {} kill signal: {}",
                                 id, pid, x
@@ -77,7 +87,7 @@ impl State {
                         trace!(
                             "<Conn @ {:?}> Proc {} is detached and will not be killed",
                             conn_id,
-                            process.id()
+                            process.id
                         );
                     }
                 }

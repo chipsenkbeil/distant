@@ -2,7 +2,7 @@ mod handler;
 mod process;
 mod state;
 
-pub(crate) use process::Process;
+pub(crate) use process::{Process, ProcessKiller, ProcessStdin};
 use state::State;
 
 use crate::{

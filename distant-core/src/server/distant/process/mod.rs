@@ -1,20 +1,10 @@
 use crate::data::PtySize;
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
-use tokio::{
-    io,
-    sync::{
-        mpsc,
-        oneshot::{self, error::TryRecvError},
-    },
-    task::JoinHandle,
-};
+use std::{future::Future, pin::Pin, sync::Arc};
+use tokio::{io, sync::mpsc};
 
 mod simple;
+pub use simple::*;
+
 mod tasks;
 
 /// Alias to the return type of an async function (for use with traits)
@@ -37,6 +27,15 @@ impl ExitStatus {
     }
 }
 
+impl From<std::process::ExitStatus> for ExitStatus {
+    fn from(status: std::process::ExitStatus) -> Self {
+        Self {
+            success: status.success(),
+            code: status.code(),
+        }
+    }
+}
+
 /// Represents a notifier for a specific waiting state
 #[derive(Debug)]
 pub enum WaitNotifier {
@@ -53,7 +52,12 @@ impl WaitNotifier {
     }
 
     /// Mark wait as completed using provided exit status
-    pub fn notify(&mut self, status: ExitStatus) -> io::Result<()> {
+    pub fn notify<S>(&mut self, status: S) -> io::Result<()>
+    where
+        S: Into<ExitStatus>,
+    {
+        let status = status.into();
+
         match self {
             Self::Done => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -139,12 +143,12 @@ impl Wait {
 }
 
 /// Represents an input channel of a process such as stdin
-pub trait InputChannel {
+pub trait InputChannel: Send + Send {
     /// Waits for input to be sent through channel
     fn send<'a>(&'a mut self, data: &[u8]) -> FutureReturn<'a, io::Result<()>>;
 }
 
-impl<T: InputChannel + ?Sized> InputChannel for Arc<T> {
+impl<T: InputChannel + Send + Sync + ?Sized> InputChannel for Arc<T> {
     fn send<'a>(&'a mut self, data: &[u8]) -> FutureReturn<'a, io::Result<()>> {
         InputChannel::send(&mut **self, data)
     }
@@ -166,12 +170,12 @@ impl InputChannel for mpsc::Sender<Vec<u8>> {
 }
 
 /// Represents an output channel of a process such as stdout or stderr
-pub trait OutputChannel {
+pub trait OutputChannel: Send + Sync {
     /// Waits for next output from channel
     fn recv(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>>;
 }
 
-impl<T: OutputChannel + ?Sized> OutputChannel for Arc<T> {
+impl<T: OutputChannel + Send + Sync + ?Sized> OutputChannel for Arc<T> {
     fn recv(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>> {
         OutputChannel::recv(&mut **self)
     }
@@ -205,28 +209,31 @@ pub trait Process: ProcessStdin + ProcessStdout + ProcessStderr + ProcessKiller 
     fn wait(&mut self) -> FutureReturn<'_, io::Result<ExitStatus>>;
 }
 
-pub trait ProcessStdin {
+pub trait ProcessStdin: Send {
     /// Writes batch of data to stdin
     fn write_stdin<'a>(&'a mut self, data: &[u8]) -> FutureReturn<'a, io::Result<()>>;
 
     /// Clones a handle to the stdin channel of the process
-    fn clone_stdin(&self) -> Box<dyn InputChannel + Send>;
+    fn clone_stdin(&self) -> Box<dyn ProcessStdin + Send>;
+
+    /// Closes the stdin of the process
+    fn close_stdin(&mut self) -> io::Result<()>;
 }
 
-pub trait ProcessStdout {
+pub trait ProcessStdout: Send {
     /// Reads next batch of data from stdout
     fn read_stdout(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>>;
 
     /// Clones a handle to the stdout channel of the process
-    fn clone_stdout(&self) -> Box<dyn OutputChannel + Send>;
+    fn clone_stdout(&self) -> Box<dyn ProcessStdout>;
 }
 
-pub trait ProcessStderr {
+pub trait ProcessStderr: Send {
     /// Reads next batch of data from stderr
     fn read_stderr(&mut self) -> FutureReturn<'_, io::Result<Vec<u8>>>;
 
     /// Clones a handle to the stderr channel of the process
-    fn clone_stderr(&self) -> Box<dyn OutputChannel + Send>;
+    fn clone_stderr(&self) -> Box<dyn ProcessStderr>;
 }
 
 pub trait ProcessKiller {
@@ -238,4 +245,19 @@ pub trait ProcessKiller {
 
     /// Clone a process killer to support sending signals independently
     fn clone_killer(&self) -> Box<dyn ProcessKiller + Send + Sync>;
+}
+
+impl ProcessKiller for mpsc::Sender<()> {
+    fn kill(&mut self) -> FutureReturn<'_, io::Result<()>> {
+        async fn inner(this: &mut mpsc::Sender<()>) -> io::Result<()> {
+            this.send(())
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))
+        }
+        Box::pin(inner(self))
+    }
+
+    fn clone_killer(&self) -> Box<dyn ProcessKiller + Send + Sync> {
+        Box::new(self.clone())
+    }
 }
