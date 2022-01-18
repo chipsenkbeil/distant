@@ -1,10 +1,13 @@
 use super::{
-    tasks, wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process,
+    wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process,
     ProcessKiller, WaitRx,
 };
 use std::{ffi::OsStr, process::Stdio};
 use tokio::{io, process::Command, sync::mpsc, task::JoinHandle};
 
+mod tasks;
+
+/// Represents a simple process that does not have a pty
 pub struct SimpleProcess {
     id: usize,
     stdin: Option<Box<dyn InputChannel>>,
@@ -47,16 +50,17 @@ impl SimpleProcess {
         tokio::spawn(async move {
             tokio::select! {
                 _ = kill_rx.recv() => {
-                    if child.kill().await.is_ok() {
-                        // TODO: Keep track of io error
-                        let _ = wait_tx.send(ExitStatus::killed());
-                    }
-                }
-                exit_status = child.wait() => {
+                    let status = match child.kill().await {
+                        Ok(_) => ExitStatus::killed(),
+                        Err(x) => ExitStatus::from(x),
+                    };
+
                     // TODO: Keep track of io error
-                    if let Ok(status) = exit_status {
-                        let _ = wait_tx.send(status);
-                    }
+                    let _ = wait_tx.send(status);
+                }
+                status = child.wait() => {
+                    // TODO: Keep track of io error
+                    let _ = wait_tx.send(status);
                 }
             }
         });
@@ -142,10 +146,6 @@ impl Process for SimpleProcess {
 impl NoProcessPty for SimpleProcess {}
 
 impl ProcessKiller for SimpleProcess {
-    /// Kill the process
-    ///
-    /// If the process is dead or has already been killed, this will return
-    /// an error.
     fn kill(&mut self) -> FutureReturn<'_, io::Result<()>> {
         async fn inner(this: &mut SimpleProcess) -> io::Result<()> {
             this.kill_tx
@@ -156,7 +156,6 @@ impl ProcessKiller for SimpleProcess {
         Box::pin(inner(self))
     }
 
-    /// Clone a process killer to support sending signals independently
     fn clone_killer(&self) -> Box<dyn ProcessKiller> {
         Box::new(self.kill_tx.clone())
     }

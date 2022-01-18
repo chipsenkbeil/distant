@@ -2,10 +2,11 @@ use crate::data::PtySize;
 use std::{future::Future, pin::Pin};
 use tokio::{io, sync::mpsc};
 
+mod pty;
+pub use pty::*;
+
 mod simple;
 pub use simple::*;
-
-mod tasks;
 
 mod wait;
 pub use wait::{ExitStatus, WaitRx, WaitTx};

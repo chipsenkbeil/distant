@@ -4,7 +4,7 @@ use crate::{
         RunningProcess, SystemInfo,
     },
     server::distant::{
-        process::{Process, SimpleProcess},
+        process::{Process, PtyProcess, SimpleProcess},
         state::{ProcessState, State},
     },
 };
@@ -441,7 +441,7 @@ where
 {
     debug!("<Conn @ {}> Spawning {} {}", conn_id, cmd, args.join(" "));
     let mut child: Box<dyn Process> = match pty {
-        Some(_size) => todo!(),
+        Some(size) => Box::new(PtyProcess::spawn(cmd.clone(), args.clone(), size)?),
         None => Box::new(SimpleProcess::spawn(cmd.clone(), args.clone())?),
     };
 

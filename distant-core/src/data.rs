@@ -408,6 +408,16 @@ impl PtySize {
         Self {
             rows,
             cols,
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for PtySize {
+    fn default() -> Self {
+        PtySize {
+            rows: 24,
+            cols: 80,
             pixel_width: 0,
             pixel_height: 0,
         }

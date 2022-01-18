@@ -17,6 +17,28 @@ impl ExitStatus {
     }
 }
 
+impl<T, E> From<Result<T, E>> for ExitStatus
+where
+    T: Into<ExitStatus>,
+    E: Into<ExitStatus>,
+{
+    fn from(res: Result<T, E>) -> Self {
+        match res {
+            Ok(x) => x.into(),
+            Err(x) => x.into(),
+        }
+    }
+}
+
+impl From<io::Error> for ExitStatus {
+    fn from(err: io::Error) -> Self {
+        Self {
+            success: false,
+            code: err.raw_os_error(),
+        }
+    }
+}
+
 impl From<std::process::ExitStatus> for ExitStatus {
     fn from(status: std::process::ExitStatus) -> Self {
         Self {
