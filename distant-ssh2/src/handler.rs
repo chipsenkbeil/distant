@@ -623,7 +623,19 @@ where
     let id = rand::random();
     let cmd_string = format!("{} {}", cmd, args.join(" "));
 
-    debug!("<Ssh | Proc {}> Spawning {}", id, cmd_string);
+    debug!(
+        "<Ssh | Proc {}> Spawning {} (pty: {:?})",
+        id, cmd_string, pty
+    );
+
+    // TODO: session.request_pty(...) returns (SshPty, SshChildProcess)
+    //
+    // The child matches the one from exec, so that's easy. The challenge is that
+    // stdin, stdout, and stderr are now baked into SshPty. We can clone readers and writers,
+    // but there's no ability to make them nonblocking. Maybe we can use tokio's spawn_blocking
+    // to work okay?
+    //
+    // Additionally, a pty has no stderr (it's all one output); so reading stderr should do nothing
     let ExecResult {
         mut stdin,
         mut stdout,

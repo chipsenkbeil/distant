@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, Mutex};
 use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
 
 mod handler;
+mod process;
 
 /// Represents a singular authentication prompt for a new ssh session
 #[derive(Debug)]
