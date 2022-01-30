@@ -21,7 +21,7 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncWriteExt},
-    sync::{mpsc, Mutex, MutexGuard},
+    sync::{mpsc, Mutex},
 };
 use walkdir::WalkDir;
 
@@ -43,7 +43,7 @@ impl From<ServerError> for ResponseData {
     }
 }
 
-type PostHook = Box<dyn FnOnce(MutexGuard<'_, State>) + Send>;
+type PostHook = Box<dyn FnOnce() + Send>;
 struct Outgoing {
     data: ResponseData,
     post_hook: Option<PostHook>,
@@ -161,7 +161,7 @@ pub(super) async fn process(
 
     // Invoke all post hooks
     for hook in post_hooks {
-        hook(state.lock().await);
+        hook();
     }
 
     result
@@ -453,7 +453,7 @@ where
     let pty = child.clone_pty();
 
     let state_2 = Arc::clone(&state);
-    let post_hook = Box::new(move |_: MutexGuard<'_, State>| {
+    let post_hook = Box::new(move || {
         // Spawn a task that sends stdout as a response
         let mut reply_2 = reply.clone();
         let _ = tokio::spawn(async move {

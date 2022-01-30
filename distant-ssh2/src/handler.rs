@@ -1,3 +1,4 @@
+use crate::process::{self, SpawnResult};
 use async_compat::CompatExt;
 use distant_core::{
     data::{
@@ -10,18 +11,13 @@ use log::*;
 use std::{
     collections::HashMap,
     future::Future,
-    io::{self, Read, Write},
+    io,
     path::{Component, PathBuf},
     pin::Pin,
     sync::Arc,
 };
 use tokio::sync::{mpsc, Mutex};
-use wezterm_ssh::{
-    Child, ExecResult, FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode,
-};
-
-const MAX_PIPE_CHUNK_SIZE: usize = 8192;
-const READ_PAUSE_MILLIS: u64 = 50;
+use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
 
 fn to_other_error<E>(err: E) -> io::Error
 where
@@ -46,7 +42,7 @@ struct Process {
 
 type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 
-type PostHook = Box<dyn FnOnce() + Send>;
+type PostHook = Box<dyn FnOnce(mpsc::Sender<Vec<ResponseData>>) + Send>;
 struct Outgoing {
     data: ResponseData,
     post_hook: Option<PostHook>,
@@ -162,9 +158,18 @@ pub(super) async fn process(
     // Send out our primary response from processing the request
     let result = tx.send(res).await;
 
+    let (tx, mut rx) = mpsc::channel(1);
+    tokio::spawn(async move {
+        while let Some(payload) = rx.recv().await {
+            if !reply(payload).await {
+                break;
+            }
+        }
+    });
+
     // Invoke all post hooks
     for hook in post_hooks {
-        hook();
+        hook(tx.clone());
     }
 
     result
@@ -620,55 +625,24 @@ async fn proc_run<F>(
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
-    let id = rand::random();
     let cmd_string = format!("{} {}", cmd, args.join(" "));
+    debug!("<Ssh> Spawning {} (pty: {:?})", cmd_string, pty);
 
-    debug!(
-        "<Ssh | Proc {}> Spawning {} (pty: {:?})",
-        id, cmd_string, pty
-    );
+    let state_2 = Arc::clone(&state);
+    let cleanup = |id: usize| async move {
+        state_2.lock().await.processes.remove(&id);
+    };
 
-    // TODO: session.request_pty(...) returns (SshPty, SshChildProcess)
-    //
-    // The child matches the one from exec, so that's easy. The challenge is that
-    // stdin, stdout, and stderr are now baked into SshPty. We can clone readers and writers,
-    // but there's no ability to make them nonblocking. Maybe we can use tokio's spawn_blocking
-    // to work okay?
-    //
-    // Additionally, a pty has no stderr (it's all one output); so reading stderr should do nothing
-    let ExecResult {
-        mut stdin,
-        mut stdout,
-        mut stderr,
-        mut child,
-    } = session
-        .exec(&cmd_string, None)
-        .compat()
-        .await
-        .map_err(to_other_error)?;
+    let SpawnResult {
+        id,
+        stdin,
+        killer,
+        initialize,
+    } = match pty {
+        None => process::spawn_simple(&session, &cmd_string, cleanup).await?,
+        Some(size) => process::spawn_pty(&session, &cmd_string, size, cleanup).await?,
+    };
 
-    // Force stdin, stdout, and stderr to be nonblocking
-    stdin
-        .set_non_blocking(true)
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-    stdout
-        .set_non_blocking(true)
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-    stderr
-        .set_non_blocking(true)
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-
-    // Check if the process died immediately and report
-    // an error if that's the case
-    if let Ok(Some(exit_status)) = child.try_wait() {
-        return Err(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("Process exited early: {:?}", exit_status),
-        ));
-    }
-
-    let (stdin_tx, mut stdin_rx) = mpsc::channel(1);
-    let (kill_tx, mut kill_rx) = mpsc::channel(1);
     state.lock().await.processes.insert(
         id,
         Process {
@@ -676,168 +650,10 @@ where
             cmd,
             args,
             detached,
-            stdin_tx,
-            kill_tx,
+            stdin_tx: stdin,
+            kill_tx: killer,
         },
     );
-
-    let post_hook = Box::new(move || {
-        // Spawn a task that sends stdout as a response
-        let mut reply_2 = reply.clone();
-        let stdout_task = tokio::spawn(async move {
-            let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
-            loop {
-                match stdout.read(&mut buf) {
-                    Ok(n) if n > 0 => {
-                        let payload = vec![ResponseData::ProcStdout {
-                            id,
-                            data: buf[..n].to_vec(),
-                        }];
-                        if !reply_2(payload).await {
-                            error!("<Ssh | Proc {}> Stdout channel closed", id);
-                            break;
-                        }
-
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Ok(_) => break,
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Err(x) => {
-                        error!("<Ssh | Proc {}> Stdout unexpectedly closed: {}", id, x);
-                        break;
-                    }
-                }
-            }
-        });
-
-        // Spawn a task that sends stderr as a response
-        let mut reply_2 = reply.clone();
-        let stderr_task = tokio::spawn(async move {
-            let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
-            loop {
-                match stderr.read(&mut buf) {
-                    Ok(n) if n > 0 => {
-                        let payload = vec![ResponseData::ProcStderr {
-                            id,
-                            data: buf[..n].to_vec(),
-                        }];
-                        if !reply_2(payload).await {
-                            error!("<Ssh | Proc {}> Stderr channel closed", id);
-                            break;
-                        }
-
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Ok(_) => break,
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Err(x) => {
-                        error!("<Ssh | Proc {}> Stderr unexpectedly closed: {}", id, x);
-                        break;
-                    }
-                }
-            }
-        });
-
-        let stdin_task = tokio::spawn(async move {
-            while let Some(line) = stdin_rx.recv().await {
-                if let Err(x) = stdin.write_all(&line) {
-                    error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
-                    break;
-                }
-            }
-        });
-
-        // Spawn a task that waits on the process to exit but can also
-        // kill the process when triggered
-        let state_2 = Arc::clone(&state);
-        let mut reply_2 = reply.clone();
-        tokio::spawn(async move {
-            let mut should_kill = false;
-            let mut success = false;
-            tokio::select! {
-                _ = kill_rx.recv() => {
-                    should_kill = true;
-                }
-                result = child.async_wait().compat() => {
-                    match result {
-                        Ok(status) => {
-                            success = status.success();
-                        }
-                        Err(x) => {
-                            error!("<Ssh | Proc {}> Waiting on process failed: {}", id, x);
-                        }
-                    }
-                }
-            }
-
-            // Force stdin task to abort if it hasn't exited as there is no
-            // point to sending any more stdin
-            stdin_task.abort();
-
-            if should_kill {
-                debug!("<Ssh | Proc {}> Killing", id);
-
-                if let Err(x) = child.kill() {
-                    error!("<Ssh | Proc {}> Unable to kill process: {}", id, x);
-                }
-
-                // NOTE: At the moment, child.kill does nothing for wezterm_ssh::SshChildProcess;
-                //       so, we need to manually run kill/taskkill to make sure that the
-                //       process is sent a kill signal
-                if let Some(pid) = child.process_id() {
-                    let _ = session
-                        .exec(&format!("kill -9 {}", pid), None)
-                        .compat()
-                        .await;
-                    let _ = session
-                        .exec(&format!("taskkill /F /PID {}", pid), None)
-                        .compat()
-                        .await;
-                }
-            } else {
-                debug!(
-                    "<Ssh | Proc {}> Completed and waiting on stdout & stderr tasks",
-                    id
-                );
-            }
-
-            if let Err(x) = stderr_task.await {
-                error!("<Ssh | Proc {}> Join on stderr task failed: {}", id, x);
-            }
-
-            if let Err(x) = stdout_task.await {
-                error!("<Ssh | Proc {}> Join on stdout task failed: {}", id, x);
-            }
-
-            state_2.lock().await.processes.remove(&id);
-
-            let payload = vec![ResponseData::ProcDone {
-                id,
-                success: !should_kill && success,
-                code: if success { Some(0) } else { None },
-            }];
-
-            if !reply_2(payload).await {
-                error!("<Ssh | Proc {}> Failed to send done", id,);
-            }
-        });
-    });
 
     debug!(
         "<Ssh | Proc {}> Spawned successfully! Will enter post hook later",
@@ -845,7 +661,7 @@ where
     );
     Ok(Outgoing {
         data: ResponseData::ProcSpawned { id },
-        post_hook: Some(post_hook),
+        post_hook: Some(initialize),
     })
 }
 

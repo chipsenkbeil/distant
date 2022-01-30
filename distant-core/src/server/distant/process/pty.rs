@@ -96,20 +96,22 @@ impl PtyProcess {
                 match (child.try_wait(), kill_rx.try_recv()) {
                     (Ok(Some(status)), _) => {
                         // TODO: Keep track of io error
-                        let _ = wait_tx.send(ExitStatus {
-                            success: status.success(),
-                            code: None,
-                        });
+                        let _ = wait_tx
+                            .send(ExitStatus {
+                                success: status.success(),
+                                code: None,
+                            })
+                            .await;
                         break;
                     }
                     (_, Ok(_)) => {
                         // TODO: Keep track of io error
-                        let _ = wait_tx.send(ExitStatus::killed());
+                        let _ = wait_tx.kill().await;
                         break;
                     }
                     (Err(x), _) => {
                         // TODO: Keep track of io error
-                        let _ = wait_tx.send(x);
+                        let _ = wait_tx.send(x).await;
                         break;
                     }
                     _ => {

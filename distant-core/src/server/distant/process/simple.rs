@@ -56,11 +56,11 @@ impl SimpleProcess {
                     };
 
                     // TODO: Keep track of io error
-                    let _ = wait_tx.send(status);
+                    let _ = wait_tx.send(status).await;
                 }
                 status = child.wait() => {
                     // TODO: Keep track of io error
-                    let _ = wait_tx.send(status);
+                    let _ = wait_tx.send(status).await;
                 }
             }
         });

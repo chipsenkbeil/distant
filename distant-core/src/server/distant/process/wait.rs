@@ -71,7 +71,7 @@ impl WaitTx {
     }
 
     /// Send exit status to receiving-side of wait
-    pub fn send<S>(&mut self, status: S) -> io::Result<()>
+    pub async fn send<S>(&mut self, status: S) -> io::Result<()>
     where
         S: Into<ExitStatus>,
     {
@@ -83,7 +83,7 @@ impl WaitTx {
                 "Notifier is closed",
             )),
             Self::Pending(tx) => {
-                let res = tx.blocking_send(status);
+                let res = tx.send(status).await;
                 *self = Self::Done;
 
                 match res {
@@ -95,8 +95,8 @@ impl WaitTx {
     }
 
     /// Mark wait as completed using killed status
-    pub fn kill(&mut self) -> io::Result<()> {
-        self.send(ExitStatus::killed())
+    pub async fn kill(&mut self) -> io::Result<()> {
+        self.send(ExitStatus::killed()).await
     }
 }
 

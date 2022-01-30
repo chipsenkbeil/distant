@@ -1,4 +1,5 @@
 use derive_more::{Display, Error, IsVariant};
+use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
 use std::{io, num::ParseIntError, path::PathBuf, str::FromStr};
 use strum::AsRefStr;
@@ -409,6 +410,28 @@ impl PtySize {
             rows,
             cols,
             ..Default::default()
+        }
+    }
+}
+
+impl From<PortablePtySize> for PtySize {
+    fn from(size: PortablePtySize) -> Self {
+        Self {
+            rows: size.rows,
+            cols: size.cols,
+            pixel_width: size.pixel_width,
+            pixel_height: size.pixel_height,
+        }
+    }
+}
+
+impl From<PtySize> for PortablePtySize {
+    fn from(size: PtySize) -> Self {
+        Self {
+            rows: size.rows,
+            cols: size.cols,
+            pixel_width: size.pixel_width,
+            pixel_height: size.pixel_height,
         }
     }
 }
