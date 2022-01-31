@@ -53,6 +53,7 @@ impl ResponseOut {
                 if let Err(x) = io::stdout().lock().write_all(&x) {
                     error!("Failed to write stdout: {}", x);
                 }
+
                 if let Err(x) = io::stdout().lock().flush() {
                     error!("Failed to flush stdout: {}", x);
                 }
@@ -67,9 +68,15 @@ impl ResponseOut {
                 }
             }
             Self::Stderr(x) => {
+                // NOTE: Because we are not including a newline in the output,
+                //       it is not guaranteed to be written out. In the case of
+                //       LSP protocol, the JSON content is not followed by a
+                //       newline and was not picked up when the response was
+                //       sent back to the client; so, we need to manually flush
                 if let Err(x) = io::stderr().lock().write_all(&x) {
                     error!("Failed to write stderr: {}", x);
                 }
+
                 if let Err(x) = io::stderr().lock().flush() {
                     error!("Failed to flush stderr: {}", x);
                 }
