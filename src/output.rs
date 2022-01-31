@@ -61,6 +61,10 @@ impl ResponseOut {
                 if let Err(x) = io::stdout().lock().write_all(&x) {
                     error!("Failed to write stdout: {}", x);
                 }
+
+                if let Err(x) = io::stdout().lock().write(b"\n") {
+                    error!("Failed to write stdout newline: {}", x);
+                }
             }
             Self::Stderr(x) => {
                 if let Err(x) = io::stderr().lock().write_all(&x) {
@@ -73,6 +77,10 @@ impl ResponseOut {
             Self::StderrLine(x) => {
                 if let Err(x) = io::stderr().lock().write_all(&x) {
                     error!("Failed to write stderr: {}", x);
+                }
+
+                if let Err(x) = io::stderr().lock().write(b"\n") {
+                    error!("Failed to write stderr newline: {}", x);
                 }
             }
             Self::None => {}
