@@ -65,11 +65,6 @@ pub enum WaitTx {
 }
 
 impl WaitTx {
-    /// Returns true if exit status has been sent through channel
-    pub fn is_done(&self) -> bool {
-        matches!(self, Self::Done)
-    }
-
     /// Send exit status to receiving-side of wait
     pub async fn send<S>(&mut self, status: S) -> io::Result<()>
     where
@@ -114,23 +109,6 @@ pub enum WaitRx {
 }
 
 impl WaitRx {
-    /// Returns true if receiver of exit status is still waiting
-    pub fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending(_))
-    }
-
-    /// Converts into an option, returning Some(status) if ready, otherwise None
-    ///
-    /// Note that this does NOT attempt to resolve a pending instance. To do that,
-    /// this requires a mutation and should instead invoke `resolve`.
-    pub fn to_option(&self) -> Option<ExitStatus> {
-        match self {
-            Self::Ready(status) => Some(*status),
-            Self::Dropped => None,
-            Self::Pending(_) => None,
-        }
-    }
-
     /// Waits until the exit status is resolved; can be called repeatedly after being
     /// resolved to immediately return the exit status again
     pub async fn recv(&mut self) -> io::Result<ExitStatus> {

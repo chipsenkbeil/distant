@@ -2,7 +2,7 @@ mod handler;
 mod process;
 mod state;
 
-pub(crate) use process::{InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty};
+pub(crate) use process::{InputChannel, ProcessKiller, ProcessPty};
 use state::State;
 
 use crate::{

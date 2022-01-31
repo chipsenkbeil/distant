@@ -34,10 +34,6 @@ impl State {
         self.processes.insert(process_state.id, process_state);
     }
 
-    pub fn mut_process(&mut self, proc_id: usize) -> Option<&mut ProcessState> {
-        self.processes.get_mut(&proc_id)
-    }
-
     /// Removes a process associated with a connection
     pub fn remove_process(&mut self, conn_id: usize, proc_id: usize) {
         self.client_processes.entry(conn_id).and_modify(|v| {

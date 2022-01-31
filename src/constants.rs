@@ -15,6 +15,10 @@ pub const SERVER_CONN_MSG_CAPACITY: usize = 10000;
 /// before failing (0 meaning indefinitely)
 pub const TIMEOUT: usize = 15000;
 
+/// Duration in milliseconds to sleep between checking for a terminal size change
+/// to send resize events to a remote pty
+pub const TERMINAL_RESIZE_MILLIS: u64 = 50;
+
 pub static TIMEOUT_STR: Lazy<String> = Lazy::new(|| TIMEOUT.to_string());
 pub static SERVER_CONN_MSG_CAPACITY_STR: Lazy<String> =
     Lazy::new(|| SERVER_CONN_MSG_CAPACITY.to_string());

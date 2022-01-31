@@ -1,4 +1,5 @@
 use crate::{
+    constants::TERMINAL_RESIZE_MILLIS,
     exit::{ExitCode, ExitCodeError},
     link::RemoteProcessLink,
     opt::{CommonOpt, ShellSubcommand},
@@ -8,7 +9,7 @@ use crate::{
 use derive_more::{Display, Error, From};
 use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, Session};
 use terminal_size::{terminal_size, Height, Width};
-use tokio::io;
+use tokio::{io, time::Duration};
 
 #[derive(Debug, Display, Error, From)]
 pub enum Error {
@@ -69,6 +70,9 @@ async fn start(
     session: Session,
     lsp_data: Option<LspData>,
 ) -> Result<(), Error> {
+    let mut width: u16 = 0;
+    let mut height: u16 = 0;
+
     let mut proc = RemoteProcess::spawn(
         utils::new_tenant(),
         session.clone_channel(),
@@ -97,7 +101,25 @@ async fn start(
         proc.stderr.take().unwrap(),
     );
 
-    let (success, exit_code) = proc.wait().await?;
+    // Continually loop to check for terminal resize changes while the process is still running
+    let (success, exit_code) = loop {
+        // If the process is done, then we want to return success and exit code
+        if proc.status().await.is_some() {
+            break proc.wait().await?;
+        }
+
+        // Get the terminal's size and compare it to the current size
+        if let Some((Width(new_width), Height(new_height))) = terminal_size() {
+            if new_width != width || new_height != height {
+                width = new_width;
+                height = new_height;
+                proc.resize(PtySize::from_rows_and_cols(height, width))
+                    .await?;
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(TERMINAL_RESIZE_MILLIS)).await;
+    };
 
     // Shut down our link
     link.shutdown().await;
