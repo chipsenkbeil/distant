@@ -83,9 +83,9 @@ macro_rules! next_two_msgs {
 
 #[rstest]
 fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
-    // distant action proc-run -- {cmd} [args]
+    // distant action proc-spawn -- {cmd} [args]
     action_cmd
-        .args(&["proc-run", "--"])
+        .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
         .arg(EXIT_CODE_SH.to_str().unwrap())
         .arg("0")
@@ -97,9 +97,9 @@ fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
 
 #[rstest]
 fn should_capture_and_print_stdout(mut action_cmd: Command) {
-    // distant action proc-run {cmd} [args]
+    // distant action proc-spawn {cmd} [args]
     action_cmd
-        .args(&["proc-run", "--"])
+        .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
         .arg(ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap())
         .arg("hello world")
@@ -111,9 +111,9 @@ fn should_capture_and_print_stdout(mut action_cmd: Command) {
 
 #[rstest]
 fn should_capture_and_print_stderr(mut action_cmd: Command) {
-    // distant action proc-run {cmd} [args]
+    // distant action proc-spawn {cmd} [args]
     action_cmd
-        .args(&["proc-run", "--"])
+        .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
         .arg(ECHO_ARGS_TO_STDERR_SH.to_str().unwrap())
         .arg("hello world")
@@ -125,9 +125,9 @@ fn should_capture_and_print_stderr(mut action_cmd: Command) {
 
 #[rstest]
 fn should_forward_stdin_to_remote_process(mut action_cmd: Command) {
-    // distant action proc-run {cmd} [args]
+    // distant action proc-spawn {cmd} [args]
     action_cmd
-        .args(&["proc-run", "--"])
+        .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
         .arg(ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap())
         .write_stdin("hello world\n")
@@ -139,9 +139,9 @@ fn should_forward_stdin_to_remote_process(mut action_cmd: Command) {
 
 #[rstest]
 fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
-    // distant action proc-run {cmd} [args]
+    // distant action proc-spawn {cmd} [args]
     action_cmd
-        .args(&["proc-run", "--"])
+        .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
         .arg(EXIT_CODE_SH.to_str().unwrap())
         .arg("99")
@@ -153,9 +153,9 @@ fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
 
 #[rstest]
 fn yield_an_error_when_fails(mut action_cmd: Command) {
-    // distant action proc-run {cmd} [args]
+    // distant action proc-spawn {cmd} [args]
     action_cmd
-        .args(&["proc-run", "--"])
+        .args(&["proc-spawn", "--"])
         .arg(DOES_NOT_EXIST_BIN.to_str().unwrap())
         .assert()
         .code(ExitCode::IoError.to_i32())

@@ -2131,7 +2131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_run_should_send_error_on_failure() {
+    async fn proc_spawn_should_send_error_on_failure() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         let req = Request::new(
@@ -2158,7 +2158,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_run_should_send_back_proc_start_on_success() {
+    async fn proc_spawn_should_send_back_proc_start_on_success() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         let req = Request::new(
@@ -2188,7 +2188,7 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_run_should_send_back_stdout_periodically_when_available() {
+    async fn proc_spawn_should_send_back_stdout_periodically_when_available() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that echoes to stdout
@@ -2255,7 +2255,7 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_run_should_send_back_stderr_periodically_when_available() {
+    async fn proc_spawn_should_send_back_stderr_periodically_when_available() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that echoes to stderr
@@ -2322,7 +2322,7 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_run_should_clear_process_from_state_when_done() {
+    async fn proc_spawn_should_clear_process_from_state_when_done() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that ends after a little bit
@@ -2366,7 +2366,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_run_should_clear_process_from_state_when_killed() {
+    async fn proc_spawn_should_clear_process_from_state_when_killed() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that ends slowly

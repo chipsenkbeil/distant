@@ -1348,7 +1348,7 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_send_error_over_stderr_on_failure(#[future] session: Session) {
+async fn proc_spawn_should_send_error_over_stderr_on_failure(#[future] session: Session) {
     let mut session = session.await;
     let req = Request::new(
         "test-tenant",
@@ -1395,7 +1395,7 @@ async fn proc_run_should_send_error_over_stderr_on_failure(#[future] session: Se
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_send_back_proc_start_on_success(#[future] session: Session) {
+async fn proc_spawn_should_send_back_proc_start_on_success(#[future] session: Session) {
     let mut session = session.await;
     let req = Request::new(
         "test-tenant",
@@ -1421,7 +1421,9 @@ async fn proc_run_should_send_back_proc_start_on_success(#[future] session: Sess
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] session: Session) {
+async fn proc_spawn_should_send_back_stdout_periodically_when_available(
+    #[future] session: Session,
+) {
     let mut session = session.await;
     // Run a program that echoes to stdout
     let req = Request::new(
@@ -1486,7 +1488,9 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] 
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] session: Session) {
+async fn proc_spawn_should_send_back_stderr_periodically_when_available(
+    #[future] session: Session,
+) {
     let mut session = session.await;
     // Run a program that echoes to stderr
     let req = Request::new(
@@ -1551,7 +1555,7 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] 
 #[rstest]
 #[tokio::test]
 #[cfg_attr(windows, ignore)]
-async fn proc_run_should_clear_process_from_state_when_done(#[future] session: Session) {
+async fn proc_spawn_should_clear_process_from_state_when_done(#[future] session: Session) {
     let mut session = session.await;
     // Run a program that ends after a little bit
     let req = Request::new(
@@ -1600,7 +1604,7 @@ async fn proc_run_should_clear_process_from_state_when_done(#[future] session: S
 
 #[rstest]
 #[tokio::test]
-async fn proc_run_should_clear_process_from_state_when_killed(#[future] session: Session) {
+async fn proc_spawn_should_clear_process_from_state_when_killed(#[future] session: Session) {
     let mut session = session.await;
     // Run a program that ends slowly
     let req = Request::new(

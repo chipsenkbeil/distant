@@ -99,7 +99,7 @@ pub(super) async fn process(
                 args,
                 detached,
                 pty,
-            } => proc_run(session, state, cmd, args, detached, pty).await,
+            } => proc_spawn(session, state, cmd, args, detached, pty).await,
             RequestData::ProcResizePty { id, size } => {
                 proc_resize_pty(session, state, id, size).await
             }
@@ -609,7 +609,7 @@ async fn metadata(
     })))
 }
 
-async fn proc_run(
+async fn proc_spawn(
     session: WezSession,
     state: Arc<Mutex<State>>,
     cmd: String,
