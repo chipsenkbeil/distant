@@ -25,28 +25,28 @@ pub trait Process: ProcessKiller + ProcessPty {
     fn wait(&mut self) -> FutureReturn<'_, io::Result<ExitStatus>>;
 
     /// Returns a reference to stdin channel if the process still has it associated
-    fn stdin(&self) -> Option<&Box<dyn InputChannel>>;
+    fn stdin(&self) -> Option<&dyn InputChannel>;
 
     /// Returns a mutable reference to the stdin channel if the process still has it associated
-    fn mut_stdin(&mut self) -> Option<&mut Box<dyn InputChannel>>;
+    fn mut_stdin(&mut self) -> Option<&mut (dyn InputChannel + 'static)>;
 
     /// Takes the stdin channel from the process if it is still associated
     fn take_stdin(&mut self) -> Option<Box<dyn InputChannel>>;
 
     /// Returns a reference to stdout channel if the process still has it associated
-    fn stdout(&self) -> Option<&Box<dyn OutputChannel>>;
+    fn stdout(&self) -> Option<&dyn OutputChannel>;
 
     /// Returns a mutable reference to the stdout channel if the process still has it associated
-    fn mut_stdout(&mut self) -> Option<&mut Box<dyn OutputChannel>>;
+    fn mut_stdout(&mut self) -> Option<&mut (dyn OutputChannel + 'static)>;
 
     /// Takes the stdout channel from the process if it is still associated
     fn take_stdout(&mut self) -> Option<Box<dyn OutputChannel>>;
 
     /// Returns a reference to stderr channel if the process still has it associated
-    fn stderr(&self) -> Option<&Box<dyn OutputChannel>>;
+    fn stderr(&self) -> Option<&dyn OutputChannel>;
 
     /// Returns a mutable reference to the stderr channel if the process still has it associated
-    fn mut_stderr(&mut self) -> Option<&mut Box<dyn OutputChannel>>;
+    fn mut_stderr(&mut self) -> Option<&mut (dyn OutputChannel + 'static)>;
 
     /// Takes the stderr channel from the process if it is still associated
     fn take_stderr(&mut self) -> Option<Box<dyn OutputChannel>>;

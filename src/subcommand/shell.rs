@@ -82,7 +82,7 @@ async fn start(
     let mut proc = RemoteProcess::spawn(
         utils::new_tenant(),
         session.clone_channel(),
-        cmd.cmd.unwrap_or("/bin/sh".to_string()),
+        cmd.cmd.unwrap_or_else(|| "/bin/sh".to_string()),
         cmd.args,
         cmd.detached,
         if let Some((Width(cur_width), Height(cur_height))) = terminal_size() {

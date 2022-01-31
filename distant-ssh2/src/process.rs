@@ -37,7 +37,7 @@ where
         mut stderr,
         mut child,
     } = session
-        .exec(&cmd, None)
+        .exec(cmd, None)
         .compat()
         .await
         .map_err(to_other_error)?;
@@ -73,7 +73,7 @@ where
             stdin_task,
             stdout_task,
             Some(stderr_task),
-            reply.clone(),
+            reply,
             cleanup,
         );
     });
@@ -104,7 +104,7 @@ where
 {
     // TODO: Do we need to support other terminal types for TERM?
     let (pty, mut child) = session
-        .request_pty("xterm-256color", to_portable_size(size), Some(&cmd), None)
+        .request_pty("xterm-256color", to_portable_size(size), Some(cmd), None)
         .compat()
         .await
         .map_err(to_other_error)?;
@@ -141,7 +141,7 @@ where
             stdin_task,
             stdout_task,
             None,
-            reply.clone(),
+            reply,
             cleanup,
         );
     });
@@ -301,6 +301,7 @@ fn spawn_nonblocking_stdin_task(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_cleanup_task<F, R>(
     session: Session,
     id: usize,

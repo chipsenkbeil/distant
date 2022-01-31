@@ -106,36 +106,36 @@ impl Process for SimpleProcess {
         Box::pin(inner(self))
     }
 
-    fn stdin(&self) -> Option<&Box<dyn InputChannel>> {
-        self.stdin.as_ref()
+    fn stdin(&self) -> Option<&dyn InputChannel> {
+        self.stdin.as_deref()
     }
 
-    fn mut_stdin(&mut self) -> Option<&mut Box<dyn InputChannel>> {
-        self.stdin.as_mut()
+    fn mut_stdin(&mut self) -> Option<&mut (dyn InputChannel + 'static)> {
+        self.stdin.as_deref_mut()
     }
 
     fn take_stdin(&mut self) -> Option<Box<dyn InputChannel>> {
         self.stdin.take()
     }
 
-    fn stdout(&self) -> Option<&Box<dyn OutputChannel>> {
-        self.stdout.as_ref()
+    fn stdout(&self) -> Option<&dyn OutputChannel> {
+        self.stdout.as_deref()
     }
 
-    fn mut_stdout(&mut self) -> Option<&mut Box<dyn OutputChannel>> {
-        self.stdout.as_mut()
+    fn mut_stdout(&mut self) -> Option<&mut (dyn OutputChannel + 'static)> {
+        self.stdout.as_deref_mut()
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn OutputChannel>> {
         self.stdout.take()
     }
 
-    fn stderr(&self) -> Option<&Box<dyn OutputChannel>> {
-        self.stderr.as_ref()
+    fn stderr(&self) -> Option<&dyn OutputChannel> {
+        self.stderr.as_deref()
     }
 
-    fn mut_stderr(&mut self) -> Option<&mut Box<dyn OutputChannel>> {
-        self.stderr.as_mut()
+    fn mut_stderr(&mut self) -> Option<&mut (dyn OutputChannel + 'static)> {
+        self.stderr.as_deref_mut()
     }
 
     fn take_stderr(&mut self) -> Option<Box<dyn OutputChannel>> {

@@ -33,7 +33,10 @@ pub enum SshBackend {
 }
 
 impl Default for SshBackend {
-    /// Defaults to libssh
+    /// Defaults to ssh2
+    ///
+    /// NOTE: There are currently bugs in libssh that cause our implementation to hang related to
+    ///       process stdout/stderr and maybe other logic.
     fn default() -> Self {
         Self::Ssh2
     }
@@ -526,7 +529,7 @@ impl Ssh2Session {
             // Iterate over output as individual lines, looking for session info
             let maybe_info = output
                 .split(|&b| b == b'\n')
-                .map(|bytes: &[u8]| String::from_utf8_lossy(bytes))
+                .map(String::from_utf8_lossy)
                 .find_map(|line| line.parse::<SessionInfo>().ok());
             match maybe_info {
                 Some(mut info) => {
