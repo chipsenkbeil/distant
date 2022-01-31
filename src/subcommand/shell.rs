@@ -7,8 +7,14 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, Session};
+use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, RemoteStdin, Session};
+use log::*;
 use terminal_size::{terminal_size, Height, Width};
+use termwiz::{
+    caps::Capabilities,
+    input::{InputEvent, KeyCodeEncodeModes},
+    terminal::{new_terminal, Terminal},
+};
 use tokio::{io, time::Duration};
 
 #[derive(Debug, Display, Error, From)]
@@ -99,9 +105,47 @@ async fn start(
             .await?;
     }
 
+    // Create a new terminal in raw mode
+    let mut terminal = new_terminal(
+        Capabilities::new_from_env().map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
+    )
+    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+    terminal
+        .set_raw_mode()
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+    let mut stdin = proc.stdin.take().unwrap();
+    tokio::spawn(async move {
+        while let Ok(input) = terminal.poll_input(Some(Duration::new(0, 0))) {
+            match input {
+                Some(InputEvent::Key(ev)) => {
+                    if let Ok(input) = ev.key.encode(
+                        ev.modifiers,
+                        KeyCodeEncodeModes {
+                            enable_csi_u_key_encoding: false,
+                            application_cursor_keys: false,
+                            newline_mode: false,
+                        },
+                    ) {
+                        if let Err(x) = stdin.write_str(input).await {
+                            error!("Failed to write to stdin of remote process: {}", x);
+                            break;
+                        }
+                    }
+                }
+                Some(InputEvent::Resized { cols: _, rows: _ }) => {
+                    // TODO: Send resize event from here instead of polling for changes below
+                    continue;
+                }
+                Some(_) => continue,
+                None => tokio::time::sleep(Duration::from_millis(1)).await,
+            }
+        }
+    });
+
     // Now, map the remote LSP server's stdin/stdout/stderr to our own process
     let link = RemoteProcessLink::from_remote_pipes(
-        proc.stdin.take().unwrap(),
+        RemoteStdin::disconnected(),
         proc.stdout.take().unwrap(),
         proc.stderr.take().unwrap(),
     );

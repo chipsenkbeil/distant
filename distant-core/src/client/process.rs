@@ -262,6 +262,11 @@ impl RemoteProcess {
 pub struct RemoteStdin(mpsc::Sender<Vec<u8>>);
 
 impl RemoteStdin {
+    /// Creates a disconnected remote stdin
+    pub fn disconnected() -> Self {
+        Self(mpsc::channel(1).0)
+    }
+
     /// Tries to write to the stdin of the remote process, returning ok if immediately
     /// successful, `WouldBlock` if would need to wait to send data, and `BrokenPipe`
     /// if stdin has been closed
