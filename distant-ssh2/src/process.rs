@@ -32,15 +32,20 @@ where
     R: Future<Output = ()> + Send + 'static,
 {
     let ExecResult {
-        stdin,
-        stdout,
-        stderr,
+        mut stdin,
+        mut stdout,
+        mut stderr,
         mut child,
     } = session
         .exec(&cmd, None)
         .compat()
         .await
         .map_err(to_other_error)?;
+
+    // Update to be nonblocking for reading and writing
+    stdin.set_non_blocking(true).map_err(to_other_error)?;
+    stdout.set_non_blocking(true).map_err(to_other_error)?;
+    stderr.set_non_blocking(true).map_err(to_other_error)?;
 
     // Check if the process died immediately and report
     // an error if that's the case
@@ -57,9 +62,9 @@ where
     let id = rand::random();
     let session = session.clone();
     let initialize = Box::new(move |reply: mpsc::Sender<Vec<ResponseData>>| {
-        let stdout_task = spawn_blocking_stdout_task(id, stdout, reply.clone());
-        let stderr_task = spawn_blocking_stderr_task(id, stderr, reply.clone());
-        let stdin_task = spawn_blocking_stdin_task(id, stdin, stdin_rx);
+        let stdout_task = spawn_nonblocking_stdout_task(id, stdout, reply.clone());
+        let stderr_task = spawn_nonblocking_stderr_task(id, stderr, reply.clone());
+        let stdin_task = spawn_nonblocking_stdin_task(id, stdin, stdin_rx);
         let _ = spawn_cleanup_task(
             session,
             id,
@@ -190,12 +195,46 @@ fn spawn_blocking_stdout_task(
     })
 }
 
-fn spawn_blocking_stderr_task(
+fn spawn_nonblocking_stdout_task(
     id: usize,
     mut reader: impl Read + Send + 'static,
     tx: mpsc::Sender<Vec<ResponseData>>,
 ) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || {
+    tokio::spawn(async move {
+        let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    let payload = vec![ResponseData::ProcStdout {
+                        id,
+                        data: buf[..n].to_vec(),
+                    }];
+                    if tx.send(payload).await.is_err() {
+                        error!("<Ssh | Proc {}> Stdout channel closed", id);
+                        break;
+                    }
+
+                    tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
+                }
+                Ok(_) => break,
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
+                }
+                Err(x) => {
+                    error!("<Ssh | Proc {}> Stdout unexpectedly closed: {}", id, x);
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn spawn_nonblocking_stderr_task(
+    id: usize,
+    mut reader: impl Read + Send + 'static,
+    tx: mpsc::Sender<Vec<ResponseData>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
@@ -204,16 +243,19 @@ fn spawn_blocking_stderr_task(
                         id,
                         data: buf[..n].to_vec(),
                     }];
-                    if tx.blocking_send(payload).is_err() {
-                        error!("<Ssh | Proc {}> stderr channel closed", id);
+                    if tx.send(payload).await.is_err() {
+                        error!("<Ssh | Proc {}> Stderr channel closed", id);
                         break;
                     }
 
-                    std::thread::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS));
+                    tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
                 }
                 Ok(_) => break,
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
+                }
                 Err(x) => {
-                    error!("<Ssh | Proc {}> stderr unexpectedly closed: {}", id, x);
+                    error!("<Ssh | Proc {}> Stderr unexpectedly closed: {}", id, x);
                     break;
                 }
             }
@@ -234,6 +276,27 @@ fn spawn_blocking_stdin_task(
             }
 
             std::thread::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS));
+        }
+    })
+}
+
+fn spawn_nonblocking_stdin_task(
+    id: usize,
+    mut writer: impl Write + Send + 'static,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(data) = rx.recv().await {
+            if let Err(x) = writer.write_all(&data) {
+                // In non-blocking mode, we'll just pause and try again if
+                // the IO would block here; otherwise, stop the task
+                if x.kind() != io::ErrorKind::WouldBlock {
+                    error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
+                    break;
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
         }
     })
 }
@@ -302,6 +365,9 @@ where
                 id
             );
         }
+
+        // We're done with the child, so drop it
+        drop(child);
 
         if let Some(task) = stderr_task {
             if let Err(x) = task.await {
