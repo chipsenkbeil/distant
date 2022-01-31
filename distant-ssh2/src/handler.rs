@@ -38,6 +38,7 @@ struct Process {
     detached: bool,
     stdin_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
+    resize_tx: mpsc::Sender<PtySize>,
 }
 
 type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
@@ -64,15 +65,11 @@ pub(super) async fn process(
     req: Request,
     tx: mpsc::Sender<Response>,
 ) -> Result<(), mpsc::error::SendError<Response>> {
-    async fn inner<F>(
+    async fn inner(
         session: WezSession,
         state: Arc<Mutex<State>>,
         data: RequestData,
-        reply: F,
-    ) -> io::Result<Outgoing>
-    where
-        F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
-    {
+    ) -> io::Result<Outgoing> {
         match data {
             RequestData::FileRead { path } => file_read(session, path).await,
             RequestData::FileReadText { path } => file_read_text(session, path).await,
@@ -102,7 +99,7 @@ pub(super) async fn process(
                 args,
                 detached,
                 pty,
-            } => proc_run(session, state, reply, cmd, args, detached, pty).await,
+            } => proc_run(session, state, cmd, args, detached, pty).await,
             RequestData::ProcResizePty { id, size } => {
                 proc_resize_pty(session, state, id, size).await
             }
@@ -128,10 +125,9 @@ pub(super) async fn process(
     let mut payload_tasks = Vec::new();
     for data in req.payload {
         let state_2 = Arc::clone(&state);
-        let reply_2 = reply.clone();
         let session = session.clone();
         payload_tasks.push(tokio::spawn(async move {
-            match inner(session, state_2, data, reply_2).await {
+            match inner(session, state_2, data).await {
                 Ok(outgoing) => outgoing,
                 Err(x) => Outgoing::from(ResponseData::from(x)),
             }
@@ -613,18 +609,14 @@ async fn metadata(
     })))
 }
 
-async fn proc_run<F>(
+async fn proc_run(
     session: WezSession,
     state: Arc<Mutex<State>>,
-    reply: F,
     cmd: String,
     args: Vec<String>,
     detached: bool,
     pty: Option<PtySize>,
-) -> io::Result<Outgoing>
-where
-    F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
-{
+) -> io::Result<Outgoing> {
     let cmd_string = format!("{} {}", cmd, args.join(" "));
     debug!("<Ssh> Spawning {} (pty: {:?})", cmd_string, pty);
 
@@ -637,6 +629,7 @@ where
         id,
         stdin,
         killer,
+        resizer,
         initialize,
     } = match pty {
         None => process::spawn_simple(&session, &cmd_string, cleanup).await?,
@@ -652,6 +645,7 @@ where
             detached,
             stdin_tx: stdin,
             kill_tx: killer,
+            resize_tx: resizer,
         },
     );
 
@@ -672,14 +666,14 @@ async fn proc_resize_pty(
     size: PtySize,
 ) -> io::Result<Outgoing> {
     if let Some(process) = state.lock().await.processes.get(&id) {
-        if process.kill_tx.send(()).await.is_ok() {
+        if process.resize_tx.send(size).await.is_ok() {
             return Ok(Outgoing::from(ResponseData::Ok));
         }
     }
 
     Err(io::Error::new(
         io::ErrorKind::BrokenPipe,
-        format!("<Ssh | Proc {}> Unable to send resize pty", id),
+        format!("<Ssh | Proc {}> Unable to resize process", id),
     ))
 }
 

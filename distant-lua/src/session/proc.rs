@@ -86,7 +86,7 @@ macro_rules! impl_process {
                                 .ok_or_else(|| {
                                     io::Error::new(io::ErrorKind::BrokenPipe, "Stdin closed").to_lua_err()
                                 })?
-                                .try_write(data.as_str());
+                                .try_write(data.as_bytes());
                             match res {
                                 Ok(_) => Ok(true),
                                 Err(x) if x.kind() == io::ErrorKind::WouldBlock => Ok(false),
@@ -112,7 +112,7 @@ macro_rules! impl_process {
                 })
             }
 
-            fn read_stdout(id: usize) -> LuaResult<Option<String>> {
+            fn read_stdout(id: usize) -> LuaResult<Option<Vec<u8>>> {
                 with_proc!($map_name, id, proc -> {
                     proc.stdout
                         .as_mut()
@@ -124,7 +124,7 @@ macro_rules! impl_process {
                 })
             }
 
-            async fn read_stdout_async(id: usize) -> LuaResult<String> {
+            async fn read_stdout_async(id: usize) -> LuaResult<Vec<u8>> {
                 // NOTE: We must spawn a task that continually tries to read stdout as
                 //       if we wait until successful then we hold the lock the entire time
                 runtime::spawn(async move {
@@ -146,7 +146,7 @@ macro_rules! impl_process {
                 }).await
             }
 
-            fn read_stderr(id: usize) -> LuaResult<Option<String>> {
+            fn read_stderr(id: usize) -> LuaResult<Option<Vec<u8>>> {
                 with_proc!($map_name, id, proc -> {
                     proc.stderr
                         .as_mut()
@@ -158,7 +158,7 @@ macro_rules! impl_process {
                 })
             }
 
-            async fn read_stderr_async(id: usize) -> LuaResult<String> {
+            async fn read_stderr_async(id: usize) -> LuaResult<Vec<u8>> {
                 // NOTE: We must spawn a task that continually tries to read stdout as
                 //       if we wait until successful then we hold the lock the entire time
                 runtime::spawn(async move {
@@ -245,14 +245,14 @@ macro_rules! impl_process {
                 // Gather stdout and stderr after process completes
                 let (success, exit_code) = proc.wait().await.to_lua_err()?;
 
-                let mut stdout_buf = String::new();
+                let mut stdout_buf = Vec::new();
                 while let Ok(Some(data)) = stdout.try_read() {
-                    stdout_buf.push_str(&data);
+                    stdout_buf.extend(data);
                 }
 
-                let mut stderr_buf = String::new();
+                let mut stderr_buf = Vec::new();
                 while let Ok(Some(data)) = stderr.try_read() {
-                    stderr_buf.push_str(&data);
+                    stderr_buf.extend(data);
                 }
 
                 Ok(Output {
@@ -342,16 +342,16 @@ impl UserData for Status {
 pub struct Output {
     pub success: bool,
     pub exit_code: Option<i32>,
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
 impl UserData for Output {
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
         fields.add_field_method_get("success", |_, this| Ok(this.success));
         fields.add_field_method_get("exit_code", |_, this| Ok(this.exit_code));
-        fields.add_field_method_get("stdout", |_, this| Ok(this.stdout.to_string()));
-        fields.add_field_method_get("stderr", |_, this| Ok(this.stderr.to_string()));
+        fields.add_field_method_get("stdout", |_, this| Ok(this.stdout.to_vec()));
+        fields.add_field_method_get("stderr", |_, this| Ok(this.stderr.to_vec()));
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
@@ -359,8 +359,8 @@ impl UserData for Output {
             let tbl = lua.create_table()?;
             tbl.set("success", this.success)?;
             tbl.set("exit_code", this.exit_code)?;
-            tbl.set("stdout", this.stdout.to_string())?;
-            tbl.set("stderr", this.stdout.to_string())?;
+            tbl.set("stdout", this.stdout.to_vec())?;
+            tbl.set("stderr", this.stdout.to_vec())?;
             Ok(tbl)
         });
     }

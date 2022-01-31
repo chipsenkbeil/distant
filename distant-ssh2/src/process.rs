@@ -7,7 +7,9 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::mpsc, task::JoinHandle};
-use wezterm_ssh::{Child, ExecResult, FileDescriptor, Session, SshChildProcess, SshPty};
+use wezterm_ssh::{
+    Child, ChildKiller, ExecResult, MasterPty, PtySize as PortablePtySize, Session, SshChildProcess,
+};
 
 const MAX_PIPE_CHUNK_SIZE: usize = 8192;
 const THREAD_PAUSE_MILLIS: u64 = 50;
@@ -18,6 +20,7 @@ pub struct SpawnResult {
     pub id: usize,
     pub stdin: mpsc::Sender<Vec<u8>>,
     pub killer: mpsc::Sender<()>,
+    pub resizer: mpsc::Sender<PtySize>,
     pub initialize: Box<dyn FnOnce(mpsc::Sender<Vec<ResponseData>>) + Send>,
 }
 
@@ -70,10 +73,14 @@ where
         );
     });
 
+    // Create a resizer that is already closed since a simple process does not resize
+    let resizer = mpsc::channel(1).0;
+
     Ok(SpawnResult {
         id,
         stdin: stdin_tx,
         killer: kill_tx,
+        resizer,
         initialize,
     })
 }
@@ -92,7 +99,7 @@ where
 {
     // TODO: Do we need to support other terminal types for TERM?
     let (pty, mut child) = session
-        .request_pty("xterm-256color", size.into(), Some(&cmd), None)
+        .request_pty("xterm-256color", to_portable_size(size), Some(&cmd), None)
         .compat()
         .await
         .map_err(to_other_error)?;
@@ -106,12 +113,12 @@ where
         ));
     }
 
-    let SshPty {
-        reader,
-        writer,
-        size,
-        ..
-    } = pty;
+    let reader = pty
+        .try_clone_reader()
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+    let writer = pty
+        .try_clone_writer()
+        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
     let (stdin_tx, stdin_rx) = mpsc::channel(1);
     let (kill_tx, kill_rx) = mpsc::channel(1);
@@ -134,23 +141,33 @@ where
         );
     });
 
+    let (resize_tx, mut resize_rx) = mpsc::channel::<PtySize>(1);
+    tokio::spawn(async move {
+        while let Some(size) = resize_rx.recv().await {
+            if pty.resize(to_portable_size(size)).is_err() {
+                break;
+            }
+        }
+    });
+
     Ok(SpawnResult {
         id,
         stdin: stdin_tx,
         killer: kill_tx,
+        resizer: resize_tx,
         initialize,
     })
 }
 
 fn spawn_blocking_stdout_task(
     id: usize,
-    fd: FileDescriptor,
+    mut reader: impl Read + Send + 'static,
     tx: mpsc::Sender<Vec<ResponseData>>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
-            match fd.read(&mut buf) {
+            match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     let payload = vec![ResponseData::ProcStdout {
                         id,
@@ -175,13 +192,13 @@ fn spawn_blocking_stdout_task(
 
 fn spawn_blocking_stderr_task(
     id: usize,
-    fd: FileDescriptor,
+    mut reader: impl Read + Send + 'static,
     tx: mpsc::Sender<Vec<ResponseData>>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
-            match fd.read(&mut buf) {
+            match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     let payload = vec![ResponseData::ProcStderr {
                         id,
@@ -206,12 +223,12 @@ fn spawn_blocking_stderr_task(
 
 fn spawn_blocking_stdin_task(
     id: usize,
-    fd: FileDescriptor,
-    rx: mpsc::Receiver<Vec<u8>>,
+    mut writer: impl Write + Send + 'static,
+    mut rx: mpsc::Receiver<Vec<u8>>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         while let Some(data) = rx.blocking_recv() {
-            if let Err(x) = fd.write_all(&data) {
+            if let Err(x) = writer.write_all(&data) {
                 error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
                 break;
             }
@@ -224,8 +241,8 @@ fn spawn_blocking_stdin_task(
 fn spawn_cleanup_task<F, R>(
     session: Session,
     id: usize,
-    child: SshChildProcess,
-    kill_rx: mpsc::Receiver<()>,
+    mut child: SshChildProcess,
+    mut kill_rx: mpsc::Receiver<()>,
     stdin_task: JoinHandle<()>,
     stdout_task: JoinHandle<()>,
     stderr_task: Option<JoinHandle<()>>,
@@ -315,4 +332,13 @@ where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     io::Error::new(io::ErrorKind::Other, err)
+}
+
+fn to_portable_size(size: PtySize) -> PortablePtySize {
+    PortablePtySize {
+        rows: size.rows,
+        cols: size.cols,
+        pixel_width: size.pixel_width,
+        pixel_height: size.pixel_height,
+    }
 }

@@ -9,6 +9,7 @@ on:
 env:
   LUA_VERSION: 5.1.5
   LUA_FEATURE: lua51
+  SSH_FEATURE: ssh2
 
 jobs:
   macos:
@@ -45,13 +46,13 @@ jobs:
       - name: Build Lua ${{ env.LUA_VERSION }} library (x86_64)
         run: |
           cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_ARCH }}
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored,${{ env.SSH_FEATURE }}" --target ${{ env.X86_ARCH }}
           ls -l ../${{ env.X86_DIR }}
           cp ../${{ env.X86_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_REL_LIB }}
       - name: Build Lua ${{ env.LUA_VERSION }} library (aarch64)
         run: |
           cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.ARM_ARCH }}
+          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored,${{ env.SSH_FEATURE }}" --target ${{ env.ARM_ARCH }}
           ls -l ../${{ env.ARM_DIR }}
           cp ../${{ env.ARM_DIR }}/${{ env.BUILD_LIB }} ../${{ env.ARM_REL_LIB }}
       - name: Unify libraries

@@ -1,12 +1,12 @@
 use crate::{
     exit::{ExitCode, ExitCodeError},
     link::RemoteProcessLink,
-    opt::{CommonOpt, LspSubcommand},
+    opt::{CommonOpt, ShellSubcommand},
     subcommand::CommandRunner,
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{LspData, PtySize, RemoteLspProcess, RemoteProcessError, Session};
+use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, Session};
 use terminal_size::{terminal_size, Height, Width};
 use tokio::io;
 
@@ -35,13 +35,13 @@ impl ExitCodeError for Error {
     }
 }
 
-pub fn run(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
+pub fn run(cmd: ShellSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async { run_async(cmd, opt).await })
 }
 
-async fn run_async(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
+async fn run_async(cmd: ShellSubcommand, opt: CommonOpt) -> Result<(), Error> {
     let method = cmd.method;
     let timeout = opt.to_timeout_duration();
     let ssh_connection = cmd.ssh_connection.clone();
@@ -65,22 +65,18 @@ async fn run_async(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
 }
 
 async fn start(
-    cmd: LspSubcommand,
+    cmd: ShellSubcommand,
     session: Session,
     lsp_data: Option<LspData>,
 ) -> Result<(), Error> {
-    let mut proc = RemoteLspProcess::spawn(
+    let mut proc = RemoteProcess::spawn(
         utils::new_tenant(),
         session.clone_channel(),
         cmd.cmd,
         cmd.args,
         cmd.detached,
-        if cmd.pty {
-            terminal_size()
-                .map(|(Width(width), Height(height))| PtySize::from_rows_and_cols(height, width))
-        } else {
-            None
-        },
+        terminal_size()
+            .map(|(Width(width), Height(height))| PtySize::from_rows_and_cols(height, width)),
     )
     .await?;
 
@@ -95,7 +91,7 @@ async fn start(
     }
 
     // Now, map the remote LSP server's stdin/stdout/stderr to our own process
-    let link = RemoteProcessLink::from_remote_lsp_pipes(
+    let link = RemoteProcessLink::from_remote_pipes(
         proc.stdin.take().unwrap(),
         proc.stdout.take().unwrap(),
         proc.stderr.take().unwrap(),

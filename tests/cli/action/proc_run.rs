@@ -172,6 +172,7 @@ fn should_support_json_to_execute_program_and_return_exit_status(mut action_cmd:
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
+            pty: None,
         }],
     };
 
@@ -205,6 +206,7 @@ fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
                 output.to_string(),
             ],
             detached: false,
+            pty: None,
         }],
     };
 
@@ -240,7 +242,7 @@ fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
         friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stdout");
     let res: Response = serde_json::from_str(&out).unwrap();
     match &res.payload[0] {
-        ResponseData::ProcStdout { data, .. } => assert_eq!(data, &output),
+        ResponseData::ProcStdout { data, .. } => assert_eq!(data, output.as_bytes()),
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -274,6 +276,7 @@ fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
                 output.to_string(),
             ],
             detached: false,
+            pty: None,
         }],
     };
 
@@ -309,7 +312,7 @@ fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
         friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stderr");
     let res: Response = serde_json::from_str(&out).unwrap();
     match &res.payload[0] {
-        ResponseData::ProcStderr { data, .. } => assert_eq!(data, &output),
+        ResponseData::ProcStderr { data, .. } => assert_eq!(data, output.as_bytes()),
         x => panic!("Unexpected response: {:?}", x),
     };
 
@@ -339,6 +342,7 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
+            pty: None,
         }],
     };
 
@@ -374,7 +378,7 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
         tenant: random_tenant(),
         payload: vec![RequestData::ProcStdin {
             id,
-            data: String::from("hello world\n"),
+            data: b"hello world\n".to_vec(),
         }],
     };
     let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
@@ -385,10 +389,10 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
     let (res1, res2) = next_two_msgs!(&stdout);
     match (&res1.payload[0], &res2.payload[0]) {
         (ResponseData::Ok, ResponseData::ProcStdout { data, .. }) => {
-            assert_eq!(data, "hello world\n")
+            assert_eq!(data, b"hello world\n")
         }
         (ResponseData::ProcStdout { data, .. }, ResponseData::Ok) => {
-            assert_eq!(data, "hello world\n")
+            assert_eq!(data, b"hello world\n")
         }
         x => panic!("Unexpected responses: {:?}", x),
     };
@@ -433,6 +437,7 @@ fn should_support_json_output_for_error(mut action_cmd: Command) {
             cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             args: Vec::new(),
             detached: false,
+            pty: None,
         }],
     };
 

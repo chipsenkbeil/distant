@@ -1356,6 +1356,7 @@ async fn proc_run_should_send_error_over_stderr_on_failure(#[future] session: Se
             cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             args: Vec::new(),
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1402,6 +1403,7 @@ async fn proc_run_should_send_back_proc_start_on_success(#[future] session: Sess
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1431,6 +1433,7 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] 
                 String::from("'some stdout'"),
             ],
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1461,7 +1464,7 @@ async fn proc_run_should_send_back_stdout_periodically_when_available(#[future] 
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
             ResponseData::ProcStdout { data, .. } => {
-                assert_eq!(data, "some stdout", "Got wrong stdout");
+                assert_eq!(data, b"some stdout", "Got wrong stdout");
                 got_stdout = true;
             }
             ResponseData::ProcDone { success, .. } => {
@@ -1495,6 +1498,7 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] 
                 String::from("'some stderr'"),
             ],
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1525,7 +1529,7 @@ async fn proc_run_should_send_back_stderr_periodically_when_available(#[future] 
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
             ResponseData::ProcStderr { data, .. } => {
-                assert_eq!(data, "some stderr", "Got wrong stderr");
+                assert_eq!(data, b"some stderr", "Got wrong stderr");
                 got_stderr = true;
             }
             ResponseData::ProcDone { success, .. } => {
@@ -1556,6 +1560,7 @@ async fn proc_run_should_clear_process_from_state_when_done(#[future] session: S
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
             detached: false,
+            pty: None,
         }],
     );
     let mut mailbox = session.mail(req).await.unwrap();
@@ -1604,6 +1609,7 @@ async fn proc_run_should_clear_process_from_state_when_killed(#[future] session:
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1678,6 +1684,7 @@ async fn proc_kill_should_send_ok_and_done_responses_on_success(#[future] sessio
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1721,7 +1728,7 @@ async fn proc_stdin_should_send_error_on_failure(#[future] session: Session) {
         "test-tenant",
         vec![RequestData::ProcStdin {
             id: 0xDEADBEEF,
-            data: String::from("some input"),
+            data: b"some input".to_vec(),
         }],
     );
 
@@ -1753,6 +1760,7 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
             detached: false,
+            pty: None,
         }],
     );
     let mut mailbox = session.mail(req).await.unwrap();
@@ -1773,7 +1781,7 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
         "test-tenant",
         vec![RequestData::ProcStdin {
             id,
-            data: String::from("hello world\n"),
+            data: b"hello world\n".to_vec(),
         }],
     );
     let res = session.send(req).await.unwrap();
@@ -1786,7 +1794,7 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
     let res = mailbox.next().await.unwrap();
     match &res.payload[0] {
         ResponseData::ProcStdout { data, .. } => {
-            assert_eq!(data, "hello world\n", "Mirrored data didn't match");
+            assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
         }
         x => panic!("Unexpected response: {:?}", x),
     }
@@ -1802,6 +1810,7 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
             detached: false,
+            pty: None,
         }],
     );
 
@@ -1827,6 +1836,7 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
                 detached: false,
+                pty: None,
                 id,
             }],
         },

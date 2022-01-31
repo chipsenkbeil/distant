@@ -174,6 +174,8 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
                 end
             end)
             assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
+
+            stdout = string.char(unpack(stdout))
             assert(stdout == "some stdout", "Unexpected stdout: " .. stdout)
         })
         .exec();
@@ -233,6 +235,8 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
                 end
             end)
             assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
+
+            stderr = string.char(unpack(stderr))
             assert(stderr == "some stderr", "Unexpected stderr: " .. stderr)
         })
         .exec();
@@ -430,6 +434,8 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
                 end
             end)
             assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
+
+            stdout = string.char(unpack(stdout))
             assert(stdout == "some text\n", "Unexpected stdout received: " .. stdout)
         })
         .exec();

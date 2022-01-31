@@ -31,7 +31,7 @@ impl CliSession {
         tenant: String,
         session: Session,
         format: Format,
-        stdin_rx: mpsc::Receiver<String>,
+        stdin_rx: mpsc::Receiver<Vec<u8>>,
     ) -> Self {
         let map_line = move |line: &str| match format {
             Format::Json => serde_json::from_str(line)
@@ -86,7 +86,7 @@ async fn process_mailbox(mut mailbox: Mailbox, format: Format, exit: oneshot::Re
 /// responses
 async fn process_outgoing_requests<F>(
     mut session: Session,
-    mut stdin_rx: mpsc::Receiver<String>,
+    mut stdin_rx: mpsc::Receiver<Vec<u8>>,
     format: Format,
     map_line: F,
 ) where
@@ -96,6 +96,15 @@ async fn process_outgoing_requests<F>(
     let mut mailbox_exits = Vec::new();
 
     while let Some(data) = stdin_rx.recv().await {
+        // TODO: Should we support raw bytes? If so, we need to rewrite map_line to take Vec<u8>
+        let data = match String::from_utf8(data) {
+            Ok(data) => data,
+            Err(x) => {
+                error!("Bad stdin: {}", x);
+                continue;
+            }
+        };
+
         // Update our buffer with the new data and split it into concrete lines and remainder
         buf.push_str(&data);
         let (lines, new_buf) = buf.into_full_lines();

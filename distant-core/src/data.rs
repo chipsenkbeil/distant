@@ -211,7 +211,7 @@ pub enum RequestData {
     },
 
     /// Spawns a new process on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["run"]))]
+    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["spawn", "run"]))]
     ProcSpawn {
         /// Name of the command to run
         cmd: String,
@@ -397,9 +397,11 @@ pub struct PtySize {
     pub cols: u16,
 
     /// Width of a cell in pixels. Note that some systems never fill this value and ignore it.
+    #[serde(default)]
     pub pixel_width: u16,
 
     /// Height of a cell in pixels. Note that some systems never fill this value and ignore it.
+    #[serde(default)]
     pub pixel_height: u16,
 }
 

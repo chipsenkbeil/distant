@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -473,13 +473,14 @@ dependencies = [
  "serde_json",
  "structopt",
  "strum",
+ "terminal_size",
  "tokio",
  "whoami",
 ]
 
 [[package]]
 name = "distant-core"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "assert_fs",
  "bytes",
@@ -491,7 +492,7 @@ dependencies = [
  "indoc",
  "log",
  "once_cell",
- "portable-pty 0.7.0",
+ "portable-pty",
  "predicates",
  "rand",
  "serde",
@@ -505,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "distant-lua"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "distant-core",
  "distant-ssh2",
@@ -539,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh2"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -950,6 +951,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd8f7255a17a627354f321ef0055d63b898c6fb27eff628af4d1b66b7331edf6"
 
 [[package]]
+name = "libssh-rs"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a24b7857c3bd6f52e22f1ca5445fad27f65719126de518abec5c1648f232e42"
+dependencies = [
+ "bitflags",
+ "libssh-rs-sys",
+ "thiserror",
+]
+
+[[package]]
+name = "libssh-rs-sys"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d592a55d4efe34f3e437e3f74e32b6d60d54aa3270fe2925840173c7d8648a42"
+dependencies = [
+ "cc",
+ "libz-sys",
+ "openssl-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "libssh2-sys"
 version = "0.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1004,9 +1028,9 @@ dependencies = [
 
 [[package]]
 name = "luajit-src"
-version = "210.2.0+resty5f13855"
+version = "210.3.2+resty1085a4d"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49f85722ea9e022305a077b916c9271011a195ee8dc9b2b764fc78b0378e3b72"
+checksum = "b1e27456f513225a9edd22fc0a5f526323f6adb3099c4de87a84ceb842d93ba4"
 dependencies = [
  "cc",
 ]
@@ -1041,9 +1065,9 @@ dependencies = [
 
 [[package]]
 name = "mlua"
-version = "0.6.6"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4235d7e740d73d7429df6f176c81b248f05c39d67264d45a7d8cecb67c227f6f"
+checksum = "7d4c93ad12064932ae8f0667ecd09ca714ff44813fa1d1965ae4279108b67f21"
 dependencies = [
  "bstr 0.2.17",
  "cc",
@@ -1057,6 +1081,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "pkg-config",
+ "rustc-hash",
  "serde",
 ]
 
@@ -1139,18 +1164,18 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
 name = "openssl-src"
-version = "111.16.0+1.1.1l"
+version = "300.0.4+3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ab2173f69416cf3ec12debb5823d244127d23a9b127d5a5189aa97c5fa2859f"
+checksum = "216e1c6b4549e24182b9d7aa268f645414888a69daf44c7b2d8118da8e7b23e7"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.67"
+version = "0.9.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69df2d8dfc6ce3aaf44b40dec6f487d5a886516cf6879c49e98e0710f310a058"
+checksum = "7df13d165e607909b363a4757a6f133f8a818a74e9d3a98d09c6128e15fa4c73"
 dependencies = [
  "autocfg",
  "cc",
@@ -1237,24 +1262,6 @@ dependencies = [
  "cpufeatures",
  "opaque-debug",
  "universal-hash",
-]
-
-[[package]]
-name = "portable-pty"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b8383c3934bd6da733223ad1b22f8102c46e8bbced07800b2346cc34326ff83"
-dependencies = [
- "anyhow",
- "bitflags",
- "filedescriptor",
- "lazy_static",
- "libc",
- "log",
- "serial",
- "shared_library",
- "shell-words",
- "winapi",
 ]
 
 [[package]]
@@ -1478,6 +1485,12 @@ dependencies = [
  "rustc_version",
  "syn",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc_version"
@@ -1784,6 +1797,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal_size"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633c1a546cee861a1a6d0dc69ebeca693bf4296661ba7852b9d21d159e0506df"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "termios"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2056,9 +2079,9 @@ dependencies = [
 
 [[package]]
 name = "wezterm-ssh"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e233b00aaa22b6ef9b573534e529e9672da8662a8355c37acacedd88741ce1ec"
+checksum = "21b5be360161357d5504d2b773d51fb23c4f9e92507720ef51821444d60cb5bb"
 dependencies = [
  "anyhow",
  "base64",
@@ -2067,8 +2090,10 @@ dependencies = [
  "dirs-next",
  "filedescriptor",
  "filenamegen",
+ "libc",
+ "libssh-rs",
  "log",
- "portable-pty 0.5.0",
+ "portable-pty",
  "regex",
  "smol",
  "ssh2",

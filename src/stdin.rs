@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 /// Creates a new thread that performs stdin reads in a blocking fashion, returning
 /// a handle to the thread and a receiver that will be sent input as it becomes available
-pub fn spawn_channel(buffer: usize) -> (thread::JoinHandle<()>, mpsc::Receiver<String>) {
+pub fn spawn_channel(buffer: usize) -> (thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
     let (tx, rx) = mpsc::channel(1);
 
     // NOTE: Using blocking I/O per tokio's advice to read from stdin line-by-line and then
@@ -22,16 +22,9 @@ pub fn spawn_channel(buffer: usize) -> (thread::JoinHandle<()>, mpsc::Receiver<S
             match stdin.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    match String::from_utf8(buf[..n].to_vec()) {
-                        Ok(text) => {
-                            if let Err(x) = tx.blocking_send(text) {
-                                error!("Stdin channel closed: {}", x);
-                                break;
-                            }
-                        }
-                        Err(x) => {
-                            error!("Input over stdin is invalid: {}", x);
-                        }
+                    if let Err(x) = tx.blocking_send(buf[..n].to_vec()) {
+                        error!("Stdin channel closed: {}", x);
+                        break;
                     }
                     thread::yield_now();
                 }
