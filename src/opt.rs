@@ -745,9 +745,9 @@ pub struct ShellSubcommand {
     #[structopt(long)]
     pub detached: bool,
 
-    /// Command to run on the remote machine that represents an LSP server
-    pub cmd: String,
+    /// Command to run on the remote machine as the shell (defaults to $TERM)
+    pub cmd: Option<String>,
 
-    /// Additional arguments to supply to the remote machine
+    /// Additional arguments to supply to the shell (defaults to nothing)
     pub args: Vec<String>,
 }

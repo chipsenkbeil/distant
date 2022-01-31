@@ -446,61 +446,65 @@ where
     };
 
     let id = child.id();
-    let stdin = child.take_stdin().unwrap();
-    let mut stdout = child.take_stdout().unwrap();
-    let mut stderr = child.take_stderr().unwrap();
+    let stdin = child.take_stdin();
+    let stdout = child.take_stdout();
+    let stderr = child.take_stderr();
     let killer = child.clone_killer();
     let pty = child.clone_pty();
 
     let state_2 = Arc::clone(&state);
     let post_hook = Box::new(move || {
         // Spawn a task that sends stdout as a response
-        let mut reply_2 = reply.clone();
-        let _ = tokio::spawn(async move {
-            loop {
-                match stdout.recv().await {
-                    Ok(Some(data)) => {
-                        let payload = vec![ResponseData::ProcStdout { id, data }];
-                        if !reply_2(payload).await {
-                            error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
+        if let Some(mut stdout) = stdout {
+            let mut reply_2 = reply.clone();
+            let _ = tokio::spawn(async move {
+                loop {
+                    match stdout.recv().await {
+                        Ok(Some(data)) => {
+                            let payload = vec![ResponseData::ProcStdout { id, data }];
+                            if !reply_2(payload).await {
+                                error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(x) => {
+                            error!(
+                                "<Conn @ {} | Proc {}> Reading stdout failed: {}",
+                                conn_id, id, x
+                            );
                             break;
                         }
                     }
-                    Ok(None) => break,
-                    Err(x) => {
-                        error!(
-                            "<Conn @ {} | Proc {}> Reading stdout failed: {}",
-                            conn_id, id, x
-                        );
-                        break;
-                    }
                 }
-            }
-        });
+            });
+        }
 
         // Spawn a task that sends stderr as a response
-        let mut reply_2 = reply.clone();
-        let _ = tokio::spawn(async move {
-            loop {
-                match stderr.recv().await {
-                    Ok(Some(data)) => {
-                        let payload = vec![ResponseData::ProcStderr { id, data }];
-                        if !reply_2(payload).await {
-                            error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
+        if let Some(mut stderr) = stderr {
+            let mut reply_2 = reply.clone();
+            let _ = tokio::spawn(async move {
+                loop {
+                    match stderr.recv().await {
+                        Ok(Some(data)) => {
+                            let payload = vec![ResponseData::ProcStderr { id, data }];
+                            if !reply_2(payload).await {
+                                error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(x) => {
+                            error!(
+                                "<Conn @ {} | Proc {}> Reading stderr failed: {}",
+                                conn_id, id, x
+                            );
                             break;
                         }
                     }
-                    Ok(None) => break,
-                    Err(x) => {
-                        error!(
-                            "<Conn @ {} | Proc {}> Reading stderr failed: {}",
-                            conn_id, id, x
-                        );
-                        break;
-                    }
                 }
-            }
-        });
+            });
+        }
 
         // Spawn a task that waits on the process to exit but can also
         // kill the process when triggered
@@ -542,7 +546,7 @@ where
             args,
             detached,
             id,
-            stdin: Some(stdin),
+            stdin,
             killer,
             pty,
         },

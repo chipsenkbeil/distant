@@ -76,11 +76,16 @@ async fn start(
     let mut proc = RemoteProcess::spawn(
         utils::new_tenant(),
         session.clone_channel(),
-        cmd.cmd,
+        cmd.cmd.unwrap_or("/bin/sh".to_string()),
         cmd.args,
         cmd.detached,
-        terminal_size()
-            .map(|(Width(width), Height(height))| PtySize::from_rows_and_cols(height, width)),
+        if let Some((Width(cur_width), Height(cur_height))) = terminal_size() {
+            width = cur_width;
+            height = cur_height;
+            Some(PtySize::from_rows_and_cols(height, width))
+        } else {
+            None
+        },
     )
     .await?;
 
