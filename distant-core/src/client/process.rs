@@ -62,10 +62,10 @@ pub struct RemoteProcess {
     pub stderr: Option<RemoteStderr>,
 
     /// Sender for resize events
-    resize: mpsc::Sender<PtySize>,
+    resizer: RemoteProcessResizer,
 
     /// Sender for kill events
-    kill: mpsc::Sender<()>,
+    killer: RemoteProcessKiller,
 
     /// Task that waits for the process to complete
     wait_task: JoinHandle<()>,
@@ -189,8 +189,8 @@ impl RemoteProcess {
             stdin: Some(RemoteStdin(stdin_tx)),
             stdout: Some(RemoteStdout(stdout_rx)),
             stderr: Some(RemoteStderr(stderr_rx)),
-            resize: resize_tx,
-            kill: kill_tx,
+            resizer: RemoteProcessResizer(resize_tx),
+            killer: RemoteProcessKiller(kill_tx),
             wait_task,
             status,
         })
@@ -232,11 +232,22 @@ impl RemoteProcess {
 
     /// Resizes the pty of the remote process if it is attached to one
     pub async fn resize(&self, size: PtySize) -> Result<(), RemoteProcessError> {
-        self.resize
-            .send(size)
-            .await
-            .map_err(|_| RemoteProcessError::ChannelDead)?;
-        Ok(())
+        self.resizer.resize(size).await
+    }
+
+    /// Clones a copy of the remote process pty resizer
+    pub fn clone_resizer(&self) -> RemoteProcessResizer {
+        self.resizer.clone()
+    }
+
+    /// Submits a kill request for the running process
+    pub async fn kill(&mut self) -> Result<(), RemoteProcessError> {
+        self.killer.kill().await
+    }
+
+    /// Clones a copy of the remote process killer
+    pub fn clone_killer(&self) -> RemoteProcessKiller {
+        self.killer.clone()
     }
 
     /// Aborts the process by forcing its response task to shutdown, which means that a call
@@ -246,10 +257,31 @@ impl RemoteProcess {
         let _ = self.abort_req_task_tx.try_send(());
         let _ = self.abort_res_task_tx.try_send(());
     }
+}
 
+/// A handle to the channel to kill a remote process
+#[derive(Clone, Debug)]
+pub struct RemoteProcessResizer(mpsc::Sender<PtySize>);
+
+impl RemoteProcessResizer {
+    /// Resizes the pty of the remote process if it is attached to one
+    pub async fn resize(&self, size: PtySize) -> Result<(), RemoteProcessError> {
+        self.0
+            .send(size)
+            .await
+            .map_err(|_| RemoteProcessError::ChannelDead)?;
+        Ok(())
+    }
+}
+
+/// A handle to the channel to kill a remote process
+#[derive(Clone, Debug)]
+pub struct RemoteProcessKiller(mpsc::Sender<()>);
+
+impl RemoteProcessKiller {
     /// Submits a kill request for the running process
     pub async fn kill(&mut self) -> Result<(), RemoteProcessError> {
-        self.kill
+        self.0
             .send(())
             .await
             .map_err(|_| RemoteProcessError::ChannelDead)?;
@@ -258,7 +290,7 @@ impl RemoteProcess {
 }
 
 /// A handle to a remote process' standard input (stdin)
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RemoteStdin(mpsc::Sender<Vec<u8>>);
 
 impl RemoteStdin {

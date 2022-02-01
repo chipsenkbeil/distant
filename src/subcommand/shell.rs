@@ -1,5 +1,4 @@
 use crate::{
-    constants::TERMINAL_RESIZE_MILLIS,
     exit::{ExitCode, ExitCodeError},
     link::RemoteProcessLink,
     opt::{CommonOpt, ShellSubcommand},
@@ -76,22 +75,13 @@ async fn start(
     session: Session,
     lsp_data: Option<LspData>,
 ) -> Result<(), Error> {
-    let mut width: u16 = 0;
-    let mut height: u16 = 0;
-
     let mut proc = RemoteProcess::spawn(
         utils::new_tenant(),
         session.clone_channel(),
         cmd.cmd.unwrap_or_else(|| "/bin/sh".to_string()),
         cmd.args,
         cmd.detached,
-        if let Some((Width(cur_width), Height(cur_height))) = terminal_size() {
-            width = cur_width;
-            height = cur_height;
-            Some(PtySize::from_rows_and_cols(height, width))
-        } else {
-            None
-        },
+        terminal_size().map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
     )
     .await?;
 
@@ -115,6 +105,7 @@ async fn start(
         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
     let mut stdin = proc.stdin.take().unwrap();
+    let resizer = proc.clone_resizer();
     tokio::spawn(async move {
         while let Ok(input) = terminal.poll_input(Some(Duration::new(0, 0))) {
             match input {
@@ -133,9 +124,14 @@ async fn start(
                         }
                     }
                 }
-                Some(InputEvent::Resized { cols: _, rows: _ }) => {
-                    // TODO: Send resize event from here instead of polling for changes below
-                    continue;
+                Some(InputEvent::Resized { cols, rows }) => {
+                    if let Err(x) = resizer
+                        .resize(PtySize::from_rows_and_cols(rows as u16, cols as u16))
+                        .await
+                    {
+                        error!("Failed to resize remote process: {}", x);
+                        break;
+                    }
                 }
                 Some(_) => continue,
                 None => tokio::time::sleep(Duration::from_millis(1)).await,
@@ -151,24 +147,7 @@ async fn start(
     );
 
     // Continually loop to check for terminal resize changes while the process is still running
-    let (success, exit_code) = loop {
-        // If the process is done, then we want to return success and exit code
-        if proc.status().await.is_some() {
-            break proc.wait().await?;
-        }
-
-        // Get the terminal's size and compare it to the current size
-        if let Some((Width(new_width), Height(new_height))) = terminal_size() {
-            if new_width != width || new_height != height {
-                width = new_width;
-                height = new_height;
-                proc.resize(PtySize::from_rows_and_cols(height, width))
-                    .await?;
-            }
-        }
-
-        tokio::time::sleep(Duration::from_millis(TERMINAL_RESIZE_MILLIS)).await;
-    };
+    let (success, exit_code) = proc.wait().await?;
 
     // Shut down our link
     link.shutdown().await;
