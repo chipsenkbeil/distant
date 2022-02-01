@@ -1,4 +1,4 @@
-use crate::common::{fixtures::*, lua, poll, session};
+use crate::common::{fixtures::*, lua, session};
 use assert_fs::prelude::*;
 use mlua::chunk;
 use once_cell::sync::Lazy;
@@ -66,7 +66,6 @@ static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
 fn should_return_error_on_failure(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     let cmd = DOES_NOT_EXIST_BIN.to_str().unwrap().to_string();
     let args: Vec<String> = Vec::new();
@@ -74,17 +73,12 @@ fn should_return_error_on_failure(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if not success then
-                    err = res
-                end
-            end)
-            assert(err, "Unexpectedly succeeded")
+            local status, _ = pcall(session.spawn, session, {
+                cmd = $cmd,
+                args = $args,
+                pty = { rows = 24, cols = 80 }
+            })
+            assert(not status, "Unexpectedly succeeded!")
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -94,7 +88,6 @@ fn should_return_error_on_failure(ctx: &'_ DistantServerCtx) {
 fn should_return_back_process_on_success(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()];
@@ -102,19 +95,7 @@ fn should_return_back_process_on_success(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
+            local proc = session:spawn({ cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } })
             assert(proc.id >= 0, "Invalid process returned")
         })
         .exec();
@@ -128,7 +109,6 @@ fn should_return_back_process_on_success(ctx: &'_ DistantServerCtx) {
 fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![
@@ -146,35 +126,12 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
-            assert(proc, "Missing proc")
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
 
             // Wait briefly to ensure the process sends stdout
             $wait_fn()
 
-            local f = distant.utils.wrap_async(proc.read_stdout_async, $schedule_fn)
-            local err, stdout
-            f(proc, function(success, res)
-                if success then
-                    stdout = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
-
+            local stdout = proc:read_stdout()
             stdout = string.char(unpack(stdout))
             assert(stdout == "some stdout", "Unexpected stdout: " .. stdout)
         })
@@ -189,7 +146,6 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
 fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![
@@ -207,35 +163,12 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
-            assert(proc, "Missing proc")
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
 
             // Wait briefly to ensure the process sends stdout
             $wait_fn()
 
-            local f = distant.utils.wrap_async(proc.read_stderr_async, $schedule_fn)
-            local err, stderr
-            f(proc, function(success, res)
-                if success then
-                    stderr = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed reading stderr: " .. tostring(err))
-
+            local stderr = proc:read_stderr()
             stderr = string.char(unpack(stderr))
             assert(stderr == "some stderr", "Unexpected stderr: " .. stderr)
         })
@@ -247,7 +180,6 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
 fn should_return_error_when_killing_dead_process(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     // Spawn a process that will exit immediately, but is a valid process
     let cmd = SCRIPT_RUNNER.to_string();
@@ -263,32 +195,13 @@ fn should_return_error_when_killing_dead_process(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
-            assert(proc, "Missing proc")
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
 
             // Wait briefly to ensure the process dies
             $wait_fn()
 
-            local f = distant.utils.wrap_async(proc.kill_async, $schedule_fn)
-            local err
-            f(proc, function(success, res)
-                if not success then
-                    err = res
-                end
-            end)
-            assert(err, "Unexpectedly succeeded in killing dead process")
+            local status, _ = pcall(proc.kill, proc)
+            assert(not status, "Unexpectedly succeeded")
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -298,7 +211,6 @@ fn should_return_error_when_killing_dead_process(ctx: &'_ DistantServerCtx) {
 fn should_support_killing_processing(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")];
@@ -306,29 +218,8 @@ fn should_support_killing_processing(ctx: &'_ DistantServerCtx) {
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
-            assert(proc, "Missing proc")
-
-            local f = distant.utils.wrap_async(proc.kill_async, $schedule_fn)
-            local err
-            f(proc, function(success, res)
-                if not success then
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to kill process: " .. tostring(err))
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
+            proc:kill()
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -338,7 +229,6 @@ fn should_support_killing_processing(ctx: &'_ DistantServerCtx) {
 fn should_return_error_if_sending_stdin_to_dead_process(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     // Spawn a process that will exit immediately, but is a valid process
     let cmd = SCRIPT_RUNNER.to_string();
@@ -354,32 +244,13 @@ fn should_return_error_if_sending_stdin_to_dead_process(ctx: &'_ DistantServerCt
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
-
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed to spawn process: " .. tostring(err))
-            assert(proc, "Missing proc")
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
 
             // Wait briefly to ensure the process dies
             $wait_fn()
 
-            local f = distant.utils.wrap_async(proc.write_stdin_async, $schedule_fn)
-            local err
-            f(proc, "some text\n", function(success, res)
-                if not success then
-                    err = res
-                end
-            end)
-            assert(err, "Unexpectedly succeeded")
+            local status, _ = pcall(proc.write_stdin, proc, "some text")
+            assert(not status, "Unexpectedly succeeded")
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -392,51 +263,61 @@ fn should_return_error_if_sending_stdin_to_dead_process(ctx: &'_ DistantServerCt
 fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
-    let schedule_fn = poll::make_function(&lua).unwrap();
 
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()];
 
+    let wait_fn = lua
+        .create_function(|_, ()| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            Ok(())
+        })
+        .unwrap();
+
     let result = lua
         .load(chunk! {
             local session = $new_session()
-            local distant = require("distant_lua")
-            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
+            proc:write_stdin("some text\n")
 
-            // Because of our scheduler, the invocation turns async -> sync
-            local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
-                if success then
-                    proc = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed spawning process: " .. tostring(err))
-            assert(proc, "Missing proc")
+            // Wait briefly to ensure the process echoes stdin
+            $wait_fn()
 
-            local f = distant.utils.wrap_async(proc.write_stdin_async, $schedule_fn)
-            local err
-            f(proc, "some text\n", function(success, res)
-                if not success then
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed writing stdin: " .. tostring(err))
-
-            local f = distant.utils.wrap_async(proc.read_stdout_async, $schedule_fn)
-            local err, stdout
-            f(proc, function(success, res)
-                if success then
-                    stdout = res
-                else
-                    err = res
-                end
-            end)
-            assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
-
+            local stdout = proc:read_stdout()
             stdout = string.char(unpack(stdout))
-            assert(stdout == "some text\n", "Unexpected stdout received: " .. stdout)
+            assert(stdout == "some text\n", "Unexpected stdin sent: " .. stdout)
+        })
+        .exec();
+    assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
+}
+
+// NOTE: Ignoring on windows because it's using WSL which wants a Linux path
+//       with / but thinks it's on windows and is providing \
+#[rstest]
+#[cfg_attr(windows, ignore)]
+fn should_support_resizing_pty(ctx: &'_ DistantServerCtx) {
+    let lua = lua::make().unwrap();
+    let new_session = session::make_function(&lua, ctx).unwrap();
+
+    let cmd = SCRIPT_RUNNER.to_string();
+    let args: Vec<String> = Vec::new();
+
+    let wait_fn = lua
+        .create_function(|_, ()| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            Ok(())
+        })
+        .unwrap();
+
+    let result = lua
+        .load(chunk! {
+            local session = $new_session()
+            local proc = session:spawn({ cmd = $cmd, args = $args, rows = 24, cols = 80 })
+
+            // Wait briefly to ensure the process starts
+            $wait_fn()
+
+            proc:resize({ rows = 16, cols = 40 })
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());

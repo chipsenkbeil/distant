@@ -1,6 +1,7 @@
 use crate::{constants::PROC_POLL_TIMEOUT, runtime};
 use distant_core::{
-    RemoteLspProcess as DistantRemoteLspProcess, RemoteProcess as DistantRemoteProcess,
+    data::PtySize, RemoteLspProcess as DistantRemoteLspProcess,
+    RemoteProcess as DistantRemoteProcess,
 };
 use mlua::{prelude::*, UserData, UserDataFields, UserDataMethods};
 use once_cell::sync::Lazy;
@@ -180,6 +181,16 @@ macro_rules! impl_process {
                 }).await
             }
 
+            fn resize(id: usize, size: PtySize) -> LuaResult<()> {
+                runtime::block_on(Self::resize_async(id, size))
+            }
+
+            async fn resize_async(id: usize, size: PtySize) -> LuaResult<()> {
+                with_proc_async!($map_name, id, proc -> {
+                    proc.resize(size).await.to_lua_err()
+                })
+            }
+
             fn kill(id: usize) -> LuaResult<()> {
                 runtime::block_on(Self::kill_async(id))
             }
@@ -303,6 +314,17 @@ macro_rules! impl_process {
                 methods.add_method("output", |_, this, ()| Self::output(this.id));
                 methods.add_async_method("output_async", |_, this, ()| {
                     runtime::spawn(Self::output_async(this.id))
+                });
+                methods.add_method("resize", |lua, this, value: LuaValue| {
+                    let size: PtySize = lua.from_value(value)?;
+                    Self::resize(this.id, size)
+                });
+                methods.add_async_method("resize_async", |lua, this, value: LuaValue| {
+                    let size: LuaResult<PtySize> = lua.from_value(value);
+                    runtime::spawn(async move {
+                        let size = size?;
+                        Self::resize_async(this.id, size).await
+                    })
                 });
                 methods.add_method("kill", |_, this, ()| Self::kill(this.id));
                 methods.add_async_method("kill_async", |_, this, ()| {
