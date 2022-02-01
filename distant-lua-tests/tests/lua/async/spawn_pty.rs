@@ -79,7 +79,7 @@ fn should_return_error_on_failure(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if not success then
                     err = res
                 end
@@ -107,7 +107,7 @@ fn should_return_back_process_on_success(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -151,7 +151,7 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 }  }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -186,7 +186,7 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
 //       with / but thinks it's on windows and is providing \
 #[rstest]
 #[cfg_attr(windows, ignore)]
-fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
+fn should_return_process_that_can_retrieve_stderr_as_part_of_stdout(ctx: &'_ DistantServerCtx) {
     let lua = lua::make().unwrap();
     let new_session = session::make_function(&lua, ctx).unwrap();
     let schedule_fn = poll::make_function(&lua).unwrap();
@@ -212,7 +212,7 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -225,6 +225,7 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
             // Wait briefly to ensure the process sends stdout
             $wait_fn()
 
+            // stderr is a broken pipe as it does not exist for pty
             local f = distant.utils.wrap_async(proc.read_stderr_async, $schedule_fn)
             local err, stderr
             f(proc, function(success, res)
@@ -234,10 +235,23 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
                     err = res
                 end
             end)
-            assert(not err, "Unexpectedly failed reading stderr: " .. tostring(err))
+            assert(err)
 
-            stderr = string.char(unpack(stderr))
-            assert(stderr == "some stderr", "Unexpected stderr: " .. stderr)
+            // in a pty process, stderr is part of stdout
+            local f = distant.utils.wrap_async(proc.read_stdout_async, $schedule_fn)
+            local err, stdout
+            f(proc, function(success, res)
+                if success then
+                    stdout = res
+                else
+                    err = res
+                end
+            end)
+            assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
+
+            // stdout should match what we'd normally expect from stderr
+            stdout = string.char(unpack(stdout))
+            assert(stdout == "some stderr", "Unexpected stdout: " .. stdout)
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -268,7 +282,7 @@ fn should_return_error_when_killing_dead_process(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -311,7 +325,7 @@ fn should_support_killing_processing(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -359,7 +373,7 @@ fn should_return_error_if_sending_stdin_to_dead_process(ctx: &'_ DistantServerCt
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -397,6 +411,13 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
     let cmd = SCRIPT_RUNNER.to_string();
     let args = vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()];
 
+    let wait_fn = lua
+        .create_function(|_, ()| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            Ok(())
+        })
+        .unwrap();
+
     let result = lua
         .load(chunk! {
             local session = $new_session()
@@ -405,7 +426,7 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
 
             // Because of our scheduler, the invocation turns async -> sync
             local err, proc
-            f(session, { cmd = $cmd, args = $args }, function(success, res)
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
                 if success then
                     proc = res
                 else
@@ -424,6 +445,9 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
             end)
             assert(not err, "Unexpectedly failed writing stdin: " .. tostring(err))
 
+            // Wait briefly to ensure that pty reflects everything
+            $wait_fn()
+
             local f = distant.utils.wrap_async(proc.read_stdout_async, $schedule_fn)
             local err, stdout
             f(proc, function(success, res)
@@ -435,8 +459,60 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
             end)
             assert(not err, "Unexpectedly failed reading stdout: " .. tostring(err))
 
-            stdout = string.char(unpack(stdout))
-            assert(stdout == "some text\n", "Unexpected stdout received: " .. stdout)
+            // NOTE: We're removing whitespace as there's some issue with properly comparing
+            //       due to something else being captured from pty
+            stdout = string.gsub(string.char(unpack(stdout)), "%s+", "")
+
+            // TODO: Sometimes this comes back as "sometextsometext" (double) and I'm assuming
+            //       this is part of pty output, but the tests seem to have a race condition
+            //       to produce it, so we're just checking for either right now
+            assert(
+                stdout == "sometext" or stdout == "sometextsometext", 
+                "Unexpected stdout received: " .. stdout
+            )
+        })
+        .exec();
+    assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
+}
+
+// NOTE: Ignoring on windows because it's using WSL which wants a Linux path
+//       with / but thinks it's on windows and is providing \
+#[rstest]
+#[cfg_attr(windows, ignore)]
+fn should_support_resizing_pty(ctx: &'_ DistantServerCtx) {
+    let lua = lua::make().unwrap();
+    let new_session = session::make_function(&lua, ctx).unwrap();
+    let schedule_fn = poll::make_function(&lua).unwrap();
+
+    let cmd = SCRIPT_RUNNER.to_string();
+    let args: Vec<String> = Vec::new();
+
+    let result = lua
+        .load(chunk! {
+            local session = $new_session()
+            local distant = require("distant_lua")
+            local f = distant.utils.wrap_async(session.spawn_async, $schedule_fn)
+
+            // Because of our scheduler, the invocation turns async -> sync
+            local err, proc
+            f(session, { cmd = $cmd, args = $args, pty = { rows = 24, cols = 80 } }, function(success, res)
+                if success then
+                    proc = res
+                else
+                    err = res
+                end
+            end)
+            assert(not err, "Unexpectedly failed spawning process: " .. tostring(err))
+            assert(proc, "Missing proc")
+
+            local f = distant.utils.wrap_async(proc.resize_async, $schedule_fn)
+            local err
+            f(proc, { rows = 16, cols = 40 }, function(success, res)
+                if not success then
+                    err = res
+                end
+            end)
+            assert(not err, "Unexpectedly failed resizing proc: " .. tostring(err))
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());

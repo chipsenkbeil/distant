@@ -23,7 +23,7 @@ macro_rules! from_pipes {
         let stdin_task = tokio::spawn(async move {
             loop {
                 if let Some(input) = stdin_rx.recv().await {
-                    if let Err(x) = $stdin.write(input.as_str()).await {
+                    if let Err(x) = $stdin.write(&*input).await {
                         break Err(x);
                     }
                 } else {
@@ -37,7 +37,7 @@ macro_rules! from_pipes {
                 match $stdout.read().await {
                     Ok(output) => {
                         let mut out = handle.lock();
-                        out.write_all(output.as_bytes())?;
+                        out.write_all(&output)?;
                         out.flush()?;
                     }
                     Err(x) => break Err(x),
@@ -50,7 +50,7 @@ macro_rules! from_pipes {
                 match $stderr.read().await {
                     Ok(output) => {
                         let mut out = handle.lock();
-                        out.write_all(output.as_bytes())?;
+                        out.write_all(&output)?;
                         out.flush()?;
                     }
                     Err(x) => break Err(x),

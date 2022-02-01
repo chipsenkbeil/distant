@@ -15,6 +15,7 @@ pub mod action;
 pub mod launch;
 pub mod listen;
 pub mod lsp;
+pub mod shell;
 
 struct CommandRunner {
     method: Method,

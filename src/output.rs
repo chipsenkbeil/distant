@@ -5,13 +5,14 @@ use distant_core::{
 };
 use log::*;
 use std::io;
+use std::io::Write;
 
 /// Represents the output content and destination
 pub enum ResponseOut {
-    Stdout(String),
-    StdoutLine(String),
-    Stderr(String),
-    StderrLine(String),
+    Stdout(Vec<u8>),
+    StdoutLine(Vec<u8>),
+    Stderr(Vec<u8>),
+    StderrLine(Vec<u8>),
     None,
 }
 
@@ -22,7 +23,7 @@ impl ResponseOut {
 
         Ok(match format {
             Format::Json => ResponseOut::StdoutLine(
-                serde_json::to_string(&res)
+                serde_json::to_vec(&res)
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
             ),
 
@@ -49,21 +50,46 @@ impl ResponseOut {
                 //       LSP protocol, the JSON content is not followed by a
                 //       newline and was not picked up when the response was
                 //       sent back to the client; so, we need to manually flush
-                use std::io::Write;
-                print!("{}", x);
-                if let Err(x) = std::io::stdout().lock().flush() {
+                if let Err(x) = io::stdout().lock().write_all(&x) {
+                    error!("Failed to write stdout: {}", x);
+                }
+
+                if let Err(x) = io::stdout().lock().flush() {
                     error!("Failed to flush stdout: {}", x);
                 }
             }
-            Self::StdoutLine(x) => println!("{}", x),
+            Self::StdoutLine(x) => {
+                if let Err(x) = io::stdout().lock().write_all(&x) {
+                    error!("Failed to write stdout: {}", x);
+                }
+
+                if let Err(x) = io::stdout().lock().write(b"\n") {
+                    error!("Failed to write stdout newline: {}", x);
+                }
+            }
             Self::Stderr(x) => {
-                use std::io::Write;
-                eprint!("{}", x);
-                if let Err(x) = std::io::stderr().lock().flush() {
+                // NOTE: Because we are not including a newline in the output,
+                //       it is not guaranteed to be written out. In the case of
+                //       LSP protocol, the JSON content is not followed by a
+                //       newline and was not picked up when the response was
+                //       sent back to the client; so, we need to manually flush
+                if let Err(x) = io::stderr().lock().write_all(&x) {
+                    error!("Failed to write stderr: {}", x);
+                }
+
+                if let Err(x) = io::stderr().lock().flush() {
                     error!("Failed to flush stderr: {}", x);
                 }
             }
-            Self::StderrLine(x) => eprintln!("{}", x),
+            Self::StderrLine(x) => {
+                if let Err(x) = io::stderr().lock().write_all(&x) {
+                    error!("Failed to write stderr: {}", x);
+                }
+
+                if let Err(x) = io::stderr().lock().write(b"\n") {
+                    error!("Failed to write stderr newline: {}", x);
+                }
+            }
             Self::None => {}
         }
     }
@@ -73,12 +99,10 @@ fn format_shell(data: ResponseData) -> ResponseOut {
     match data {
         ResponseData::Ok => ResponseOut::None,
         ResponseData::Error(Error { kind, description }) => {
-            ResponseOut::StderrLine(format!("Failed ({}): '{}'.", kind, description))
+            ResponseOut::StderrLine(format!("Failed ({}): '{}'.", kind, description).into_bytes())
         }
-        ResponseData::Blob { data } => {
-            ResponseOut::StdoutLine(String::from_utf8_lossy(&data).to_string())
-        }
-        ResponseData::Text { data } => ResponseOut::StdoutLine(data),
+        ResponseData::Blob { data } => ResponseOut::StdoutLine(data),
+        ResponseData::Text { data } => ResponseOut::StdoutLine(data.into_bytes()),
         ResponseData::DirEntries { entries, .. } => ResponseOut::StdoutLine(
             entries
                 .into_iter()
@@ -100,13 +124,14 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                     )
                 })
                 .collect::<Vec<String>>()
-                .join("\n"),
+                .join("\n")
+                .into_bytes(),
         ),
         ResponseData::Exists { value: exists } => {
             if exists {
-                ResponseOut::StdoutLine("true".to_string())
+                ResponseOut::StdoutLine(b"true".to_vec())
             } else {
-                ResponseOut::StdoutLine("false".to_string())
+                ResponseOut::StdoutLine(b"false".to_vec())
             }
         }
         ResponseData::Metadata(Metadata {
@@ -117,32 +142,36 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             accessed,
             created,
             modified,
-        }) => ResponseOut::StdoutLine(format!(
-            concat!(
-                "{}",
-                "Type: {}\n",
-                "Len: {}\n",
-                "Readonly: {}\n",
-                "Created: {}\n",
-                "Last Accessed: {}\n",
-                "Last Modified: {}",
-            ),
-            canonicalized_path
-                .map(|p| format!("Canonicalized Path: {:?}\n", p))
-                .unwrap_or_default(),
-            file_type.as_ref(),
-            len,
-            readonly,
-            created.unwrap_or_default(),
-            accessed.unwrap_or_default(),
-            modified.unwrap_or_default(),
-        )),
+        }) => ResponseOut::StdoutLine(
+            format!(
+                concat!(
+                    "{}",
+                    "Type: {}\n",
+                    "Len: {}\n",
+                    "Readonly: {}\n",
+                    "Created: {}\n",
+                    "Last Accessed: {}\n",
+                    "Last Modified: {}",
+                ),
+                canonicalized_path
+                    .map(|p| format!("Canonicalized Path: {:?}\n", p))
+                    .unwrap_or_default(),
+                file_type.as_ref(),
+                len,
+                readonly,
+                created.unwrap_or_default(),
+                accessed.unwrap_or_default(),
+                modified.unwrap_or_default(),
+            )
+            .into_bytes(),
+        ),
         ResponseData::ProcEntries { entries } => ResponseOut::StdoutLine(
             entries
                 .into_iter()
                 .map(|entry| format!("{}: {} {}", entry.id, entry.cmd, entry.args.join(" ")))
                 .collect::<Vec<String>>()
-                .join("\n"),
+                .join("\n")
+                .into_bytes(),
         ),
         ResponseData::ProcSpawned { .. } => ResponseOut::None,
         ResponseData::ProcStdout { data, .. } => ResponseOut::Stdout(data),
@@ -151,9 +180,11 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             if success {
                 ResponseOut::None
             } else if let Some(code) = code {
-                ResponseOut::StderrLine(format!("Proc {} failed with code {}", id, code))
+                ResponseOut::StderrLine(
+                    format!("Proc {} failed with code {}", id, code).into_bytes(),
+                )
             } else {
-                ResponseOut::StderrLine(format!("Proc {} failed", id))
+                ResponseOut::StderrLine(format!("Proc {} failed", id).into_bytes())
             }
         }
         ResponseData::SystemInfo(SystemInfo {
@@ -162,15 +193,18 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             arch,
             current_dir,
             main_separator,
-        }) => ResponseOut::StdoutLine(format!(
-            concat!(
-                "Family: {:?}\n",
-                "Operating System: {:?}\n",
-                "Arch: {:?}\n",
-                "Cwd: {:?}\n",
-                "Path Sep: {:?}",
-            ),
-            family, os, arch, current_dir, main_separator,
-        )),
+        }) => ResponseOut::StdoutLine(
+            format!(
+                concat!(
+                    "Family: {:?}\n",
+                    "Operating System: {:?}\n",
+                    "Arch: {:?}\n",
+                    "Cwd: {:?}\n",
+                    "Path Sep: {:?}",
+                ),
+                family, os, arch, current_dir, main_separator,
+            )
+            .into_bytes(),
+        ),
     }
 }

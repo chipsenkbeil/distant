@@ -1,10 +1,12 @@
 use crate::{
-    constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
     data::{
         self, DirEntry, FileType, Metadata, PtySize, Request, RequestData, Response, ResponseData,
         RunningProcess, SystemInfo,
     },
-    server::distant::state::{Process, State},
+    server::distant::{
+        process::{Process, PtyProcess, SimpleProcess},
+        state::{ProcessState, State},
+    },
 };
 use derive_more::{Display, Error, From};
 use futures::future;
@@ -14,14 +16,12 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    process::Stdio,
     sync::Arc,
     time::SystemTime,
 };
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
-    process::Command,
-    sync::{mpsc, oneshot, Mutex, MutexGuard},
+    io::{self, AsyncWriteExt},
+    sync::{mpsc, Mutex},
 };
 use walkdir::WalkDir;
 
@@ -43,7 +43,7 @@ impl From<ServerError> for ResponseData {
     }
 }
 
-type PostHook = Box<dyn FnOnce(MutexGuard<'_, State>) + Send>;
+type PostHook = Box<dyn FnOnce() + Send>;
 struct Outgoing {
     data: ResponseData,
     post_hook: Option<PostHook>,
@@ -161,7 +161,7 @@ pub(super) async fn process(
 
     // Invoke all post hooks
     for hook in post_hooks {
-        hook(state.lock().await);
+        hook();
     }
 
     result
@@ -439,211 +439,118 @@ async fn proc_spawn<F>(
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
-    let id = rand::random();
+    debug!("<Conn @ {}> Spawning {} {}", conn_id, cmd, args.join(" "));
+    let mut child: Box<dyn Process> = match pty {
+        Some(size) => Box::new(PtyProcess::spawn(cmd.clone(), args.clone(), size)?),
+        None => Box::new(SimpleProcess::spawn(cmd.clone(), args.clone())?),
+    };
 
-    debug!(
-        "<Conn @ {} | Proc {}> Spawning {} {}",
-        conn_id,
-        id,
-        cmd,
-        args.join(" ")
-    );
-    let mut child = Command::new(cmd.to_string())
-        .args(args.clone())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    state
-        .lock()
-        .await
-        .push_process(conn_id, Process::new(id, cmd, args, detached, pty));
+    let id = child.id();
+    let stdin = child.take_stdin();
+    let stdout = child.take_stdout();
+    let stderr = child.take_stderr();
+    let killer = child.clone_killer();
+    let pty = child.clone_pty();
 
-    let post_hook = Box::new(move |mut state_lock: MutexGuard<'_, State>| {
+    let state_2 = Arc::clone(&state);
+    let post_hook = Box::new(move || {
         // Spawn a task that sends stdout as a response
-        let mut stdout = child.stdout.take().unwrap();
-        let mut reply_2 = reply.clone();
-        let stdout_task = tokio::spawn(async move {
-            let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
-            loop {
-                match stdout.read(&mut buf).await {
-                    Ok(n) if n > 0 => {
-                        let payload = vec![ResponseData::ProcStdout {
-                            id,
-                            data: buf[..n].to_vec(),
-                        }];
-                        if !reply_2(payload).await {
-                            error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
+        if let Some(mut stdout) = stdout {
+            let mut reply_2 = reply.clone();
+            let _ = tokio::spawn(async move {
+                loop {
+                    match stdout.recv().await {
+                        Ok(Some(data)) => {
+                            let payload = vec![ResponseData::ProcStdout { id, data }];
+                            if !reply_2(payload).await {
+                                error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(x) => {
+                            error!(
+                                "<Conn @ {} | Proc {}> Reading stdout failed: {}",
+                                conn_id, id, x
+                            );
                             break;
                         }
-
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Ok(_) => break,
-                    Err(x) => {
-                        error!(
-                            "<Conn @ {} | Proc {}> Reading stdout failed: {}",
-                            conn_id, id, x
-                        );
-                        break;
                     }
                 }
-            }
-        });
+            });
+        }
 
         // Spawn a task that sends stderr as a response
-        let mut stderr = child.stderr.take().unwrap();
-        let mut reply_2 = reply.clone();
-        let stderr_task = tokio::spawn(async move {
-            let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
-            loop {
-                match stderr.read(&mut buf).await {
-                    Ok(n) if n > 0 => {
-                        let payload = vec![ResponseData::ProcStderr {
-                            id,
-                            data: buf[..n].to_vec(),
-                        }];
-                        if !reply_2(payload).await {
-                            error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
+        if let Some(mut stderr) = stderr {
+            let mut reply_2 = reply.clone();
+            let _ = tokio::spawn(async move {
+                loop {
+                    match stderr.recv().await {
+                        Ok(Some(data)) => {
+                            let payload = vec![ResponseData::ProcStderr { id, data }];
+                            if !reply_2(payload).await {
+                                error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(x) => {
+                            error!(
+                                "<Conn @ {} | Proc {}> Reading stderr failed: {}",
+                                conn_id, id, x
+                            );
                             break;
                         }
-
-                        // Pause to allow buffer to fill up a little bit, avoiding
-                        // spamming with a lot of smaller responses
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
-                    }
-                    Ok(_) => break,
-                    Err(x) => {
-                        error!(
-                            "<Conn @ {} | Proc {}> Reading stderr failed: {}",
-                            conn_id, id, x
-                        );
-                        break;
                     }
                 }
-            }
-        });
-
-        // Spawn a task that sends stdin to the process
-        let mut stdin = child.stdin.take().unwrap();
-        let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(1);
-        let stdin_task = tokio::spawn(async move {
-            while let Some(line) = stdin_rx.recv().await {
-                if let Err(x) = stdin.write_all(&line).await {
-                    error!(
-                        "<Conn @ {} | Proc {}> Failed to send stdin: {}",
-                        conn_id, id, x
-                    );
-                    break;
-                }
-            }
-        });
+            });
+        }
 
         // Spawn a task that waits on the process to exit but can also
         // kill the process when triggered
-        let state_2 = Arc::clone(&state);
-        let (kill_tx, kill_rx) = oneshot::channel();
         let mut reply_2 = reply.clone();
-        let wait_task = tokio::spawn(async move {
-            tokio::select! {
-                status = child.wait() => {
-                    debug!(
-                        "<Conn @ {} | Proc {}> Completed and waiting on stdout & stderr tasks",
-                        conn_id,
+        let _ = tokio::spawn(async move {
+            let status = child.wait().await;
+            debug!("<Conn @ {} | Proc {}> Completed {:?}", conn_id, id, status);
+
+            state_2.lock().await.remove_process(conn_id, id);
+
+            match status {
+                Ok(status) => {
+                    let payload = vec![ResponseData::ProcDone {
                         id,
-                    );
-
-                    // Force stdin task to abort if it hasn't exited as there is no
-                    // point to sending any more stdin
-                    stdin_task.abort();
-
-                    if let Err(x) = stderr_task.await {
-                        error!("<Conn @ {} | Proc {}> Join on stderr task failed: {}", conn_id, id, x);
-                    }
-
-                    if let Err(x) = stdout_task.await {
-                        error!("<Conn @ {} | Proc {}> Join on stdout task failed: {}", conn_id, id, x);
-                    }
-
-                    state_2.lock().await.remove_process(conn_id, id);
-
-                    match status {
-                        Ok(status) => {
-                            let success = status.success();
-                            let mut code = status.code();
-
-                            // If we succeeded and have no exit code, automatically populate
-                            // with success exit code
-                            if success && code.is_none() {
-                                code = Some(0);
-                            }
-
-                            let payload = vec![ResponseData::ProcDone { id, success, code }];
-                            if !reply_2(payload).await {
-                                error!(
-                                    "<Conn @ {} | Proc {}> Failed to send done",
-                                    conn_id,
-                                    id,
-                                );
-                            }
-                        }
-                        Err(x) => {
-                            let payload = vec![ResponseData::from(x)];
-                            if !reply_2(payload).await {
-                                error!(
-                                    "<Conn @ {} | Proc {}> Failed to send error for waiting",
-                                    conn_id,
-                                    id,
-                                );
-                            }
-                        }
-                    }
-
-                },
-                _ = kill_rx => {
-                    debug!("<Conn @ {} | Proc {}> Killing", conn_id, id);
-
-                    if let Err(x) = child.kill().await {
-                        error!("<Conn @ {} | Proc {}> Unable to kill: {}", conn_id, id, x);
-                    }
-
-                    // Force stdin task to abort if it hasn't exited as there is no
-                    // point to sending any more stdin
-                    stdin_task.abort();
-
-                    if let Err(x) = stderr_task.await {
-                        error!("<Conn @ {} | Proc {}> Join on stderr task failed: {}", conn_id, id, x);
-                    }
-
-                    if let Err(x) = stdout_task.await {
-                        error!("<Conn @ {} | Proc {}> Join on stdout task failed: {}", conn_id, id, x);
-                    }
-
-                    // Wait for the child after being killed to ensure that it has been cleaned
-                    // up at the operating system level
-                    if let Err(x) = child.wait().await {
-                        error!("<Conn @ {} | Proc {}> Failed to wait after killed: {}", conn_id, id, x);
-                    }
-
-                    state_2.lock().await.remove_process(conn_id, id);
-
-                    let payload = vec![ResponseData::ProcDone { id, success: false, code: None }];
+                        success: status.success,
+                        code: status.code,
+                    }];
                     if !reply_2(payload).await {
-                        error!("<Conn @ {} | Proc {}> Failed to send done", conn_id, id);
+                        error!("<Conn @ {} | Proc {}> Failed to send done", conn_id, id,);
+                    }
+                }
+                Err(x) => {
+                    let payload = vec![ResponseData::from(x)];
+                    if !reply_2(payload).await {
+                        error!(
+                            "<Conn @ {} | Proc {}> Failed to send error for waiting",
+                            conn_id, id,
+                        );
                     }
                 }
             }
         });
-
-        // Update our state with the new process
-        if let Some(proc) = state_lock.mut_process(id) {
-            proc.initialize(stdin_tx, kill_tx, wait_task);
-        }
     });
+
+    state.lock().await.push_process_state(
+        conn_id,
+        ProcessState {
+            cmd,
+            args,
+            detached,
+            id,
+            stdin,
+            killer,
+            pty,
+        },
+    );
 
     debug!(
         "<Conn @ {} | Proc {}> Spawned successfully! Will enter post hook later",
@@ -656,8 +563,8 @@ where
 }
 
 async fn proc_kill(conn_id: usize, state: HState, id: usize) -> Result<Outgoing, ServerError> {
-    if let Some(process) = state.lock().await.processes.remove(&id) {
-        if process.kill() {
+    if let Some(mut process) = state.lock().await.processes.remove(&id) {
+        if process.killer.kill().await.is_ok() {
             return Ok(Outgoing::from(ResponseData::Ok));
         }
     }
@@ -677,9 +584,11 @@ async fn proc_stdin(
     id: usize,
     data: Vec<u8>,
 ) -> Result<Outgoing, ServerError> {
-    if let Some(process) = state.lock().await.processes.get(&id) {
-        if process.send_stdin(data).await {
-            return Ok(Outgoing::from(ResponseData::Ok));
+    if let Some(process) = state.lock().await.processes.get_mut(&id) {
+        if let Some(stdin) = process.stdin.as_mut() {
+            if stdin.send(&data).await.is_ok() {
+                return Ok(Outgoing::from(ResponseData::Ok));
+            }
         }
     }
 
@@ -698,7 +607,19 @@ async fn proc_resize_pty(
     id: usize,
     size: PtySize,
 ) -> Result<Outgoing, ServerError> {
-    todo!();
+    if let Some(process) = state.lock().await.processes.get(&id) {
+        let _ = process.pty.resize_pty(size)?;
+
+        return Ok(Outgoing::from(ResponseData::Ok));
+    }
+
+    Err(ServerError::IoError(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        format!(
+            "<Conn @ {} | Proc {}> Unable to resize pty to {:?}",
+            conn_id, id, size,
+        ),
+    )))
 }
 
 async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
@@ -712,7 +633,8 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
                 detached: p.detached,
-                pty: p.pty.clone(),
+                // TODO: Support retrieving current pty size
+                pty: None,
                 id: p.id,
             })
             .collect(),
@@ -2213,7 +2135,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_run_should_send_error_on_failure() {
+    async fn proc_spawn_should_send_error_on_failure() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         let req = Request::new(
@@ -2240,7 +2162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_run_should_send_back_proc_start_on_success() {
+    async fn proc_spawn_should_send_back_proc_start_on_success() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         let req = Request::new(
@@ -2270,7 +2192,7 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_run_should_send_back_stdout_periodically_when_available() {
+    async fn proc_spawn_should_send_back_stdout_periodically_when_available() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that echoes to stdout
@@ -2337,7 +2259,7 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_run_should_send_back_stderr_periodically_when_available() {
+    async fn proc_spawn_should_send_back_stderr_periodically_when_available() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that echoes to stderr
@@ -2404,7 +2326,7 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_run_should_clear_process_from_state_when_done() {
+    async fn proc_spawn_should_clear_process_from_state_when_done() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that ends after a little bit
@@ -2448,7 +2370,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_run_should_clear_process_from_state_when_killed() {
+    async fn proc_spawn_should_clear_process_from_state_when_killed() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
         // Run a program that ends slowly

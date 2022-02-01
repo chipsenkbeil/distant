@@ -7,6 +7,7 @@ use log::*;
 use smol::channel::Receiver as SmolReceiver;
 use std::{
     collections::BTreeMap,
+    fmt,
     io::{self, Write},
     net::{IpAddr, SocketAddr},
     path::PathBuf,
@@ -17,6 +18,38 @@ use tokio::sync::{mpsc, Mutex};
 use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
 
 mod handler;
+mod process;
+
+/// Represents the backend to use for ssh operations
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum SshBackend {
+    /// Use libssh as backend
+    LibSsh,
+
+    /// Use ssh2 as backend
+    Ssh2,
+}
+
+impl Default for SshBackend {
+    /// Defaults to ssh2
+    ///
+    /// NOTE: There are currently bugs in libssh that cause our implementation to hang related to
+    ///       process stdout/stderr and maybe other logic.
+    fn default() -> Self {
+        Self::Ssh2
+    }
+}
+
+impl fmt::Display for SshBackend {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::LibSsh => write!(f, "libssh"),
+            Self::Ssh2 => write!(f, "ssh2"),
+        }
+    }
+}
 
 /// Represents a singular authentication prompt for a new ssh session
 #[derive(Debug)]
@@ -50,6 +83,9 @@ pub struct Ssh2AuthEvent {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct Ssh2SessionOpts {
+    /// Represents the backend to use for ssh operations
+    pub backend: SshBackend,
+
     /// List of files from which the user's DSA, ECDSA, Ed25519, or RSA authentication identity
     /// is read, defaulting to
     ///
@@ -79,6 +115,9 @@ pub struct Ssh2SessionOpts {
     /// - `~/.ssh/known_hosts`
     /// - `~/.ssh/known_hosts2`
     pub user_known_hosts_files: Vec<PathBuf>,
+
+    /// If true, will output tracing information from the underlying ssh implementation
+    pub verbose: bool,
 
     /// Additional options to provide as defined by `ssh_config(5)`
     pub other: BTreeMap<String, String>,
@@ -248,6 +287,12 @@ impl Ssh2Session {
                     .join(" "),
             );
         }
+
+        // Set verbosity optin for ssh lib
+        config.insert("wezterm_ssh_verbose".to_string(), opts.verbose.to_string());
+
+        // Set the backend to use going forward
+        config.insert("wezterm_ssh_backend".to_string(), opts.backend.to_string());
 
         // Add in any of the other options provided
         config.extend(opts.other);
@@ -459,7 +504,7 @@ impl Ssh2Session {
         // ssh session is closed
         debug!("Executing {} {}", bin, args.join(" "));
         let mut proc = session
-            .spawn("<ssh-launch>", bin, args, true)
+            .spawn("<ssh-launch>", bin, args, true, None)
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
         let mut stdout = proc.stdout.take().unwrap();
@@ -472,17 +517,19 @@ impl Ssh2Session {
         // Close out ssh session
         session.abort();
         let _ = session.wait().await;
-        let mut output = String::new();
+        let mut output = Vec::new();
 
         // If successful, grab the session information and establish a connection
         // with the distant server
         if success {
             while let Ok(data) = stdout.read().await {
-                output.push_str(&data);
+                output.extend(&data);
             }
 
+            // Iterate over output as individual lines, looking for session info
             let maybe_info = output
-                .lines()
+                .split(|&b| b == b'\n')
+                .map(String::from_utf8_lossy)
                 .find_map(|line| line.parse::<SessionInfo>().ok());
             match maybe_info {
                 Some(mut info) => {
@@ -496,7 +543,7 @@ impl Ssh2Session {
             }
         } else {
             while let Ok(data) = stderr.read().await {
-                output.push_str(&data);
+                output.extend(&data);
             }
 
             Err(io::Error::new(
@@ -505,7 +552,10 @@ impl Ssh2Session {
                     "Spawning distant failed [{}]: {}",
                     code.map(|x| x.to_string())
                         .unwrap_or_else(|| String::from("???")),
-                    output
+                    match String::from_utf8(output) {
+                        Ok(output) => output,
+                        Err(x) => x.to_string(),
+                    }
                 ),
             ))
         }

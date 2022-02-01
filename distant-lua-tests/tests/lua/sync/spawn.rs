@@ -131,6 +131,7 @@ fn should_return_process_that_can_retrieve_stdout(ctx: &'_ DistantServerCtx) {
             $wait_fn()
 
             local stdout = proc:read_stdout()
+            stdout = string.char(unpack(stdout))
             assert(stdout == "some stdout", "Unexpected stdout: " .. stdout)
         })
         .exec();
@@ -167,6 +168,7 @@ fn should_return_process_that_can_retrieve_stderr(ctx: &'_ DistantServerCtx) {
             $wait_fn()
 
             local stderr = proc:read_stderr()
+            stderr = string.char(unpack(stderr))
             assert(stderr == "some stderr", "Unexpected stderr: " .. stderr)
         })
         .exec();
@@ -281,6 +283,7 @@ fn should_support_sending_stdin_to_spawned_process(ctx: &'_ DistantServerCtx) {
             $wait_fn()
 
             local stdout = proc:read_stdout()
+            stdout = string.char(unpack(stdout))
             assert(stdout == "some text\n", "Unexpected stdin sent: " .. stdout)
         })
         .exec();

@@ -92,6 +92,7 @@ async fn start(
                 cmd,
                 args,
                 detached,
+                pty,
             }),
         ) if is_shell_format => {
             let mut proc = RemoteProcess::spawn(
@@ -100,6 +101,7 @@ async fn start(
                 cmd,
                 args,
                 detached,
+                pty,
             )
             .await?;
 

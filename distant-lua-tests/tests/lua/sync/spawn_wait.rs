@@ -96,8 +96,13 @@ fn should_capture_all_stdout(ctx: &'_ DistantServerCtx) {
             local output = session:spawn_wait({ cmd = $cmd, args = $args })
             assert(output, "Missing process output")
             assert(output.success, "Process unexpectedly failed")
-            assert(output.stdout == "some stdout", "Unexpected stdout: " .. output.stdout)
-            assert(output.stderr == "", "Unexpected stderr: " .. output.stderr)
+
+            local stdout, stderr
+            stdout = string.char(unpack(output.stdout))
+            stderr = string.char(unpack(output.stderr))
+
+            assert(stdout == "some stdout", "Unexpected stdout: " .. stdout)
+            assert(stderr == "", "Unexpected stderr: " .. stderr)
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());
@@ -123,8 +128,13 @@ fn should_capture_all_stderr(ctx: &'_ DistantServerCtx) {
             local output = session:spawn_wait({ cmd = $cmd, args = $args })
             assert(output, "Missing process output")
             assert(output.success, "Process unexpectedly failed")
-            assert(output.stdout == "", "Unexpected stdout: " .. output.stdout)
-            assert(output.stderr == "some stderr", "Unexpected stderr: " .. output.stderr)
+
+            local stdout, stderr
+            stdout = string.char(unpack(output.stdout))
+            stderr = string.char(unpack(output.stderr))
+
+            assert(stdout == "", "Unexpected stdout: " .. stdout)
+            assert(stderr == "some stderr", "Unexpected stderr: " .. stderr)
         })
         .exec();
     assert!(result.is_ok(), "Failed: {}", result.unwrap_err());

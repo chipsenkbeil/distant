@@ -150,6 +150,9 @@ pub enum Subcommand {
 
     /// Specialized treatment of running a remote LSP process
     Lsp(LspSubcommand),
+
+    /// Specialized treatment of running a remote shell process
+    Shell(ShellSubcommand),
 }
 
 impl Subcommand {
@@ -160,6 +163,7 @@ impl Subcommand {
             Self::Launch(cmd) => subcommand::launch::run(cmd, opt)?,
             Self::Listen(cmd) => subcommand::listen::run(cmd, opt)?,
             Self::Lsp(cmd) => subcommand::lsp::run(cmd, opt)?,
+            Self::Shell(cmd) => subcommand::shell::run(cmd, opt)?,
         }
 
         Ok(())
@@ -171,7 +175,7 @@ impl Subcommand {
             Self::Action(cmd) => cmd
                 .operation
                 .as_ref()
-                .map(|req| req.is_proc_run())
+                .map(|req| req.is_proc_spawn())
                 .unwrap_or_default(),
             Self::Lsp(_) => true,
             _ => false,
@@ -678,9 +682,72 @@ pub struct LspSubcommand {
     #[structopt(long)]
     pub detached: bool,
 
+    /// If provided, will run LSP in a pty
+    #[structopt(long)]
+    pub pty: bool,
+
     /// Command to run on the remote machine that represents an LSP server
     pub cmd: String,
 
     /// Additional arguments to supply to the remote machine
+    pub args: Vec<String>,
+}
+
+/// Represents subcommand to execute some shell on a remote machine
+#[derive(Clone, Debug, StructOpt)]
+#[structopt(verbatim_doc_comment)]
+pub struct ShellSubcommand {
+    /// Represents the format that results should be returned
+    ///
+    /// Currently, there are two possible formats:
+    ///
+    /// 1. "json": printing out JSON for external program usage
+    ///
+    /// 2. "shell": printing out human-readable results for interactive shell usage
+    #[structopt(
+        short,
+        long,
+        case_insensitive = true,
+        default_value = Format::Shell.into(),
+        possible_values = Format::VARIANTS
+    )]
+    pub format: Format,
+
+    /// Method to communicate with a remote machine
+    #[structopt(
+        short,
+        long,
+        case_insensitive = true,
+        default_value = Method::default().into(),
+        possible_values = Method::VARIANTS
+    )]
+    pub method: Method,
+
+    /// Represents the medium for retrieving a session to use when running a remote LSP server
+    #[structopt(
+        long,
+        case_insensitive = true,
+        default_value = SessionInput::default().into(),
+        possible_values = SessionInput::VARIANTS
+    )]
+    pub session: SessionInput,
+
+    /// Contains additional information related to sessions
+    #[structopt(flatten)]
+    pub session_data: SessionOpt,
+
+    /// SSH connection settings when method is ssh
+    #[structopt(flatten)]
+    pub ssh_connection: SshConnectionOpts,
+
+    /// If provided, will run in detached mode, meaning that the process will not be killed if the
+    /// client disconnects from the server
+    #[structopt(long)]
+    pub detached: bool,
+
+    /// Command to run on the remote machine as the shell (defaults to $TERM)
+    pub cmd: Option<String>,
+
+    /// Additional arguments to supply to the shell (defaults to nothing)
     pub args: Vec<String>,
 }

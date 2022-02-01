@@ -6,7 +6,8 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{LspData, RemoteLspProcess, RemoteProcessError, Session};
+use distant_core::{LspData, PtySize, RemoteLspProcess, RemoteProcessError, Session};
+use terminal_size::{terminal_size, Height, Width};
 use tokio::io;
 
 #[derive(Debug, Display, Error, From)]
@@ -74,6 +75,12 @@ async fn start(
         cmd.cmd,
         cmd.args,
         cmd.detached,
+        if cmd.pty {
+            terminal_size()
+                .map(|(Width(width), Height(height))| PtySize::from_rows_and_cols(height, width))
+        } else {
+            None
+        },
     )
     .await?;
 
@@ -83,7 +90,7 @@ async fn start(
         proc.stdin
             .as_mut()
             .unwrap()
-            .write(&data.to_string())
+            .write(data.to_string().as_bytes())
             .await?;
     }
 
