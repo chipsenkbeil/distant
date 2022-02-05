@@ -101,9 +101,9 @@ pub(super) async fn process(
             RequestData::ProcSpawn {
                 cmd,
                 args,
-                detached,
+                persist,
                 pty,
-            } => proc_spawn(conn_id, state, reply, cmd, args, detached, pty).await,
+            } => proc_spawn(conn_id, state, reply, cmd, args, persist, pty).await,
             RequestData::ProcKill { id } => proc_kill(conn_id, state, id).await,
             RequestData::ProcStdin { id, data } => proc_stdin(conn_id, state, id, data).await,
             RequestData::ProcResizePty { id, size } => {
@@ -433,7 +433,7 @@ async fn proc_spawn<F>(
     reply: F,
     cmd: String,
     args: Vec<String>,
-    detached: bool,
+    persist: bool,
     pty: Option<PtySize>,
 ) -> Result<Outgoing, ServerError>
 where
@@ -544,7 +544,7 @@ where
         ProcessState {
             cmd,
             args,
-            detached,
+            persist,
             id,
             stdin,
             killer,
@@ -632,7 +632,7 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
             .map(|p| RunningProcess {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
-                detached: p.detached,
+                persist: p.persist,
                 // TODO: Support retrieving current pty size
                 pty: None,
                 id: p.id,
@@ -2143,7 +2143,7 @@ mod tests {
             vec![RequestData::ProcSpawn {
                 cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
                 args: Vec::new(),
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2170,7 +2170,7 @@ mod tests {
             vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2204,7 +2204,7 @@ mod tests {
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
                     String::from("some stdout"),
                 ],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2271,7 +2271,7 @@ mod tests {
                     ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
                     String::from("some stderr"),
                 ],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2335,7 +2335,7 @@ mod tests {
             vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2379,7 +2379,7 @@ mod tests {
             vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2455,7 +2455,7 @@ mod tests {
             vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2552,7 +2552,7 @@ mod tests {
             vec![RequestData::ProcSpawn {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
-                detached: false,
+                persist: false,
                 pty: None,
             }],
         );
@@ -2626,7 +2626,7 @@ mod tests {
                 RequestData::ProcSpawn {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-                    detached: false,
+                    persist: false,
                     pty: None,
                 },
                 RequestData::ProcList {},
@@ -2651,7 +2651,7 @@ mod tests {
                 entries: vec![RunningProcess {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-                    detached: false,
+                    persist: false,
                     pty: None,
                     id,
                 }],

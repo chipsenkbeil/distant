@@ -16,7 +16,7 @@ pub struct State {
 pub struct ProcessState {
     pub cmd: String,
     pub args: Vec<String>,
-    pub detached: bool,
+    pub persist: bool,
 
     pub id: usize,
     pub stdin: Option<Box<dyn InputChannel>>,
@@ -68,7 +68,7 @@ impl State {
         if let Some(ids) = self.client_processes.remove(&conn_id) {
             for id in ids {
                 if let Some(mut process) = self.processes.remove(&id) {
-                    if !process.detached {
+                    if !process.persist {
                         trace!(
                             "<Conn @ {:?}> Requesting proc {} be killed",
                             conn_id,
@@ -83,7 +83,7 @@ impl State {
                         }
                     } else {
                         trace!(
-                            "<Conn @ {:?}> Proc {} is detached and will not be killed",
+                            "<Conn @ {:?}> Proc {} is persistent and will not be killed",
                             conn_id,
                             process.id
                         );

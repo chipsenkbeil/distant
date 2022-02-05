@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update ProcStdin, ProcStdout, and ProcStderr to use list of bytes instead
   of a string as a parameter; RemoteProcess and RemoteLspProcess now support
   reading and writing using either `String` or `Vec<u8>`
+- Rename `--detached` and associated to `--persist`
 
 ### Removed
 - Github actions no longer use paths-filter so every PR & commit will test

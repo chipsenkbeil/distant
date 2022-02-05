@@ -81,7 +81,7 @@ impl RemoteProcess {
         mut channel: SessionChannel,
         cmd: impl Into<String>,
         args: Vec<String>,
-        detached: bool,
+        persist: bool,
         pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
         let tenant = tenant.into();
@@ -94,7 +94,7 @@ impl RemoteProcess {
                 vec![RequestData::ProcSpawn {
                     cmd,
                     args,
-                    detached,
+                    persist,
                     pty,
                 }],
             ))

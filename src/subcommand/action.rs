@@ -91,7 +91,7 @@ async fn start(
             Some(RequestData::ProcSpawn {
                 cmd,
                 args,
-                detached,
+                persist,
                 pty,
             }),
         ) if is_shell_format => {
@@ -100,7 +100,7 @@ async fn start(
                 session.clone_channel(),
                 cmd,
                 args,
-                detached,
+                persist,
                 pty,
             )
             .await?;

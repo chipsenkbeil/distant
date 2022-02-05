@@ -164,22 +164,22 @@ make_api!(
 make_api!(
     spawn,
     RemoteProcess,
-    { cmd: String, #[serde(default)] args: Vec<String>, #[serde(default)] pty: Option<PtySize>, #[serde(default)] detached: bool },
+    { cmd: String, #[serde(default)] args: Vec<String>, #[serde(default)] pty: Option<PtySize>, #[serde(default)] persist: bool },
     |channel, tenant, params| {
-        channel.spawn(tenant, params.cmd, params.args, params.detached, params.pty).await
+        channel.spawn(tenant, params.cmd, params.args, params.persist, params.pty).await
     }
 );
 
 make_api!(
     spawn_wait,
     Output,
-    { cmd: String, #[serde(default)] args: Vec<String>, #[serde(default)] pty: Option<PtySize>, #[serde(default)] detached: bool },
+    { cmd: String, #[serde(default)] args: Vec<String>, #[serde(default)] pty: Option<PtySize>, #[serde(default)] persist: bool },
     |channel, tenant, params| {
         let proc = channel.spawn(
             tenant,
             params.cmd,
             params.args,
-            params.detached,
+            params.persist,
             params.pty,
         ).await.to_lua_err()?;
         let id = LuaRemoteProcess::from_distant_async(proc).await?.id;
@@ -190,9 +190,9 @@ make_api!(
 make_api!(
     spawn_lsp,
     RemoteLspProcess,
-    { cmd: String, #[serde(default)] args: Vec<String>, #[serde(default)] pty: Option<PtySize>, #[serde(default)] detached: bool },
+    { cmd: String, #[serde(default)] args: Vec<String>, #[serde(default)] pty: Option<PtySize>, #[serde(default)] persist: bool },
     |channel, tenant, params| {
-        channel.spawn_lsp(tenant, params.cmd, params.args, params.detached, params.pty).await
+        channel.spawn_lsp(tenant, params.cmd, params.args, params.persist, params.pty).await
     }
 );
 

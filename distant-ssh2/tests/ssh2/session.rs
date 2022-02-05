@@ -1355,7 +1355,7 @@ async fn proc_spawn_should_send_error_over_stderr_on_failure(#[future] session: 
         vec![RequestData::ProcSpawn {
             cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             args: Vec::new(),
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1402,7 +1402,7 @@ async fn proc_spawn_should_send_back_proc_start_on_success(#[future] session: Se
         vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1434,7 +1434,7 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
                 String::from("'some stdout'"),
             ],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1501,7 +1501,7 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
                 ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
                 String::from("'some stderr'"),
             ],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1563,7 +1563,7 @@ async fn proc_spawn_should_clear_process_from_state_when_done(#[future] session:
         vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1612,7 +1612,7 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(#[future] sessio
         vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1687,7 +1687,7 @@ async fn proc_kill_should_send_ok_and_done_responses_on_success(#[future] sessio
         vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1763,7 +1763,7 @@ async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process
         vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1813,7 +1813,7 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
         vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     );
@@ -1839,7 +1839,7 @@ async fn proc_list_should_send_proc_entry_list(#[future] session: Session) {
             entries: vec![RunningProcess {
                 cmd: SCRIPT_RUNNER.to_string(),
                 args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("10")],
-                detached: false,
+                persist: false,
                 pty: None,
                 id,
             }],

@@ -35,7 +35,7 @@ struct Process {
     id: usize,
     cmd: String,
     args: Vec<String>,
-    detached: bool,
+    persist: bool,
     stdin_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
     resize_tx: mpsc::Sender<PtySize>,
@@ -97,9 +97,9 @@ pub(super) async fn process(
             RequestData::ProcSpawn {
                 cmd,
                 args,
-                detached,
+                persist,
                 pty,
-            } => proc_spawn(session, state, cmd, args, detached, pty).await,
+            } => proc_spawn(session, state, cmd, args, persist, pty).await,
             RequestData::ProcResizePty { id, size } => {
                 proc_resize_pty(session, state, id, size).await
             }
@@ -614,7 +614,7 @@ async fn proc_spawn(
     state: Arc<Mutex<State>>,
     cmd: String,
     args: Vec<String>,
-    detached: bool,
+    persist: bool,
     pty: Option<PtySize>,
 ) -> io::Result<Outgoing> {
     let cmd_string = format!("{} {}", cmd, args.join(" "));
@@ -642,7 +642,7 @@ async fn proc_spawn(
             id,
             cmd,
             args,
-            detached,
+            persist,
             stdin_tx: stdin,
             kill_tx: killer,
             resize_tx: resizer,
@@ -722,7 +722,7 @@ async fn proc_list(_session: WezSession, state: Arc<Mutex<State>>) -> io::Result
             .map(|p| RunningProcess {
                 cmd: p.cmd.to_string(),
                 args: p.args.clone(),
-                detached: p.detached,
+                persist: p.persist,
                 // TODO: Support pty size from ssh
                 pty: None,
                 id: p.id,

@@ -80,7 +80,7 @@ async fn start(
         session.clone_channel(),
         cmd.cmd.unwrap_or_else(|| "/bin/sh".to_string()),
         cmd.args,
-        cmd.detached,
+        cmd.persist,
         terminal_size().map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
     )
     .await?;
