@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Shell support introduced for ssh & distant servers, including a new shell
+  command for distant cli
+- Support for JSON communication of ssh auth during launch (cli)
+
+### Changed
+- Replace cbor library with alternative as old cbor lib has been abandoned
+- Refactor some request & response types to work with new cbor lib
+- Updated cli to always include serde dependency
+- Expose `origin_id` of remote process as method
+- Rename ProcRun -> ProcSpawn, ProcStarted -> ProcSpawned
+- Update ProcStdin, ProcStdout, and ProcStderr to use list of bytes instead
+  of a string as a parameter; RemoteProcess and RemoteLspProcess now support
+  reading and writing using either `String` or `Vec<u8>`
+
+### Removed
+- Github actions no longer use paths-filter so every PR & commit will test
+  everything
+
 
 ## [0.15.1] - 2021-11-15
 ### Added
