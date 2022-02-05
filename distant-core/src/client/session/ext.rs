@@ -124,7 +124,7 @@ pub trait SessionChannelExt {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
-        detached: bool,
+        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError>;
 
@@ -134,7 +134,7 @@ pub trait SessionChannelExt {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
-        detached: bool,
+        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError>;
 
@@ -379,14 +379,14 @@ impl SessionChannelExt for SessionChannel {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
-        detached: bool,
+        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
         let args = args.into_iter().map(Into::into).collect();
         Box::pin(async move {
-            RemoteProcess::spawn(tenant, self.clone(), cmd, args, detached, pty).await
+            RemoteProcess::spawn(tenant, self.clone(), cmd, args, persist, pty).await
         })
     }
 
@@ -395,14 +395,14 @@ impl SessionChannelExt for SessionChannel {
         tenant: impl Into<String>,
         cmd: impl Into<String>,
         args: Vec<impl Into<String>>,
-        detached: bool,
+        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess, RemoteProcessError> {
         let tenant = tenant.into();
         let cmd = cmd.into();
         let args = args.into_iter().map(Into::into).collect();
         Box::pin(async move {
-            RemoteLspProcess::spawn(tenant, self.clone(), cmd, args, detached, pty).await
+            RemoteLspProcess::spawn(tenant, self.clone(), cmd, args, persist, pty).await
         })
     }
 

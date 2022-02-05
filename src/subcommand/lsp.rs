@@ -74,7 +74,7 @@ async fn start(
         session.clone_channel(),
         cmd.cmd,
         cmd.args,
-        cmd.detached,
+        cmd.persist,
         if cmd.pty {
             terminal_size()
                 .map(|(Width(width), Height(height))| PtySize::from_rows_and_cols(height, width))

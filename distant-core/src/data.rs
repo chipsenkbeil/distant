@@ -219,10 +219,10 @@ pub enum RequestData {
         /// Arguments for the command
         args: Vec<String>,
 
-        /// Whether or not the process should be detached, meaning that the process will not be
+        /// Whether or not the process should be persistent, meaning that the process will not be
         /// killed when the associated client disconnects
         #[cfg_attr(feature = "structopt", structopt(long))]
-        detached: bool,
+        persist: bool,
 
         /// If provided, will spawn process in a pty, otherwise spawns directly
         #[cfg_attr(feature = "structopt", structopt(long))]
@@ -617,8 +617,8 @@ pub struct RunningProcess {
     /// Arguments for the command
     pub args: Vec<String>,
 
-    /// Whether or not the process was run in detached mode
-    pub detached: bool,
+    /// Whether or not the process was run in persist mode
+    pub persist: bool,
 
     /// Pty associated with running process if it has one
     pub pty: Option<PtySize>,

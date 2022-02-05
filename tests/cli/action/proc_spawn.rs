@@ -171,7 +171,7 @@ fn should_support_json_to_execute_program_and_return_exit_status(mut action_cmd:
         payload: vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     };
@@ -205,7 +205,7 @@ fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
                 output.to_string(),
             ],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     };
@@ -275,7 +275,7 @@ fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
                 ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
                 output.to_string(),
             ],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     };
@@ -341,7 +341,7 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
         payload: vec![RequestData::ProcSpawn {
             cmd: SCRIPT_RUNNER.to_string(),
             args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
-            detached: false,
+            persist: false,
             pty: None,
         }],
     };
@@ -436,7 +436,7 @@ fn should_support_json_output_for_error(mut action_cmd: Command) {
         payload: vec![RequestData::ProcSpawn {
             cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             args: Vec::new(),
-            detached: false,
+            persist: false,
             pty: None,
         }],
     };

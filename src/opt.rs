@@ -677,10 +677,10 @@ pub struct LspSubcommand {
     #[structopt(flatten)]
     pub ssh_connection: SshConnectionOpts,
 
-    /// If provided, will run in detached mode, meaning that the process will not be killed if the
+    /// If provided, will run in persist mode, meaning that the process will not be killed if the
     /// client disconnects from the server
     #[structopt(long)]
-    pub detached: bool,
+    pub persist: bool,
 
     /// If provided, will run LSP in a pty
     #[structopt(long)]
@@ -740,10 +740,10 @@ pub struct ShellSubcommand {
     #[structopt(flatten)]
     pub ssh_connection: SshConnectionOpts,
 
-    /// If provided, will run in detached mode, meaning that the process will not be killed if the
+    /// If provided, will run in persist mode, meaning that the process will not be killed if the
     /// client disconnects from the server
     #[structopt(long)]
-    pub detached: bool,
+    pub persist: bool,
 
     /// Command to run on the remote machine as the shell (defaults to $TERM)
     pub cmd: Option<String>,

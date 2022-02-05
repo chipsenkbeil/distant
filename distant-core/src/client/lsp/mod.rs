@@ -30,10 +30,10 @@ impl RemoteLspProcess {
         channel: SessionChannel,
         cmd: impl Into<String>,
         args: Vec<String>,
-        detached: bool,
+        persist: bool,
         pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
-        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args, detached, pty).await?;
+        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args, persist, pty).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
