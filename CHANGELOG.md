@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell support introduced for ssh & distant servers, including a new shell
   command for distant cli
 - Support for JSON communication of ssh auth during launch (cli)
+- Add windows and unix metadata files to overall metadata response data
 
 ### Changed
 - Replace cbor library with alternative as old cbor lib has been abandoned

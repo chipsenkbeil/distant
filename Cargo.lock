@@ -529,6 +529,7 @@ name = "distant-core"
 version = "0.16.0"
 dependencies = [
  "assert_fs",
+ "bitflags",
  "bytes",
  "chacha20poly1305",
  "ciborium",

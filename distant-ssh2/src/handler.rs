@@ -4,7 +4,7 @@ use distant_core::{
     data::{
         DirEntry, Error as DistantError, FileType, Metadata, PtySize, RunningProcess, SystemInfo,
     },
-    Request, RequestData, Response, ResponseData,
+    Request, RequestData, Response, ResponseData, UnixMetadata,
 };
 use futures::future;
 use log::*;
@@ -606,6 +606,18 @@ async fn metadata(
         accessed: metadata.accessed.map(u128::from),
         modified: metadata.modified.map(u128::from),
         created: None,
+        unix: metadata.permissions.as_ref().map(|p| UnixMetadata {
+            owner_read: p.owner_read,
+            owner_write: p.owner_write,
+            owner_exec: p.owner_exec,
+            group_read: p.group_read,
+            group_write: p.group_write,
+            group_exec: p.group_exec,
+            other_read: p.other_read,
+            other_write: p.other_write,
+            other_exec: p.other_exec,
+        }),
+        windows: None,
     })))
 }
 
