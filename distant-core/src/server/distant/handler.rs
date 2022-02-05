@@ -424,6 +424,24 @@ async fn metadata(
         } else {
             FileType::Symlink
         },
+
+        #[cfg(unix)]
+        unix: Some({
+            use std::os::unix::prelude::*;
+            let mode = metadata.mode();
+            crate::data::UnixMetadata::from(mode)
+        }),
+        #[cfg(not(unix))]
+        unix: None,
+
+        #[cfg(windows)]
+        windows: Some({
+            use std::os::windows::prelude::*;
+            let attributes = metadata.file_attributes();
+            crate::data::WindowsMetadata::from(attributes)
+        }),
+        #[cfg(not(windows))]
+        windows: None,
     })))
 }
 
@@ -1989,6 +2007,74 @@ mod tests {
             "Unexpected response: {:?}",
             res.payload[0]
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn metadata_should_include_unix_specific_metadata_on_unix_platform() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: file.path().to_path_buf(),
+                canonicalize: false,
+                resolve_file_type: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
+        match &res.payload[0] {
+            ResponseData::Metadata(Metadata { unix, windows, .. }) => {
+                assert!(unix.is_some(), "Unexpectedly missing unix metadata on unix");
+                assert!(
+                    windows.is_none(),
+                    "Unexpectedly got windows metadata on unix"
+                );
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn metadata_should_include_unix_specific_metadata_on_windows_platform() {
+        let (conn_id, state, tx, mut rx) = setup(1);
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Metadata {
+                path: file.path().to_path_buf(),
+                canonicalize: false,
+                resolve_file_type: false,
+            }],
+        );
+
+        process(conn_id, state, req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+
+        match &res.payload[0] {
+            ResponseData::Metadata(Metadata { unix, windows, .. }) => {
+                assert!(
+                    windows.is_some(),
+                    "Unexpectedly missing windows metadata on windows"
+                );
+                assert!(unix.is_none(), "Unexpectedly got unix metadata on windows");
+            }
+            x => panic!("Unexpected response: {:?}", x),
+        }
     }
 
     #[tokio::test]

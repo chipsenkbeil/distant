@@ -142,6 +142,8 @@ fn format_shell(data: ResponseData) -> ResponseOut {
             accessed,
             created,
             modified,
+            unix,
+            windows,
         }) => ResponseOut::StdoutLine(
             format!(
                 concat!(
@@ -151,7 +153,10 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                     "Readonly: {}\n",
                     "Created: {}\n",
                     "Last Accessed: {}\n",
-                    "Last Modified: {}",
+                    "Last Modified: {}\n",
+                    "{}",
+                    "{}",
+                    "{}",
                 ),
                 canonicalized_path
                     .map(|p| format!("Canonicalized Path: {:?}\n", p))
@@ -162,6 +167,70 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 created.unwrap_or_default(),
                 accessed.unwrap_or_default(),
                 modified.unwrap_or_default(),
+                unix.map(|u| format!(
+                    concat!(
+                        "Owner Read: {}\n",
+                        "Owner Write: {}\n",
+                        "Owner Exec: {}\n",
+                        "Group Read: {}\n",
+                        "Group Write: {}\n",
+                        "Group Exec: {}\n",
+                        "Other Read: {}\n",
+                        "Other Write: {}\n",
+                        "Other Exec: {}",
+                    ),
+                    u.owner_read,
+                    u.owner_write,
+                    u.owner_exec,
+                    u.group_read,
+                    u.group_write,
+                    u.group_exec,
+                    u.other_read,
+                    u.other_write,
+                    u.other_exec
+                ))
+                .unwrap_or_default(),
+                windows
+                    .map(|w| format!(
+                        concat!(
+                            "Archive: {}\n",
+                            "Compressed: {}\n",
+                            "Encrypted: {}\n",
+                            "Hidden: {}\n",
+                            "Integrity Stream: {}\n",
+                            "Normal: {}\n",
+                            "Not Content Indexed: {}\n",
+                            "No Scrub Data: {}\n",
+                            "Offline: {}\n",
+                            "Recall on Data Access: {}\n",
+                            "Recall on Open: {}\n",
+                            "Reparse Point: {}\n",
+                            "Sparse File: {}\n",
+                            "System: {}\n",
+                            "Temporary: {}",
+                        ),
+                        w.archive,
+                        w.compressed,
+                        w.encrypted,
+                        w.hidden,
+                        w.integrity_stream,
+                        w.normal,
+                        w.not_content_indexed,
+                        w.no_scrub_data,
+                        w.offline,
+                        w.recall_on_data_access,
+                        w.recall_on_open,
+                        w.reparse_point,
+                        w.sparse_file,
+                        w.system,
+                        w.temporary,
+                    ))
+                    .unwrap_or_default(),
+                if unix.is_none() && windows.is_none() {
+                    String::from("\n")
+                } else {
+                    String::new()
+                }
             )
             .into_bytes(),
         ),
