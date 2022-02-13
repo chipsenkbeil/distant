@@ -359,6 +359,17 @@ impl FromStr for BindAddress {
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum SessionOutput {
+    /// Session will be exposed as a series of environment variables
+    ///
+    /// * `DISTANT_HOST=<host>`
+    /// * `DISTANT_PORT=<port>`
+    /// * `DISTANT_KEY=<key>`
+    ///
+    /// Note that this does not actually create the environment variables,
+    /// but instead prints out a message detailing how to set the environment
+    /// variables, which can be evaluated to set them
+    Environment,
+
     /// Session is in a file in the form of `DISTANT CONNECT <host> <port> <key>`
     File,
 
@@ -378,16 +389,9 @@ pub enum SessionOutput {
 }
 
 impl Default for SessionOutput {
-    /// For unix-based systems, output defaults to a socket
-    #[cfg(unix)]
+    /// Default to environment output
     fn default() -> Self {
-        Self::Socket
-    }
-
-    /// For non-unix-based systems, output defaults to a file
-    #[cfg(not(unix))]
-    fn default() -> Self {
-        Self::File
+        Self::Environment
     }
 }
 
@@ -431,16 +435,9 @@ pub enum SessionInput {
 }
 
 impl Default for SessionInput {
-    /// For unix-based systems, input defaults to a socket
-    #[cfg(unix)]
+    /// Default to environment output
     fn default() -> Self {
-        Self::Socket
-    }
-
-    /// For non-unix-based systems, input defaults to a file
-    #[cfg(not(unix))]
-    fn default() -> Self {
-        Self::File
+        Self::Environment
     }
 }
 

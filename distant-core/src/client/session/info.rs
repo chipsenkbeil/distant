@@ -137,6 +137,11 @@ impl SessionInfo {
         Ok(SocketAddr::from((addr, self.port)))
     }
 
+    /// Converts the session's key to a hex string
+    pub fn key_to_unprotected_string(&self) -> String {
+        self.key.unprotected_to_hex_key()
+    }
+
     /// Converts to unprotected string that exposes the key in the form of
     /// `DISTANT CONNECT <host> <port> <key>`
     pub fn to_unprotected_string(&self) -> String {

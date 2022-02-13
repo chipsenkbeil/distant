@@ -68,17 +68,22 @@ Launch a remote instance of `distant`. Calling `launch` will do the following:
 1. Ssh into the specified host (in the below example, `my.example.com`)
 2. Execute `distant listen --host ssh` on the remote machine
 3. Receive on the local machine the credentials needed to connect to the server
-4. Depending on the options specified, store/use the session settings so
+4. Depending on the options specified, print/store/use the session settings so
    future calls to `distant action` can connect
 
 ```bash
 # Connects to my.example.com on port 22 via SSH to start a new session
+# and print out information to configure your system to talk to it
 distant launch my.example.com
+
+# NOTE: If you are using sh, bash, or zsh, you can automatically set the
+        appropriate environment variables using the following
+eval "$(distant launch my.example.com)"
 
 # After the session is established, you can perform different operations
 # on the remote machine via `distant action {command} [args]`
 distant action copy path/to/file new/path/to/file
-distant action run -- echo 'Hello, this is from the other side'
+distant action spawn -- echo 'Hello, this is from the other side'
 ```
 
 ## License
