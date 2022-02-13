@@ -28,7 +28,7 @@ fn inner_print_environment(host: &str, port: u16, key: &str) {
 fn inner_print_environment(host: &str, port: u16, key: &str) {
     match parent_exe_name() {
         // If shell is powershell, we want to print differently
-        Some(p) if s.name().eq_ignore_ascii_case("powershell") => {
+        Some(s) if s.name().eq_ignore_ascii_case("powershell") => {
             formatter::print_powershell_string(host, port, key)
         }
 
