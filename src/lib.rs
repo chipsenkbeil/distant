@@ -1,5 +1,6 @@
 mod buf;
 mod constants;
+mod environment;
 mod exit;
 mod link;
 mod msg;

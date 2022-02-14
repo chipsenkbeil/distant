@@ -1,4 +1,5 @@
 use crate::{
+    environment,
     exit::{ExitCode, ExitCodeError},
     msg::{MsgReceiver, MsgSender},
     opt::{CommonOpt, Format, LaunchSubcommand, SessionOutput},
@@ -51,6 +52,10 @@ pub fn run(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<(), Error> {
 
     // Handle sharing resulting session in different ways
     match session_output {
+        SessionOutput::Environment => {
+            debug!("Outputting session to environment");
+            environment::print_environment(&session)
+        }
         SessionOutput::File => {
             debug!("Outputting session to {:?}", session_file);
             rt.block_on(async { SessionInfoFile::new(session_file, session).save().await })?

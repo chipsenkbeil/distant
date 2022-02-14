@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- New `environment` session type that prints out environment variable
+  definitions for use in an interactive session or to evaluate
 - Shell support introduced for ssh & distant servers, including a new shell
   command for distant cli
 - Support for JSON communication of ssh auth during launch (cli)
 - Add windows and unix metadata files to overall metadata response data
 
 ### Changed
+- Default session type for CLI (launch, action, etc) is `environment`
 - Replace cbor library with alternative as old cbor lib has been abandoned
 - Refactor some request & response types to work with new cbor lib
 - Updated cli to always include serde dependency
@@ -26,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Github actions no longer use paths-filter so every PR & commit will test
   everything
-
 
 ## [0.15.1] - 2021-11-15
 ### Added
