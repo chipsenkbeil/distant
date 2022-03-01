@@ -11,6 +11,7 @@ use crate::{
 use derive_more::{Display, Error, From};
 use futures::future;
 use log::*;
+use notify::{RecursiveMode, Watcher};
 use std::{
     env,
     future::Future,
@@ -31,6 +32,7 @@ type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 #[derive(Debug, Display, Error, From)]
 pub enum ServerError {
     IoError(io::Error),
+    NotifyError(notify::Error),
     WalkDirError(walkdir::Error),
 }
 
@@ -38,6 +40,7 @@ impl From<ServerError> for ResponseData {
     fn from(x: ServerError) -> Self {
         match x {
             ServerError::IoError(x) => Self::from(x),
+            ServerError::NotifyError(x) => Self::from(x),
             ServerError::WalkDirError(x) => Self::from(x),
         }
     }
@@ -92,6 +95,10 @@ pub(super) async fn process(
             RequestData::Remove { path, force } => remove(path, force).await,
             RequestData::Copy { src, dst } => copy(src, dst).await,
             RequestData::Rename { src, dst } => rename(src, dst).await,
+            RequestData::Watch { path, recursive } => {
+                watch(conn_id, state, reply, path, recursive).await
+            }
+            RequestData::Unwatch { path } => unwatch(conn_id, state, path).await,
             RequestData::Exists { path } => exists(path).await,
             RequestData::Metadata {
                 path,
@@ -364,6 +371,92 @@ async fn rename(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
     tokio::fs::rename(src, dst).await?;
 
     Ok(Outgoing::from(ResponseData::Ok))
+}
+
+async fn watch<F>(
+    conn_id: usize,
+    state: HState,
+    mut reply: F,
+    path: PathBuf,
+    recursive: bool,
+) -> Result<Outgoing, ServerError>
+where
+    F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+{
+    let mut state = state.lock().await;
+
+    // NOTE: Do not use get_or_insert_with since notify::recommended_watcher returns a result
+    //       and we cannot unpack the result within the above function. Since we are locking
+    //       our state, we can be confident that no one else is modifying the watcher option
+    //       concurrently; so, we do a naive check for option being populated
+    if state.watcher.is_none() {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let watcher = notify::recommended_watcher(move |res| {
+            let _ = tx.blocking_send(res);
+        })?;
+
+        // TODO: Do we want to support precise events? These do not appear to be available on
+        //       MacOS and would encourage odd divergence by clients based on platform.
+        /* if !watcher.configure(WatcherConfig::PreciseEvents(true))? {
+            let _ = reply(vec![ResponseData::Error(
+                concat!(
+                    "Precise events not supported for filesystem watcher! ",
+                    "Will continue operating with generic events.",
+                )
+                .into(),
+            )])
+            .await;
+        } */
+
+        let _ = state.watcher.insert(watcher);
+
+        tokio::spawn(async move {
+            while let Some(res) = rx.recv().await {
+                let is_ok = match res {
+                    Ok(x) => reply(vec![ResponseData::Changed(x)]).await,
+                    Err(x) => reply(vec![ResponseData::Error(x.into())]).await,
+                };
+
+                if !is_ok {
+                    break;
+                }
+            }
+        });
+    }
+
+    match state.watcher.as_mut() {
+        Some(watcher) => {
+            watcher.watch(
+                path.as_path(),
+                if recursive {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                },
+            )?;
+            Ok(Outgoing::from(ResponseData::Ok))
+        }
+        None => Err(ServerError::IoError(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("<Conn @ {}> Unable to initialize watcher", conn_id,),
+        ))),
+    }
+}
+
+async fn unwatch(conn_id: usize, state: HState, path: PathBuf) -> Result<Outgoing, ServerError> {
+    if let Some(watcher) = state.lock().await.watcher.as_mut() {
+        watcher.unwatch(path.as_path())?;
+        return Ok(Outgoing::from(ResponseData::Ok));
+    }
+
+    Err(ServerError::IoError(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        format!(
+            "<Conn @ {}> Unable to unwatch as watcher not initialized",
+            conn_id,
+        ),
+    )))
 }
 
 async fn exists(path: PathBuf) -> Result<Outgoing, ServerError> {
@@ -1904,6 +1997,49 @@ mod tests {
         // Verify that we moved the file
         src.assert(predicate::path::missing());
         dst.assert("some text");
+    }
+
+    #[tokio::test]
+    async fn watch_should_support_watching_a_single_file() {
+        // NOTE: setup(2) because we can receive an error response first
+        //       when setting up precise events
+        let (conn_id, state, tx, mut rx) = setup(2);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let file = temp.child("file");
+        file.touch().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Watch {
+                path: file.path().to_path_buf(),
+                recursive: false,
+            }],
+        );
+
+        // NOTE: Clone tx so we don't close the rx at the end of the request
+        process(conn_id, state, req, tx.clone()).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Update the file and verify we get a notification
+        file.write_str("some text").unwrap();
+
+        // TODO: This is hanging. I'm assuming because we aren't getting notifications
+        //       on MacOS for a file change? May be related to temporary files.
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Changed(_)),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
     }
 
     #[tokio::test]

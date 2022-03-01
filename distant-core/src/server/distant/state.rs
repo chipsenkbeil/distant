@@ -1,5 +1,6 @@
 use super::{InputChannel, ProcessKiller, ProcessPty};
 use log::*;
+use notify::RecommendedWatcher;
 use std::collections::HashMap;
 
 /// Holds state related to multiple connections managed by a server
@@ -10,6 +11,9 @@ pub struct State {
 
     /// List of processes that will be killed when a connection drops
     client_processes: HashMap<usize, Vec<usize>>,
+
+    /// Watcher used for filesystem events
+    pub watcher: Option<RecommendedWatcher>,
 }
 
 /// Holds information related to a spawned process on the server

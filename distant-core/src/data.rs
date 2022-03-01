@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 use derive_more::{Display, Error, IsVariant};
+use notify::{event::Event as Changed, ErrorKind as NotifyErrorKind};
 use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
 use std::{io, num::ParseIntError, path::PathBuf, str::FromStr};
@@ -189,6 +190,23 @@ pub enum RequestData {
         dst: PathBuf,
     },
 
+    /// Watches a path for changes
+    Watch {
+        /// The path to the file, directory, or symlink on the remote machine
+        path: PathBuf,
+
+        /// If true, will recursively watch for changes within directories, othewise
+        /// will only watch for changes immediately within directories
+        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        recursive: bool,
+    },
+
+    /// Unwatches a path for changes, meaning no additional changes will be reported
+    Unwatch {
+        /// The path to the file, directory, or symlink on the remote machine
+        path: PathBuf,
+    },
+
     /// Checks whether the given path exists
     Exists {
         /// The path to the file or directory on the remote machine
@@ -335,6 +353,9 @@ pub enum ResponseData {
         /// Errors encountered while scanning for entries
         errors: Vec<Error>,
     },
+
+    /// Response to a filesystem change for some watched file, directory, or symlink
+    Changed(Changed),
 
     /// Response to checking if a path exists
     Exists { value: bool },
@@ -910,6 +931,12 @@ impl From<walkdir::Error> for ResponseData {
     }
 }
 
+impl From<notify::Error> for ResponseData {
+    fn from(x: notify::Error) -> Self {
+        Self::Error(Error::from(x))
+    }
+}
+
 impl From<tokio::task::JoinError> for ResponseData {
     fn from(x: tokio::task::JoinError) -> Self {
         Self::Error(Error::from(x))
@@ -930,6 +957,15 @@ pub struct Error {
 
 impl std::error::Error for Error {}
 
+impl<'a> From<&'a str> for Error {
+    fn from(x: &'a str) -> Self {
+        Self {
+            kind: ErrorKind::Other,
+            description: x.to_string(),
+        }
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(x: io::Error) -> Self {
         Self {
@@ -942,6 +978,47 @@ impl From<io::Error> for Error {
 impl From<Error> for io::Error {
     fn from(x: Error) -> Self {
         Self::new(x.kind.into(), x.description)
+    }
+}
+
+impl From<notify::Error> for Error {
+    fn from(x: notify::Error) -> Self {
+        let err = match x.kind {
+            NotifyErrorKind::Generic(x) => Self {
+                kind: ErrorKind::Other,
+                description: x,
+            },
+            NotifyErrorKind::Io(x) => Self::from(x),
+            NotifyErrorKind::PathNotFound => Self {
+                kind: ErrorKind::Other,
+                description: String::from("Path not found"),
+            },
+            NotifyErrorKind::WatchNotFound => Self {
+                kind: ErrorKind::Other,
+                description: String::from("Watch not found"),
+            },
+            NotifyErrorKind::InvalidConfig(_) => Self {
+                kind: ErrorKind::Other,
+                description: String::from("Invalid config"),
+            },
+            NotifyErrorKind::MaxFilesWatch => Self {
+                kind: ErrorKind::Other,
+                description: String::from("Max files watched"),
+            },
+        };
+
+        Self {
+            kind: err.kind,
+            description: format!(
+                "{}\n\nPaths: {}",
+                err.description,
+                x.paths
+                    .into_iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+        }
     }
 }
 

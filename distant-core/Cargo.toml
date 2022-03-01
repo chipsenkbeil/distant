@@ -20,6 +20,7 @@ derive_more = { version = "0.99.16", default-features = false, features = ["disp
 futures = "0.3.16"
 hex = "0.4.3"
 log = "0.4.14"
+notify = { version = "5.0.0-pre.13", features = ["serde"] }
 once_cell = "1.8.0"
 portable-pty = "0.7.0"
 rand = { version = "0.8.4", features = ["getrandom"] }
