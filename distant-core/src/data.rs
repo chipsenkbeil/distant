@@ -1,6 +1,8 @@
 use bitflags::bitflags;
 use derive_more::{Display, Error, IsVariant};
-use notify::{event::Event as Changed, ErrorKind as NotifyErrorKind};
+use notify::{
+    event::Event as NotifyEvent, ErrorKind as NotifyErrorKind, EventKind as NotifyEventKind,
+};
 use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
 use std::{io, num::ParseIntError, path::PathBuf, str::FromStr};
@@ -355,7 +357,7 @@ pub enum ResponseData {
     },
 
     /// Response to a filesystem change for some watched file, directory, or symlink
-    Changed(Changed),
+    Changed { changes: Vec<Change> },
 
     /// Response to checking if a path exists
     Exists { value: bool },
@@ -940,6 +942,50 @@ impl From<notify::Error> for ResponseData {
 impl From<tokio::task::JoinError> for ResponseData {
     fn from(x: tokio::task::JoinError) -> Self {
         Self::Error(Error::from(x))
+    }
+}
+
+/// Change to one or more paths on the filesystem
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct Change {
+    /// Label describing the kind of change
+    pub kind: ChangeKind,
+
+    /// Paths that were changed
+    pub paths: Vec<PathBuf>,
+}
+
+impl From<NotifyEvent> for Change {
+    fn from(x: NotifyEvent) -> Self {
+        Self {
+            kind: x.kind.into(),
+            paths: x.paths,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ChangeKind {
+    Access,
+    Create,
+    Modify,
+    Remove,
+
+    // Catchall in case we have no insight as to the type of change
+    Unknown,
+}
+
+impl From<NotifyEventKind> for ChangeKind {
+    fn from(x: NotifyEventKind) -> Self {
+        match x {
+            NotifyEventKind::Access(_) => Self::Access,
+            NotifyEventKind::Create(_) => Self::Create,
+            NotifyEventKind::Modify(_) => Self::Modify,
+            NotifyEventKind::Remove(_) => Self::Remove,
+            NotifyEventKind::Any | NotifyEventKind::Other => Self::Unknown,
+        }
     }
 }
 

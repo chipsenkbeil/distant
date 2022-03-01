@@ -396,29 +396,22 @@ where
             let _ = tx.blocking_send(res);
         })?;
 
-        // TODO: Do we want to support precise events? These do not appear to be available on
-        //       MacOS and would encourage odd divergence by clients based on platform.
-        /* if !watcher.configure(WatcherConfig::PreciseEvents(true))? {
-            let _ = reply(vec![ResponseData::Error(
-                concat!(
-                    "Precise events not supported for filesystem watcher! ",
-                    "Will continue operating with generic events.",
-                )
-                .into(),
-            )])
-            .await;
-        } */
-
         let _ = state.watcher.insert(watcher);
 
         tokio::spawn(async move {
             while let Some(res) = rx.recv().await {
                 let is_ok = match res {
-                    Ok(x) => reply(vec![ResponseData::Changed(x)]).await,
+                    Ok(x) => {
+                        reply(vec![ResponseData::Changed {
+                            changes: vec![x.into()],
+                        }])
+                        .await
+                    }
                     Err(x) => reply(vec![ResponseData::Error(x.into())]).await,
                 };
 
                 if !is_ok {
+                    error!("<Conn @ {}> Watcher channel closed", conn_id);
                     break;
                 }
             }
@@ -1999,11 +1992,37 @@ mod tests {
         dst.assert("some text");
     }
 
+    /// Validates a response as being a series of changes that include the provided paths
+    fn validate_changed_paths(
+        res: &Response,
+        expected_paths: &[PathBuf],
+        should_panic: bool,
+    ) -> bool {
+        match &res.payload[0] {
+            ResponseData::Changed { changes } if should_panic => {
+                assert_eq!(changes.len(), 1, "Wrong number of changes: {:?}", changes);
+
+                let paths = &changes[0].paths;
+                assert_eq!(
+                    paths, expected_paths,
+                    "Wrong paths reported: {:?}",
+                    changes[0]
+                );
+
+                true
+            }
+            ResponseData::Changed { changes } => {
+                changes.len() == 1 && &changes[0].paths == expected_paths
+            }
+            x if should_panic => panic!("Unexpected response: {:?}", x),
+            _ => false,
+        }
+    }
+
     #[tokio::test]
     async fn watch_should_support_watching_a_single_file() {
-        // NOTE: setup(2) because we can receive an error response first
-        //       when setting up precise events
-        let (conn_id, state, tx, mut rx) = setup(2);
+        // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
+        let (conn_id, state, tx, mut rx) = setup(100);
         let temp = assert_fs::TempDir::new().unwrap();
 
         let file = temp.child("file");
@@ -2017,8 +2036,9 @@ mod tests {
             }],
         );
 
-        // NOTE: Clone tx so we don't close the rx at the end of the request
-        process(conn_id, state, req, tx.clone()).await.unwrap();
+        // NOTE: We need to clone state so we don't drop the watcher
+        //       as part of dropping the state
+        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
@@ -2031,14 +2051,94 @@ mod tests {
         // Update the file and verify we get a notification
         file.write_str("some text").unwrap();
 
-        // TODO: This is hanging. I'm assuming because we aren't getting notifications
-        //       on MacOS for a file change? May be related to temporary files.
+        let res = rx
+            .recv()
+            .await
+            .expect("Channel closed before we got change");
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        validate_changed_paths(
+            &res,
+            &[file.path().to_path_buf().canonicalize().unwrap()],
+            /* should_panic */ true,
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_should_support_watching_a_directory_recursively() {
+        // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
+        let (conn_id, state, tx, mut rx) = setup(100);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let file = temp.child("file");
+        file.touch().unwrap();
+
+        let dir = temp.child("dir");
+        dir.create_dir_all().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Watch {
+                path: temp.path().to_path_buf(),
+                recursive: true,
+            }],
+        );
+
+        // NOTE: We need to clone state so we don't drop the watcher
+        //       as part of dropping the state
+        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Changed(_)),
+            matches!(res.payload[0], ResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
+        );
+
+        // Update the file and verify we get a notification
+        file.write_str("some text").unwrap();
+
+        // Create a nested file and verify we get a notification
+        let nested_file = dir.child("nested-file");
+        nested_file.write_str("some text").unwrap();
+
+        // Sleep a bit to give time to get all changes happening
+        // TODO: Can we slim down this sleep? Or redesign test in some other way?
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Collect all responses, as we may get multiple for interactions within a directory
+        let mut responses = Vec::new();
+        while let Ok(res) = rx.try_recv() {
+            responses.push(res);
+        }
+
+        // Validate that we have at least one change reported for each of our paths
+        assert!(
+            responses.len() >= 2,
+            "Less than expected total responses: {:?}",
+            responses
+        );
+
+        let path = file.path().to_path_buf();
+        assert!(
+            responses.iter().any(|res| validate_changed_paths(
+                &res,
+                &[file.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ false,
+            )),
+            "Missing {:?} in changes",
+            path
+        );
+
+        let path = nested_file.path().to_path_buf();
+        assert!(
+            responses.iter().any(|res| validate_changed_paths(
+                &res,
+                &[file.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ false,
+            )),
+            "Missing {:?} in changes",
+            path
         );
     }
 
