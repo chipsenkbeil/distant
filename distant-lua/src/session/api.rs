@@ -4,7 +4,7 @@ use crate::{
 };
 use distant_core::{
     data::PtySize, DirEntry, Error as Failure, Metadata, RemoteLspProcess, RemoteProcess,
-    SessionChannel, SessionChannelExt, SystemInfo,
+    SessionChannel, SessionChannelExt, SystemInfo, Watcher,
 };
 use mlua::prelude::*;
 use once_cell::sync::Lazy;
@@ -13,6 +13,11 @@ use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 
 static TENANT: Lazy<String> = Lazy::new(whoami::hostname);
+
+/// Default flag for recursion of watching directories
+const fn default_recursive() -> bool {
+    true
+}
 
 /// Default depth for reading directory
 const fn default_depth() -> usize {
@@ -160,6 +165,17 @@ make_api!(
     { src: PathBuf, dst: PathBuf },
     |channel, tenant, params| { channel.rename(tenant, params.src, params.dst).await }
 );
+
+make_api!(
+    watch,
+    Watcher,
+    { path: PathBuf, #[serde(default = "default_recursive")] recursive: bool },
+    |channel, tenant, params| { channel.watch(tenant, params.path, params.recursive).await }
+);
+
+make_api!(unwatch, (), { path: PathBuf }, |channel, tenant, params| {
+    channel.unwatch(tenant, params.path).await
+});
 
 make_api!(
     spawn,

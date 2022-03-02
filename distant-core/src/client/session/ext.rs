@@ -118,6 +118,21 @@ pub trait SessionChannelExt {
         dst: impl Into<PathBuf>,
     ) -> AsyncReturn<'_, ()>;
 
+    /// Watches a remote file or directory
+    fn watch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+        recursive: bool,
+    ) -> AsyncReturn<'_, ()>;
+
+    /// Unwatches a remote file or directory
+    fn unwatch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> AsyncReturn<'_, ()>;
+
     /// Spawns a process on the remote machine
     fn spawn(
         &mut self,
@@ -370,6 +385,33 @@ impl SessionChannelExt for SessionChannel {
             self,
             tenant,
             RequestData::Rename { src: src.into(), dst: dst.into() },
+            @ok
+        )
+    }
+
+    fn watch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+        recursive: bool,
+    ) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            tenant,
+            RequestData::Watch { path: path.into(), recursive },
+            @ok
+        )
+    }
+
+    fn unwatch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            tenant,
+            RequestData::Unwatch { path: path.into() },
             @ok
         )
     }

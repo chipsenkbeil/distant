@@ -1,6 +1,6 @@
 use crate::opt::Format;
 use distant_core::{
-    data::{Error, Metadata, SystemInfo},
+    data::{ChangeKind, Error, Metadata, SystemInfo},
     Response, ResponseData,
 };
 use log::*;
@@ -121,6 +121,31 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                         } else {
                             String::new()
                         },
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join("\n")
+                .into_bytes(),
+        ),
+        ResponseData::Changed { changes } => ResponseOut::StdoutLine(
+            changes
+                .into_iter()
+                .map(|change| {
+                    format!(
+                        "{}{}",
+                        match change.kind {
+                            ChangeKind::Access => "Following paths were accessed:\n",
+                            ChangeKind::Create => "Following paths were created:\n",
+                            ChangeKind::Modify => "Following paths were modified:\n",
+                            ChangeKind::Remove => "Following paths were removed:\n",
+                            ChangeKind::Unknown => "Following paths were affected:\n",
+                        },
+                        change
+                            .paths
+                            .into_iter()
+                            .map(|p| format!("* {}", p.to_string_lossy()))
+                            .collect::<Vec<String>>()
+                            .join("\n")
                     )
                 })
                 .collect::<Vec<String>>()

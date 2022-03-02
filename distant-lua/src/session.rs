@@ -316,6 +316,8 @@ impl UserData for Session {
         impl_methods!(methods, read_file_text);
         impl_methods!(methods, remove);
         impl_methods!(methods, rename);
+        impl_methods!(methods, watch);
+        impl_methods!(methods, unwatch);
         impl_methods!(methods, spawn, |_lua, proc| {
             Ok(RemoteProcess::from_distant(proc))
         });
