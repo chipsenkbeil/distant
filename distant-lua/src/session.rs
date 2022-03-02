@@ -89,10 +89,12 @@ macro_rules! try_timeout {
 mod api;
 mod opts;
 mod proc;
+mod watcher;
 
 use opts::Mode;
 pub use opts::{ConnectOpts, LaunchOpts};
 use proc::{RemoteLspProcess, RemoteProcess};
+use watcher::Watcher;
 
 /// Contains mapping of id -> session for use in maintaining active sessions
 static SESSION_MAP: Lazy<RwLock<HashMap<usize, DistantSession>>> =
@@ -316,7 +318,9 @@ impl UserData for Session {
         impl_methods!(methods, read_file_text);
         impl_methods!(methods, remove);
         impl_methods!(methods, rename);
-        impl_methods!(methods, watch);
+        impl_methods!(methods, watch, |_lua, watcher| {
+            Ok(Watcher::from(watcher))
+        });
         impl_methods!(methods, unwatch);
         impl_methods!(methods, spawn, |_lua, proc| {
             Ok(RemoteProcess::from_distant(proc))

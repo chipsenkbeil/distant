@@ -4,7 +4,10 @@ use crate::{
     net::TransportError,
 };
 use derive_more::{Display, Error};
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 #[derive(Debug, Display, Error)]
@@ -23,6 +26,15 @@ pub struct Watcher {
     path: PathBuf,
     task: JoinHandle<()>,
     rx: mpsc::Receiver<Change>,
+}
+
+impl fmt::Debug for Watcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Watcher")
+            .field("tenant", &self.tenant)
+            .field("path", &self.path)
+            .finish()
+    }
 }
 
 impl Watcher {
@@ -109,4 +121,3 @@ impl Watcher {
         }
     }
 }
-
