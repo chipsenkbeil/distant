@@ -1,5 +1,6 @@
 use crate::{
     client::{SessionChannel, SessionChannelExt, SessionChannelExtError},
+    constants::CLIENT_WATCHER_CAPACITY,
     data::{Change, Request, RequestData, ResponseData},
     net::TransportError,
 };
@@ -62,7 +63,7 @@ impl Watcher {
 
         // Spawn a task that continues to look for change events, discarding anything
         // else that it gets
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = mpsc::channel(CLIENT_WATCHER_CAPACITY);
         let task = tokio::spawn(async move {
             while let Some(res) = mailbox.next().await {
                 for data in res.payload {
@@ -119,5 +120,337 @@ impl Watcher {
             }
             Err(x) => Err(x),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        client::Session,
+        data::{ChangeKind, Response},
+        net::{InmemoryStream, PlainCodec, Transport},
+    };
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, Session) {
+        let (t1, t2) = Transport::make_pair();
+        (t1, Session::initialize(t2).unwrap())
+    }
+
+    #[tokio::test]
+    async fn watcher_should_have_path_reflect_watched_path() {
+        let (mut transport, session) = make_session();
+        let test_path = Path::new("/some/test/path");
+
+        // Create a task for watcher as we need to handle the request and a response
+        // in a separate async block
+        let watch_task = tokio::spawn(async move {
+            Watcher::watch(
+                String::from("test-tenant"),
+                session.clone_channel(),
+                test_path,
+                true,
+            )
+            .await
+        });
+
+        // Wait until we get the request from the session
+        let req = transport.receive::<Request>().await.unwrap().unwrap();
+
+        // Send back an acknowledgement that a watcher was created
+        transport
+            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .await
+            .unwrap();
+
+        // Get the watcher and verify the path
+        let watcher = watch_task.await.unwrap().unwrap();
+        assert_eq!(watcher.path(), test_path);
+    }
+
+    #[tokio::test]
+    async fn watcher_should_support_getting_next_change() {
+        let (mut transport, session) = make_session();
+        let test_path = Path::new("/some/test/path");
+
+        // Create a task for watcher as we need to handle the request and a response
+        // in a separate async block
+        let watch_task = tokio::spawn(async move {
+            Watcher::watch(
+                String::from("test-tenant"),
+                session.clone_channel(),
+                test_path,
+                true,
+            )
+            .await
+        });
+
+        // Wait until we get the request from the session
+        let req = transport.receive::<Request>().await.unwrap().unwrap();
+
+        // Send back an acknowledgement that a watcher was created
+        transport
+            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .await
+            .unwrap();
+
+        // Get the watcher
+        let mut watcher = watch_task.await.unwrap().unwrap();
+
+        // Send some changes related to the file
+        transport
+            .send(Response::new(
+                "test-tenant",
+                req.id,
+                vec![ResponseData::Changed {
+                    changes: vec![
+                        Change {
+                            kind: ChangeKind::Access,
+                            paths: vec![test_path.to_path_buf()],
+                        },
+                        Change {
+                            kind: ChangeKind::Modify,
+                            paths: vec![test_path.to_path_buf()],
+                        },
+                    ],
+                }],
+            ))
+            .await
+            .unwrap();
+
+        // Verify that the watcher gets the changes, one at a time
+        let change = watcher.next().await.expect("Watcher closed unexpectedly");
+        assert_eq!(
+            change,
+            Change {
+                kind: ChangeKind::Access,
+                paths: vec![test_path.to_path_buf()]
+            }
+        );
+
+        let change = watcher.next().await.expect("Watcher closed unexpectedly");
+        assert_eq!(
+            change,
+            Change {
+                kind: ChangeKind::Modify,
+                paths: vec![test_path.to_path_buf()]
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn watcher_should_distinguish_change_events_and_only_receive_changes_for_itself() {
+        let (mut transport, session) = make_session();
+        let test_path = Path::new("/some/test/path");
+
+        // Create a task for watcher as we need to handle the request and a response
+        // in a separate async block
+        let watch_task = tokio::spawn(async move {
+            Watcher::watch(
+                String::from("test-tenant"),
+                session.clone_channel(),
+                test_path,
+                true,
+            )
+            .await
+        });
+
+        // Wait until we get the request from the session
+        let req = transport.receive::<Request>().await.unwrap().unwrap();
+
+        // Send back an acknowledgement that a watcher was created
+        transport
+            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .await
+            .unwrap();
+
+        // Get the watcher
+        let mut watcher = watch_task.await.unwrap().unwrap();
+
+        // Send a change from the appropriate origin
+        transport
+            .send(Response::new(
+                "test-tenant",
+                req.id,
+                vec![ResponseData::Changed {
+                    changes: vec![Change {
+                        kind: ChangeKind::Access,
+                        paths: vec![test_path.to_path_buf()],
+                    }],
+                }],
+            ))
+            .await
+            .unwrap();
+
+        // Send a change from a different origin
+        transport
+            .send(Response::new(
+                "test-tenant",
+                req.id + 1,
+                vec![ResponseData::Changed {
+                    changes: vec![Change {
+                        kind: ChangeKind::Modify,
+                        paths: vec![test_path.to_path_buf()],
+                    }],
+                }],
+            ))
+            .await
+            .unwrap();
+
+        // Send a change from the appropriate origin
+        transport
+            .send(Response::new(
+                "test-tenant",
+                req.id,
+                vec![ResponseData::Changed {
+                    changes: vec![Change {
+                        kind: ChangeKind::Remove,
+                        paths: vec![test_path.to_path_buf()],
+                    }],
+                }],
+            ))
+            .await
+            .unwrap();
+
+        // Verify that the watcher gets the changes, one at a time
+        let change = watcher.next().await.expect("Watcher closed unexpectedly");
+        assert_eq!(
+            change,
+            Change {
+                kind: ChangeKind::Access,
+                paths: vec![test_path.to_path_buf()]
+            }
+        );
+
+        let change = watcher.next().await.expect("Watcher closed unexpectedly");
+        assert_eq!(
+            change,
+            Change {
+                kind: ChangeKind::Remove,
+                paths: vec![test_path.to_path_buf()]
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn watcher_should_stop_receiving_events_if_unwatched() {
+        let (mut transport, session) = make_session();
+        let test_path = Path::new("/some/test/path");
+
+        // Create a task for watcher as we need to handle the request and a response
+        // in a separate async block
+        let watch_task = tokio::spawn(async move {
+            Watcher::watch(
+                String::from("test-tenant"),
+                session.clone_channel(),
+                test_path,
+                true,
+            )
+            .await
+        });
+
+        // Wait until we get the request from the session
+        let req = transport.receive::<Request>().await.unwrap().unwrap();
+
+        // Send back an acknowledgement that a watcher was created
+        transport
+            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .await
+            .unwrap();
+
+        // Send some changes from the appropriate origin
+        transport
+            .send(Response::new(
+                "test-tenant",
+                req.id,
+                vec![ResponseData::Changed {
+                    changes: vec![
+                        Change {
+                            kind: ChangeKind::Access,
+                            paths: vec![test_path.to_path_buf()],
+                        },
+                        Change {
+                            kind: ChangeKind::Modify,
+                            paths: vec![test_path.to_path_buf()],
+                        },
+                        Change {
+                            kind: ChangeKind::Remove,
+                            paths: vec![test_path.to_path_buf()],
+                        },
+                    ],
+                }],
+            ))
+            .await
+            .unwrap();
+
+        // Wait a little bit for all changes to be queued
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Create a task for for unwatching as we need to handle the request and a response
+        // in a separate async block
+        let watcher = Arc::new(Mutex::new(watch_task.await.unwrap().unwrap()));
+
+        // Verify that the watcher gets the first change
+        let change = watcher
+            .lock()
+            .await
+            .next()
+            .await
+            .expect("Watcher closed unexpectedly");
+        assert_eq!(
+            change,
+            Change {
+                kind: ChangeKind::Access,
+                paths: vec![test_path.to_path_buf()]
+            }
+        );
+
+        // Unwatch the watcher, verify the request is sent out, and respond with ok
+        let watcher_2 = Arc::clone(&watcher);
+        let unwatch_task = tokio::spawn(async move { watcher_2.lock().await.unwatch().await });
+
+        let req = transport.receive::<Request>().await.unwrap().unwrap();
+
+        transport
+            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .await
+            .unwrap();
+
+        // Wait for the unwatch to complete
+        let _ = unwatch_task.await.unwrap().unwrap();
+
+        transport
+            .send(Response::new(
+                "test-tenant",
+                req.id,
+                vec![ResponseData::Changed {
+                    changes: vec![Change {
+                        kind: ChangeKind::Unknown,
+                        paths: vec![test_path.to_path_buf()],
+                    }],
+                }],
+            ))
+            .await
+            .unwrap();
+
+        // Verify that we get any remaining changes that were received before unwatched,
+        // but nothing new after that
+        assert_eq!(
+            watcher.lock().await.next().await,
+            Some(Change {
+                kind: ChangeKind::Modify,
+                paths: vec![test_path.to_path_buf()]
+            })
+        );
+        assert_eq!(
+            watcher.lock().await.next().await,
+            Some(Change {
+                kind: ChangeKind::Remove,
+                paths: vec![test_path.to_path_buf()]
+            })
+        );
+        assert_eq!(watcher.lock().await.next().await, None);
     }
 }

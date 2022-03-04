@@ -4,6 +4,9 @@ pub const CLIENT_MAILBOX_CAPACITY: usize = 10000;
 /// Capacity associated stdin, stdout, and stderr pipes receiving data from remote server
 pub const CLIENT_PIPE_CAPACITY: usize = 10000;
 
+/// Capacity associated with a client watcher receiving changes
+pub const CLIENT_WATCHER_CAPACITY: usize = 100;
+
 /// Represents the maximum size (in bytes) that data will be read from pipes
 /// per individual `read` call
 ///
