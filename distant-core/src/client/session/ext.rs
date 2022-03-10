@@ -3,8 +3,8 @@ use crate::{
         RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel, Watcher, WatcherError,
     },
     data::{
-        DirEntry, Error as Failure, Metadata, PtySize, Request, RequestData, ResponseData,
-        SystemInfo,
+        ChangeKindSet, DirEntry, Error as Failure, Metadata, PtySize, Request, RequestData,
+        ResponseData, SystemInfo,
     },
     net::TransportError,
 };
@@ -126,6 +126,7 @@ pub trait SessionChannelExt {
         tenant: impl Into<String>,
         path: impl Into<PathBuf>,
         recursive: bool,
+        only: impl Into<ChangeKindSet>,
     ) -> AsyncReturn<'_, Watcher, WatcherError>;
 
     /// Unwatches a remote file or directory
@@ -396,10 +397,12 @@ impl SessionChannelExt for SessionChannel {
         tenant: impl Into<String>,
         path: impl Into<PathBuf>,
         recursive: bool,
+        only: impl Into<ChangeKindSet>,
     ) -> AsyncReturn<'_, Watcher, WatcherError> {
         let tenant = tenant.into();
         let path = path.into();
-        Box::pin(async move { Watcher::watch(tenant, self.clone(), path, recursive).await })
+        let only = only.into();
+        Box::pin(async move { Watcher::watch(tenant, self.clone(), path, recursive, only).await })
     }
 
     fn unwatch(

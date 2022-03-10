@@ -1,11 +1,11 @@
 use crate::{
     data::{
-        self, DirEntry, FileType, Metadata, PtySize, Request, RequestData, Response, ResponseData,
-        RunningProcess, SystemInfo,
+        self, Change, ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, PtySize, Request,
+        RequestData, Response, ResponseData, RunningProcess, SystemInfo,
     },
     server::distant::{
         process::{Process, PtyProcess, SimpleProcess},
-        state::{ProcessState, State},
+        state::{ProcessState, State, WatcherPath},
     },
 };
 use derive_more::{Display, Error, From};
@@ -95,9 +95,11 @@ pub(super) async fn process(
             RequestData::Remove { path, force } => remove(path, force).await,
             RequestData::Copy { src, dst } => copy(src, dst).await,
             RequestData::Rename { src, dst } => rename(src, dst).await,
-            RequestData::Watch { path, recursive } => {
-                watch(conn_id, state, reply, path, recursive).await
-            }
+            RequestData::Watch {
+                path,
+                recursive,
+                only,
+            } => watch(conn_id, state, reply, path, recursive, only).await,
             RequestData::Unwatch { path } => unwatch(conn_id, state, path).await,
             RequestData::Exists { path } => exists(path).await,
             RequestData::Metadata {
@@ -376,13 +378,15 @@ async fn rename(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
 async fn watch<F>(
     conn_id: usize,
     state: HState,
-    mut reply: F,
+    reply: F,
     path: PathBuf,
     recursive: bool,
+    only: ChangeKindSet,
 ) -> Result<Outgoing, ServerError>
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
+    let state_2 = Arc::clone(&state);
     let mut state = state.lock().await;
 
     // NOTE: Do not use get_or_insert_with since notify::recommended_watcher returns a result
@@ -401,13 +405,70 @@ where
         tokio::spawn(async move {
             while let Some(res) = rx.recv().await {
                 let is_ok = match res {
-                    Ok(x) => {
-                        reply(vec![ResponseData::Changed {
-                            changes: vec![x.into()],
-                        }])
-                        .await
+                    Ok(mut x) => {
+                        let mut state = state_2.lock().await;
+                        let paths: Vec<_> = x.paths.drain(..).collect();
+                        let kind = ChangeKind::from(x.kind);
+
+                        fn make_res_data(kind: ChangeKind, paths: &[&PathBuf]) -> ResponseData {
+                            ResponseData::Changed(Change {
+                                kind,
+                                paths: paths.iter().map(|p| p.to_path_buf()).collect(),
+                            })
+                        }
+
+                        let results = state.map_paths_to_watcher_paths_and_replies(&paths);
+                        let mut is_ok = true;
+                        for (paths, only, reply) in results {
+                            // Skip sending this change if we are not watching it
+                            if !only.contains(&kind) {
+                                continue;
+                            }
+
+                            if !reply(vec![make_res_data(kind, &paths)]).await {
+                                is_ok = false;
+                                break;
+                            }
+                        }
+                        is_ok
                     }
-                    Err(x) => reply(vec![ResponseData::Error(x.into())]).await,
+                    Err(mut x) => {
+                        let mut state = state_2.lock().await;
+                        let paths: Vec<_> = x.paths.drain(..).collect();
+                        let msg = x.to_string();
+
+                        fn make_res_data(msg: &str, paths: &[&PathBuf]) -> ResponseData {
+                            if paths.is_empty() {
+                                ResponseData::Error(msg.into())
+                            } else {
+                                ResponseData::Error(format!("{} about {:?}", msg, paths).into())
+                            }
+                        }
+
+                        let mut is_ok = true;
+
+                        // If we have no paths for the errors, then we send the error to everyone
+                        if paths.is_empty() {
+                            for reply in state.watcher_paths.values_mut() {
+                                if !reply(vec![make_res_data(&msg, &[])]).await {
+                                    is_ok = false;
+                                    break;
+                                }
+                            }
+                        // Otherwise, figure out the relevant watchers from our paths and
+                        // send the error to them
+                        } else {
+                            let results = state.map_paths_to_watcher_paths_and_replies(&paths);
+                            for (paths, _, reply) in results {
+                                if !reply(vec![make_res_data(&msg, &paths)]).await {
+                                    is_ok = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        is_ok
+                    }
                 };
 
                 if !is_ok {
@@ -420,6 +481,7 @@ where
 
     match state.watcher.as_mut() {
         Some(watcher) => {
+            let wp = WatcherPath::new(&path, recursive, only)?;
             watcher.watch(
                 path.as_path(),
                 if recursive {
@@ -428,6 +490,7 @@ where
                     RecursiveMode::NonRecursive
                 },
             )?;
+            state.watcher_paths.insert(wp, Box::new(reply));
             Ok(Outgoing::from(ResponseData::Ok))
         }
         None => Err(ServerError::IoError(io::Error::new(
@@ -440,6 +503,8 @@ where
 async fn unwatch(conn_id: usize, state: HState, path: PathBuf) -> Result<Outgoing, ServerError> {
     if let Some(watcher) = state.lock().await.watcher.as_mut() {
         watcher.unwatch(path.as_path())?;
+        // TODO: This also needs to remove any path that matches in either raw form
+        //       or canonicalized form from the map of PathBuf -> ReplyFn
         return Ok(Outgoing::from(ResponseData::Ok));
     }
 
@@ -1999,21 +2064,13 @@ mod tests {
         should_panic: bool,
     ) -> bool {
         match &res.payload[0] {
-            ResponseData::Changed { changes } if should_panic => {
-                assert_eq!(changes.len(), 1, "Wrong number of changes: {:?}", changes);
-
-                let paths = &changes[0].paths;
-                assert_eq!(
-                    paths, expected_paths,
-                    "Wrong paths reported: {:?}",
-                    changes[0]
-                );
+            ResponseData::Changed(change) if should_panic => {
+                let paths = &change.paths;
+                assert_eq!(paths, expected_paths, "Wrong paths reported: {:?}", change);
 
                 true
             }
-            ResponseData::Changed { changes } => {
-                changes.len() == 1 && &changes[0].paths == expected_paths
-            }
+            ResponseData::Changed(change) => &change.paths == expected_paths,
             x if should_panic => panic!("Unexpected response: {:?}", x),
             _ => false,
         }
@@ -2033,6 +2090,7 @@ mod tests {
             vec![RequestData::Watch {
                 path: file.path().to_path_buf(),
                 recursive: false,
+                only: Default::default(),
             }],
         );
 
@@ -2080,6 +2138,7 @@ mod tests {
             vec![RequestData::Watch {
                 path: temp.path().to_path_buf(),
                 recursive: true,
+                only: Default::default(),
             }],
         );
 
@@ -2140,6 +2199,110 @@ mod tests {
             "Missing {:?} in changes",
             path
         );
+    }
+
+    #[tokio::test]
+    async fn watch_should_report_changes_using_the_request_id() {
+        // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
+        let (conn_id, state, tx, mut rx) = setup(100);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let file_1 = temp.child("file_1");
+        file_1.touch().unwrap();
+
+        // Initialize watch on file 1
+        let file_1_origin_id = {
+            let req = Request::new(
+                "test-tenant",
+                vec![RequestData::Watch {
+                    path: file_1.path().to_path_buf(),
+                    recursive: false,
+                    only: vec![ChangeKind::Modify].into_iter().collect(),
+                }],
+            );
+            let origin_id = req.id;
+
+            // NOTE: We need to clone state so we don't drop the watcher
+            //       as part of dropping the state
+            process(conn_id, Arc::clone(&state), req, tx.clone())
+                .await
+                .unwrap();
+
+            let res = rx.recv().await.unwrap();
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            assert!(
+                matches!(res.payload[0], ResponseData::Ok),
+                "Unexpected response: {:?}",
+                res.payload[0]
+            );
+
+            origin_id
+        };
+
+        let file_2 = temp.child("file_2");
+        file_2.touch().unwrap();
+
+        // Initialize watch on file 2
+        let file_2_origin_id = {
+            let req = Request::new(
+                "test-tenant",
+                vec![RequestData::Watch {
+                    path: file_2.path().to_path_buf(),
+                    recursive: false,
+                    only: vec![ChangeKind::Modify].into_iter().collect(),
+                }],
+            );
+            let origin_id = req.id;
+
+            // NOTE: We need to clone state so we don't drop the watcher
+            //       as part of dropping the state
+            process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
+            let res = rx.recv().await.unwrap();
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            assert!(
+                matches!(res.payload[0], ResponseData::Ok),
+                "Unexpected response: {:?}",
+                res.payload[0]
+            );
+
+            origin_id
+        };
+
+        // Update the files and verify we get notifications from different origins
+        {
+            file_1.write_str("some text").unwrap();
+            let res = rx
+                .recv()
+                .await
+                .expect("Channel closed before we got change");
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            validate_changed_paths(
+                &res,
+                &[file_1.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ true,
+            );
+            assert_eq!(res.origin_id, file_1_origin_id, "Wrong origin id (file 1)");
+
+            // Process any extra messages, such as getting a metadata modified
+            while rx.try_recv().is_ok() {}
+        }
+
+        // Update the files and verify we get notifications from different origins
+        {
+            file_2.write_str("some text").unwrap();
+            let res = rx
+                .recv()
+                .await
+                .expect("Channel closed before we got change");
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            validate_changed_paths(
+                &res,
+                &[file_2.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ true,
+            );
+            assert_eq!(res.origin_id, file_2_origin_id, "Wrong origin id (file 2)");
+        }
     }
 
     #[tokio::test]

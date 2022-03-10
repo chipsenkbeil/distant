@@ -1,7 +1,7 @@
 use crate::{
     client::{SessionChannel, SessionChannelExt, SessionChannelExtError},
     constants::CLIENT_WATCHER_CAPACITY,
-    data::{Change, Request, RequestData, ResponseData},
+    data::{Change, ChangeKindSet, Request, RequestData, ResponseData},
     net::TransportError,
 };
 use derive_more::{Display, Error};
@@ -45,9 +45,11 @@ impl Watcher {
         mut channel: SessionChannel,
         path: impl Into<PathBuf>,
         recursive: bool,
+        only: impl Into<ChangeKindSet>,
     ) -> Result<Self, WatcherError> {
         let tenant = tenant.into();
         let path = path.into();
+        let only = only.into();
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
@@ -56,6 +58,7 @@ impl Watcher {
                 vec![RequestData::Watch {
                     path: path.to_path_buf(),
                     recursive,
+                    only,
                 }],
             ))
             .await
@@ -68,13 +71,11 @@ impl Watcher {
             while let Some(res) = mailbox.next().await {
                 for data in res.payload {
                     match data {
-                        ResponseData::Changed { changes } => {
-                            for change in changes {
-                                // If we can't queue up a change anymore, we've
-                                // been closed and therefore want to quit
-                                if tx.send(change).await.is_err() {
-                                    break;
-                                }
+                        ResponseData::Changed(change) => {
+                            // If we can't queue up a change anymore, we've
+                            // been closed and therefore want to quit
+                            if tx.send(change).await.is_err() {
+                                break;
                             }
                         }
                         _ => continue,
@@ -152,6 +153,7 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
+                ChangeKindSet::default(),
             )
             .await
         });
@@ -183,6 +185,7 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
+                ChangeKindSet::default(),
             )
             .await
         });
@@ -204,18 +207,16 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::Changed {
-                    changes: vec![
-                        Change {
-                            kind: ChangeKind::Access,
-                            paths: vec![test_path.to_path_buf()],
-                        },
-                        Change {
-                            kind: ChangeKind::Modify,
-                            paths: vec![test_path.to_path_buf()],
-                        },
-                    ],
-                }],
+                vec![
+                    ResponseData::Changed(Change {
+                        kind: ChangeKind::Access,
+                        paths: vec![test_path.to_path_buf()],
+                    }),
+                    ResponseData::Changed(Change {
+                        kind: ChangeKind::Modify,
+                        paths: vec![test_path.to_path_buf()],
+                    }),
+                ],
             ))
             .await
             .unwrap();
@@ -253,6 +254,7 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
+                ChangeKindSet::default(),
             )
             .await
         });
@@ -274,12 +276,10 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::Changed {
-                    changes: vec![Change {
-                        kind: ChangeKind::Access,
-                        paths: vec![test_path.to_path_buf()],
-                    }],
-                }],
+                vec![ResponseData::Changed(Change {
+                    kind: ChangeKind::Access,
+                    paths: vec![test_path.to_path_buf()],
+                })],
             ))
             .await
             .unwrap();
@@ -289,12 +289,10 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id + 1,
-                vec![ResponseData::Changed {
-                    changes: vec![Change {
-                        kind: ChangeKind::Modify,
-                        paths: vec![test_path.to_path_buf()],
-                    }],
-                }],
+                vec![ResponseData::Changed(Change {
+                    kind: ChangeKind::Modify,
+                    paths: vec![test_path.to_path_buf()],
+                })],
             ))
             .await
             .unwrap();
@@ -304,12 +302,10 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::Changed {
-                    changes: vec![Change {
-                        kind: ChangeKind::Remove,
-                        paths: vec![test_path.to_path_buf()],
-                    }],
-                }],
+                vec![ResponseData::Changed(Change {
+                    kind: ChangeKind::Remove,
+                    paths: vec![test_path.to_path_buf()],
+                })],
             ))
             .await
             .unwrap();
@@ -347,6 +343,7 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
+                ChangeKindSet::default(),
             )
             .await
         });
@@ -365,22 +362,20 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::Changed {
-                    changes: vec![
-                        Change {
-                            kind: ChangeKind::Access,
-                            paths: vec![test_path.to_path_buf()],
-                        },
-                        Change {
-                            kind: ChangeKind::Modify,
-                            paths: vec![test_path.to_path_buf()],
-                        },
-                        Change {
-                            kind: ChangeKind::Remove,
-                            paths: vec![test_path.to_path_buf()],
-                        },
-                    ],
-                }],
+                vec![
+                    ResponseData::Changed(Change {
+                        kind: ChangeKind::Access,
+                        paths: vec![test_path.to_path_buf()],
+                    }),
+                    ResponseData::Changed(Change {
+                        kind: ChangeKind::Modify,
+                        paths: vec![test_path.to_path_buf()],
+                    }),
+                    ResponseData::Changed(Change {
+                        kind: ChangeKind::Remove,
+                        paths: vec![test_path.to_path_buf()],
+                    }),
+                ],
             ))
             .await
             .unwrap();
@@ -425,12 +420,10 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 req.id,
-                vec![ResponseData::Changed {
-                    changes: vec![Change {
-                        kind: ChangeKind::Unknown,
-                        paths: vec![test_path.to_path_buf()],
-                    }],
-                }],
+                vec![ResponseData::Changed(Change {
+                    kind: ChangeKind::Unknown,
+                    paths: vec![test_path.to_path_buf()],
+                })],
             ))
             .await
             .unwrap();

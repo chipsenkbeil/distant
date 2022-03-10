@@ -1,12 +1,14 @@
 use bitflags::bitflags;
-use derive_more::{Display, Error, IsVariant};
+use derive_more::{Deref, Display, Error, IntoIterator, IsVariant};
 use notify::{
     event::Event as NotifyEvent, ErrorKind as NotifyErrorKind, EventKind as NotifyEventKind,
 };
 use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
-use std::{io, num::ParseIntError, path::PathBuf, str::FromStr};
-use strum::AsRefStr;
+use std::{
+    collections::HashSet, io, iter::FromIterator, num::ParseIntError, path::PathBuf, str::FromStr,
+};
+use strum::{AsRefStr, EnumString, EnumVariantNames};
 
 /// Type alias for a vec of bytes
 ///
@@ -201,6 +203,21 @@ pub enum RequestData {
         /// will only watch for changes immediately within directories
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         recursive: bool,
+
+        /// Filter to only report back specified changes
+        ///
+        /// * access: When a file or directory is accessed
+        /// * create: when a file or directory was created
+        /// * modify: when a file or directory was modified
+        /// * remove: when a file or directory was removed
+        /// * rename: when a file or directory was renamed
+        /// * unknown: catchall in case we have no insight as to the type of change
+        #[cfg_attr(
+            feature = "structopt",
+            structopt(short, long, default_value, verbatim_doc_comment)
+        )]
+        #[serde(default)]
+        only: ChangeKindSet,
     },
 
     /// Unwatches a path for changes, meaning no additional changes will be reported
@@ -357,7 +374,7 @@ pub enum ResponseData {
     },
 
     /// Response to a filesystem change for some watched file, directory, or symlink
-    Changed { changes: Vec<Change> },
+    Changed(Change),
 
     /// Response to checking if a path exists
     Exists { value: bool },
@@ -965,13 +982,36 @@ impl From<NotifyEvent> for Change {
     }
 }
 
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    strum::Display,
+    EnumString,
+    EnumVariantNames,
+    Hash,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[strum(serialize_all = "snake_case")]
 pub enum ChangeKind {
+    /// A file was accessed
     Access,
+
+    /// A file, directory, or something else was created
     Create,
+
+    /// A file or directory was modified in some way
     Modify,
+
+    /// A file, directory, or something else was removed
     Remove,
+
+    /// A file or directory was renamed
+    Rename,
 
     // Catchall in case we have no insight as to the type of change
     Unknown,
@@ -979,13 +1019,64 @@ pub enum ChangeKind {
 
 impl From<NotifyEventKind> for ChangeKind {
     fn from(x: NotifyEventKind) -> Self {
+        use notify::event::ModifyKind;
         match x {
             NotifyEventKind::Access(_) => Self::Access,
             NotifyEventKind::Create(_) => Self::Create,
+            NotifyEventKind::Modify(ModifyKind::Name(_)) => Self::Rename,
             NotifyEventKind::Modify(_) => Self::Modify,
             NotifyEventKind::Remove(_) => Self::Remove,
             NotifyEventKind::Any | NotifyEventKind::Other => Self::Unknown,
         }
+    }
+}
+
+/// Represents a distinct set of different change kinds
+#[derive(Clone, Debug, Deref, Display, IntoIterator, PartialEq, Eq, Serialize, Deserialize)]
+#[display(
+    fmt = "{}",
+    "_0.iter().map(ToString::to_string).collect::<Vec<String>>().join(\",\")"
+)]
+pub struct ChangeKindSet(HashSet<ChangeKind>);
+
+impl FromStr for ChangeKindSet {
+    type Err = strum::ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut change_set = HashSet::new();
+
+        for word in s.split(",") {
+            change_set.insert(ChangeKind::from_str(word.trim())?);
+        }
+
+        Ok(ChangeKindSet(change_set))
+    }
+}
+
+impl FromIterator<ChangeKind> for ChangeKindSet {
+    fn from_iter<I: IntoIterator<Item = ChangeKind>>(iter: I) -> Self {
+        let mut change_set = HashSet::new();
+
+        for i in iter {
+            change_set.insert(i);
+        }
+
+        ChangeKindSet(change_set)
+    }
+}
+
+impl Default for ChangeKindSet {
+    fn default() -> Self {
+        ChangeKindSet(
+            vec![
+                ChangeKind::Create,
+                ChangeKind::Modify,
+                ChangeKind::Remove,
+                ChangeKind::Rename,
+            ]
+            .into_iter()
+            .collect(),
+        )
     }
 }
 
@@ -1005,9 +1096,15 @@ impl std::error::Error for Error {}
 
 impl<'a> From<&'a str> for Error {
     fn from(x: &'a str) -> Self {
+        Self::from(x.to_string())
+    }
+}
+
+impl From<String> for Error {
+    fn from(x: String) -> Self {
         Self {
             kind: ErrorKind::Other,
-            description: x.to_string(),
+            description: x,
         }
     }
 }
