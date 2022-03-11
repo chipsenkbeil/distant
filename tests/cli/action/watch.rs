@@ -20,7 +20,7 @@ fn should_support_watching_a_single_file(mut action_cmd: Command) {
 
     // distant action remove {path}
     action_cmd
-        .args(&["remove", file.to_str().unwrap()])
+        .args(&["watch", file.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")

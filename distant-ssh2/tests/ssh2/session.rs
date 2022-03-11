@@ -1,8 +1,8 @@
 use crate::sshd::*;
 use assert_fs::{prelude::*, TempDir};
 use distant_core::{
-    FileType, Metadata, Request, RequestData, Response, ResponseData, RunningProcess, Session,
-    SystemInfo,
+    ErrorKind, FileType, Metadata, Request, RequestData, Response, ResponseData, RunningProcess,
+    Session, SystemInfo,
 };
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
@@ -1893,4 +1893,50 @@ async fn system_info_should_send_system_info_based_on_binary(#[future] session: 
         "Unexpected response: {:?}",
         res.payload[0]
     );
+}
+
+#[rstest]
+#[tokio::test]
+async fn watch_should_fail_as_unsupported(#[future] session: Session) {
+    let mut session = session.await;
+
+    let req = Request::new(
+        "test-tenant",
+        vec![RequestData::Watch {
+            path: PathBuf::from("/some/path"),
+            recursive: true,
+            only: Default::default(),
+        }],
+    );
+    let res = session.send(req).await.unwrap();
+
+    assert_eq!(res.payload.len(), 1, "Wrong payload size");
+    match &res.payload[0] {
+        ResponseData::Error(x) => {
+            assert_eq!(x.to_string(), "Other: Unsupported");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn unwatch_should_fail_as_unsupported(#[future] session: Session) {
+    let mut session = session.await;
+
+    let req = Request::new(
+        "test-tenant",
+        vec![RequestData::Unwatch {
+            path: PathBuf::from("/some/path"),
+        }],
+    );
+    let res = session.send(req).await.unwrap();
+
+    assert_eq!(res.payload.len(), 1, "Wrong payload size");
+    match &res.payload[0] {
+        ResponseData::Error(x) => {
+            assert_eq!(x.to_string(), "Other: Unsupported");
+        }
+        x => panic!("Unexpected response: {:?}", x),
+    }
 }
