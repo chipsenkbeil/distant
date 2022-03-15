@@ -9,7 +9,8 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Session, TransportError,
+    LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Response, ResponseData,
+    Session, TransportError, Watcher, WatcherError,
 };
 use tokio::{io, time::Duration};
 
@@ -23,6 +24,7 @@ pub enum Error {
     OperationFailed,
     RemoteProcess(RemoteProcessError),
     Transport(TransportError),
+    Watcher(WatcherError),
 }
 
 impl ExitCodeError for Error {
@@ -42,6 +44,7 @@ impl ExitCodeError for Error {
             Self::OperationFailed => ExitCode::Software,
             Self::RemoteProcess(x) => x.to_exit_code(),
             Self::Transport(x) => x.to_exit_code(),
+            Self::Watcher(x) => x.to_exit_code(),
         }
     }
 }
@@ -84,7 +87,36 @@ async fn start(
     let is_shell_format = matches!(cmd.format, Format::Shell);
 
     match (cmd.interactive, cmd.operation) {
-        // ProcRun request w/ shell format is specially handled and we ignore interactive as
+        // Watch request w/ shell format is specially handled and we ignore interactive as
+        // watch will run and wait
+        (
+            _,
+            Some(RequestData::Watch {
+                path,
+                recursive,
+                only,
+            }),
+        ) if is_shell_format => {
+            let mut watcher = Watcher::watch(
+                utils::new_tenant(),
+                session.into_channel(),
+                path,
+                recursive,
+                only,
+            )
+            .await?;
+
+            // Continue to receive and process changes
+            while let Some(change) = watcher.next().await {
+                // TODO: Provide a cleaner way to print just a change
+                let res = Response::new("", 0, vec![ResponseData::Changed(change)]);
+                ResponseOut::new(cmd.format, res)?.print()
+            }
+
+            Ok(())
+        }
+
+        // ProcSpawn request w/ shell format is specially handled and we ignore interactive as
         // the stdin will be used for sending ProcStdin to remote process
         (
             _,

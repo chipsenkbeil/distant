@@ -1,12 +1,13 @@
 use bitflags::bitflags;
-use derive_more::{Deref, Display, Error, IntoIterator, IsVariant};
+use derive_more::{Deref, DerefMut, Display, Error, IntoIterator, IsVariant};
 use notify::{
     event::Event as NotifyEvent, ErrorKind as NotifyErrorKind, EventKind as NotifyEventKind,
 };
 use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet, io, iter::FromIterator, num::ParseIntError, path::PathBuf, str::FromStr,
+    collections::HashSet, io, iter::FromIterator, num::ParseIntError, ops::BitOr, path::PathBuf,
+    str::FromStr,
 };
 use strum::{AsRefStr, EnumString, EnumVariantNames};
 
@@ -1017,6 +1018,16 @@ pub enum ChangeKind {
     Unknown,
 }
 
+impl BitOr for ChangeKind {
+    type Output = ChangeKindSet;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        let mut set = ChangeKindSet::empty();
+        set.insert(rhs);
+        set
+    }
+}
+
 impl From<NotifyEventKind> for ChangeKind {
     fn from(x: NotifyEventKind) -> Self {
         use notify::event::ModifyKind;
@@ -1032,12 +1043,30 @@ impl From<NotifyEventKind> for ChangeKind {
 }
 
 /// Represents a distinct set of different change kinds
-#[derive(Clone, Debug, Deref, Display, IntoIterator, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, Deref, DerefMut, Display, IntoIterator, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[display(
     fmt = "{}",
     "_0.iter().map(ToString::to_string).collect::<Vec<String>>().join(\",\")"
 )]
 pub struct ChangeKindSet(HashSet<ChangeKind>);
+
+impl ChangeKindSet {
+    /// Produces an empty set of [`ChangeKind`]
+    pub fn empty() -> Self {
+        Self(HashSet::new())
+    }
+}
+
+impl BitOr<ChangeKind> for ChangeKindSet {
+    type Output = Self;
+
+    fn bitor(mut self, rhs: ChangeKind) -> Self::Output {
+        self.0.insert(rhs);
+        self
+    }
+}
 
 impl FromStr for ChangeKindSet {
     type Err = strum::ParseError;
@@ -1062,6 +1091,14 @@ impl FromIterator<ChangeKind> for ChangeKindSet {
         }
 
         ChangeKindSet(change_set)
+    }
+}
+
+impl From<ChangeKind> for ChangeKindSet {
+    fn from(change_kind: ChangeKind) -> Self {
+        let mut set = Self::empty();
+        set.insert(change_kind);
+        set
     }
 }
 

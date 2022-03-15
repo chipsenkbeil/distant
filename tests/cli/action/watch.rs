@@ -1,13 +1,12 @@
 use crate::cli::{fixtures::*, utils::random_tenant};
 use assert_fs::prelude::*;
-use distant::ExitCode;
 use distant_core::{
     data::{ChangeKind, ChangeKindSet, ErrorKind},
     Request, RequestData, Response, ResponseData,
 };
 use rstest::*;
 use std::{
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::Command,
 };
@@ -21,9 +20,10 @@ fn read_response<R>(reader: &mut R) -> Response
 where
     R: Read,
 {
-    let mut buf = [0u8; 4096];
-    reader.read(&mut buf[..]).expect("Failed to read input");
-    serde_json::from_slice(&buf[..]).expect("Invalid response format")
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("Failed to read input");
+    serde_json::from_str(&line).expect("Invalid response format")
 }
 
 fn send_watch_request<W, R>(
@@ -170,7 +170,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
         &mut stdout,
         file.to_path_buf(),
         false,
-        ChangeKindSet::default(),
+        ChangeKind::Modify,
     );
 
     // Make a change to some file
@@ -214,7 +214,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
         &mut stdout,
         temp.to_path_buf(),
         true,
-        ChangeKindSet::default(),
+        ChangeKind::Modify,
     );
 
     // Make a change to some file
@@ -257,9 +257,9 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     let file1_res = send_watch_request(
         &mut stdin,
         &mut stdout,
-        file2.to_path_buf(),
+        file1.to_path_buf(),
         true,
-        ChangeKindSet::default(),
+        ChangeKind::Modify,
     );
 
     // Create a request to watch file2
@@ -268,7 +268,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file2.to_path_buf(),
         true,
-        ChangeKindSet::default(),
+        ChangeKind::Modify,
     );
 
     assert_ne!(
@@ -360,7 +360,7 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
     let res = read_response(&mut stdout);
     match &res.payload[0] {
         ResponseData::Error(x) => {
-            assert_eq!(x.kind, ErrorKind::Other);
+            assert_eq!(x.kind, ErrorKind::NotFound);
             assert_eq!(x.description, "");
         }
         x => panic!("Unexpected response: {:?}", x),
