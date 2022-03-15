@@ -9,20 +9,69 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::Command,
+    sync::mpsc,
 };
 
 fn wait_a_bit() {
-    use std::{thread, time::Duration};
-    thread::sleep(Duration::from_millis(50));
+    wait_millis(50);
 }
 
-fn read_response<R>(reader: &mut R) -> Response
+fn wait_millis(millis: u64) {
+    use std::{thread, time::Duration};
+    thread::sleep(Duration::from_millis(millis));
+}
+
+fn spawn_consume_thread<R>(mut reader: R) -> mpsc::Receiver<Vec<u8>>
+where
+    R: Read + Send + Sync + 'static,
+{
+    use std::thread;
+
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        // NOTE: Assuming we won't have more bytes than this
+        let mut buf = [0u8; 4096];
+        let len = reader.read(&mut buf).expect("Failed to read");
+
+        tx.send(buf[..len].to_vec())
+            .expect("Channel closed before could send data");
+    });
+
+    rx
+}
+
+fn consume_and_read_chunk<R>(reader: R) -> Option<Vec<u8>>
+where
+    R: Read + Send + Sync + 'static,
+{
+    let rx = spawn_consume_thread(reader);
+    wait_millis(150);
+    rx.try_recv().ok()
+}
+
+fn consume_and_read_chunk_as_string<R>(reader: R) -> Option<String>
+where
+    R: Read + Send + Sync + 'static,
+{
+    consume_and_read_chunk(reader).map(|x| String::from_utf8(x).unwrap())
+}
+
+fn read_line<R>(reader: &mut R) -> String
 where
     R: Read,
 {
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     reader.read_line(&mut line).expect("Failed to read input");
+    line
+}
+
+fn read_response<R>(reader: &mut R) -> Response
+where
+    R: Read,
+{
+    let line = read_line(reader);
     serde_json::from_str(&line).expect("Invalid response format")
 }
 
@@ -74,21 +123,31 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
         .spawn()
         .expect("Failed to execute");
 
+    // Wait for the process to be ready
+    wait_a_bit();
+
     // Manipulate the file
     file.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the change is detected and reported
     wait_a_bit();
 
+    // Read all of current stdout & stderr
+    let stdout_data = consume_and_read_chunk_as_string(child.stdout.take().unwrap());
+    let stderr_data = consume_and_read_chunk_as_string(child.stderr.take().unwrap());
+
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
-    let output = child
-        .wait_with_output()
-        .expect("Failed to get child output");
 
     // Verify we get information printed out about the change
-    assert_eq!(output.stdout, b"");
-    assert_eq!(output.stderr, b"");
+    assert_eq!(
+        stdout_data,
+        Some(format!(
+            "Following paths were modified:\n* {}\n",
+            file.to_str().unwrap()
+        ))
+    );
+    assert_eq!(stderr_data, None);
 }
 
 #[rstest]
@@ -107,21 +166,31 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
         .spawn()
         .expect("Failed to execute");
 
+    // Wait for the process to be ready
+    wait_a_bit();
+
     // Manipulate the file
     file.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the change is detected and reported
     wait_a_bit();
 
+    // Read all of current stdout & stderr
+    let stdout_data = consume_and_read_chunk_as_string(child.stdout.take().unwrap());
+    let stderr_data = consume_and_read_chunk_as_string(child.stderr.take().unwrap());
+
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
-    let output = child
-        .wait_with_output()
-        .expect("Failed to get child output");
 
     // Verify we get information printed out about the change
-    assert_eq!(output.stdout, b"");
-    assert_eq!(output.stderr, b"");
+    assert_eq!(
+        stdout_data,
+        Some(format!(
+            "Following paths were modified:\n* {}\n",
+            file.to_str().unwrap()
+        ))
+    );
+    assert_eq!(stderr_data, None);
 }
 
 #[rstest]
@@ -130,7 +199,7 @@ fn yield_an_error_when_fails(mut action_std_cmd: Command) {
     let invalid_path = temp.to_path_buf().join("missing");
 
     // distant action watch {path}
-    let mut child = action_std_cmd
+    let child = action_std_cmd
         .args(&["watch", invalid_path.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
@@ -138,15 +207,14 @@ fn yield_an_error_when_fails(mut action_std_cmd: Command) {
     // Pause a bit to ensure that the process started and failed
     wait_a_bit();
 
-    // Close out the process (if it is still around) and collect the output
-    let _ = child.kill();
     let output = child
         .wait_with_output()
-        .expect("Failed to get child output");
+        .expect("Failed to wait for child to complete");
 
     // Verify we get information printed out about the change
-    assert_eq!(output.stdout, b"");
-    assert_eq!(output.stderr, b"");
+    assert!(!output.status.success(), "Child unexpectedly succeeded");
+    assert!(output.stdout.is_empty(), "Unexpectedly got stdout");
+    assert!(!output.stderr.is_empty(), "Missing stderr output");
 }
 
 #[rstest]
@@ -184,7 +252,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     match &res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::Modify);
-            assert_eq!(&change.paths, &[file.to_path_buf()]);
+            assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
     }
@@ -228,7 +296,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     match &res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::Modify);
-            assert_eq!(&change.paths, &[file.to_path_buf()]);
+            assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
     }
@@ -287,7 +355,10 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     match &file1_change_res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::Modify);
-            assert_eq!(&change.paths, &[file1.to_path_buf()]);
+            assert_eq!(
+                &change.paths,
+                &[file1.to_path_buf().canonicalize().unwrap()]
+            );
         }
         x => panic!("Unexpected response: {:?}", x),
     }
@@ -303,7 +374,10 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     match &file2_change_res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::Modify);
-            assert_eq!(&change.paths, &[file2.to_path_buf()]);
+            assert_eq!(
+                &change.paths,
+                &[file2.to_path_buf().canonicalize().unwrap()]
+            );
         }
         x => panic!("Unexpected response: {:?}", x),
     }
@@ -361,7 +435,6 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
     match &res.payload[0] {
         ResponseData::Error(x) => {
             assert_eq!(x.kind, ErrorKind::NotFound);
-            assert_eq!(x.description, "");
         }
         x => panic!("Unexpected response: {:?}", x),
     }

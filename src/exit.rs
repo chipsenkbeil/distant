@@ -1,4 +1,4 @@
-use distant_core::{RemoteProcessError, SessionChannelExtError, TransportError, WatcherError};
+use distant_core::{RemoteProcessError, SessionChannelExtError, TransportError, WatchError};
 
 /// Exit codes following https://www.freebsd.org/cgi/man.cgi?query=sysexits&sektion=3
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -129,11 +129,13 @@ impl ExitCodeError for SessionChannelExtError {
     }
 }
 
-impl ExitCodeError for WatcherError {
+impl ExitCodeError for WatchError {
     fn to_exit_code(&self) -> ExitCode {
         match self {
+            Self::MissingConfirmation => ExitCode::Protocol,
+            Self::ServerError(_) => ExitCode::Software,
             Self::TransportError(x) => x.to_exit_code(),
-            Self::UnwatchError(x) => x.to_exit_code(),
+            Self::UnexpectedResponse(_) => ExitCode::Protocol,
         }
     }
 }

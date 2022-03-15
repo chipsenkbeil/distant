@@ -10,7 +10,7 @@ use crate::{
 use derive_more::{Display, Error, From};
 use distant_core::{
     LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Response, ResponseData,
-    Session, TransportError, Watcher, WatcherError,
+    Session, TransportError, WatchError, Watcher,
 };
 use tokio::{io, time::Duration};
 
@@ -24,7 +24,7 @@ pub enum Error {
     OperationFailed,
     RemoteProcess(RemoteProcessError),
     Transport(TransportError),
-    Watcher(WatcherError),
+    Watch(WatchError),
 }
 
 impl ExitCodeError for Error {
@@ -44,7 +44,7 @@ impl ExitCodeError for Error {
             Self::OperationFailed => ExitCode::Software,
             Self::RemoteProcess(x) => x.to_exit_code(),
             Self::Transport(x) => x.to_exit_code(),
-            Self::Watcher(x) => x.to_exit_code(),
+            Self::Watch(x) => x.to_exit_code(),
         }
     }
 }

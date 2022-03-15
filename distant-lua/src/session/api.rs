@@ -3,8 +3,8 @@ use crate::{
     session::proc::{Output, RemoteProcess as LuaRemoteProcess},
 };
 use distant_core::{
-    data::PtySize, DirEntry, Error as Failure, Metadata, RemoteLspProcess, RemoteProcess,
-    SessionChannel, SessionChannelExt, SystemInfo, Watcher,
+    data::PtySize, ChangeKindSet, DirEntry, Error as Failure, Metadata, RemoteLspProcess,
+    RemoteProcess, SessionChannel, SessionChannelExt, SystemInfo, Watcher,
 };
 use mlua::prelude::*;
 use once_cell::sync::Lazy;
@@ -169,8 +169,8 @@ make_api!(
 make_api!(
     watch,
     Watcher,
-    { path: PathBuf, #[serde(default = "default_recursive")] recursive: bool },
-    |channel, tenant, params| { channel.watch(tenant, params.path, params.recursive).await }
+    { path: PathBuf, #[serde(default = "default_recursive")] recursive: bool, only: ChangeKindSet },
+    |channel, tenant, params| { channel.watch(tenant, params.path, params.recursive, params.only).await }
 );
 
 make_api!(unwatch, (), { path: PathBuf }, |channel, tenant, params| {

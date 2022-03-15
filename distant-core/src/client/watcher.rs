@@ -1,10 +1,10 @@
 use crate::{
     client::{SessionChannel, SessionChannelExt, SessionChannelExtError},
     constants::CLIENT_WATCHER_CAPACITY,
-    data::{Change, ChangeKindSet, Request, RequestData, ResponseData},
+    data::{Change, ChangeKindSet, Error as DistantError, Request, RequestData, ResponseData},
     net::TransportError,
 };
-use derive_more::{Display, Error};
+use derive_more::{Display, Error, From};
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -12,13 +12,23 @@ use std::{
 use tokio::{sync::mpsc, task::JoinHandle};
 
 #[derive(Debug, Display, Error)]
-pub enum WatcherError {
+pub enum WatchError {
+    /// When no confirmation of watch is received
+    MissingConfirmation,
+
+    /// A server-side error occurred when attempting to watch
+    ServerError(DistantError),
+
     /// When the communication over the wire has issues
     TransportError(TransportError),
 
-    /// When attempting to unwatch fails
-    UnwatchError(SessionChannelExtError),
+    /// Some unexpected response was received when attempting to watch
+    #[display(fmt = "Unexpected response: {:?}", _0)]
+    UnexpectedResponse(#[error(not(source))] ResponseData),
 }
+
+#[derive(Debug, Display, From, Error)]
+pub struct UnwatchError(SessionChannelExtError);
 
 /// Represents a watcher of some path on a remote machine
 pub struct Watcher {
@@ -46,7 +56,7 @@ impl Watcher {
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
-    ) -> Result<Self, WatcherError> {
+    ) -> Result<Self, WatchError> {
         let tenant = tenant.into();
         let path = path.into();
         let only = only.into();
@@ -62,11 +72,33 @@ impl Watcher {
                 }],
             ))
             .await
-            .map_err(WatcherError::TransportError)?;
+            .map_err(WatchError::TransportError)?;
+
+        let (tx, rx) = mpsc::channel(CLIENT_WATCHER_CAPACITY);
+
+        // Wait to get the confirmation of watch as either ok or error
+        let mut queue: Vec<Change> = Vec::new();
+        let mut confirmed = false;
+        while let Some(res) = mailbox.next().await {
+            for data in res.payload {
+                match data {
+                    ResponseData::Changed(change) => queue.push(change),
+                    ResponseData::Ok => {
+                        confirmed = true;
+                        break;
+                    }
+                    ResponseData::Error(x) => return Err(WatchError::ServerError(x)),
+                    x => return Err(WatchError::UnexpectedResponse(x)),
+                }
+            }
+        }
+
+        if !confirmed {
+            return Err(WatchError::MissingConfirmation);
+        }
 
         // Spawn a task that continues to look for change events, discarding anything
         // else that it gets
-        let (tx, rx) = mpsc::channel(CLIENT_WATCHER_CAPACITY);
         let task = tokio::spawn(async move {
             while let Some(res) = mailbox.next().await {
                 for data in res.payload {
@@ -104,12 +136,12 @@ impl Watcher {
     }
 
     /// Unwatches the path being watched, closing out the watcher
-    pub async fn unwatch(&mut self) -> Result<(), WatcherError> {
+    pub async fn unwatch(&mut self) -> Result<(), UnwatchError> {
         let result = self
             .channel
             .unwatch(self.tenant.to_string(), self.path.to_path_buf())
             .await
-            .map_err(WatcherError::UnwatchError);
+            .map_err(UnwatchError::from);
 
         match result {
             Ok(_) => {

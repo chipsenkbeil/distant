@@ -1,8 +1,8 @@
 use crate::sshd::*;
 use assert_fs::{prelude::*, TempDir};
 use distant_core::{
-    ErrorKind, FileType, Metadata, Request, RequestData, Response, ResponseData, RunningProcess,
-    Session, SystemInfo,
+    FileType, Metadata, Request, RequestData, Response, ResponseData, RunningProcess, Session,
+    SystemInfo,
 };
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
