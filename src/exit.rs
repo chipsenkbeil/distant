@@ -135,6 +135,7 @@ impl ExitCodeError for WatchError {
             Self::MissingConfirmation => ExitCode::Protocol,
             Self::ServerError(_) => ExitCode::Software,
             Self::TransportError(x) => x.to_exit_code(),
+            Self::QueuedChangeDropped => ExitCode::Software,
             Self::UnexpectedResponse(_) => ExitCode::Protocol,
         }
     }

@@ -5,6 +5,7 @@ use crate::{
     net::TransportError,
 };
 use derive_more::{Display, Error, From};
+use log::*;
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -22,6 +23,9 @@ pub enum WatchError {
     /// When the communication over the wire has issues
     TransportError(TransportError),
 
+    /// When a queued change is dropped because the response channel closed early
+    QueuedChangeDropped,
+
     /// Some unexpected response was received when attempting to watch
     #[display(fmt = "Unexpected response: {:?}", _0)]
     UnexpectedResponse(#[error(not(source))] ResponseData),
@@ -37,6 +41,7 @@ pub struct Watcher {
     path: PathBuf,
     task: JoinHandle<()>,
     rx: mpsc::Receiver<Change>,
+    active: bool,
 }
 
 impl fmt::Debug for Watcher {
@@ -60,6 +65,12 @@ impl Watcher {
         let tenant = tenant.into();
         let path = path.into();
         let only = only.into();
+        trace!(
+            "Watching {:?} (recursive = {}) for {}",
+            path,
+            recursive,
+            only.to_string()
+        );
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
@@ -85,32 +96,60 @@ impl Watcher {
                     ResponseData::Changed(change) => queue.push(change),
                     ResponseData::Ok => {
                         confirmed = true;
-                        break;
                     }
                     ResponseData::Error(x) => return Err(WatchError::ServerError(x)),
                     x => return Err(WatchError::UnexpectedResponse(x)),
                 }
             }
+
+            // Exit if we got the confirmation
+            // NOTE: Doing this later because we want to make sure the entire payload is processed
+            //       first before exiting the loop
+            if confirmed {
+                break;
+            }
         }
 
+        // Send out any of our queued changes that we got prior to the acknowledgement
+        trace!("Forwarding {} queued changes for {:?}", queue.len(), path);
+        for change in queue {
+            if tx.send(change).await.is_err() {
+                return Err(WatchError::QueuedChangeDropped);
+            }
+        }
+
+        // If we never received an acknowledgement of watch before the mailbox closed,
+        // fail with a missing confirmation error
         if !confirmed {
             return Err(WatchError::MissingConfirmation);
         }
 
         // Spawn a task that continues to look for change events, discarding anything
         // else that it gets
-        let task = tokio::spawn(async move {
-            while let Some(res) = mailbox.next().await {
-                for data in res.payload {
-                    match data {
-                        ResponseData::Changed(change) => {
-                            // If we can't queue up a change anymore, we've
-                            // been closed and therefore want to quit
-                            if tx.send(change).await.is_err() {
-                                break;
+        let task = tokio::spawn({
+            let path = path.clone();
+            async move {
+                while let Some(res) = mailbox.next().await {
+                    for data in res.payload {
+                        match data {
+                            ResponseData::Changed(change) => {
+                                // If we can't queue up a change anymore, we've
+                                // been closed and therefore want to quit
+                                if tx.is_closed() {
+                                    break;
+                                }
+
+                                // Otherwise, send over the change
+                                if let Err(x) = tx.send(change).await {
+                                    error!(
+                                        "Watcher for {:?} failed to send change {:?}",
+                                        path, x.0
+                                    );
+                                    break;
+                                }
                             }
+                            _ => continue,
                         }
-                        _ => continue,
                     }
                 }
             }
@@ -122,12 +161,18 @@ impl Watcher {
             channel,
             task,
             rx,
+            active: true,
         })
     }
 
     /// Returns a reference to the path this watcher is monitoring
     pub fn path(&self) -> &Path {
         self.path.as_path()
+    }
+
+    /// Returns true if the watcher is still actively watching for changes
+    pub fn is_active(&self) -> bool {
+        self.active
     }
 
     /// Returns the next change detected by the watcher, or none if the watcher has concluded
@@ -137,6 +182,7 @@ impl Watcher {
 
     /// Unwatches the path being watched, closing out the watcher
     pub async fn unwatch(&mut self) -> Result<(), UnwatchError> {
+        trace!("Unwatching {:?}", self.path);
         let result = self
             .channel
             .unwatch(self.tenant.to_string(), self.path.to_path_buf())
@@ -148,6 +194,7 @@ impl Watcher {
                 // Kill our task that processes inbound changes if we
                 // have successfully unwatched the path
                 self.task.abort();
+                self.active = false;
 
                 Ok(())
             }

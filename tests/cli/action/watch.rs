@@ -9,7 +9,6 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::Command,
-    sync::mpsc,
 };
 
 fn wait_a_bit() {
@@ -19,42 +18,6 @@ fn wait_a_bit() {
 fn wait_millis(millis: u64) {
     use std::{thread, time::Duration};
     thread::sleep(Duration::from_millis(millis));
-}
-
-fn spawn_consume_thread<R>(mut reader: R) -> mpsc::Receiver<Vec<u8>>
-where
-    R: Read + Send + Sync + 'static,
-{
-    use std::thread;
-
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        // NOTE: Assuming we won't have more bytes than this
-        let mut buf = [0u8; 4096];
-        let len = reader.read(&mut buf).expect("Failed to read");
-
-        tx.send(buf[..len].to_vec())
-            .expect("Channel closed before could send data");
-    });
-
-    rx
-}
-
-fn consume_and_read_chunk<R>(reader: R) -> Option<Vec<u8>>
-where
-    R: Read + Send + Sync + 'static,
-{
-    let rx = spawn_consume_thread(reader);
-    wait_millis(150);
-    rx.try_recv().ok()
-}
-
-fn consume_and_read_chunk_as_string<R>(reader: R) -> Option<String>
-where
-    R: Read + Send + Sync + 'static,
-{
-    consume_and_read_chunk(reader).map(|x| String::from_utf8(x).unwrap())
 }
 
 fn read_line<R>(reader: &mut R) -> String
@@ -132,22 +95,21 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
     // Pause a bit to ensure that the change is detected and reported
     wait_a_bit();
 
-    // Read all of current stdout & stderr
-    let stdout_data = consume_and_read_chunk_as_string(child.stdout.take().unwrap());
-    let stderr_data = consume_and_read_chunk_as_string(child.stderr.take().unwrap());
-
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
+    let output = child.wait_with_output().expect("Failed to wait for output");
+    let stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
     // Verify we get information printed out about the change
     assert_eq!(
         stdout_data,
-        Some(format!(
+        format!(
             "Following paths were modified:\n* {}\n",
             file.to_str().unwrap()
-        ))
+        )
     );
-    assert_eq!(stderr_data, None);
+    assert_eq!(stderr_data, "");
 }
 
 #[rstest]
@@ -175,22 +137,21 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
     // Pause a bit to ensure that the change is detected and reported
     wait_a_bit();
 
-    // Read all of current stdout & stderr
-    let stdout_data = consume_and_read_chunk_as_string(child.stdout.take().unwrap());
-    let stderr_data = consume_and_read_chunk_as_string(child.stderr.take().unwrap());
-
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
+    let output = child.wait_with_output().expect("Failed to wait for output");
+    let stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
     // Verify we get information printed out about the change
     assert_eq!(
         stdout_data,
-        Some(format!(
+        format!(
             "Following paths were modified:\n* {}\n",
             file.to_str().unwrap()
-        ))
+        )
     );
-    assert_eq!(stderr_data, None);
+    assert_eq!(stderr_data, "");
 }
 
 #[rstest]
