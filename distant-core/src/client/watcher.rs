@@ -292,7 +292,7 @@ mod tests {
                         paths: vec![test_path.to_path_buf()],
                     }),
                     ResponseData::Changed(Change {
-                        kind: ChangeKind::Modify,
+                        kind: ChangeKind::ModifyData,
                         paths: vec![test_path.to_path_buf()],
                     }),
                 ],
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(
             change,
             Change {
-                kind: ChangeKind::Modify,
+                kind: ChangeKind::ModifyData,
                 paths: vec![test_path.to_path_buf()]
             }
         );
@@ -369,7 +369,7 @@ mod tests {
                 "test-tenant",
                 req.id + 1,
                 vec![ResponseData::Changed(Change {
-                    kind: ChangeKind::Modify,
+                    kind: ChangeKind::ModifyData,
                     paths: vec![test_path.to_path_buf()],
                 })],
             ))
@@ -447,7 +447,7 @@ mod tests {
                         paths: vec![test_path.to_path_buf()],
                     }),
                     ResponseData::Changed(Change {
-                        kind: ChangeKind::Modify,
+                        kind: ChangeKind::ModifyData,
                         paths: vec![test_path.to_path_buf()],
                     }),
                     ResponseData::Changed(Change {
@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(
             watcher.lock().await.next().await,
             Some(Change {
-                kind: ChangeKind::Modify,
+                kind: ChangeKind::ModifyData,
                 paths: vec![test_path.to_path_buf()]
             })
         );

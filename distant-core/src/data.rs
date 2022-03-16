@@ -1005,8 +1005,14 @@ pub enum ChangeKind {
     /// A file, directory, or something else was created
     Create,
 
-    /// A file or directory was modified in some way
-    Modify,
+    /// A file's content, size, or something else regarding its data was modified
+    ModifyData,
+
+    /// A file's or directory's metadata (access time, permissions, etc) was modified
+    ModifyMetadata,
+
+    /// A file or directory was modified, but it is unclear what was modified
+    ModifyUnknown,
 
     /// A file, directory, or something else was removed
     Remove,
@@ -1035,7 +1041,9 @@ impl From<NotifyEventKind> for ChangeKind {
             NotifyEventKind::Access(_) => Self::Access,
             NotifyEventKind::Create(_) => Self::Create,
             NotifyEventKind::Modify(ModifyKind::Name(_)) => Self::Rename,
-            NotifyEventKind::Modify(_) => Self::Modify,
+            NotifyEventKind::Modify(ModifyKind::Data(_)) => Self::ModifyData,
+            NotifyEventKind::Modify(ModifyKind::Metadata(_)) => Self::ModifyMetadata,
+            NotifyEventKind::Modify(_) => Self::ModifyUnknown,
             NotifyEventKind::Remove(_) => Self::Remove,
             NotifyEventKind::Any | NotifyEventKind::Other => Self::Unknown,
         }
@@ -1107,7 +1115,7 @@ impl Default for ChangeKindSet {
         ChangeKindSet(
             vec![
                 ChangeKind::Create,
-                ChangeKind::Modify,
+                ChangeKind::ModifyData,
                 ChangeKind::Remove,
                 ChangeKind::Rename,
             ]

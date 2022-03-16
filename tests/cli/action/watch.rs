@@ -82,7 +82,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&["watch", file.to_str().unwrap()])
+        .args(&["watch", "--only", "modify_data", file.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -101,13 +101,18 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
     let stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
+    let path = file
+        .to_path_buf()
+        .canonicalize()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
     // Verify we get information printed out about the change
     assert_eq!(
         stdout_data,
-        format!(
-            "Following paths were modified:\n* {}\n",
-            file.to_str().unwrap()
-        )
+        format!("Following paths were modified:\n* {}\n", path)
     );
     assert_eq!(stderr_data, "");
 }
@@ -124,7 +129,13 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&["watch", temp.to_str().unwrap()])
+        .args(&[
+            "watch",
+            "--recursive",
+            "--only",
+            "modify_data",
+            temp.to_str().unwrap(),
+        ])
         .spawn()
         .expect("Failed to execute");
 
@@ -143,13 +154,18 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
     let stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
+    let path = file
+        .to_path_buf()
+        .canonicalize()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
     // Verify we get information printed out about the change
     assert_eq!(
         stdout_data,
-        format!(
-            "Following paths were modified:\n* {}\n",
-            file.to_str().unwrap()
-        )
+        format!("Following paths were modified:\n* {}\n", path)
     );
     assert_eq!(stderr_data, "");
 }
@@ -199,7 +215,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
         &mut stdout,
         file.to_path_buf(),
         false,
-        ChangeKind::Modify,
+        ChangeKind::ModifyData,
     );
 
     // Make a change to some file
@@ -212,7 +228,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     let res = read_response(&mut stdout);
     match &res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Modify);
+            assert_eq!(change.kind, ChangeKind::ModifyData);
             assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
@@ -243,7 +259,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
         &mut stdout,
         temp.to_path_buf(),
         true,
-        ChangeKind::Modify,
+        ChangeKind::ModifyData,
     );
 
     // Make a change to some file
@@ -256,7 +272,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     let res = read_response(&mut stdout);
     match &res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Modify);
+            assert_eq!(change.kind, ChangeKind::ModifyData);
             assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
@@ -288,7 +304,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file1.to_path_buf(),
         true,
-        ChangeKind::Modify,
+        ChangeKind::ModifyData,
     );
 
     // Create a request to watch file2
@@ -297,7 +313,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file2.to_path_buf(),
         true,
-        ChangeKind::Modify,
+        ChangeKind::ModifyData,
     );
 
     assert_ne!(
@@ -315,7 +331,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     let file1_change_res = read_response(&mut stdout);
     match &file1_change_res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Modify);
+            assert_eq!(change.kind, ChangeKind::ModifyData);
             assert_eq!(
                 &change.paths,
                 &[file1.to_path_buf().canonicalize().unwrap()]
@@ -334,7 +350,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     let file2_change_res = read_response(&mut stdout);
     match &file2_change_res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Modify);
+            assert_eq!(change.kind, ChangeKind::ModifyData);
             assert_eq!(
                 &change.paths,
                 &[file2.to_path_buf().canonicalize().unwrap()]
