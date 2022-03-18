@@ -6,9 +6,13 @@ use distant_core::{
 };
 use rstest::*;
 use std::{
+    io,
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::Command,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
 };
 
 fn wait_a_bit() {
@@ -16,38 +20,108 @@ fn wait_a_bit() {
 }
 
 fn wait_millis(millis: u64) {
-    use std::{thread, time::Duration};
     thread::sleep(Duration::from_millis(millis));
 }
 
-fn read_line<R>(reader: &mut R) -> String
-where
-    R: Read,
-{
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("Failed to read input");
-    line
+struct ThreadedReader {
+    handle: thread::JoinHandle<io::Result<()>>,
+    rx: mpsc::Receiver<String>,
 }
 
-fn read_response<R>(reader: &mut R) -> Response
-where
-    R: Read,
-{
-    let line = read_line(reader);
-    serde_json::from_str(&line).expect("Invalid response format")
+impl ThreadedReader {
+    pub fn new<R>(reader: R) -> Self
+    where
+        R: Read + Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            loop {
+                match reader.read_line(&mut line) {
+                    Ok(0) => break Ok(()),
+                    Ok(_) => {
+                        // Consume the line and create an empty line to
+                        // be filled in next time
+                        let line2 = line;
+                        line = String::new();
+
+                        if let Err(line) = tx.send(line2) {
+                            return Err(io::Error::new(
+                                io::ErrorKind::Other,
+                                format!(
+                                    "Failed to pass along line because channel closed! Line: '{}'",
+                                    line.0
+                                ),
+                            ));
+                        }
+                    }
+                    Err(x) => return Err(x),
+                }
+            }
+        });
+        Self { handle, rx }
+    }
+
+    /// Tries to read the next line if available
+    pub fn try_read_line(&mut self) -> Option<String> {
+        self.rx.try_recv().ok()
+    }
+
+    /// Tries to read the next response if available
+    ///
+    /// Will panic if next line is not a valid response
+    pub fn try_read_response(&mut self) -> Option<Response> {
+        self.try_read_line().map(|line| {
+            serde_json::from_str(&line)
+                .unwrap_or_else(|_| panic!("Invalid response format for {}", line))
+        })
+    }
+
+    /// Reads the next response, waiting for at minimum "timeout" before panicking
+    pub fn read_response_timeout(&mut self, timeout: Duration) -> Response {
+        let start_time = Instant::now();
+        let mut checked_at_least_once = false;
+
+        while !checked_at_least_once || start_time.elapsed() < timeout {
+            if let Some(res) = self.try_read_response() {
+                return res;
+            }
+
+            checked_at_least_once = true;
+        }
+
+        panic!("Reached timeout of {:?}", timeout);
+    }
+
+    /// Reads the next response, waiting for at minimum default timeout before panicking
+    pub fn read_response_default_timeout(&mut self) -> Response {
+        self.read_response_timeout(Self::default_timeout())
+    }
+
+    /// Creates a new duration representing a default timeout for the threaded reader
+    pub fn default_timeout() -> Duration {
+        Duration::from_millis(250)
+    }
+
+    /// Waits for reader to shut down, returning the result
+    pub fn wait(self) -> io::Result<()> {
+        match self.handle.join() {
+            Ok(x) => x,
+            Err(x) => std::panic::resume_unwind(x),
+        }
+    }
 }
 
-fn send_watch_request<W, R>(
+fn send_watch_request<W>(
     writer: &mut W,
-    reader: &mut R,
+    reader: &mut ThreadedReader,
     path: impl Into<PathBuf>,
     recursive: bool,
     only: impl Into<ChangeKindSet>,
 ) -> Response
 where
     W: Write,
-    R: Read,
 {
     let req = Request {
         id: rand::random(),
@@ -69,7 +143,7 @@ where
     wait_a_bit();
 
     // Ensure we got an acknowledgement of watching
-    let res = read_response(reader);
+    let res = reader.read_response_default_timeout();
     assert_eq!(res.payload[0], ResponseData::Ok);
     res
 }
@@ -208,7 +282,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
         .spawn()
         .expect("Failed to execute");
     let mut stdin = cmd.stdin.take().unwrap();
-    let mut stdout = cmd.stdout.take().unwrap();
+    let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
     let _ = send_watch_request(
         &mut stdin,
@@ -225,7 +299,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     wait_a_bit();
 
     // Get the response and verify the change
-    let res = read_response(&mut stdout);
+    let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::ModifyData);
@@ -252,7 +326,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
         .spawn()
         .expect("Failed to execute");
     let mut stdin = cmd.stdin.take().unwrap();
-    let mut stdout = cmd.stdout.take().unwrap();
+    let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
     let _ = send_watch_request(
         &mut stdin,
@@ -269,7 +343,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     wait_a_bit();
 
     // Get the response and verify the change
-    let res = read_response(&mut stdout);
+    let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::ModifyData);
@@ -296,7 +370,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         .spawn()
         .expect("Failed to execute");
     let mut stdin = cmd.stdin.take().unwrap();
-    let mut stdout = cmd.stdout.take().unwrap();
+    let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
     // Create a request to watch file1
     let file1_res = send_watch_request(
@@ -328,7 +402,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     wait_a_bit();
 
     // Get the response and verify the change
-    let file1_change_res = read_response(&mut stdout);
+    let file1_change_res = stdout.read_response_default_timeout();
     match &file1_change_res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::ModifyData);
@@ -347,7 +421,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     wait_a_bit();
 
     // Get the response and verify the change
-    let file2_change_res = read_response(&mut stdout);
+    let file2_change_res = stdout.read_response_default_timeout();
     match &file2_change_res.payload[0] {
         ResponseData::Changed(change) => {
             assert_eq!(change.kind, ChangeKind::ModifyData);
@@ -386,7 +460,7 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
         .spawn()
         .expect("Failed to execute");
     let mut stdin = cmd.stdin.take().unwrap();
-    let mut stdout = cmd.stdout.take().unwrap();
+    let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
     let req = Request {
         id: rand::random(),
@@ -408,7 +482,7 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
     wait_a_bit();
 
     // Ensure we got an acknowledgement of watching
-    let res = read_response(&mut stdout);
+    let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Error(x) => {
             assert_eq!(x.kind, ErrorKind::NotFound);
