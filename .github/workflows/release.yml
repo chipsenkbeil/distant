@@ -6,10 +6,6 @@ on:
       - v[0-9]+.[0-9]+.[0-9]+
       - v[0-9]+.[0-9]+.[0-9]+-**
 
-env:
-  LUA_VERSION: 5.1.5
-  LUA_FEATURE: lua51
-
 jobs:
   macos:
     name: "Build release on MacOS"
@@ -22,11 +18,7 @@ jobs:
       X86_DIR: target/x86_64-apple-darwin/release
       ARM_DIR: target/aarch64-apple-darwin/release
       BUILD_BIN: distant
-      BUILD_LIB: libdistant_lua.dylib
       UNIVERSAL_REL_BIN: distant-macos
-      UNIVERSAL_REL_LIB: distant_lua-macos.dylib
-      X86_REL_LIB: distant_lua-macos-intel.dylib
-      ARM_REL_LIB: distant_lua-macos-arm.dylib
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (x86)
@@ -42,24 +34,6 @@ jobs:
           toolchain: stable
           target: ${{ env.ARM_ARCH }}
       - uses: Swatinem/rust-cache@v1
-      - name: Build Lua ${{ env.LUA_VERSION }} library (x86_64)
-        run: |
-          cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_ARCH }}
-          ls -l ../${{ env.X86_DIR }}
-          cp ../${{ env.X86_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_REL_LIB }}
-      - name: Build Lua ${{ env.LUA_VERSION }} library (aarch64)
-        run: |
-          cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.ARM_ARCH }}
-          ls -l ../${{ env.ARM_DIR }}
-          cp ../${{ env.ARM_DIR }}/${{ env.BUILD_LIB }} ../${{ env.ARM_REL_LIB }}
-      - name: Unify libraries
-        run: |
-          lipo -create -output ${{ env.UNIVERSAL_REL_LIB }} \
-              ./${{ env.X86_DIR }}/${{ env.BUILD_LIB }} \
-              ./${{ env.ARM_DIR }}/${{ env.BUILD_LIB }}
-          chmod +x ./${{ env.UNIVERSAL_REL_LIB }}
       - name: Build binary (x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_ARCH }}
@@ -82,9 +56,6 @@ jobs:
           name: ${{ env.UPLOAD_NAME }}
           path: |
             ${{ env.UNIVERSAL_REL_BIN }}
-            ${{ env.UNIVERSAL_REL_LIB }}
-            ${{ env.X86_REL_LIB }}
-            ${{ env.ARM_REL_LIB }}
 
   windows:
     name: "Build release on Windows"
@@ -95,9 +66,7 @@ jobs:
       X86_ARCH: x86_64-pc-windows-msvc
       X86_DIR: target/x86_64-pc-windows-msvc/release
       BUILD_BIN: distant.exe
-      BUILD_LIB: distant_lua.dll
       X86_REL_BIN: distant-win64.exe
-      X86_REL_LIB: distant_lua-win64.dll
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (MSVC)
@@ -107,19 +76,6 @@ jobs:
           toolchain: stable
           target: ${{ env.X86_ARCH }}
       - uses: Swatinem/rust-cache@v1
-      - uses: xpol/setup-lua@v0.3
-        with:
-          lua-version: "${{ env.LUA_VERSION }}"
-      - name: Build Lua ${{ env.LUA_VERSION }} library (x86_64)
-        run: |
-          cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }}" --target ${{ env.X86_ARCH }}
-          ls -l ../${{ env.X86_DIR }}
-          mv ../${{ env.X86_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_REL_LIB }}
-        env:
-          LUA_INC: ${{ github.workspace }}\.lua\include
-          LUA_LIB: ${{ github.workspace }}\.lua\lib
-          LUA_LIB_NAME: lua
       - name: Build binary (x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_ARCH }}
@@ -132,7 +88,6 @@ jobs:
         with:
           name: ${{ env.UPLOAD_NAME }}
           path: |
-            ${{ env.X86_REL_LIB }}
             ${{ env.X86_REL_BIN }}
 
   linux_gnu:
@@ -144,9 +99,7 @@ jobs:
       X86_GNU_ARCH: x86_64-unknown-linux-gnu
       X86_GNU_DIR: target/x86_64-unknown-linux-gnu/release
       BUILD_BIN: distant
-      BUILD_LIB: libdistant_lua.so
       X86_GNU_REL_BIN: distant-linux64-gnu
-      X86_GNU_REL_LIB: distant_lua-linux64-gnu.so
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (GNU)
@@ -156,12 +109,6 @@ jobs:
           toolchain: stable
           target: ${{ env.X86_GNU_ARCH }}
       - uses: Swatinem/rust-cache@v1
-      - name: Build Lua ${{ env.LUA_VERSION }} library (GNU x86_64)
-        run: |
-          cd distant-lua
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_GNU_ARCH }}
-          ls -l ../${{ env.X86_GNU_DIR }}
-          mv ../${{ env.X86_GNU_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_GNU_REL_LIB }}
       - name: Build binary (GNU x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_GNU_ARCH }}
@@ -174,7 +121,6 @@ jobs:
         with:
           name: ${{ env.UPLOAD_NAME }}
           path: |
-            ${{ env.X86_GNU_REL_LIB }}
             ${{ env.X86_GNU_REL_BIN }}
 
   linux_musl:
@@ -188,9 +134,7 @@ jobs:
       X86_MUSL_ARCH: x86_64-unknown-linux-musl
       X86_MUSL_DIR: target/x86_64-unknown-linux-musl/release
       BUILD_BIN: distant
-      BUILD_LIB: libdistant_lua.so
       X86_MUSL_REL_BIN: distant-linux64-musl
-      X86_MUSL_REL_LIB: distant_lua-linux64-musl.so
     steps:
       - uses: actions/checkout@v2
       - name: Install base dependencies
@@ -200,15 +144,6 @@ jobs:
         run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
       - uses: Swatinem/rust-cache@v1
-      - name: Build Lua ${{ env.LUA_VERSION }} library (MUSL x86_64)
-        run: |
-          cd distant-lua
-          source $HOME/.cargo/env
-          cargo build --release --no-default-features --features "${{ env.LUA_FEATURE }},vendored" --target ${{ env.X86_MUSL_ARCH }}
-          ls -l ../${{ env.X86_MUSL_DIR }}
-          mv ../${{ env.X86_MUSL_DIR }}/${{ env.BUILD_LIB }} ../${{ env.X86_MUSL_REL_LIB }}
-        env:
-          RUSTFLAGS: -C target-feature=-crt-static -C linker=x86_64-alpine-linux-musl-gcc
       - name: Build binary (MUSL x86_64)
         run: |
           source $HOME/.cargo/env
@@ -222,7 +157,6 @@ jobs:
         with:
           name: ${{ env.UPLOAD_NAME }}
           path: |
-            ${{ env.X86_MUSL_REL_LIB }}
             ${{ env.X86_MUSL_REL_BIN }}
 
   publish:
@@ -234,50 +168,32 @@ jobs:
     env:
       MACOS: macos
       MACOS_UNIVERSAL_BIN: distant-macos
-      MACOS_UNIVERSAL_LIB: distant_lua-macos.dylib
-      MACOS_X86_LIB: distant_lua-macos-intel.dylib
-      MACOS_ARM_LIB: distant_lua-macos-arm.dylib
       WIN64: win64
       WIN64_BIN: distant-win64.exe
-      WIN64_LIB: distant_lua-win64.dll
       LINUX64_GNU: linux64-gnu
       LINUX64_GNU_BIN: distant-linux64-gnu
-      LINUX64_GNU_LIB: distant_lua-linux64-gnu.so
       LINUX64_MUSL: linux64-musl
       LINUX64_MUSL_BIN: distant-linux64-musl
-      LINUX64_MUSL_LIB: distant_lua-linux64-musl.so
     steps:
       - uses: actions/download-artifact@v2
       - name: Generate MacOS SHA256 checksums
         run: |
           cd ${{ env.MACOS }}
-          sha256sum ${{ env.MACOS_UNIVERSAL_LIB }} > ${{ env.MACOS_UNIVERSAL_LIB }}.sha256sum
-          echo "SHA_MACOS_LUA_LIB=$(cat ${{ env.MACOS_UNIVERSAL_LIB }}.sha256sum)" >> $GITHUB_ENV
-          sha256sum ${{ env.MACOS_X86_LIB }} > ${{ env.MACOS_X86_LIB }}.sha256sum
-          echo "SHA_MACOS_X86_LUA_LIB=$(cat ${{ env.MACOS_X86_LIB }}.sha256sum)" >> $GITHUB_ENV
-          sha256sum ${{ env.MACOS_ARM_LIB }} > ${{ env.MACOS_ARM_LIB }}.sha256sum
-          echo "SHA_MACOS_ARM_LUA_LIB=$(cat ${{ env.MACOS_ARM_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.MACOS_UNIVERSAL_BIN }} > ${{ env.MACOS_UNIVERSAL_BIN }}.sha256sum
           echo "SHA_MACOS_BIN=$(cat ${{ env.MACOS_UNIVERSAL_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Win64 SHA256 checksums
         run: |
           cd ${{ env.WIN64 }}
-          sha256sum ${{ env.WIN64_LIB }} > ${{ env.WIN64_LIB }}.sha256sum
-          echo "SHA_WIN64_LUA_LIB=$(cat ${{ env.WIN64_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.WIN64_BIN }} > ${{ env.WIN64_BIN }}.sha256sum
           echo "SHA_WIN64_BIN=$(cat ${{ env.WIN64_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Linux64 (gnu) SHA256 checksums
         run: |
           cd ${{ env.LINUX64_GNU }}
-          sha256sum ${{ env.LINUX64_GNU_LIB }} > ${{ env.LINUX64_GNU_LIB }}.sha256sum
-          echo "SHA_LINUX64_GNU_LUA_LIB=$(cat ${{ env.LINUX64_GNU_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.LINUX64_GNU_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
           echo "SHA_LINUX64_GNU_BIN=$(cat ${{ env.LINUX64_GNU_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Linux64 (musl) SHA256 checksums
         run: |
           cd ${{ env.LINUX64_MUSL }}
-          sha256sum ${{ env.LINUX64_MUSL_LIB }} > ${{ env.LINUX64_MUSL_LIB }}.sha256sum
-          echo "SHA_LINUX64_MUSL_LUA_LIB=$(cat ${{ env.LINUX64_MUSL_LIB }}.sha256sum)" >> $GITHUB_ENV
           sha256sum ${{ env.LINUX64_MUSL_BIN }} > ${{ env.LINUX64_MUSL_BIN }}.sha256sum
           echo "SHA_LINUX64_MUSL_BIN=$(cat ${{ env.LINUX64_MUSL_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Determine git tag
@@ -302,47 +218,14 @@ jobs:
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: ${{ steps.check-tag.outputs.match == 'true' }}
-          # NOTE: MacOS universal and aarch64 Lua libs are withheld due to
-          #       https://github.com/khvzak/mlua/issues/82 and must be
-          #       built and added to each release manually
           files: |
             ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_BIN }}
-            ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_LIB }}
-            ${{ env.MACOS }}/${{ env.MACOS_X86_LIB }}
-            ${{ env.MACOS }}/${{ env.MACOS_ARM_LIB }}
             ${{ env.WIN64 }}/${{ env.WIN64_BIN }}
-            ${{ env.WIN64 }}/${{ env.WIN64_LIB }}
             ${{ env.LINUX64_GNU }}/${{ env.LINUX64_GNU_BIN }}
-            ${{ env.LINUX64_GNU }}/${{ env.LINUX64_GNU_LIB }}
             ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_BIN }}
-            ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_LIB }}
             **/*.sha256sum
           body: |
-            ## Install Lua library
-            ### Windows
-            1. Download **${{ env.WIN64_LIB }}**
-            2. Rename to `distant_lua.dll`
-            3. Import via `distant = require("distant_lua")`
-            ### macOS
-            1. Download **${{ env.MACOS_UNIVERSAL_LIB }}** (or **${{ env.MACOS_X86_LIB }}** or **${{ env.MACOS_ARM_LIB }}**)
-            2. Rename to `distant_lua.so` (still works on Mac for Lua)
-              - Alternatively, you can rename to `distant_lua.dylib` and add 
-                `package.cpath = package.cpath .. ";?.dylib"` within your Lua code before
-                requiring the library
-            3. Import via `distant = require("distant_lua")`
-            ### Linux
-            1. Download **${{ env.LINUX64_GNU_LIB }}** (or **${{ env.LINUX64_MUSL_LIB }}**)
-            2. Rename to `distant_lua.so`
-            3. Import via `distant = require("distant_lua")`
-            ## Artifacts
-            A Lua library is built out to provide bindings to `distant-core` and `distant-ssh2` within Lua.
-            While this is geared towards usage in neovim, this Lua binding is generic and can be used in Lua
-            anyway. The library is built against Lua ${{ env.LUA_VERSION }}. Make sure to rename the
-            library to `distant_lua.{dll,dylib,so}` prior to importing as that is the expected name!
-            - **linux64** is the Linux library that supports the x86-64 platform using libc
-            - **macos** is the universal MacOS library that supports x86-64 and aarch64 (ARM) platforms
-            - **win64** is the Windows library release that supports the x86-64 platform and built via MSVC
-
+            ## Binaries
             Standalone binaries are built out for Windows (x86_64), MacOS (Intel & ARM), and Linux (x86_64).
             - **linux64-gnu** is the x86-64 release on Linux using libc
             - **linux64-musl** is the x86-64 release on Linux using musl (static binary, no libc dependency)
@@ -350,14 +233,8 @@ jobs:
             - **win64** is the x86-64 release on Windows using MSVC
             ## SHA256 Checksums
             ```
-            ${{ env.SHA_MACOS_LUA_LIB }}
-            ${{ env.SHA_MACOS_X86_LUA_LIB }}
-            ${{ env.SHA_MACOS_ARM_LUA_LIB }}
             ${{ env.SHA_MACOS_BIN }}
-            ${{ env.SHA_WIN64_LUA_LIB }}
             ${{ env.SHA_WIN64_BIN }}
-            ${{ env.SHA_LINUX64_GNU_LUA_LIB }}
-            ${{ env.SHA_LINUX64_MUSL_LUA_LIB }}
             ${{ env.SHA_LINUX64_GNU_BIN }}
             ${{ env.SHA_LINUX64_MUSL_BIN }}
             ```

@@ -29,12 +29,6 @@ jobs:
         run: cargo clippy -p distant-core --all-targets --verbose --all-features
       - name: distant-ssh2 (all features)
         run: cargo clippy -p distant-ssh2 --all-targets --verbose --all-features
-      # - name: distant-lua (lua51 & vendored)
-      #   run: (cd distant-lua && cargo clippy --all-targets --verbose --no-default-features --features "lua51,vendored")
-      #   shell: bash
-      # - name: distant-lua-tests (lua51 & vendored)
-      #   run: (cd distant-lua-tests && cargo clippy --tests --verbose --no-default-features --features "lua51,vendored")
-      #   shell: bash
       - name: distant (all features)
         run: cargo clippy --all-targets --verbose --all-features
 

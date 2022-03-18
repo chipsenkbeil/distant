@@ -44,6 +44,3 @@ jobs:
       - name: Run CLI tests (no default features)
         run: cargo test --verbose --no-default-features
         shell: bash
-      # - name: Run Lua tests
-      #   run: (cd distant-lua && cargo build) && (cd distant-lua-tests && cargo test --verbose)
-      #   shell: bash
