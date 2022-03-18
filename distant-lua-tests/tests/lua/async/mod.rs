@@ -13,8 +13,6 @@ mod spawn;
 mod spawn_pty;
 mod spawn_wait;
 mod system_info;
-mod unwatch;
-mod watch;
 mod write_file;
 mod write_file_text;
 
