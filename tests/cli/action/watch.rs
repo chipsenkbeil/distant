@@ -24,6 +24,7 @@ fn wait_millis(millis: u64) {
 }
 
 struct ThreadedReader {
+    #[allow(dead_code)]
     handle: thread::JoinHandle<io::Result<()>>,
     rx: mpsc::Receiver<String>,
 }
@@ -105,6 +106,7 @@ impl ThreadedReader {
     }
 
     /// Waits for reader to shut down, returning the result
+    #[allow(dead_code)]
     pub fn wait(self) -> io::Result<()> {
         match self.handle.join() {
             Ok(x) => x,
