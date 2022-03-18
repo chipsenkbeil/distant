@@ -392,7 +392,7 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
         id: rand::random(),
         tenant: random_tenant(),
         payload: vec![RequestData::Watch {
-            path: path.into(),
+            path,
             recursive: false,
             only: Default::default(),
         }],

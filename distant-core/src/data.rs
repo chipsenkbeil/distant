@@ -1082,7 +1082,7 @@ impl FromStr for ChangeKindSet {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut change_set = HashSet::new();
 
-        for word in s.split(",") {
+        for word in s.split(',') {
             change_set.insert(ChangeKind::from_str(word.trim())?);
         }
 

@@ -31,7 +31,7 @@ pub struct State {
     pub watcher_paths: HashMap<WatcherPath, ReplyFn>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct WatcherPath {
     /// The raw path provided to the watcher, which is not canonicalized
     raw_path: PathBuf,
@@ -47,6 +47,14 @@ pub struct WatcherPath {
     /// Specific filter for path
     only: ChangeKindSet,
 }
+
+impl PartialEq for WatcherPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+
+impl Eq for WatcherPath {}
 
 impl Hash for WatcherPath {
     fn hash<H: Hasher>(&self, state: &mut H) {

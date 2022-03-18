@@ -31,17 +31,17 @@ type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 
 #[derive(Debug, Display, Error, From)]
 pub enum ServerError {
-    IoError(io::Error),
-    NotifyError(notify::Error),
-    WalkDirError(walkdir::Error),
+    Io(io::Error),
+    Notify(notify::Error),
+    WalkDir(walkdir::Error),
 }
 
 impl From<ServerError> for ResponseData {
     fn from(x: ServerError) -> Self {
         match x {
-            ServerError::IoError(x) => Self::from(x),
-            ServerError::NotifyError(x) => Self::from(x),
-            ServerError::WalkDirError(x) => Self::from(x),
+            ServerError::Io(x) => Self::from(x),
+            ServerError::Notify(x) => Self::from(x),
+            ServerError::WalkDir(x) => Self::from(x),
         }
     }
 }
@@ -493,7 +493,7 @@ where
             state.watcher_paths.insert(wp, Box::new(reply));
             Ok(Outgoing::from(ResponseData::Ok))
         }
-        None => Err(ServerError::IoError(io::Error::new(
+        None => Err(ServerError::Io(io::Error::new(
             io::ErrorKind::BrokenPipe,
             format!("<Conn @ {}> Unable to initialize watcher", conn_id,),
         ))),
@@ -508,7 +508,7 @@ async fn unwatch(conn_id: usize, state: HState, path: PathBuf) -> Result<Outgoin
         return Ok(Outgoing::from(ResponseData::Ok));
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {}> Unable to unwatch as watcher not initialized",
@@ -738,7 +738,7 @@ async fn proc_kill(conn_id: usize, state: HState, id: usize) -> Result<Outgoing,
         }
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {} | Proc {}> Unable to send kill signal to process",
@@ -761,7 +761,7 @@ async fn proc_stdin(
         }
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {} | Proc {}> Unable to send stdin to process",
@@ -782,7 +782,7 @@ async fn proc_resize_pty(
         return Ok(Outgoing::from(ResponseData::Ok));
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {} | Proc {}> Unable to resize pty to {:?}",
@@ -2070,7 +2070,7 @@ mod tests {
 
                 true
             }
-            ResponseData::Changed(change) => &change.paths == expected_paths,
+            ResponseData::Changed(change) => change.paths == expected_paths,
             x if should_panic => panic!("Unexpected response: {:?}", x),
             _ => false,
         }
@@ -2181,7 +2181,7 @@ mod tests {
         let path = file.path().to_path_buf();
         assert!(
             responses.iter().any(|res| validate_changed_paths(
-                &res,
+                res,
                 &[file.path().to_path_buf().canonicalize().unwrap()],
                 /* should_panic */ false,
             )),
@@ -2192,7 +2192,7 @@ mod tests {
         let path = nested_file.path().to_path_buf();
         assert!(
             responses.iter().any(|res| validate_changed_paths(
-                &res,
+                res,
                 &[file.path().to_path_buf().canonicalize().unwrap()],
                 /* should_panic */ false,
             )),
