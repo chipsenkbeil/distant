@@ -227,10 +227,10 @@ pub enum RequestData {
         #[cfg_attr(
             feature = "structopt",
             structopt(
-                short, 
-                long, 
-                default_value, 
-                help = watch_only_help(), 
+                short,
+                long,
+                default_value,
+                help = watch_only_help(),
                 long_help = watch_only_long_help()
             )
         )]
