@@ -410,6 +410,13 @@ where
                         let paths: Vec<_> = x.paths.drain(..).collect();
                         let kind = ChangeKind::from(x.kind);
 
+                        trace!(
+                            "<Conn @ {}> Watcher detected '{}' change for {:?}",
+                            conn_id,
+                            kind,
+                            paths
+                        );
+
                         fn make_res_data(kind: ChangeKind, paths: &[&PathBuf]) -> ResponseData {
                             ResponseData::Changed(Change {
                                 kind,
@@ -419,9 +426,16 @@ where
 
                         let results = state.map_paths_to_watcher_paths_and_replies(&paths);
                         let mut is_ok = true;
+
                         for (paths, only, reply) in results {
                             // Skip sending this change if we are not watching it
                             if !only.contains(&kind) {
+                                trace!(
+                                    "<Conn @ {}> Skipping change '{}' for {:?}",
+                                    conn_id,
+                                    kind,
+                                    paths
+                                );
                                 continue;
                             }
 
@@ -437,6 +451,11 @@ where
                         let paths: Vec<_> = x.paths.drain(..).collect();
                         let msg = x.to_string();
 
+                        error!(
+                            "<Conn @ {}> Watcher encountered an error {} for {:?}",
+                            conn_id, msg, paths
+                        );
+
                         fn make_res_data(msg: &str, paths: &[&PathBuf]) -> ResponseData {
                             if paths.is_empty() {
                                 ResponseData::Error(msg.into())
@@ -449,6 +468,7 @@ where
 
                         // If we have no paths for the errors, then we send the error to everyone
                         if paths.is_empty() {
+                            trace!("<Conn @ {}> Relaying error to all watchers", conn_id);
                             for reply in state.watcher_paths.values_mut() {
                                 if !reply(vec![make_res_data(&msg, &[])]).await {
                                     is_ok = false;
@@ -459,6 +479,12 @@ where
                         // send the error to them
                         } else {
                             let results = state.map_paths_to_watcher_paths_and_replies(&paths);
+
+                            trace!(
+                                "<Conn @ {}> Relaying error to {} watchers",
+                                conn_id,
+                                results.len()
+                            );
                             for (paths, _, reply) in results {
                                 if !reply(vec![make_res_data(&msg, &paths)]).await {
                                     is_ok = false;

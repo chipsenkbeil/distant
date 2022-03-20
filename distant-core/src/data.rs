@@ -1134,6 +1134,7 @@ impl BitOr for ChangeKind {
 
     fn bitor(self, rhs: Self) -> Self::Output {
         let mut set = ChangeKindSet::empty();
+        set.insert(self);
         set.insert(rhs);
         set
     }

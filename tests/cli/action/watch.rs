@@ -69,9 +69,32 @@ impl ThreadedReader {
         self.rx.try_recv().ok()
     }
 
+    /// Reads the next line, waiting for at minimum "timeout" before panicking
+    pub fn read_line_timeout(&mut self, timeout: Duration) -> String {
+        let start_time = Instant::now();
+        let mut checked_at_least_once = false;
+
+        while !checked_at_least_once || start_time.elapsed() < timeout {
+            if let Some(line) = self.try_read_line() {
+                return line;
+            }
+
+            checked_at_least_once = true;
+        }
+
+        panic!("Reached timeout of {:?}", timeout);
+    }
+
+    /// Reads the next line, waiting for at minimum default timeout before panicking
+    #[allow(dead_code)]
+    pub fn read_line_default_timeout(&mut self) -> String {
+        self.read_line_timeout(Self::default_timeout())
+    }
+
     /// Tries to read the next response if available
     ///
     /// Will panic if next line is not a valid response
+    #[allow(dead_code)]
     pub fn try_read_response(&mut self) -> Option<Response> {
         self.try_read_line().map(|line| {
             serde_json::from_str(&line)
@@ -81,18 +104,9 @@ impl ThreadedReader {
 
     /// Reads the next response, waiting for at minimum "timeout" before panicking
     pub fn read_response_timeout(&mut self, timeout: Duration) -> Response {
-        let start_time = Instant::now();
-        let mut checked_at_least_once = false;
-
-        while !checked_at_least_once || start_time.elapsed() < timeout {
-            if let Some(res) = self.try_read_response() {
-                return res;
-            }
-
-            checked_at_least_once = true;
-        }
-
-        panic!("Reached timeout of {:?}", timeout);
+        let line = self.read_line_timeout(timeout);
+        serde_json::from_str(&line)
+            .unwrap_or_else(|_| panic!("Invalid response format for {}", line))
     }
 
     /// Reads the next response, waiting for at minimum default timeout before panicking
