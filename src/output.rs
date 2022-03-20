@@ -133,12 +133,10 @@ fn format_shell(data: ResponseData) -> ResponseOut {
                 match change.kind {
                     ChangeKind::Access => "Following paths were accessed:\n",
                     ChangeKind::Create => "Following paths were created:\n",
-                    ChangeKind::ModifyData
-                    | ChangeKind::ModifyMetadata
-                    | ChangeKind::ModifyUnknown => "Following paths were modified:\n",
                     ChangeKind::Remove => "Following paths were removed:\n",
-                    ChangeKind::Rename => "Following paths were renamed:\n",
-                    ChangeKind::Unknown => "Following paths were affected:\n",
+                    x if x.is_modify_kind() => "Following paths were modified:\n",
+                    x if x.is_rename_kind() => "Following paths were renamed:\n",
+                    _ => "Following paths were affected:\n",
                 },
                 change
                     .paths

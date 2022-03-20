@@ -2227,7 +2227,7 @@ mod tests {
                 vec![RequestData::Watch {
                     path: file_1.path().to_path_buf(),
                     recursive: false,
-                    only: vec![ChangeKind::ModifyData].into_iter().collect(),
+                    only: vec![ChangeKind::Content].into_iter().collect(),
                 }],
             );
             let origin_id = req.id;
@@ -2259,7 +2259,7 @@ mod tests {
                 vec![RequestData::Watch {
                     path: file_2.path().to_path_buf(),
                     recursive: false,
-                    only: vec![ChangeKind::ModifyData].into_iter().collect(),
+                    only: vec![ChangeKind::Content].into_iter().collect(),
                 }],
             );
             let origin_id = req.id;

@@ -9,7 +9,7 @@ use std::{
     collections::HashSet, io, iter::FromIterator, num::ParseIntError, ops::BitOr, path::PathBuf,
     str::FromStr,
 };
-use strum::{AsRefStr, EnumString, EnumVariantNames};
+use strum::{AsRefStr, EnumString, EnumVariantNames, VariantNames};
 
 /// Type alias for a vec of bytes
 ///
@@ -20,6 +20,24 @@ pub type ByteVec = Vec<u8>;
 #[cfg(feature = "structopt")]
 fn parse_byte_vec(src: &str) -> ByteVec {
     src.as_bytes().to_vec()
+}
+
+#[cfg(feature = "structopt")]
+fn watch_only_help() -> &'static str {
+    "Filter to only report back specified changes"
+}
+
+#[cfg(feature = "structopt")]
+fn watch_only_long_help() -> &'static str {
+    use once_cell::sync::OnceCell;
+    static INSTANCE: OnceCell<String> = OnceCell::new();
+    INSTANCE.get_or_init(|| {
+        format!(
+            "{} [choices: {}]",
+            watch_only_help(),
+            ChangeKind::VARIANTS.join(", ")
+        )
+    })
 }
 
 /// Represents the request to be performed on the remote machine
@@ -206,16 +224,15 @@ pub enum RequestData {
         recursive: bool,
 
         /// Filter to only report back specified changes
-        ///
-        /// * access: When a file or directory is accessed
-        /// * create: when a file or directory was created
-        /// * modify: when a file or directory was modified
-        /// * remove: when a file or directory was removed
-        /// * rename: when a file or directory was renamed
-        /// * unknown: catchall in case we have no insight as to the type of change
         #[cfg_attr(
             feature = "structopt",
-            structopt(short, long, default_value, verbatim_doc_comment)
+            structopt(
+                short, 
+                long, 
+                default_value, 
+                help = watch_only_help(), 
+                long_help = watch_only_long_help()
+            )
         )]
         #[serde(default)]
         only: ChangeKindSet,
@@ -993,35 +1010,123 @@ impl From<NotifyEvent> for Change {
     Hash,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Serialize,
     Deserialize,
 )]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
 pub enum ChangeKind {
-    /// A file was accessed
+    /// Something about a file or directory was accessed, but
+    /// no specific details were known
     Access,
+
+    /// The access time of a file or directory was changed
+    AccessTime,
 
     /// A file, directory, or something else was created
     Create,
 
-    /// A file's content, size, or something else regarding its data was modified
-    ModifyData,
+    /// The content of a file or directory changed
+    Content,
 
-    /// A file's or directory's metadata (access time, permissions, etc) was modified
-    ModifyMetadata,
+    /// The data of a file or directory was modified, but
+    /// no specific details were known
+    Data,
 
-    /// A file or directory was modified, but it is unclear what was modified
-    ModifyUnknown,
+    /// The metadata of a file or directory was modified, but
+    /// no specific details were known
+    Metadata,
+
+    /// Something about a file or directory was modified, but
+    /// no specific details were known
+    Modify,
 
     /// A file, directory, or something else was removed
     Remove,
 
-    /// A file or directory was renamed
+    /// A file or directory was renamed, but no specific details were known
     Rename,
+
+    /// A file or directory was renamed, and the provided paths
+    /// are the source and target in that order (from, to)
+    RenameBoth,
+
+    /// A file or directory was renamed, and the provided path
+    /// is the origin of the rename (before being renamed)
+    RenameFrom,
+
+    /// A file or directory was renamed, and the provided path
+    /// is the result of the rename
+    RenameTo,
+
+    /// A file's size changed
+    Size,
+
+    /// The ownership of a file or directory was changed
+    Ownership,
+
+    /// The permissions of a file or directory was changed
+    Permissions,
+
+    /// The write or modify time of a file or directory was changed
+    WriteTime,
 
     // Catchall in case we have no insight as to the type of change
     Unknown,
+}
+
+impl ChangeKind {
+    /// Returns true if the change is a kind of access
+    pub fn is_access_kind(&self) -> bool {
+        matches!(self, Self::Access)
+    }
+
+    /// Returns true if the change is a kind of creation
+    pub fn is_create_kind(&self) -> bool {
+        matches!(self, Self::Create)
+    }
+
+    /// Returns true if the change is a kind of modification
+    pub fn is_modify_kind(&self) -> bool {
+        self.is_data_modify_kind() || self.is_metadata_modify_kind() || matches!(self, Self::Modify)
+    }
+
+    /// Returns true if the change is a kind of data modification
+    pub fn is_data_modify_kind(&self) -> bool {
+        matches!(self, Self::Content | Self::Data | Self::Size)
+    }
+
+    /// Returns true if the change is a kind of metadata modification
+    pub fn is_metadata_modify_kind(&self) -> bool {
+        matches!(
+            self,
+            Self::AccessTime
+                | Self::Metadata
+                | Self::Ownership
+                | Self::Permissions
+                | Self::WriteTime
+        )
+    }
+
+    /// Returns true if the change is a kind of rename
+    pub fn is_rename_kind(&self) -> bool {
+        matches!(
+            self,
+            Self::Rename | Self::RenameBoth | Self::RenameFrom | Self::RenameTo
+        )
+    }
+
+    /// Returns true if the change is a kind of removal
+    pub fn is_remove_kind(&self) -> bool {
+        matches!(self, Self::Remove)
+    }
+
+    /// Returns true if the change kind is unknown
+    pub fn is_unknown_kind(&self) -> bool {
+        matches!(self, Self::Unknown)
+    }
 }
 
 impl BitOr for ChangeKind {
@@ -1036,15 +1141,47 @@ impl BitOr for ChangeKind {
 
 impl From<NotifyEventKind> for ChangeKind {
     fn from(x: NotifyEventKind) -> Self {
-        use notify::event::ModifyKind;
+        use notify::event::{DataChange, MetadataKind, ModifyKind, RenameMode};
         match x {
+            // File/directory access events
             NotifyEventKind::Access(_) => Self::Access,
+
+            // File/directory creation events
             NotifyEventKind::Create(_) => Self::Create,
+
+            // Rename-oriented events
+            NotifyEventKind::Modify(ModifyKind::Name(RenameMode::Both)) => Self::RenameBoth,
+            NotifyEventKind::Modify(ModifyKind::Name(RenameMode::From)) => Self::RenameFrom,
+            NotifyEventKind::Modify(ModifyKind::Name(RenameMode::To)) => Self::RenameTo,
             NotifyEventKind::Modify(ModifyKind::Name(_)) => Self::Rename,
-            NotifyEventKind::Modify(ModifyKind::Data(_)) => Self::ModifyData,
-            NotifyEventKind::Modify(ModifyKind::Metadata(_)) => Self::ModifyMetadata,
-            NotifyEventKind::Modify(_) => Self::ModifyUnknown,
+
+            // Data-modification events
+            NotifyEventKind::Modify(ModifyKind::Data(DataChange::Content)) => Self::Content,
+            NotifyEventKind::Modify(ModifyKind::Data(DataChange::Size)) => Self::Size,
+            NotifyEventKind::Modify(ModifyKind::Data(_)) => Self::Data,
+
+            // Metadata-modification events
+            NotifyEventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => {
+                Self::AccessTime
+            }
+            NotifyEventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime)) => {
+                Self::WriteTime
+            }
+            NotifyEventKind::Modify(ModifyKind::Metadata(MetadataKind::Permissions)) => {
+                Self::Permissions
+            }
+            NotifyEventKind::Modify(ModifyKind::Metadata(MetadataKind::Ownership)) => {
+                Self::Ownership
+            }
+            NotifyEventKind::Modify(ModifyKind::Metadata(_)) => Self::Metadata,
+
+            // General modification events
+            NotifyEventKind::Modify(_) => Self::Modify,
+
+            // File/directory removal events
             NotifyEventKind::Remove(_) => Self::Remove,
+
+            // Catch-all for other events
             NotifyEventKind::Any | NotifyEventKind::Other => Self::Unknown,
         }
     }
@@ -1065,6 +1202,44 @@ impl ChangeKindSet {
     pub fn empty() -> Self {
         Self(HashSet::new())
     }
+
+    // Produces a changeset containing all of the modification kinds
+    pub fn modify_set() -> Self {
+        Self::modify_data_set() | Self::modify_metadata_set() | ChangeKind::Modify
+    }
+
+    /// Produces a changeset containing all of the data modification kinds
+    pub fn modify_data_set() -> Self {
+        ChangeKind::Content | ChangeKind::Data | ChangeKind::Size
+    }
+
+    /// Produces a changeset containing all of the metadata modification kinds
+    pub fn modify_metadata_set() -> Self {
+        ChangeKind::AccessTime
+            | ChangeKind::Metadata
+            | ChangeKind::Ownership
+            | ChangeKind::Permissions
+            | ChangeKind::WriteTime
+    }
+
+    /// Produces a changeset containing all of the rename kinds
+    pub fn rename_set() -> Self {
+        ChangeKind::Rename | ChangeKind::RenameBoth | ChangeKind::RenameFrom | ChangeKind::RenameTo
+    }
+
+    /// Consumes set and returns a vec of the kinds of changes
+    pub fn into_vec(self) -> Vec<ChangeKind> {
+        self.0.into_iter().collect()
+    }
+}
+
+impl BitOr<ChangeKindSet> for ChangeKindSet {
+    type Output = Self;
+
+    fn bitor(mut self, rhs: ChangeKindSet) -> Self::Output {
+        self.extend(rhs.0);
+        self
+    }
 }
 
 impl BitOr<ChangeKind> for ChangeKindSet {
@@ -1073,6 +1248,14 @@ impl BitOr<ChangeKind> for ChangeKindSet {
     fn bitor(mut self, rhs: ChangeKind) -> Self::Output {
         self.0.insert(rhs);
         self
+    }
+}
+
+impl BitOr<ChangeKindSet> for ChangeKind {
+    type Output = ChangeKindSet;
+
+    fn bitor(self, rhs: ChangeKindSet) -> Self::Output {
+        rhs | self
     }
 }
 
@@ -1112,16 +1295,7 @@ impl From<ChangeKind> for ChangeKindSet {
 
 impl Default for ChangeKindSet {
     fn default() -> Self {
-        ChangeKindSet(
-            vec![
-                ChangeKind::Create,
-                ChangeKind::ModifyData,
-                ChangeKind::Remove,
-                ChangeKind::Rename,
-            ]
-            .into_iter()
-            .collect(),
-        )
+        ChangeKind::Create | Self::modify_data_set() | Self::rename_set() | ChangeKind::Remove
     }
 }
 

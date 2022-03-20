@@ -301,7 +301,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
         &mut stdout,
         file.to_path_buf(),
         false,
-        ChangeKind::ModifyData,
+        ChangeKind::Content,
     );
 
     // Make a change to some file
@@ -314,7 +314,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::ModifyData);
+            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
@@ -345,7 +345,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
         &mut stdout,
         temp.to_path_buf(),
         true,
-        ChangeKind::ModifyData,
+        ChangeKind::Content,
     );
 
     // Make a change to some file
@@ -358,7 +358,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::ModifyData);
+            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
@@ -395,7 +395,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file1.to_path_buf(),
         true,
-        ChangeKind::ModifyData,
+        ChangeKind::Content,
     );
 
     // Create a request to watch file2
@@ -404,7 +404,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file2.to_path_buf(),
         true,
-        ChangeKind::ModifyData,
+        ChangeKind::Content,
     );
 
     assert_ne!(
@@ -422,7 +422,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     let file1_change_res = stdout.read_response_default_timeout();
     match &file1_change_res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::ModifyData);
+            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(
                 &change.paths,
                 &[file1.to_path_buf().canonicalize().unwrap()]
@@ -441,7 +441,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     let file2_change_res = stdout.read_response_default_timeout();
     match &file2_change_res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::ModifyData);
+            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(
                 &change.paths,
                 &[file2.to_path_buf().canonicalize().unwrap()]
