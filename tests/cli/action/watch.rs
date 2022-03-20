@@ -177,7 +177,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&["watch", "--only", "modify_data", file.to_str().unwrap()])
+        .args(&["watch", "--only", "content", file.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -228,7 +228,7 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
             "watch",
             "--recursive",
             "--only",
-            "modify_data",
+            "content",
             temp.to_str().unwrap(),
         ])
         .spawn()

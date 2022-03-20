@@ -26,7 +26,7 @@ pub fn random_tenant() -> String {
 /// Initializes logging (should only call once)
 pub fn init_logging(path: impl Into<PathBuf>) -> flexi_logger::LoggerHandle {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
-    let modules = &["distant", "distant_core"];
+    let modules = &["distant", "distant_core", "distant_ssh2"];
 
     // Disable logging for everything but our binary, which is based on verbosity
     let mut builder = LogSpecification::builder();
