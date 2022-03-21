@@ -2123,7 +2123,11 @@ mod tests {
     ) -> bool {
         match &res.payload[0] {
             ResponseData::Changed(change) if should_panic => {
-                let paths = &change.paths;
+                let paths: Vec<PathBuf> = change
+                    .paths
+                    .iter()
+                    .map(|x| x.canonicalize().unwrap())
+                    .collect();
                 assert_eq!(paths, expected_paths, "Wrong paths reported: {:?}", change);
 
                 true
