@@ -70,6 +70,22 @@ impl ThreadedReader {
         self.rx.try_recv().ok()
     }
 
+    /// Reads the next line, waiting for at minimum "timeout"
+    pub fn try_read_line_timeout(&mut self, timeout: Duration) -> Option<String> {
+        let start_time = Instant::now();
+        let mut checked_at_least_once = false;
+
+        while !checked_at_least_once || start_time.elapsed() < timeout {
+            if let Some(line) = self.try_read_line() {
+                return Some(line);
+            }
+
+            checked_at_least_once = true;
+        }
+
+        None
+    }
+
     /// Reads the next line, waiting for at minimum "timeout" before panicking
     pub fn read_line_timeout(&mut self, timeout: Duration) -> String {
         let start_time = Instant::now();
@@ -186,10 +202,15 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
     // Pause a bit to ensure that the change is detected and reported
     wait_even_longer();
 
+    let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
+    let mut stdout_data = String::new();
+    while let Some(line) = stdout.try_read_line_timeout(ThreadedReader::default_timeout()) {
+        stdout_data.push_str(&line);
+    }
+
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
     let output = child.wait_with_output().expect("Failed to wait for output");
-    let stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
     let path = file
@@ -235,10 +256,15 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
     // Pause a bit to ensure that the change is detected and reported
     wait_even_longer();
 
+    let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
+    let mut stdout_data = String::new();
+    while let Some(line) = stdout.try_read_line_timeout(ThreadedReader::default_timeout()) {
+        stdout_data.push_str(&line);
+    }
+
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
     let output = child.wait_with_output().expect("Failed to wait for output");
-    let stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
     let path = file
