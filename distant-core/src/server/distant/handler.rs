@@ -402,10 +402,7 @@ where
 
         // Attempt to configure watcher, but don't fail if these configurations fail
         match watcher.configure(WatcherConfig::PreciseEvents(true)) {
-            Ok(true) => debug!(
-                "<Conn @ {}> Watcher configured for precise events",
-                conn_id,
-            ),
+            Ok(true) => debug!("<Conn @ {}> Watcher configured for precise events", conn_id,),
             Ok(false) => debug!(
                 "<Conn @ {}> Watcher not configured for precise events",
                 conn_id,
