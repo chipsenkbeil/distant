@@ -2132,7 +2132,14 @@ mod tests {
 
                 true
             }
-            ResponseData::Changed(change) => change.paths == expected_paths,
+            ResponseData::Changed(change) => {
+                let paths: Vec<PathBuf> = change
+                    .paths
+                    .iter()
+                    .map(|x| x.canonicalize().unwrap())
+                    .collect();
+                paths == expected_paths
+            }
             x if should_panic => panic!("Unexpected response: {:?}", x),
             _ => false,
         }
@@ -2249,8 +2256,12 @@ mod tests {
                 &[file.path().to_path_buf().canonicalize().unwrap()],
                 /* should_panic */ false,
             )),
-            "Missing {:?} in changes",
-            path
+            "Missing {:?} in {:?}",
+            path,
+            responses
+                .iter()
+                .map(|x| format!("{:?}", x))
+                .collect::<Vec<String>>(),
         );
 
         let path = nested_file.path().to_path_buf();
@@ -2260,8 +2271,12 @@ mod tests {
                 &[file.path().to_path_buf().canonicalize().unwrap()],
                 /* should_panic */ false,
             )),
-            "Missing {:?} in changes",
-            path
+            "Missing {:?} in {:?}",
+            path,
+            responses
+                .iter()
+                .map(|x| format!("{:?}", x))
+                .collect::<Vec<String>>(),
         );
     }
 
