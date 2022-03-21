@@ -11,7 +11,7 @@ use crate::{
 use derive_more::{Display, Error, From};
 use futures::future;
 use log::*;
-use notify::{RecursiveMode, Watcher};
+use notify::{Config as WatcherConfig, RecursiveMode, Watcher};
 use std::{
     env,
     future::Future,
@@ -396,9 +396,38 @@ where
     if state.watcher.is_none() {
         let (tx, mut rx) = mpsc::channel(1);
 
-        let watcher = notify::recommended_watcher(move |res| {
+        let mut watcher = notify::recommended_watcher(move |res| {
             let _ = tx.blocking_send(res);
         })?;
+
+        // Attempt to configure watcher, but don't fail if these configurations fail
+        match watcher.configure(WatcherConfig::PreciseEvents(true)) {
+            Ok(true) => debug!(
+                "<Conn @ {}> Watcher configured for precise events",
+                conn_id,
+            ),
+            Ok(false) => debug!(
+                "<Conn @ {}> Watcher not configured for precise events",
+                conn_id,
+            ),
+            Err(x) => error!(
+                "<Conn @ {}> Watcher configuration for precise events failed: {}",
+                conn_id, x
+            ),
+        }
+
+        // Attempt to configure watcher, but don't fail if these configurations fail
+        match watcher.configure(WatcherConfig::NoticeEvents(true)) {
+            Ok(true) => debug!("<Conn @ {}> Watcher configured for notice events", conn_id),
+            Ok(false) => debug!(
+                "<Conn @ {}> Watcher not configured for notice events",
+                conn_id,
+            ),
+            Err(x) => error!(
+                "<Conn @ {}> Watcher configuration for notice events failed: {}",
+                conn_id, x
+            ),
+        }
 
         let _ = state.watcher.insert(watcher);
 
