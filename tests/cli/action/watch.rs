@@ -13,7 +13,11 @@ use std::{
 };
 
 fn wait_a_bit() {
-    wait_millis(50);
+    wait_millis(250);
+}
+
+fn wait_even_longer() {
+    wait_millis(500);
 }
 
 fn wait_millis(millis: u64) {
@@ -180,7 +184,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
     file.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the change is detected and reported
-    wait_a_bit();
+    wait_even_longer();
 
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
@@ -229,7 +233,7 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
     file.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the change is detected and reported
-    wait_a_bit();
+    wait_even_longer();
 
     // Close out the process and collect the output
     let _ = child.kill().expect("Failed to terminate process");
@@ -301,7 +305,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     file.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the process detected the change and reported it
-    wait_a_bit();
+    wait_even_longer();
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
@@ -339,7 +343,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     file.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the process detected the change and reported it
-    wait_a_bit();
+    wait_even_longer();
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
@@ -386,7 +390,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     file1.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the process detected the change and reported it
-    wait_a_bit();
+    wait_even_longer();
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
@@ -415,7 +419,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     file2.write_str("some text").unwrap();
 
     // Pause a bit to ensure that the process detected the change and reported it
-    wait_a_bit();
+    wait_even_longer();
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
@@ -477,7 +481,7 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
         .expect("Failed to write to process");
 
     // Pause a bit to ensure that the process started and processed our request
-    wait_a_bit();
+    wait_even_longer();
 
     // Ensure we got an acknowledgement of watching
     let res = stdout.read_response_default_timeout();
