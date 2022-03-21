@@ -2251,6 +2251,13 @@ mod tests {
         let file_1 = temp.child("file_1");
         file_1.touch().unwrap();
 
+        let file_2 = temp.child("file_2");
+        file_2.touch().unwrap();
+
+        // Sleep a bit to give time to get all changes happening
+        // TODO: Can we slim down this sleep? Or redesign test in some other way?
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         // Initialize watch on file 1
         let file_1_origin_id = {
             let req = Request::new(
@@ -2258,7 +2265,7 @@ mod tests {
                 vec![RequestData::Watch {
                     path: file_1.path().to_path_buf(),
                     recursive: false,
-                    only: vec![ChangeKind::Content].into_iter().collect(),
+                    only: Default::default(),
                 }],
             );
             let origin_id = req.id;
@@ -2280,9 +2287,6 @@ mod tests {
             origin_id
         };
 
-        let file_2 = temp.child("file_2");
-        file_2.touch().unwrap();
-
         // Initialize watch on file 2
         let file_2_origin_id = {
             let req = Request::new(
@@ -2290,7 +2294,7 @@ mod tests {
                 vec![RequestData::Watch {
                     path: file_2.path().to_path_buf(),
                     recursive: false,
-                    only: vec![ChangeKind::Content].into_iter().collect(),
+                    only: Default::default(),
                 }],
             );
             let origin_id = req.id;
@@ -2325,8 +2329,16 @@ mod tests {
             );
             assert_eq!(res.origin_id, file_1_origin_id, "Wrong origin id (file 1)");
 
-            // Process any extra messages, such as getting a metadata modified
-            while rx.try_recv().is_ok() {}
+            // Process any extra messages (we might get create, content, and more)
+            loop {
+                // Sleep a bit to give time to get all changes happening
+                // TODO: Can we slim down this sleep? Or redesign test in some other way?
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                if rx.try_recv().is_err() {
+                    break;
+                }
+            }
         }
 
         // Update the files and verify we get notifications from different origins
