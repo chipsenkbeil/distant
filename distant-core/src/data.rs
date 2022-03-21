@@ -1380,6 +1380,12 @@ impl From<ChangeKind> for ChangeKindSet {
     }
 }
 
+impl From<Vec<ChangeKind>> for ChangeKindSet {
+    fn from(changes: Vec<ChangeKind>) -> Self {
+        changes.into_iter().collect()
+    }
+}
+
 impl Default for ChangeKindSet {
     fn default() -> Self {
         Self::empty()
