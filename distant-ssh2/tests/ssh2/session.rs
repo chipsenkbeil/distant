@@ -1906,6 +1906,7 @@ async fn watch_should_fail_as_unsupported(#[future] session: Session) {
             path: PathBuf::from("/some/path"),
             recursive: true,
             only: Default::default(),
+            except: Default::default(),
         }],
     );
     let res = session.send(req).await.unwrap();

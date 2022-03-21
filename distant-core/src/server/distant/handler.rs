@@ -99,7 +99,8 @@ pub(super) async fn process(
                 path,
                 recursive,
                 only,
-            } => watch(conn_id, state, reply, path, recursive, only).await,
+                except,
+            } => watch(conn_id, state, reply, path, recursive, only, except).await,
             RequestData::Unwatch { path } => unwatch(conn_id, state, path).await,
             RequestData::Exists { path } => exists(path).await,
             RequestData::Metadata {
@@ -381,11 +382,14 @@ async fn watch<F>(
     reply: F,
     path: PathBuf,
     recursive: bool,
-    only: ChangeKindSet,
+    only: Vec<ChangeKind>,
+    except: Vec<ChangeKind>,
 ) -> Result<Outgoing, ServerError>
 where
     F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
+    let only = only.into_iter().collect::<ChangeKindSet>();
+    let except = except.into_iter().collect::<ChangeKindSet>();
     let state_2 = Arc::clone(&state);
     let mut state = state.lock().await;
 
@@ -455,7 +459,9 @@ where
 
                         for (paths, only, reply) in results {
                             // Skip sending this change if we are not watching it
-                            if !only.contains(&kind) {
+                            if (!only.is_empty() && !only.contains(&kind))
+                                || (!except.is_empty() && except.contains(&kind))
+                            {
                                 trace!(
                                     "<Conn @ {}> Skipping change '{}' for {:?}",
                                     conn_id,
@@ -2148,6 +2154,7 @@ mod tests {
                 path: file.path().to_path_buf(),
                 recursive: false,
                 only: Default::default(),
+                except: Default::default(),
             }],
         );
 
@@ -2201,6 +2208,7 @@ mod tests {
                 path: temp.path().to_path_buf(),
                 recursive: true,
                 only: Default::default(),
+                except: Default::default(),
             }],
         );
 
@@ -2292,6 +2300,7 @@ mod tests {
                     path: file_1.path().to_path_buf(),
                     recursive: false,
                     only: Default::default(),
+                    except: Default::default(),
                 }],
             );
             let origin_id = req.id;
@@ -2321,6 +2330,7 @@ mod tests {
                     path: file_2.path().to_path_buf(),
                     recursive: false,
                     only: Default::default(),
+                    except: Default::default(),
                 }],
             );
             let origin_id = req.id;

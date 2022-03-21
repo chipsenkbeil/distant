@@ -9,8 +9,8 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Response, ResponseData,
-    Session, TransportError, WatchError, Watcher,
+    ChangeKindSet, LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Response,
+    ResponseData, Session, TransportError, WatchError, Watcher,
 };
 use tokio::{io, time::Duration};
 
@@ -95,6 +95,7 @@ async fn start(
                 path,
                 recursive,
                 only,
+                except,
             }),
         ) if is_shell_format => {
             let mut watcher = Watcher::watch(
@@ -102,7 +103,8 @@ async fn start(
                 session.into_channel(),
                 path,
                 recursive,
-                only,
+                only.into_iter().collect::<ChangeKindSet>(),
+                except.into_iter().collect::<ChangeKindSet>(),
             )
             .await?;
 

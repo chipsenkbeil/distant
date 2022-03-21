@@ -128,6 +128,7 @@ pub trait SessionChannelExt {
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
+        except: impl Into<ChangeKindSet>,
     ) -> AsyncReturn<'_, Watcher, WatchError>;
 
     /// Unwatches a remote file or directory
@@ -399,11 +400,15 @@ impl SessionChannelExt for SessionChannel {
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
+        except: impl Into<ChangeKindSet>,
     ) -> AsyncReturn<'_, Watcher, WatchError> {
         let tenant = tenant.into();
         let path = path.into();
         let only = only.into();
-        Box::pin(async move { Watcher::watch(tenant, self.clone(), path, recursive, only).await })
+        let except = except.into();
+        Box::pin(async move {
+            Watcher::watch(tenant, self.clone(), path, recursive, only, except).await
+        })
     }
 
     fn unwatch(

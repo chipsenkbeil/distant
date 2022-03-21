@@ -22,24 +22,6 @@ fn parse_byte_vec(src: &str) -> ByteVec {
     src.as_bytes().to_vec()
 }
 
-#[cfg(feature = "structopt")]
-fn watch_only_help() -> &'static str {
-    "Filter to only report back specified changes"
-}
-
-#[cfg(feature = "structopt")]
-fn watch_only_long_help() -> &'static str {
-    use once_cell::sync::OnceCell;
-    static INSTANCE: OnceCell<String> = OnceCell::new();
-    INSTANCE.get_or_init(|| {
-        format!(
-            "{} [choices: {}]",
-            watch_only_help(),
-            ChangeKind::VARIANTS.join(", ")
-        )
-    })
-}
-
 /// Represents the request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -226,16 +208,18 @@ pub enum RequestData {
         /// Filter to only report back specified changes
         #[cfg_attr(
             feature = "structopt",
-            structopt(
-                short,
-                long,
-                default_value,
-                help = watch_only_help(),
-                long_help = watch_only_long_help()
-            )
+            structopt(short, long, possible_values = &ChangeKind::VARIANTS)
         )]
         #[serde(default)]
-        only: ChangeKindSet,
+        only: Vec<ChangeKind>,
+
+        /// Filter to report back changes except these specified changes
+        #[cfg_attr(
+            feature = "structopt", 
+            structopt(short, long, possible_values = &ChangeKind::VARIANTS)
+        )]
+        #[serde(default)]
+        except: Vec<ChangeKind>,
     },
 
     /// Unwatches a path for changes, meaning no additional changes will be reported
@@ -1256,6 +1240,38 @@ impl ChangeKindSet {
         Self(HashSet::new())
     }
 
+    /// Produces a set of all [`ChangeKind`]
+    pub fn all() -> Self {
+        vec![
+            ChangeKind::Access,
+            ChangeKind::AccessCloseExecute,
+            ChangeKind::AccessCloseRead,
+            ChangeKind::AccessCloseWrite,
+            ChangeKind::AccessOpenExecute,
+            ChangeKind::AccessOpenRead,
+            ChangeKind::AccessOpenWrite,
+            ChangeKind::AccessRead,
+            ChangeKind::AccessTime,
+            ChangeKind::Create,
+            ChangeKind::Content,
+            ChangeKind::Data,
+            ChangeKind::Metadata,
+            ChangeKind::Modify,
+            ChangeKind::Remove,
+            ChangeKind::Rename,
+            ChangeKind::RenameBoth,
+            ChangeKind::RenameFrom,
+            ChangeKind::RenameTo,
+            ChangeKind::Size,
+            ChangeKind::Ownership,
+            ChangeKind::Permissions,
+            ChangeKind::WriteTime,
+            ChangeKind::Unknown,
+        ]
+        .into_iter()
+        .collect()
+    }
+
     /// Produces a changeset containing all of the access kinds
     pub fn access_set() -> Self {
         Self::access_open_set()
@@ -1366,11 +1382,7 @@ impl From<ChangeKind> for ChangeKindSet {
 
 impl Default for ChangeKindSet {
     fn default() -> Self {
-        Self::access_set()
-            | ChangeKind::Create
-            | Self::modify_data_set()
-            | Self::rename_set()
-            | ChangeKind::Remove
+        Self::empty()
     }
 }
 

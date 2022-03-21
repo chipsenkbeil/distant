@@ -1,9 +1,6 @@
 use crate::cli::{fixtures::*, utils::random_tenant};
 use assert_fs::prelude::*;
-use distant_core::{
-    data::{ChangeKindSet, ErrorKind},
-    Request, RequestData, Response, ResponseData,
-};
+use distant_core::{data::ErrorKind, Request, RequestData, Response, ResponseData};
 use rstest::*;
 use std::{
     io,
@@ -134,7 +131,6 @@ fn send_watch_request<W>(
     reader: &mut ThreadedReader,
     path: impl Into<PathBuf>,
     recursive: bool,
-    only: impl Into<ChangeKindSet>,
 ) -> Response
 where
     W: Write,
@@ -145,7 +141,8 @@ where
         payload: vec![RequestData::Watch {
             path: path.into(),
             recursive,
-            only: only.into(),
+            only: Vec::new(),
+            except: Vec::new(),
         }],
     };
 
@@ -310,13 +307,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     let mut stdin = cmd.stdin.take().unwrap();
     let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
-    let _ = send_watch_request(
-        &mut stdin,
-        &mut stdout,
-        file.to_path_buf(),
-        false,
-        ChangeKindSet::default(),
-    );
+    let _ = send_watch_request(&mut stdin, &mut stdout, file.to_path_buf(), false);
 
     // Make a change to some file
     file.write_str("some text").unwrap();
@@ -354,13 +345,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     let mut stdin = cmd.stdin.take().unwrap();
     let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
-    let _ = send_watch_request(
-        &mut stdin,
-        &mut stdout,
-        temp.to_path_buf(),
-        true,
-        ChangeKindSet::default(),
-    );
+    let _ = send_watch_request(&mut stdin, &mut stdout, temp.to_path_buf(), true);
 
     // Make a change to some file
     file.write_str("some text").unwrap();
@@ -404,22 +389,10 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     let mut stdout = ThreadedReader::new(cmd.stdout.take().unwrap());
 
     // Create a request to watch file1
-    let file1_res = send_watch_request(
-        &mut stdin,
-        &mut stdout,
-        file1.to_path_buf(),
-        true,
-        ChangeKindSet::default(),
-    );
+    let file1_res = send_watch_request(&mut stdin, &mut stdout, file1.to_path_buf(), true);
 
     // Create a request to watch file2
-    let file2_res = send_watch_request(
-        &mut stdin,
-        &mut stdout,
-        file2.to_path_buf(),
-        true,
-        ChangeKindSet::default(),
-    );
+    let file2_res = send_watch_request(&mut stdin, &mut stdout, file2.to_path_buf(), true);
 
     assert_ne!(
         file1_res.origin_id, file2_res.origin_id,
@@ -509,7 +482,8 @@ fn should_support_json_output_for_error(mut action_std_cmd: Command) {
         payload: vec![RequestData::Watch {
             path,
             recursive: false,
-            only: Default::default(),
+            only: Vec::new(),
+            except: Vec::new(),
         }],
     };
 

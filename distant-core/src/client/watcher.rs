@@ -61,15 +61,26 @@ impl Watcher {
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
+        except: impl Into<ChangeKindSet>,
     ) -> Result<Self, WatchError> {
         let tenant = tenant.into();
         let path = path.into();
         let only = only.into();
+        let except = except.into();
         trace!(
-            "Watching {:?} (recursive = {}) for {}",
+            "Watching {:?} (recursive = {}){}{}",
             path,
             recursive,
-            only.to_string()
+            if only.is_empty() {
+                String::new()
+            } else {
+                format!(" (only = {})", only.to_string())
+            },
+            if except.is_empty() {
+                String::new()
+            } else {
+                format!(" (except = {})", except.to_string())
+            },
         );
 
         // Submit our run request and get back a mailbox for responses
@@ -79,7 +90,8 @@ impl Watcher {
                 vec![RequestData::Watch {
                     path: path.to_path_buf(),
                     recursive,
-                    only,
+                    only: only.into_vec(),
+                    except: except.into_vec(),
                 }],
             ))
             .await
@@ -232,7 +244,8 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
-                ChangeKindSet::default(),
+                ChangeKindSet::empty(),
+                ChangeKindSet::empty(),
             )
             .await
         });
@@ -264,7 +277,8 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
-                ChangeKindSet::default(),
+                ChangeKindSet::empty(),
+                ChangeKindSet::empty(),
             )
             .await
         });
@@ -333,7 +347,8 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
-                ChangeKindSet::default(),
+                ChangeKindSet::empty(),
+                ChangeKindSet::empty(),
             )
             .await
         });
@@ -422,7 +437,8 @@ mod tests {
                 session.clone_channel(),
                 test_path,
                 true,
-                ChangeKindSet::default(),
+                ChangeKindSet::empty(),
+                ChangeKindSet::empty(),
             )
             .await
         });
