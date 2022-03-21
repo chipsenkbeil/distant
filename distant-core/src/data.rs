@@ -1022,6 +1022,27 @@ pub enum ChangeKind {
     /// no specific details were known
     Access,
 
+    /// A file was closed for executing
+    AccessCloseExecute,
+
+    /// A file was closed for reading
+    AccessCloseRead,
+
+    /// A file was closed for writing
+    AccessCloseWrite,
+
+    /// A file was opened for executing
+    AccessOpenExecute,
+
+    /// A file was opened for reading
+    AccessOpenRead,
+
+    /// A file was opened for writing
+    AccessOpenWrite,
+
+    /// A file or directory was read
+    AccessRead,
+
     /// The access time of a file or directory was changed
     AccessTime,
 
@@ -1080,7 +1101,25 @@ pub enum ChangeKind {
 impl ChangeKind {
     /// Returns true if the change is a kind of access
     pub fn is_access_kind(&self) -> bool {
-        matches!(self, Self::Access)
+        self.is_open_access_kind()
+            || self.is_close_access_kind()
+            || matches!(self, Self::Access | Self::AccessRead)
+    }
+
+    /// Returns true if the change is a kind of open access
+    pub fn is_open_access_kind(&self) -> bool {
+        matches!(
+            self,
+            Self::AccessOpenExecute | Self::AccessOpenRead | Self::AccessOpenWrite
+        )
+    }
+
+    /// Returns true if the change is a kind of close access
+    pub fn is_close_access_kind(&self) -> bool {
+        matches!(
+            self,
+            Self::AccessCloseExecute | Self::AccessCloseRead | Self::AccessCloseWrite
+        )
     }
 
     /// Returns true if the change is a kind of creation
@@ -1142,9 +1181,22 @@ impl BitOr for ChangeKind {
 
 impl From<NotifyEventKind> for ChangeKind {
     fn from(x: NotifyEventKind) -> Self {
-        use notify::event::{DataChange, MetadataKind, ModifyKind, RenameMode};
+        use notify::event::{
+            AccessKind, AccessMode, DataChange, MetadataKind, ModifyKind, RenameMode,
+        };
         match x {
             // File/directory access events
+            NotifyEventKind::Access(AccessKind::Read) => Self::AccessRead,
+            NotifyEventKind::Access(AccessKind::Open(AccessMode::Execute)) => {
+                Self::AccessOpenExecute
+            }
+            NotifyEventKind::Access(AccessKind::Open(AccessMode::Read)) => Self::AccessOpenRead,
+            NotifyEventKind::Access(AccessKind::Open(AccessMode::Write)) => Self::AccessOpenWrite,
+            NotifyEventKind::Access(AccessKind::Close(AccessMode::Execute)) => {
+                Self::AccessCloseExecute
+            }
+            NotifyEventKind::Access(AccessKind::Close(AccessMode::Read)) => Self::AccessCloseRead,
+            NotifyEventKind::Access(AccessKind::Close(AccessMode::Write)) => Self::AccessCloseWrite,
             NotifyEventKind::Access(_) => Self::Access,
 
             // File/directory creation events
@@ -1202,6 +1254,24 @@ impl ChangeKindSet {
     /// Produces an empty set of [`ChangeKind`]
     pub fn empty() -> Self {
         Self(HashSet::new())
+    }
+
+    /// Produces a changeset containing all of the access kinds
+    pub fn access_set() -> Self {
+        Self::access_open_set()
+            | Self::access_close_set()
+            | ChangeKind::AccessRead
+            | ChangeKind::Access
+    }
+
+    /// Produces a changeset containing all of the open access kinds
+    pub fn access_open_set() -> Self {
+        ChangeKind::AccessOpenExecute | ChangeKind::AccessOpenRead | ChangeKind::AccessOpenWrite
+    }
+
+    /// Produces a changeset containing all of the close access kinds
+    pub fn access_close_set() -> Self {
+        ChangeKind::AccessCloseExecute | ChangeKind::AccessCloseRead | ChangeKind::AccessCloseWrite
     }
 
     // Produces a changeset containing all of the modification kinds
@@ -1296,7 +1366,11 @@ impl From<ChangeKind> for ChangeKindSet {
 
 impl Default for ChangeKindSet {
     fn default() -> Self {
-        ChangeKind::Create | Self::modify_data_set() | Self::rename_set() | ChangeKind::Remove
+        Self::access_set()
+            | ChangeKind::Create
+            | Self::modify_data_set()
+            | Self::rename_set()
+            | ChangeKind::Remove
     }
 }
 

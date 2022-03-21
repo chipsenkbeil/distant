@@ -1,7 +1,7 @@
 use crate::cli::{fixtures::*, utils::random_tenant};
 use assert_fs::prelude::*;
 use distant_core::{
-    data::{ChangeKind, ChangeKindSet, ErrorKind},
+    data::{ChangeKindSet, ErrorKind},
     Request, RequestData, Response, ResponseData,
 };
 use rstest::*;
@@ -177,7 +177,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&["watch", "--only", "content", file.to_str().unwrap()])
+        .args(&["watch", file.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -205,9 +205,12 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
         .to_string();
 
     // Verify we get information printed out about the change
-    assert_eq!(
+    let expected = format!("Following paths were modified:\n* {}\n", path);
+    assert!(
+        stdout_data.contains(&expected),
+        "{} missing {}",
         stdout_data,
-        format!("Following paths were modified:\n* {}\n", path)
+        expected
     );
     assert_eq!(stderr_data, "");
 }
@@ -224,13 +227,7 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&[
-            "watch",
-            "--recursive",
-            "--only",
-            "content",
-            temp.to_str().unwrap(),
-        ])
+        .args(&["watch", "--recursive", temp.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -258,9 +255,12 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
         .to_string();
 
     // Verify we get information printed out about the change
-    assert_eq!(
+    let expected = format!("Following paths were modified:\n* {}\n", path);
+    assert!(
+        stdout_data.contains(&expected),
+        "{} missing {}",
         stdout_data,
-        format!("Following paths were modified:\n* {}\n", path)
+        expected
     );
     assert_eq!(stderr_data, "");
 }
@@ -315,7 +315,7 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
         &mut stdout,
         file.to_path_buf(),
         false,
-        ChangeKind::Content,
+        ChangeKindSet::default(),
     );
 
     // Make a change to some file
@@ -325,10 +325,10 @@ fn should_support_json_watching_single_file(mut action_std_cmd: Command) {
     wait_a_bit();
 
     // Get the response and verify the change
+    // NOTE: Don't bother checking the kind as it can vary by platform
     let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
@@ -359,7 +359,7 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
         &mut stdout,
         temp.to_path_buf(),
         true,
-        ChangeKind::Content,
+        ChangeKindSet::default(),
     );
 
     // Make a change to some file
@@ -369,10 +369,10 @@ fn should_support_json_watching_directory_recursively(mut action_std_cmd: Comman
     wait_a_bit();
 
     // Get the response and verify the change
+    // NOTE: Don't bother checking the kind as it can vary by platform
     let res = stdout.read_response_default_timeout();
     match &res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(&change.paths, &[file.to_path_buf().canonicalize().unwrap()]);
         }
         x => panic!("Unexpected response: {:?}", x),
@@ -409,7 +409,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file1.to_path_buf(),
         true,
-        ChangeKind::Content,
+        ChangeKindSet::default(),
     );
 
     // Create a request to watch file2
@@ -418,7 +418,7 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
         &mut stdout,
         file2.to_path_buf(),
         true,
-        ChangeKind::Content,
+        ChangeKindSet::default(),
     );
 
     assert_ne!(
@@ -433,16 +433,26 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     wait_a_bit();
 
     // Get the response and verify the change
+    // NOTE: Don't bother checking the kind as it can vary by platform
     let file1_change_res = stdout.read_response_default_timeout();
     match &file1_change_res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(
                 &change.paths,
                 &[file1.to_path_buf().canonicalize().unwrap()]
             );
         }
         x => panic!("Unexpected response: {:?}", x),
+    }
+
+    // Process any extra messages (we might get create, content, and more)
+    loop {
+        // Sleep a bit to give time to get all changes happening
+        wait_a_bit();
+
+        if stdout.try_read_line().is_none() {
+            break;
+        }
     }
 
     // Make a change to file2
@@ -452,10 +462,10 @@ fn should_support_json_reporting_changes_using_correct_request_id(mut action_std
     wait_a_bit();
 
     // Get the response and verify the change
+    // NOTE: Don't bother checking the kind as it can vary by platform
     let file2_change_res = stdout.read_response_default_timeout();
     match &file2_change_res.payload[0] {
         ResponseData::Changed(change) => {
-            assert_eq!(change.kind, ChangeKind::Content);
             assert_eq!(
                 &change.paths,
                 &[file2.to_path_buf().canonicalize().unwrap()]
