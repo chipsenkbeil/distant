@@ -74,12 +74,12 @@ impl Watcher {
             if only.is_empty() {
                 String::new()
             } else {
-                format!(" (only = {})", only.to_string())
+                format!(" (only = {})", only)
             },
             if except.is_empty() {
                 String::new()
             } else {
-                format!(" (except = {})", except.to_string())
+                format!(" (except = {})", except)
             },
         );
 

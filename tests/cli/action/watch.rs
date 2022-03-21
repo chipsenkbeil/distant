@@ -202,12 +202,11 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
         .to_string();
 
     // Verify we get information printed out about the change
-    let expected = format!("Following paths were modified:\n* {}\n", path);
     assert!(
-        stdout_data.contains(&expected),
+        stdout_data.contains(&path),
         "{} missing {}",
         stdout_data,
-        expected
+        path
     );
     assert_eq!(stderr_data, "");
 }
@@ -252,12 +251,11 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
         .to_string();
 
     // Verify we get information printed out about the change
-    let expected = format!("Following paths were modified:\n* {}\n", path);
     assert!(
-        stdout_data.contains(&expected),
+        stdout_data.contains(&path),
         "{} missing {}",
         stdout_data,
-        expected
+        path
     );
     assert_eq!(stderr_data, "");
 }
