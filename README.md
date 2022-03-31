@@ -39,8 +39,6 @@ talk to the server.
 
 Additionally, the core of the distant client and server codebase can be pulled
 in to be used with your own Rust crates via the `distant-core` crate.
-Separately, Lua bindings can be found within `distant-lua`, exported as a
-shared library that can be imported into lua using `require("distant_lua")`.
 
 ## Installation
 

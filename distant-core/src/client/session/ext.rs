@@ -1,8 +1,11 @@
 use crate::{
-    client::{RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel},
+    client::{
+        RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel, UnwatchError,
+        WatchError, Watcher,
+    },
     data::{
-        DirEntry, Error as Failure, Metadata, PtySize, Request, RequestData, ResponseData,
-        SystemInfo,
+        ChangeKindSet, DirEntry, Error as Failure, Metadata, PtySize, Request, RequestData,
+        ResponseData, SystemInfo,
     },
     net::TransportError,
 };
@@ -117,6 +120,23 @@ pub trait SessionChannelExt {
         src: impl Into<PathBuf>,
         dst: impl Into<PathBuf>,
     ) -> AsyncReturn<'_, ()>;
+
+    /// Watches a remote file or directory
+    fn watch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+        recursive: bool,
+        only: impl Into<ChangeKindSet>,
+        except: impl Into<ChangeKindSet>,
+    ) -> AsyncReturn<'_, Watcher, WatchError>;
+
+    /// Unwatches a remote file or directory
+    fn unwatch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> AsyncReturn<'_, (), UnwatchError>;
 
     /// Spawns a process on the remote machine
     fn spawn(
@@ -372,6 +392,51 @@ impl SessionChannelExt for SessionChannel {
             RequestData::Rename { src: src.into(), dst: dst.into() },
             @ok
         )
+    }
+
+    fn watch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+        recursive: bool,
+        only: impl Into<ChangeKindSet>,
+        except: impl Into<ChangeKindSet>,
+    ) -> AsyncReturn<'_, Watcher, WatchError> {
+        let tenant = tenant.into();
+        let path = path.into();
+        let only = only.into();
+        let except = except.into();
+        Box::pin(async move {
+            Watcher::watch(tenant, self.clone(), path, recursive, only, except).await
+        })
+    }
+
+    fn unwatch(
+        &mut self,
+        tenant: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> AsyncReturn<'_, (), UnwatchError> {
+        fn inner_unwatch(
+            channel: &mut SessionChannel,
+            tenant: impl Into<String>,
+            path: impl Into<PathBuf>,
+        ) -> AsyncReturn<'_, ()> {
+            make_body!(
+                channel,
+                tenant,
+                RequestData::Unwatch { path: path.into() },
+                @ok
+            )
+        }
+
+        let tenant = tenant.into();
+        let path = path.into();
+
+        Box::pin(async move {
+            inner_unwatch(self, tenant, path)
+                .await
+                .map_err(UnwatchError::from)
+        })
     }
 
     fn spawn(

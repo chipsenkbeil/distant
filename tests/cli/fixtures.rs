@@ -3,7 +3,12 @@ use assert_cmd::Command;
 use distant_core::*;
 use once_cell::sync::OnceCell;
 use rstest::*;
-use std::{ffi::OsStr, net::SocketAddr, thread};
+use std::{
+    ffi::OsStr,
+    net::SocketAddr,
+    process::{Command as StdCommand, Stdio},
+    thread,
+};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 const LOG_PATH: &str = "/tmp/test.distant.server.log";
@@ -67,13 +72,31 @@ impl DistantServerCtx {
 
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
-    pub fn new_cmd(&self, subcommand: impl AsRef<OsStr>) -> Command {
+    pub fn new_assert_cmd(&self, subcommand: impl AsRef<OsStr>) -> Command {
         let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
         cmd.arg(subcommand)
             .args(&["--session", "environment"])
             .env("DISTANT_HOST", self.addr.ip().to_string())
             .env("DISTANT_PORT", self.addr.port().to_string())
             .env("DISTANT_KEY", self.key.as_str());
+        cmd
+    }
+
+    /// Configures some distant command with an environment that can talk to a
+    /// remote distant server, spawning it as a child process
+    pub fn new_std_cmd(&self, subcommand: impl AsRef<OsStr>) -> StdCommand {
+        let cmd_path = assert_cmd::cargo::cargo_bin(env!("CARGO_PKG_NAME"));
+        let mut cmd = StdCommand::new(cmd_path);
+
+        cmd.arg(subcommand)
+            .args(&["--session", "environment"])
+            .env("DISTANT_HOST", self.addr.ip().to_string())
+            .env("DISTANT_PORT", self.addr.port().to_string())
+            .env("DISTANT_KEY", self.key.as_str())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
         cmd
     }
 }
@@ -94,10 +117,15 @@ pub fn ctx() -> &'static DistantServerCtx {
 
 #[fixture]
 pub fn action_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_cmd("action")
+    ctx.new_assert_cmd("action")
 }
 
 #[fixture]
 pub fn lsp_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_cmd("lsp")
+    ctx.new_assert_cmd("lsp")
+}
+
+#[fixture]
+pub fn action_std_cmd(ctx: &'_ DistantServerCtx) -> StdCommand {
+    ctx.new_std_cmd("action")
 }

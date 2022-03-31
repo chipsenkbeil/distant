@@ -1,16 +1,17 @@
 use crate::{
     data::{
-        self, DirEntry, FileType, Metadata, PtySize, Request, RequestData, Response, ResponseData,
-        RunningProcess, SystemInfo,
+        self, Change, ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, PtySize, Request,
+        RequestData, Response, ResponseData, RunningProcess, SystemInfo,
     },
     server::distant::{
         process::{Process, PtyProcess, SimpleProcess},
-        state::{ProcessState, State},
+        state::{ProcessState, State, WatcherPath},
     },
 };
 use derive_more::{Display, Error, From};
 use futures::future;
 use log::*;
+use notify::{Config as WatcherConfig, RecursiveMode, Watcher};
 use std::{
     env,
     future::Future,
@@ -30,15 +31,17 @@ type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 
 #[derive(Debug, Display, Error, From)]
 pub enum ServerError {
-    IoError(io::Error),
-    WalkDirError(walkdir::Error),
+    Io(io::Error),
+    Notify(notify::Error),
+    WalkDir(walkdir::Error),
 }
 
 impl From<ServerError> for ResponseData {
     fn from(x: ServerError) -> Self {
         match x {
-            ServerError::IoError(x) => Self::from(x),
-            ServerError::WalkDirError(x) => Self::from(x),
+            ServerError::Io(x) => Self::from(x),
+            ServerError::Notify(x) => Self::from(x),
+            ServerError::WalkDir(x) => Self::from(x),
         }
     }
 }
@@ -92,6 +95,13 @@ pub(super) async fn process(
             RequestData::Remove { path, force } => remove(path, force).await,
             RequestData::Copy { src, dst } => copy(src, dst).await,
             RequestData::Rename { src, dst } => rename(src, dst).await,
+            RequestData::Watch {
+                path,
+                recursive,
+                only,
+                except,
+            } => watch(conn_id, state, reply, path, recursive, only, except).await,
+            RequestData::Unwatch { path } => unwatch(conn_id, state, path).await,
             RequestData::Exists { path } => exists(path).await,
             RequestData::Metadata {
                 path,
@@ -366,6 +376,205 @@ async fn rename(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
     Ok(Outgoing::from(ResponseData::Ok))
 }
 
+async fn watch<F>(
+    conn_id: usize,
+    state: HState,
+    reply: F,
+    path: PathBuf,
+    recursive: bool,
+    only: Vec<ChangeKind>,
+    except: Vec<ChangeKind>,
+) -> Result<Outgoing, ServerError>
+where
+    F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+{
+    let only = only.into_iter().collect::<ChangeKindSet>();
+    let except = except.into_iter().collect::<ChangeKindSet>();
+    let state_2 = Arc::clone(&state);
+    let mut state = state.lock().await;
+
+    // NOTE: Do not use get_or_insert_with since notify::recommended_watcher returns a result
+    //       and we cannot unpack the result within the above function. Since we are locking
+    //       our state, we can be confident that no one else is modifying the watcher option
+    //       concurrently; so, we do a naive check for option being populated
+    if state.watcher.is_none() {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let mut watcher = notify::recommended_watcher(move |res| {
+            let _ = tx.blocking_send(res);
+        })?;
+
+        // Attempt to configure watcher, but don't fail if these configurations fail
+        match watcher.configure(WatcherConfig::PreciseEvents(true)) {
+            Ok(true) => debug!("<Conn @ {}> Watcher configured for precise events", conn_id,),
+            Ok(false) => debug!(
+                "<Conn @ {}> Watcher not configured for precise events",
+                conn_id,
+            ),
+            Err(x) => error!(
+                "<Conn @ {}> Watcher configuration for precise events failed: {}",
+                conn_id, x
+            ),
+        }
+
+        // Attempt to configure watcher, but don't fail if these configurations fail
+        match watcher.configure(WatcherConfig::NoticeEvents(true)) {
+            Ok(true) => debug!("<Conn @ {}> Watcher configured for notice events", conn_id),
+            Ok(false) => debug!(
+                "<Conn @ {}> Watcher not configured for notice events",
+                conn_id,
+            ),
+            Err(x) => error!(
+                "<Conn @ {}> Watcher configuration for notice events failed: {}",
+                conn_id, x
+            ),
+        }
+
+        let _ = state.watcher.insert(watcher);
+
+        tokio::spawn(async move {
+            while let Some(res) = rx.recv().await {
+                let is_ok = match res {
+                    Ok(mut x) => {
+                        let mut state = state_2.lock().await;
+                        let paths: Vec<_> = x.paths.drain(..).collect();
+                        let kind = ChangeKind::from(x.kind);
+
+                        trace!(
+                            "<Conn @ {}> Watcher detected '{}' change for {:?}",
+                            conn_id,
+                            kind,
+                            paths
+                        );
+
+                        fn make_res_data(kind: ChangeKind, paths: &[&PathBuf]) -> ResponseData {
+                            ResponseData::Changed(Change {
+                                kind,
+                                paths: paths.iter().map(|p| p.to_path_buf()).collect(),
+                            })
+                        }
+
+                        let results = state.map_paths_to_watcher_paths_and_replies(&paths);
+                        let mut is_ok = true;
+
+                        for (paths, only, reply) in results {
+                            // Skip sending this change if we are not watching it
+                            if (!only.is_empty() && !only.contains(&kind))
+                                || (!except.is_empty() && except.contains(&kind))
+                            {
+                                trace!(
+                                    "<Conn @ {}> Skipping change '{}' for {:?}",
+                                    conn_id,
+                                    kind,
+                                    paths
+                                );
+                                continue;
+                            }
+
+                            if !reply(vec![make_res_data(kind, &paths)]).await {
+                                is_ok = false;
+                                break;
+                            }
+                        }
+                        is_ok
+                    }
+                    Err(mut x) => {
+                        let mut state = state_2.lock().await;
+                        let paths: Vec<_> = x.paths.drain(..).collect();
+                        let msg = x.to_string();
+
+                        error!(
+                            "<Conn @ {}> Watcher encountered an error {} for {:?}",
+                            conn_id, msg, paths
+                        );
+
+                        fn make_res_data(msg: &str, paths: &[&PathBuf]) -> ResponseData {
+                            if paths.is_empty() {
+                                ResponseData::Error(msg.into())
+                            } else {
+                                ResponseData::Error(format!("{} about {:?}", msg, paths).into())
+                            }
+                        }
+
+                        let mut is_ok = true;
+
+                        // If we have no paths for the errors, then we send the error to everyone
+                        if paths.is_empty() {
+                            trace!("<Conn @ {}> Relaying error to all watchers", conn_id);
+                            for reply in state.watcher_paths.values_mut() {
+                                if !reply(vec![make_res_data(&msg, &[])]).await {
+                                    is_ok = false;
+                                    break;
+                                }
+                            }
+                        // Otherwise, figure out the relevant watchers from our paths and
+                        // send the error to them
+                        } else {
+                            let results = state.map_paths_to_watcher_paths_and_replies(&paths);
+
+                            trace!(
+                                "<Conn @ {}> Relaying error to {} watchers",
+                                conn_id,
+                                results.len()
+                            );
+                            for (paths, _, reply) in results {
+                                if !reply(vec![make_res_data(&msg, &paths)]).await {
+                                    is_ok = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        is_ok
+                    }
+                };
+
+                if !is_ok {
+                    error!("<Conn @ {}> Watcher channel closed", conn_id);
+                    break;
+                }
+            }
+        });
+    }
+
+    match state.watcher.as_mut() {
+        Some(watcher) => {
+            let wp = WatcherPath::new(&path, recursive, only)?;
+            watcher.watch(
+                path.as_path(),
+                if recursive {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                },
+            )?;
+            state.watcher_paths.insert(wp, Box::new(reply));
+            Ok(Outgoing::from(ResponseData::Ok))
+        }
+        None => Err(ServerError::Io(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("<Conn @ {}> Unable to initialize watcher", conn_id,),
+        ))),
+    }
+}
+
+async fn unwatch(conn_id: usize, state: HState, path: PathBuf) -> Result<Outgoing, ServerError> {
+    if let Some(watcher) = state.lock().await.watcher.as_mut() {
+        watcher.unwatch(path.as_path())?;
+        // TODO: This also needs to remove any path that matches in either raw form
+        //       or canonicalized form from the map of PathBuf -> ReplyFn
+        return Ok(Outgoing::from(ResponseData::Ok));
+    }
+
+    Err(ServerError::Io(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        format!(
+            "<Conn @ {}> Unable to unwatch as watcher not initialized",
+            conn_id,
+        ),
+    )))
+}
+
 async fn exists(path: PathBuf) -> Result<Outgoing, ServerError> {
     // Following experimental `std::fs::try_exists`, which checks the error kind of the
     // metadata lookup to see if it is not found and filters accordingly
@@ -587,7 +796,7 @@ async fn proc_kill(conn_id: usize, state: HState, id: usize) -> Result<Outgoing,
         }
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {} | Proc {}> Unable to send kill signal to process",
@@ -610,7 +819,7 @@ async fn proc_stdin(
         }
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {} | Proc {}> Unable to send stdin to process",
@@ -631,7 +840,7 @@ async fn proc_resize_pty(
         return Ok(Outgoing::from(ResponseData::Ok));
     }
 
-    Err(ServerError::IoError(io::Error::new(
+    Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
             "<Conn @ {} | Proc {}> Unable to resize pty to {:?}",
@@ -1904,6 +2113,289 @@ mod tests {
         // Verify that we moved the file
         src.assert(predicate::path::missing());
         dst.assert("some text");
+    }
+
+    /// Validates a response as being a series of changes that include the provided paths
+    fn validate_changed_paths(
+        res: &Response,
+        expected_paths: &[PathBuf],
+        should_panic: bool,
+    ) -> bool {
+        match &res.payload[0] {
+            ResponseData::Changed(change) if should_panic => {
+                let paths: Vec<PathBuf> = change
+                    .paths
+                    .iter()
+                    .map(|x| x.canonicalize().unwrap())
+                    .collect();
+                assert_eq!(paths, expected_paths, "Wrong paths reported: {:?}", change);
+
+                true
+            }
+            ResponseData::Changed(change) => {
+                let paths: Vec<PathBuf> = change
+                    .paths
+                    .iter()
+                    .map(|x| x.canonicalize().unwrap())
+                    .collect();
+                paths == expected_paths
+            }
+            x if should_panic => panic!("Unexpected response: {:?}", x),
+            _ => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_should_support_watching_a_single_file() {
+        // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
+        let (conn_id, state, tx, mut rx) = setup(100);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let file = temp.child("file");
+        file.touch().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Watch {
+                path: file.path().to_path_buf(),
+                recursive: false,
+                only: Default::default(),
+                except: Default::default(),
+            }],
+        );
+
+        // NOTE: We need to clone state so we don't drop the watcher
+        //       as part of dropping the state
+        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Update the file and verify we get a notification
+        file.write_str("some text").unwrap();
+
+        let res = rx
+            .recv()
+            .await
+            .expect("Channel closed before we got change");
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        validate_changed_paths(
+            &res,
+            &[file.path().to_path_buf().canonicalize().unwrap()],
+            /* should_panic */ true,
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_should_support_watching_a_directory_recursively() {
+        // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
+        let (conn_id, state, tx, mut rx) = setup(100);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let file = temp.child("file");
+        file.touch().unwrap();
+
+        let dir = temp.child("dir");
+        dir.create_dir_all().unwrap();
+
+        let req = Request::new(
+            "test-tenant",
+            vec![RequestData::Watch {
+                path: temp.path().to_path_buf(),
+                recursive: true,
+                only: Default::default(),
+                except: Default::default(),
+            }],
+        );
+
+        // NOTE: We need to clone state so we don't drop the watcher
+        //       as part of dropping the state
+        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
+        let res = rx.recv().await.unwrap();
+        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        assert!(
+            matches!(res.payload[0], ResponseData::Ok),
+            "Unexpected response: {:?}",
+            res.payload[0]
+        );
+
+        // Update the file and verify we get a notification
+        file.write_str("some text").unwrap();
+
+        // Create a nested file and verify we get a notification
+        let nested_file = dir.child("nested-file");
+        nested_file.write_str("some text").unwrap();
+
+        // Sleep a bit to give time to get all changes happening
+        // TODO: Can we slim down this sleep? Or redesign test in some other way?
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Collect all responses, as we may get multiple for interactions within a directory
+        let mut responses = Vec::new();
+        while let Ok(res) = rx.try_recv() {
+            responses.push(res);
+        }
+
+        // Validate that we have at least one change reported for each of our paths
+        assert!(
+            responses.len() >= 2,
+            "Less than expected total responses: {:?}",
+            responses
+        );
+
+        let path = file.path().to_path_buf();
+        assert!(
+            responses.iter().any(|res| validate_changed_paths(
+                res,
+                &[file.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ false,
+            )),
+            "Missing {:?} in {:?}",
+            path,
+            responses
+                .iter()
+                .map(|x| format!("{:?}", x))
+                .collect::<Vec<String>>(),
+        );
+
+        let path = nested_file.path().to_path_buf();
+        assert!(
+            responses.iter().any(|res| validate_changed_paths(
+                res,
+                &[file.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ false,
+            )),
+            "Missing {:?} in {:?}",
+            path,
+            responses
+                .iter()
+                .map(|x| format!("{:?}", x))
+                .collect::<Vec<String>>(),
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_should_report_changes_using_the_request_id() {
+        // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
+        let (conn_id, state, tx, mut rx) = setup(100);
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let file_1 = temp.child("file_1");
+        file_1.touch().unwrap();
+
+        let file_2 = temp.child("file_2");
+        file_2.touch().unwrap();
+
+        // Sleep a bit to give time to get all changes happening
+        // TODO: Can we slim down this sleep? Or redesign test in some other way?
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Initialize watch on file 1
+        let file_1_origin_id = {
+            let req = Request::new(
+                "test-tenant",
+                vec![RequestData::Watch {
+                    path: file_1.path().to_path_buf(),
+                    recursive: false,
+                    only: Default::default(),
+                    except: Default::default(),
+                }],
+            );
+            let origin_id = req.id;
+
+            // NOTE: We need to clone state so we don't drop the watcher
+            //       as part of dropping the state
+            process(conn_id, Arc::clone(&state), req, tx.clone())
+                .await
+                .unwrap();
+
+            let res = rx.recv().await.unwrap();
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            assert!(
+                matches!(res.payload[0], ResponseData::Ok),
+                "Unexpected response: {:?}",
+                res.payload[0]
+            );
+
+            origin_id
+        };
+
+        // Initialize watch on file 2
+        let file_2_origin_id = {
+            let req = Request::new(
+                "test-tenant",
+                vec![RequestData::Watch {
+                    path: file_2.path().to_path_buf(),
+                    recursive: false,
+                    only: Default::default(),
+                    except: Default::default(),
+                }],
+            );
+            let origin_id = req.id;
+
+            // NOTE: We need to clone state so we don't drop the watcher
+            //       as part of dropping the state
+            process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
+
+            let res = rx.recv().await.unwrap();
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            assert!(
+                matches!(res.payload[0], ResponseData::Ok),
+                "Unexpected response: {:?}",
+                res.payload[0]
+            );
+
+            origin_id
+        };
+
+        // Update the files and verify we get notifications from different origins
+        {
+            file_1.write_str("some text").unwrap();
+            let res = rx
+                .recv()
+                .await
+                .expect("Channel closed before we got change");
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            validate_changed_paths(
+                &res,
+                &[file_1.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ true,
+            );
+            assert_eq!(res.origin_id, file_1_origin_id, "Wrong origin id (file 1)");
+
+            // Process any extra messages (we might get create, content, and more)
+            loop {
+                // Sleep a bit to give time to get all changes happening
+                // TODO: Can we slim down this sleep? Or redesign test in some other way?
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                if rx.try_recv().is_err() {
+                    break;
+                }
+            }
+        }
+
+        // Update the files and verify we get notifications from different origins
+        {
+            file_2.write_str("some text").unwrap();
+            let res = rx
+                .recv()
+                .await
+                .expect("Channel closed before we got change");
+            assert_eq!(res.payload.len(), 1, "Wrong payload size");
+            validate_changed_paths(
+                &res,
+                &[file_2.path().to_path_buf().canonicalize().unwrap()],
+                /* should_panic */ true,
+            );
+            assert_eq!(res.origin_id, file_2_origin_id, "Wrong origin id (file 2)");
+        }
     }
 
     #[tokio::test]

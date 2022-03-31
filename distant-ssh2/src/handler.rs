@@ -49,6 +49,15 @@ struct Outgoing {
     post_hook: Option<PostHook>,
 }
 
+impl Outgoing {
+    pub fn unsupported() -> Self {
+        Self::from(ResponseData::from(io::Error::new(
+            io::ErrorKind::Other,
+            "Unsupported",
+        )))
+    }
+}
+
 impl From<ResponseData> for Outgoing {
     fn from(data: ResponseData) -> Self {
         Self {
@@ -88,6 +97,8 @@ pub(super) async fn process(
             RequestData::Remove { path, force } => remove(session, path, force).await,
             RequestData::Copy { src, dst } => copy(session, src, dst).await,
             RequestData::Rename { src, dst } => rename(session, src, dst).await,
+            RequestData::Watch { .. } => Ok(Outgoing::unsupported()),
+            RequestData::Unwatch { .. } => Ok(Outgoing::unsupported()),
             RequestData::Exists { path } => exists(session, path).await,
             RequestData::Metadata {
                 path,

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command for distant cli
 - Support for JSON communication of ssh auth during launch (cli)
 - Add windows and unix metadata files to overall metadata response data
+- Watch and unwatch cli commands powered by underlying `Watcher` core
+  implementation that uses new `RequestData::Watch`, `RequestData::Unwatch`,
+  and `ResponseData::Changed` data types to communicate filesystem changes
 
 ### Changed
 - Default session type for CLI (launch, action, etc) is `environment`
@@ -29,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Github actions no longer use paths-filter so every PR & commit will test
   everything
+- `distant-lua` and `distant-lua-test` no longer exist as we are focusing
+  solely on the JSON API for integration into distant
 
 ## [0.15.1] - 2021-11-15
 ### Added

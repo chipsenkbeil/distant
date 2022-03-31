@@ -1,4 +1,4 @@
-use distant_core::{RemoteProcessError, TransportError};
+use distant_core::{RemoteProcessError, SessionChannelExtError, TransportError, WatchError};
 
 /// Exit codes following https://www.freebsd.org/cgi/man.cgi?query=sysexits&sektion=3
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -115,6 +115,28 @@ impl ExitCodeError for RemoteProcessError {
             Self::TransportError(x) => x.to_exit_code(),
             Self::UnexpectedEof => ExitCode::IoError,
             Self::WaitFailed(_) => ExitCode::Software,
+        }
+    }
+}
+
+impl ExitCodeError for SessionChannelExtError {
+    fn to_exit_code(&self) -> ExitCode {
+        match self {
+            Self::Failure(_) => ExitCode::Software,
+            Self::TransportError(x) => x.to_exit_code(),
+            Self::MismatchedResponse => ExitCode::Protocol,
+        }
+    }
+}
+
+impl ExitCodeError for WatchError {
+    fn to_exit_code(&self) -> ExitCode {
+        match self {
+            Self::MissingConfirmation => ExitCode::Protocol,
+            Self::ServerError(_) => ExitCode::Software,
+            Self::TransportError(x) => x.to_exit_code(),
+            Self::QueuedChangeDropped => ExitCode::Software,
+            Self::UnexpectedResponse(_) => ExitCode::Protocol,
         }
     }
 }

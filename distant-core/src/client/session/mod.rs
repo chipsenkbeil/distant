@@ -128,6 +128,11 @@ impl Session {
             .await
             .and_then(convert::identity)
     }
+
+    /// Convert into underlying channel
+    pub fn into_channel(self) -> SessionChannel {
+        self.channel
+    }
 }
 
 #[cfg(unix)]
