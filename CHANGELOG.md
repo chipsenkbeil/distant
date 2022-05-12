@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+### Changed
+### Fixed
+### Removed
+
+## [0.16.0] - 2022-05-12
+### Added
 - New `environment` session type that prints out environment variable
   definitions for use in an interactive session or to evaluate
 - Shell support introduced for ssh & distant servers, including a new shell

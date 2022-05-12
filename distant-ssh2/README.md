@@ -31,7 +31,7 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-ssh2 = "0.15"
+distant-ssh2 = "0.16"
 ```
 
 ## Examples
