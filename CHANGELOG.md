@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 ### Removed
 
+## [0.16.1] - 2022-05-13
+### Changed
+- Lock in to Rust openssl 0.10.38 as it is the last version that supports using
+  openssl 3.x.x before reverting
+
 ## [0.16.0] - 2022-05-12
 ### Added
 - New `environment` session type that prints out environment variable
