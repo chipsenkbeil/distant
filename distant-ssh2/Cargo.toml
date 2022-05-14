@@ -10,6 +10,11 @@ repository = "https://github.com/chipsenkbeil/distant"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = ["libssh", "ssh2"]
+libssh = ["wezterm-ssh/libssh-rs", "wezterm-ssh/vendored-openssl-libssh-rs"]
+ssh2 = ["wezterm-ssh/ssh2", "wezterm-ssh/vendored-openssl-ssh2"]
+
 [dependencies]
 async-compat = "0.2.1"
 distant-core = { version = "=0.16.1", path = "../distant-core" }
@@ -20,15 +25,7 @@ rpassword = "5.0.1"
 shell-words = "1.0"
 smol = "1.2"
 tokio = { version = "1.12.0", features = ["full"] }
-wezterm-ssh = { version = "0.4.0", features = ["vendored-openssl"] }
-
-# Constrained to the last version of openssl that builds together with
-# `openssl-sys = "=0.9.71"` which we are constrained to in libssh-rs used
-# by wezterm-ssh until it switches back to openssl 3.x.
-# https://github.com/sfackler/rust-openssl/issues/1630
-# https://github.com/sfackler/rust-openssl/pull/1578
-# https://github.com/wez/libssh-rs/blob/main/libssh-rs-sys/Cargo.toml
-openssl = "=0.10.38"
+wezterm-ssh = { version = "0.4.0", default-features = false }
 
 # Optional serde support for data structures
 serde = { version = "1.0.126", features = ["derive"], optional = true }

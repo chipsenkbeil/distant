@@ -123,6 +123,8 @@ jobs:
           path: |
             ${{ env.X86_GNU_REL_BIN }}
 
+  # NOTE: For musl, we only support ssh2 and not libssh for the time being due to some
+  #       build issue with libssh-rs-sys not finding the symbol ENGINE_cleanup in libcrypto
   linux_musl:
     name: "Build release on Linux (musl)"
     runs-on: ubuntu-latest
@@ -147,7 +149,7 @@ jobs:
       - name: Build binary (MUSL x86_64)
         run: |
           source $HOME/.cargo/env
-          cargo build --release --all-features --target ${{ env.X86_MUSL_ARCH }}
+          cargo build --release --no-default-features --features ssh2 --target ${{ env.X86_MUSL_ARCH }}
           ls -l ./${{ env.X86_MUSL_DIR }}
           strip ./${{ env.X86_MUSL_DIR }}/${{ env.BUILD_BIN }}
           mv ./${{ env.X86_MUSL_DIR }}/${{ env.BUILD_BIN }} ./${{ env.X86_MUSL_REL_BIN }}
