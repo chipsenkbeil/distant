@@ -543,7 +543,7 @@ mod tests {
         let (_t_read, mut t_write) = stream.into_split();
 
         // Queue a write already so that we block on the next one
-        t_write.write(&[1, 2, 3]).await.expect("Failed to write");
+        let _ = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
 
         // Verify that the next write is pending
         let f = t_write.write(&[4, 5]);
