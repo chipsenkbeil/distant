@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 ### Removed
 
+## [0.16.2] - 2022-05-27
+### Changed
+- The following fields now default to false when missing in JSON request body
+  - For `DirRead`: `absolute`, `canonicalize`, `include_root`
+  - For `DirCreate`: `all`
+  - For `Remove`: `force`
+  - For `Watch`: `recursive`
+  - For `Metadata`: `canonicalize` and `resolve_file_type`
+  - For `ProcSpawn`: `args` (empty list), `persist`, and `pty` (nothing)
+
 ## [0.16.1] - 2022-05-13
 ### Changed
 - Lock in to Rust openssl 0.10.38 as it is the last version that supports using

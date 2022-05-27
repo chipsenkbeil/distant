@@ -131,6 +131,7 @@ pub enum RequestData {
         depth: usize,
 
         /// Whether or not to return absolute or relative paths
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         absolute: bool,
 
@@ -140,6 +141,7 @@ pub enum RequestData {
         ///
         /// Note that the flag absolute must be true to have absolute paths
         /// returned, even if canonicalize is flagged as true
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         canonicalize: bool,
 
@@ -148,6 +150,7 @@ pub enum RequestData {
         ///
         /// If included, the root directory will also be a canonicalized,
         /// absolute path and will not follow any of the other flags
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(long))]
         include_root: bool,
     },
@@ -159,6 +162,7 @@ pub enum RequestData {
         path: PathBuf,
 
         /// Whether or not to create all parent directories
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         all: bool,
     },
@@ -171,6 +175,7 @@ pub enum RequestData {
 
         /// Whether or not to remove all contents within directory if is a directory.
         /// Does nothing different for files
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         force: bool,
     },
@@ -202,23 +207,24 @@ pub enum RequestData {
 
         /// If true, will recursively watch for changes within directories, othewise
         /// will only watch for changes immediately within directories
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         recursive: bool,
 
         /// Filter to only report back specified changes
+        #[serde(default)]
         #[cfg_attr(
             feature = "structopt",
             structopt(short, long, possible_values = &ChangeKind::VARIANTS)
         )]
-        #[serde(default)]
         only: Vec<ChangeKind>,
 
         /// Filter to report back changes except these specified changes
+        #[serde(default)]
         #[cfg_attr(
             feature = "structopt", 
             structopt(short, long, possible_values = &ChangeKind::VARIANTS)
         )]
-        #[serde(default)]
         except: Vec<ChangeKind>,
     },
 
@@ -242,10 +248,12 @@ pub enum RequestData {
         /// Whether or not to include a canonicalized version of the path, meaning
         /// returning the canonical, absolute form of a path with all
         /// intermediate components normalized and symbolic links resolved
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(short, long))]
         canonicalize: bool,
 
         /// Whether or not to follow symlinks to determine absolute file type (dir/file)
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(long))]
         resolve_file_type: bool,
     },
@@ -257,14 +265,17 @@ pub enum RequestData {
         cmd: String,
 
         /// Arguments for the command
+        #[serde(default)]
         args: Vec<String>,
 
         /// Whether or not the process should be persistent, meaning that the process will not be
         /// killed when the associated client disconnects
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(long))]
         persist: bool,
 
         /// If provided, will spawn process in a pty, otherwise spawns directly
+        #[serde(default)]
         #[cfg_attr(feature = "structopt", structopt(long))]
         pty: Option<PtySize>,
     },

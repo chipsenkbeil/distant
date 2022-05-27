@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "assert_fs",
  "bitflags",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh2"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "assert_cmd",
  "assert_fs",
