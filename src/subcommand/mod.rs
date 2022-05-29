@@ -47,7 +47,7 @@ impl CommandRunner {
         } = self;
 
         let (session, lsp_data) = match method {
-            #[cfg(feature = "ssh2")]
+            #[cfg(any(feature = "libssh", feature = "ssh2"))]
             Method::Ssh => {
                 use distant_ssh2::{Ssh2Session, Ssh2SessionOpts};
                 let SshConnectionOpts { host, port, user } = ssh_connection;

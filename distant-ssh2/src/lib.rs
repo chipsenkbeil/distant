@@ -1,3 +1,6 @@
+#[cfg(not(any(feature = "libssh", feature = "ssh2")))]
+compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
+
 use async_compat::CompatExt;
 use distant_core::{
     Request, Session, SessionChannelExt, SessionDetails, SessionInfo, Transport,
@@ -11,6 +14,7 @@ use std::{
     io::{self, Write},
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -26,26 +30,67 @@ mod process;
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum SshBackend {
     /// Use libssh as backend
+    #[cfg(feature = "libssh")]
     LibSsh,
 
     /// Use ssh2 as backend
+    #[cfg(feature = "ssh2")]
     Ssh2,
 }
 
+impl SshBackend {
+    pub fn as_static_str(&self) -> &'static str {
+        match self {
+            #[cfg(feature = "libssh")]
+            Self::LibSsh => "libssh",
+
+            #[cfg(feature = "ssh2")]
+            Self::Ssh2 => "ssh2",
+        }
+    }
+}
+
 impl Default for SshBackend {
-    /// Defaults to ssh2
+    /// Defaults to ssh2 if enabled, otherwise uses libssh by default
     ///
     /// NOTE: There are currently bugs in libssh that cause our implementation to hang related to
     ///       process stdout/stderr and maybe other logic.
     fn default() -> Self {
-        Self::Ssh2
+        #[cfg(feature = "ssh2")]
+        {
+            Self::Ssh2
+        }
+
+        #[cfg(not(feature = "ssh2"))]
+        {
+            Self::LibSsh
+        }
+    }
+}
+
+impl FromStr for SshBackend {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            #[cfg(feature = "ssh2")]
+            s if s.trim().eq_ignore_ascii_case("ssh2") => Ok(Self::Ssh2),
+
+            #[cfg(feature = "libssh")]
+            s if s.trim().eq_ignore_ascii_case("libssh") => Ok(Self::LibSsh),
+
+            _ => Err("SSH backend must be \"libssh\" or \"ssh2\""),
+        }
     }
 }
 
 impl fmt::Display for SshBackend {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            #[cfg(feature = "libssh")]
             Self::LibSsh => write!(f, "libssh"),
+
+            #[cfg(feature = "ssh2")]
             Self::Ssh2 => write!(f, "ssh2"),
         }
     }

@@ -177,6 +177,7 @@ jobs:
       LINUX64_MUSL: linux64-musl
       LINUX64_MUSL_BIN: distant-linux64-musl
     steps:
+      - uses: actions/checkout@v2
       - uses: actions/download-artifact@v2
       - name: Generate MacOS SHA256 checksums
         run: |
@@ -203,6 +204,7 @@ jobs:
         run: |
           TAG_NAME=${{ github.ref }}
           echo "TAG_NAME=${TAG_NAME#refs/tags/}" >> $GITHUB_ENV
+          echo "TAG_VERSION=${TAG_NAME#refs/tags/v}" >> $GITHUB_ENV
       - name: Check git tag for pre-release
         id: check-tag
         run: |
@@ -212,6 +214,12 @@ jobs:
       - name: Print pre-release status
         run: |
           echo "Is ${{ github.ref }} a pre-release: ${{ steps.check-tag.outputs.match }}"
+      - name: Get Changelog Entry
+        id: changelog
+        uses: mindsers/changelog-reader-action@v2
+        with:
+          version: ${{ env.TAG_VERSION }}
+          path: "./CHANGELOG.md"
       - name: Publish
         uses: softprops/action-gh-release@v1
         with:
@@ -227,6 +235,8 @@ jobs:
             ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_BIN }}
             **/*.sha256sum
           body: |
+            ## Release Notes
+            ${{ steps.changelog.outputs.changes }}
             ## Binaries
             Standalone binaries are built out for Windows (x86_64), MacOS (Intel & ARM), and Linux (x86_64).
             - **linux64-gnu** is the x86-64 release on Linux using libc

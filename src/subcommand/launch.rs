@@ -192,21 +192,21 @@ async fn socket_loop(
 }
 
 async fn spawn_remote_server(cmd: LaunchSubcommand, opt: CommonOpt) -> Result<SessionInfo, Error> {
-    #[cfg(feature = "ssh2")]
+    #[cfg(any(feature = "libssh", feature = "ssh2"))]
     if cmd.external_ssh {
         external_spawn_remote_server(cmd, opt).await
     } else {
         native_spawn_remote_server(cmd, opt).await
     }
 
-    #[cfg(not(feature = "ssh2"))]
+    #[cfg(not(any(feature = "libssh", feature = "ssh2")))]
     external_spawn_remote_server(cmd, opt).await
 }
 
 /// Spawns a remote server using native ssh library that listens for requests
 ///
 /// Returns the session associated with the server
-#[cfg(feature = "ssh2")]
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 async fn native_spawn_remote_server(
     cmd: LaunchSubcommand,
     _opt: CommonOpt,
@@ -223,6 +223,7 @@ async fn native_spawn_remote_server(
     if let Some(path) = cmd.identity_file {
         opts.identity_files.push(path);
     }
+    opts.backend = cmd.ssh_backend;
     opts.port = Some(cmd.port);
     opts.user = Some(cmd.username);
 

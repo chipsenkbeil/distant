@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 ### Removed
 
+## [0.16.3] - 2022-05-29
+### Added
+- New `--ssh-backend` option for CLI that accepts `libssh` or `ssh2` for
+  native backend ssh support
+- `distant_ssh2::SshBackend` now supports parsing from a `&str` and producing a
+  `&'static str` from an instance
+
 ## [0.16.2] - 2022-05-27
 ### Changed
 - The following fields now default to false when missing in JSON request body

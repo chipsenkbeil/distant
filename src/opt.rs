@@ -202,7 +202,7 @@ pub enum Method {
     Distant,
 
     /// Connect to an SSH server running on a remote machine
-    #[cfg(feature = "ssh2")]
+    #[cfg(any(feature = "libssh", feature = "ssh2"))]
     Ssh,
 }
 
@@ -503,6 +503,11 @@ pub struct LaunchSubcommand {
     /// Path to ssh program on local machine to execute when using external ssh
     #[structopt(long, default_value = "ssh")]
     pub ssh: String,
+
+    /// If using native ssh integration, represents the backend
+    #[cfg(any(feature = "libssh", feature = "ssh2"))]
+    #[structopt(long, default_value = distant_ssh2::SshBackend::default().as_static_str())]
+    pub ssh_backend: distant_ssh2::SshBackend,
 
     /// If specified, will use the external ssh program to launch the server
     /// instead of the native integration; does nothing if the ssh2 feature is
