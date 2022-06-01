@@ -283,7 +283,7 @@ impl Session {
         tokio::try_join!(self.request_task, self.response_task).map(|_| ())
     }
 
-    /// Abort the session's current connection by forcing its response task to shutdown
+    /// Abort the session's current connection by forcing its tasks to abort
     pub fn abort(&self) {
         self.request_task.abort();
         self.response_task.abort();

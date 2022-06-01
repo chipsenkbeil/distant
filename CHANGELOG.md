@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 ### Removed
 
+## [0.16.4] - 2022-06-01
+### Added
+- Dockerfile using Alpine linux with a basic install of distant, tagged as
+  `chipsenkbeil/distant:0.16.3`
+
+### Fixed
+- [Issue #90](https://github.com/chipsenkbeil/distant/issues/90)
+- [Issue #103](https://github.com/chipsenkbeil/distant/issues/103)
+
 ## [0.16.3] - 2022-05-29
 ### Added
 - New `--ssh-backend` option for CLI that accepts `libssh` or `ssh2` for

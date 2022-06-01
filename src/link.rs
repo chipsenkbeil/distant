@@ -11,26 +11,32 @@ use tokio::task::{JoinError, JoinHandle};
 /// Represents a link between a remote process' stdin/stdout/stderr and this process'
 /// stdin/stdout/stderr
 pub struct RemoteProcessLink {
-    _stdin_thread: thread::JoinHandle<()>,
-    stdin_task: JoinHandle<io::Result<()>>,
+    _stdin_thread: Option<thread::JoinHandle<()>>,
+    stdin_task: Option<JoinHandle<io::Result<()>>>,
     stdout_task: JoinHandle<io::Result<()>>,
     stderr_task: JoinHandle<io::Result<()>>,
 }
 
 macro_rules! from_pipes {
     ($stdin:expr, $stdout:expr, $stderr:expr) => {{
-        let (stdin_thread, mut stdin_rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
-        let stdin_task = tokio::spawn(async move {
-            loop {
-                if let Some(input) = stdin_rx.recv().await {
-                    if let Err(x) = $stdin.write(&*input).await {
-                        break Err(x);
+        let mut stdin_thread = None;
+        let mut stdin_task = None;
+        if let Some(mut stdin_handle) = $stdin {
+            let (thread, mut rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
+            let task = tokio::spawn(async move {
+                loop {
+                    if let Some(input) = rx.recv().await {
+                        if let Err(x) = stdin_handle.write(&*input).await {
+                            break Err(x);
+                        }
+                    } else {
+                        break Ok(());
                     }
-                } else {
-                    break Ok(());
                 }
-            }
-        });
+            });
+            stdin_thread = Some(thread);
+            stdin_task = Some(task);
+        }
         let stdout_task = tokio::spawn(async move {
             let handle = io::stdout();
             loop {
@@ -70,7 +76,7 @@ macro_rules! from_pipes {
 impl RemoteProcessLink {
     /// Creates a new process link from the pipes of a remote process
     pub fn from_remote_pipes(
-        mut stdin: RemoteStdin,
+        stdin: Option<RemoteStdin>,
         mut stdout: RemoteStdout,
         mut stderr: RemoteStderr,
     ) -> Self {
@@ -79,7 +85,7 @@ impl RemoteProcessLink {
 
     /// Creates a new process link from the pipes of a remote LSP server process
     pub fn from_remote_lsp_pipes(
-        mut stdin: RemoteLspStdin,
+        stdin: Option<RemoteLspStdin>,
         mut stdout: RemoteLspStdout,
         mut stderr: RemoteLspStderr,
     ) -> Self {
@@ -94,12 +100,18 @@ impl RemoteProcessLink {
 
     /// Waits for the stdin, stdout, and stderr tasks to complete
     pub async fn wait(self) -> Result<(), JoinError> {
-        tokio::try_join!(self.stdin_task, self.stdout_task, self.stderr_task).map(|_| ())
+        if let Some(stdin_task) = self.stdin_task {
+            tokio::try_join!(stdin_task, self.stdout_task, self.stderr_task).map(|_| ())
+        } else {
+            tokio::try_join!(self.stdout_task, self.stderr_task).map(|_| ())
+        }
     }
 
     /// Aborts the link by aborting tasks processing stdin, stdout, and stderr
     pub fn abort(&self) {
-        self.stdin_task.abort();
+        if let Some(stdin_task) = self.stdin_task.as_ref() {
+            stdin_task.abort();
+        }
         self.stdout_task.abort();
         self.stderr_task.abort();
     }

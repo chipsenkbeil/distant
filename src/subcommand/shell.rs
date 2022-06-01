@@ -6,7 +6,7 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, RemoteStdin, Session};
+use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, Session};
 use log::*;
 use terminal_size::{terminal_size, Height, Width};
 use termwiz::{
@@ -139,9 +139,10 @@ async fn start(
         }
     });
 
-    // Now, map the remote LSP server's stdin/stdout/stderr to our own process
+    // Now, map the remote shell's stdout/stderr to our own process,
+    // while stdin is handled by the task above
     let link = RemoteProcessLink::from_remote_pipes(
-        RemoteStdin::disconnected(),
+        None,
         proc.stdout.take().unwrap(),
         proc.stderr.take().unwrap(),
     );

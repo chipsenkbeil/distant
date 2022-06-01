@@ -147,7 +147,7 @@ async fn start(
 
             // Now, map the remote process' stdin/stdout/stderr to our own process
             let link = RemoteProcessLink::from_remote_pipes(
-                proc.stdin.take().unwrap(),
+                proc.stdin.take(),
                 proc.stdout.take().unwrap(),
                 proc.stderr.take().unwrap(),
             );

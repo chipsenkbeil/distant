@@ -513,7 +513,7 @@ impl Ssh2Session {
         let host = self.host().to_string();
 
         // Turn our ssh connection into a client session so we can use it to spawn our server
-        let mut session = self.into_ssh_client_session().await?;
+        let (mut session, cleanup_session) = self.into_ssh_client_session_impl().await?;
 
         // Build arguments for distant to execute listen subcommand
         let mut args = vec![
@@ -560,6 +560,7 @@ impl Ssh2Session {
             .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))?;
 
         // Close out ssh session
+        cleanup_session();
         session.abort();
         let _ = session.wait().await;
         let mut output = Vec::new();
@@ -609,6 +610,10 @@ impl Ssh2Session {
     /// Consume [`Ssh2Session`] and produce a distant [`Session`] that is powered by an ssh client
     /// underneath
     pub async fn into_ssh_client_session(self) -> io::Result<Session> {
+        self.into_ssh_client_session_impl().await.map(|x| x.0)
+    }
+
+    async fn into_ssh_client_session_impl(self) -> io::Result<(Session, Box<dyn FnOnce()>)> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -630,7 +635,7 @@ impl Ssh2Session {
         } = self;
 
         let (tx, mut rx) = mpsc::channel(1);
-        tokio::spawn(async move {
+        let request_task = tokio::spawn(async move {
             let state = Arc::new(Mutex::new(handler::State::default()));
             while let Ok(Some(req)) = t_read.receive::<Request>().await {
                 if let Err(x) =
@@ -642,7 +647,7 @@ impl Ssh2Session {
             debug!("Ssh receiver task is now closed");
         });
 
-        tokio::spawn(async move {
+        let send_task = tokio::spawn(async move {
             while let Some(res) = rx.recv().await {
                 if let Err(x) = t_write.send(res).await {
                     error!("Ssh session sender failed: {}", x);
@@ -652,6 +657,12 @@ impl Ssh2Session {
             debug!("Ssh sender task is now closed");
         });
 
-        Ok(session)
+        Ok((
+            session,
+            Box::new(move || {
+                send_task.abort();
+                request_task.abort();
+            }),
+        ))
     }
 }
