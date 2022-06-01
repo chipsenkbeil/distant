@@ -108,6 +108,9 @@ async fn start(
             )
             .await?;
 
+            // TODO: Why is this needed?
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
             // Continue to receive and process changes
             while let Some(change) = watcher.next().await {
                 // TODO: Provide a cleaner way to print just a change
