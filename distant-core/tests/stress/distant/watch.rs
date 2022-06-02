@@ -17,10 +17,10 @@ async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantSessi
 
     for n in 1..=500 {
         let file = root.child(format!("test-file-{}", n));
-        // eprintln!("Generating {:?}", file.path());
+        eprintln!("Generating {:?}", file.path());
         file.touch().unwrap();
 
-        // eprintln!("Watching {:?}", file.path());
+        eprintln!("Watching {:?}", file.path());
         let watcher = channel
             .watch(
                 tenant,
@@ -32,17 +32,17 @@ async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantSessi
             .await
             .unwrap();
 
-        // eprintln!("Now watching file {}", n);
+        eprintln!("Now watching file {}", n);
         files_and_watchers.push((file, watcher));
     }
 
     for (file, _watcher) in files_and_watchers.iter() {
-        // eprintln!("Updating {:?}", file.path());
+        eprintln!("Updating {:?}", file.path());
         file.write_str("updated text").unwrap();
     }
 
     for (file, watcher) in files_and_watchers.iter_mut() {
-        // eprintln!("Checking {:?} for changes", file.path());
+        eprintln!("Checking {:?} for changes", file.path());
         match watcher.next().await {
             Some(_) => {}
             None => panic!("File {:?} did not have a change detected", file.path()),
