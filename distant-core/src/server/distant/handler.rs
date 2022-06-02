@@ -406,7 +406,7 @@ where
 
         // Attempt to configure watcher, but don't fail if these configurations fail
         match watcher.configure(WatcherConfig::PreciseEvents(true)) {
-            Ok(true) => debug!("<Conn @ {}> Watcher configured for precise events", conn_id,),
+            Ok(true) => debug!("<Conn @ {}> Watcher configured for precise events", conn_id),
             Ok(false) => debug!(
                 "<Conn @ {}> Watcher not configured for precise events",
                 conn_id,
@@ -540,6 +540,7 @@ where
     match state.watcher.as_mut() {
         Some(watcher) => {
             let wp = WatcherPath::new(&path, recursive, only)?;
+            trace!("<Conn @ {}> New {:?}", conn_id, wp);
             watcher.watch(
                 path.as_path(),
                 if recursive {
@@ -548,12 +549,13 @@ where
                     RecursiveMode::NonRecursive
                 },
             )?;
+            debug!("<Conn @ {}> Now watching {:?}", conn_id, wp.path());
             state.watcher_paths.insert(wp, Box::new(reply));
             Ok(Outgoing::from(ResponseData::Ok))
         }
         None => Err(ServerError::Io(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("<Conn @ {}> Unable to initialize watcher", conn_id,),
+            format!("<Conn @ {}> Unable to initialize watcher", conn_id),
         ))),
     }
 }

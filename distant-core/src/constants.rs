@@ -17,6 +17,9 @@ pub const MAX_PIPE_CHUNK_SIZE: usize = 16384;
 /// to avoid sending many small messages to clients
 pub const READ_PAUSE_MILLIS: u64 = 50;
 
+/// Maximum message capacity per connection for the distant server
+pub const MAX_MSG_CAPACITY: usize = 10000;
+
 /// Test-only constants
 #[cfg(test)]
 pub mod test {
