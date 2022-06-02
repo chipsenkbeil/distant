@@ -398,7 +398,9 @@ where
     //       our state, we can be confident that no one else is modifying the watcher option
     //       concurrently; so, we do a naive check for option being populated
     if state.watcher.is_none() {
-        let (tx, mut rx) = mpsc::channel(1);
+        // NOTE: Cannot be something small like 1 as this seems to cause a deadlock sometimes
+        //       with a large volume of watch requests
+        let (tx, mut rx) = mpsc::channel(100);
 
         let mut watcher = notify::recommended_watcher(move |res| {
             let _ = tx.blocking_send(res);
@@ -540,7 +542,6 @@ where
     match state.watcher.as_mut() {
         Some(watcher) => {
             let wp = WatcherPath::new(&path, recursive, only)?;
-            trace!("<Conn @ {}> New {:?}", conn_id, wp);
             watcher.watch(
                 path.as_path(),
                 if recursive {
