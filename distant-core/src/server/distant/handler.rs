@@ -1,4 +1,5 @@
 use crate::{
+    constants::{SERVER_WATCHER_CAPACITY, SERVER_WATCHER_PAUSE_MILLIS},
     data::{
         self, Change, ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, PtySize, Request,
         RequestData, Response, ResponseData, RunningProcess, SystemInfo,
@@ -18,11 +19,14 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 use tokio::{
     io::{self, AsyncWriteExt},
-    sync::{mpsc, Mutex},
+    sync::{
+        mpsc::{self, error::TrySendError},
+        Mutex,
+    },
 };
 use walkdir::WalkDir;
 
@@ -400,10 +404,31 @@ where
     if state.watcher.is_none() {
         // NOTE: Cannot be something small like 1 as this seems to cause a deadlock sometimes
         //       with a large volume of watch requests
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
 
         let mut watcher = notify::recommended_watcher(move |res| {
-            let _ = tx.blocking_send(res);
+            let mut res = res;
+
+            // Attempt to send our result, breaking out of the loop
+            // if we succeed or it is impossible, otherwise trying
+            // again after a brief sleep
+            loop {
+                match tx.try_send(res) {
+                    Ok(_) => break,
+                    Err(TrySendError::Full(x)) => {
+                        warn!(
+                            "Reached watcher capacity of {}! Trying again after {}ms",
+                            SERVER_WATCHER_CAPACITY, SERVER_WATCHER_PAUSE_MILLIS
+                        );
+                        res = x;
+                        std::thread::sleep(Duration::from_millis(SERVER_WATCHER_PAUSE_MILLIS));
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        warn!("Skipping watch event because watcher channel closed");
+                        break;
+                    }
+                }
+            }
         })?;
 
         // Attempt to configure watcher, but don't fail if these configurations fail

@@ -7,6 +7,12 @@ pub const CLIENT_PIPE_CAPACITY: usize = 10000;
 /// Capacity associated with a client watcher receiving changes
 pub const CLIENT_WATCHER_CAPACITY: usize = 100;
 
+/// Capacity associated with the server's file watcher to pass events outbound
+pub const SERVER_WATCHER_CAPACITY: usize = 10000;
+
+/// Duration in milliseconds to sleep when reaching maximum watcher events in queue
+pub const SERVER_WATCHER_PAUSE_MILLIS: u64 = 100;
+
 /// Represents the maximum size (in bytes) that data will be read from pipes
 /// per individual `read` call
 ///
