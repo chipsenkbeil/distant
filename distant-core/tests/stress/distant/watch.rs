@@ -3,9 +3,11 @@ use assert_fs::prelude::*;
 use distant_core::{ChangeKindSet, SessionChannelExt};
 use rstest::*;
 
-// TODO: RUN WITH cargo test -p distant-core stress -- --nocapture
+const MAX_FILES: usize = 500;
+
 #[rstest]
 #[tokio::test]
+#[ignore]
 async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantSessionCtx) {
     let ctx = ctx.await;
     let mut channel = ctx.session.clone_channel();
@@ -15,7 +17,7 @@ async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantSessi
 
     let mut files_and_watchers = Vec::new();
 
-    for n in 1..=500 {
+    for n in 1..=MAX_FILES {
         let file = root.child(format!("test-file-{}", n));
         eprintln!("Generating {:?}", file.path());
         file.touch().unwrap();

@@ -25,35 +25,35 @@ libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
-derive_more = { version = "0.99.16", default-features = false, features = ["display", "from", "error", "is_variant"] }
+derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 distant-core = { version = "=0.16.4", path = "distant-core", features = ["structopt"] }
-flexi_logger = "0.18.0"
-indoc = "1.0.3"
-log = "0.4.14"
-once_cell = "1.8.0"
-rand = { version = "0.8.4", features = ["getrandom"] }
-serde = { version = "1.0.126", features = ["derive"] }
-serde_json = "1.0.64"
-structopt = "0.3.22"
+flexi_logger = "0.18.1"
+indoc = "1.0.6"
+log = "0.4.17"
+once_cell = "1.12.0"
+rand = { version = "0.8.5", features = ["getrandom"] }
+serde = { version = "1.0.137", features = ["derive"] }
+serde_json = "1.0.81"
+structopt = "0.3.26"
 strum = { version = "0.21.0", features = ["derive"] }
-sysinfo = "0.23.2"
-tokio = { version = "1.12.0", features = ["full"] }
+sysinfo = "0.23.13"
+tokio = { version = "1.19.0", features = ["full"] }
 terminal_size = "0.1.17"
 termwiz = "0.15.0"
-whoami = "1.1.2"
+whoami = "1.2.1"
 
 # Optional native SSH functionality
 distant-ssh2 = { version = "=0.16.4", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-fork = "0.1.18"
+fork = "0.1.19"
 
 # [target.'cfg(windows)'.dependencies]
 # sysinfo = "0.23.2"
 
 [dev-dependencies]
-assert_cmd = "2.0.0"
-assert_fs = "1.0.4"
-indoc = "1.0.3"
-predicates = "2.0.2"
+assert_cmd = "2.0.4"
+assert_fs = "1.0.7"
+indoc = "1.0.6"
+predicates = "2.1.1"
 rstest = "0.11.0"
