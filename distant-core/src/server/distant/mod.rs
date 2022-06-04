@@ -6,6 +6,7 @@ pub(crate) use process::{InputChannel, ProcessKiller, ProcessPty};
 use state::State;
 
 use crate::{
+    constants::MAX_MSG_CAPACITY,
     data::{Request, Response},
     net::{Codec, DataStream, Transport, TransportListener, TransportReadHalf, TransportWriteHalf},
     server::{
@@ -39,7 +40,7 @@ impl Default for DistantServerOptions {
     fn default() -> Self {
         Self {
             shutdown_after: None,
-            max_msg_capacity: 1,
+            max_msg_capacity: MAX_MSG_CAPACITY,
         }
     }
 }

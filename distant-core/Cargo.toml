@@ -20,7 +20,7 @@ derive_more = { version = "0.99.16", default-features = false, features = ["dere
 futures = "0.3.16"
 hex = "0.4.3"
 log = "0.4.14"
-notify = { version = "5.0.0-pre.14", features = ["serde"] }
+notify = { version = "5.0.0-pre.15", features = ["serde"] }
 normpath = "0.3.2"
 once_cell = "1.8.0"
 portable-pty = "0.7.0"
@@ -37,5 +37,7 @@ structopt = { version = "0.3.22", optional = true }
 
 [dev-dependencies]
 assert_fs = "1.0.4"
+flexi_logger = "0.22.3"
 indoc = "1.0.3"
 predicates = "2.0.2"
+rstest = "0.13.0"
