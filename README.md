@@ -75,7 +75,7 @@ Launch a remote instance of `distant`. Calling `launch` will do the following:
 distant launch my.example.com
 
 # NOTE: If you are using sh, bash, or zsh, you can automatically set the
-        appropriate environment variables using the following
+#       appropriate environment variables using the following
 eval "$(distant launch my.example.com)"
 
 # After the session is established, you can perform different operations
