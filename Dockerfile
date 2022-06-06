@@ -1,13 +1,13 @@
+FROM rust:alpine AS builder
+# make & perl needed for openssl vendor build
+# musl-dev needed, otherwise crti.o is missing
+RUN apk add --no-cache make musl-dev perl
+WORKDIR /usr/src/distant
+COPY . .
+# NOTE: For musl clients, there is a bug with wezterm-ssh's libssh-rs that
+#       prevents us from linking to it; so, we have to exclude it for musl
+RUN cargo build --release --no-default-features --features ssh2
+
 FROM alpine:3
-
-# Install curl so we can download the distant binary
-RUN apk add --no-cache curl
-
-# 1. Specify the distant version
-# 2. Download the MUSL artifact as alpine uses musl
-# 3. Make the binary executable
-ARG distant_version=0.16.4
-ARG distant_url=https://github.com/chipsenkbeil/distant/releases/download/v${distant_version}/distant-linux64-musl
-RUN curl -L ${distant_url} > /usr/local/bin/distant && chmod +x /usr/local/bin/distant
-
+COPY --from=builder /usr/src/distant/target/release/distant /usr/local/bin/distant
 ENTRYPOINT ["/usr/local/bin/distant"]

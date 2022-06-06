@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.16.4] - 2022-06-01
 ### Added
 - Dockerfile using Alpine linux with a basic install of distant, tagged as
-  `chipsenkbeil/distant:0.16.3`
+  `chipsenkbeil/distant:0.16.3` and `chipsenkbeil/distant:0.16.4`
 
 ### Fixed
 - [Issue #90](https://github.com/chipsenkbeil/distant/issues/90)

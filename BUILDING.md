@@ -1,5 +1,10 @@
 # Building from Source
 
+## Dependencies
+
+* `make` - needed to build openssl via vendor feature
+* `perl` - needed to build openssl via vendor feature
+
 ## Using Cargo
 
 A debug build is straightforward:
