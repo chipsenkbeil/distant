@@ -53,4 +53,11 @@ x86_64-linux-musl-gcc target/x86_64-unknown-linux-musl/release/distant
 At the moment, this is not possible to build on M1 Macs: 
 https://github.com/FiloSottile/homebrew-musl-cross/issues/23
 
+## Using Docker
 
+From the root of the repository, run the below, replacing `VERSION` with a
+version like `0.16.4`:
+
+```bash
+docker build -t chipsenkbeil/distant:VERSION .
+```
