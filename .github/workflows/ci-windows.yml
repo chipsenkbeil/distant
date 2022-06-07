@@ -30,16 +30,16 @@ jobs:
         run: cargo --version
       - uses: Vampire/setup-wsl@v1
       - name: Run distant-core tests (default features)
-        run: cargo test --verbose -p distant-core
+        run: cargo test --release --verbose -p distant-core
       - name: Run distant-core tests (all features)
-        run: cargo test --verbose --all-features -p distant-core
+        run: cargo test --release --verbose --all-features -p distant-core
       - name: Build distant-ssh2 (default features)
-        run: cargo build --verbose -p distant-ssh2
+        run: cargo build --release --verbose -p distant-ssh2
       - name: Build distant-ssh2 (all features)
-        run: cargo build --verbose --all-features -p distant-ssh2
+        run: cargo build --release --verbose --all-features -p distant-ssh2
       - name: Build CLI
-        run: cargo build --verbose
+        run: cargo build --release --verbose
         shell: bash
       - name: Build CLI (no default features)
-        run: cargo build --verbose --no-default-features
+        run: cargo build --release --verbose --no-default-features
         shell: bash

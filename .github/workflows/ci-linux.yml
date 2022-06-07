@@ -29,18 +29,18 @@ jobs:
       - name: Check Cargo availability
         run: cargo --version
       - name: Run core tests (default features)
-        run: cargo test --verbose -p distant-core
+        run: cargo test --release --verbose -p distant-core
       - name: Run core tests (all features)
-        run: cargo test --verbose --all-features -p distant-core
+        run: cargo test --release --verbose --all-features -p distant-core
       - name: Ensure /run/sshd exists on Unix
         run: mkdir -p /run/sshd
       - name: Run ssh2 tests (default features)
-        run: cargo test --verbose -p distant-ssh2
+        run: cargo test --release --verbose -p distant-ssh2
       - name: Run ssh2 tests (all features)
-        run: cargo test --verbose --all-features -p distant-ssh2
+        run: cargo test --release --verbose --all-features -p distant-ssh2
       - name: Run CLI tests
-        run: cargo test --verbose
+        run: cargo test --release --verbose
         shell: bash
       - name: Run CLI tests (no default features)
-        run: cargo test --verbose --no-default-features
+        run: cargo test --release --verbose --no-default-features
         shell: bash
