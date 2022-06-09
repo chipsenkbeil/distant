@@ -1,5 +1,4 @@
 use crate::net::{Codec, DataStream, Transport};
-use derive_more::{Deref, DerefMut, From};
 use tokio::{
     io,
     net::{
@@ -8,23 +7,22 @@ use tokio::{
     },
 };
 
-#[derive(Deref, DerefMut, From)]
-pub struct UnixStream(TokioUnixStream);
+impl_async_newtype!(UnixSocketStream -> TokioUnixStream);
 
-impl DataStream for UnixStream {
+impl DataStream for UnixSocketStream {
     type Read = OwnedReadHalf;
     type Write = OwnedWriteHalf;
 
     fn into_split(self) -> (Self::Read, Self::Write) {
-        UnixStream::into_split(self)
+        TokioUnixStream::into_split(self.0)
     }
 }
 
-impl<U: Codec> Transport<UnixStream, U> {
+impl<U: Codec> Transport<UnixSocketStream, U> {
     /// Establishes a connection to the socket at the specified path and uses the provided codec
     /// for transportation
     pub async fn connect(path: impl AsRef<std::path::Path>, codec: U) -> io::Result<Self> {
-        let stream = UnixStream::connect(path.as_ref()).await?;
-        Ok(Transport::new(stream, codec))
+        let stream = TokioUnixStream::connect(path.as_ref()).await?;
+        Ok(Transport::new(UnixSocketStream(stream), codec))
     }
 }
