@@ -36,13 +36,13 @@ use mailbox::PostOffice;
 #[serde(rename_all = "snake_case")]
 pub enum SessionDetails {
     /// Indicates session is a TCP type
-    Tcp { addr: SocketAddr, tag: String },
+    Tcp { addr: SocketAddr },
 
     /// Indicates session is a Unix socket type
-    Socket { path: PathBuf, tag: String },
+    Socket { path: PathBuf },
 
     /// Indicates session type is inmemory
-    Inmemory { tag: String },
+    Inmemory,
 
     /// Indicates session type is a custom type (such as ssh)
     Custom { tag: String },
@@ -50,12 +50,10 @@ pub enum SessionDetails {
 
 impl SessionDetails {
     /// Represents the tag associated with the session
-    pub fn tag(&self) -> &str {
+    pub fn tag(&self) -> Option<&str> {
         match self {
-            Self::Tcp { tag, .. } => tag.as_str(),
-            Self::Socket { tag, .. } => tag.as_str(),
-            Self::Inmemory { tag } => tag.as_str(),
-            Self::Custom { tag } => tag.as_str(),
+            Self::Custom { tag } => Some(tag.as_str()),
+            _ => None,
         }
     }
 
@@ -101,17 +99,8 @@ impl Session {
         U: Codec + Send + 'static,
     {
         let transport = Transport::<TcpStream, U>::connect(addr, codec).await?;
-        let details = SessionDetails::Tcp {
-            addr,
-            tag: transport.to_connection_tag(),
-        };
-        debug!(
-            "Session has been established with {}",
-            transport
-                .peer_addr()
-                .map(|x| x.to_string())
-                .unwrap_or_else(|_| String::from("???"))
-        );
+        let details = SessionDetails::Tcp { addr };
+        debug!("Session has been established with {}", addr);
         Self::initialize_with_details(transport, Some(details))
     }
 
@@ -146,15 +135,8 @@ impl Session {
         let transport = Transport::<tokio::net::UnixStream, U>::connect(p, codec).await?;
         let details = SessionDetails::Socket {
             path: p.to_path_buf(),
-            tag: transport.to_connection_tag(),
         };
-        debug!(
-            "Session has been established with {}",
-            transport
-                .peer_addr()
-                .map(|x| format!("{:?}", x))
-                .unwrap_or_else(|_| String::from("???"))
-        );
+        debug!("Session has been established with {:?}", p);
         Self::initialize_with_details(transport, Some(details))
     }
 

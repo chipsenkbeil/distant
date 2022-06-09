@@ -1,4 +1,4 @@
-use super::Codec;
+use crate::net::Codec;
 use bytes::{Buf, BufMut, BytesMut};
 use std::convert::TryInto;
 use tokio::io;

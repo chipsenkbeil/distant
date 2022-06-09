@@ -117,11 +117,7 @@ async fn connection_loop<T, U, S>(
             match stream.next().await {
                 Some(transport) => {
                     let conn_id = rand::random();
-                    debug!(
-                        "<Conn @ {}> Established against {}",
-                        conn_id,
-                        transport.to_connection_tag()
-                    );
+                    debug!("<Conn @ {}> Established", conn_id);
                     if let Err(x) = on_new_conn(
                         transport,
                         conn_id,

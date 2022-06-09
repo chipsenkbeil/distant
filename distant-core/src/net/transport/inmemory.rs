@@ -1,4 +1,4 @@
-use super::{DataStream, PlainCodec, Transport};
+use crate::net::{DataStream, PlainCodec, Transport};
 use futures::ready;
 use std::{
     fmt,
@@ -206,10 +206,6 @@ impl DataStream for InmemoryStream {
     type Read = InmemoryStreamReadHalf;
     type Write = InmemoryStreamWriteHalf;
 
-    fn to_connection_tag(&self) -> String {
-        String::from("inmemory-stream")
-    }
-
     fn into_split(self) -> (Self::Read, Self::Write) {
         (self.incoming, self.outgoing)
     }
@@ -237,12 +233,6 @@ impl Transport<InmemoryStream, PlainCodec> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    #[test]
-    fn to_connection_tag_should_be_hardcoded_string() {
-        let (_, _, stream) = InmemoryStream::make(1);
-        assert_eq!(stream.to_connection_tag(), "inmemory-stream");
-    }
 
     #[tokio::test]
     async fn make_should_return_sender_that_sends_data_to_stream() {

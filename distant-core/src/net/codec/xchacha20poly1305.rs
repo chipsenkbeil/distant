@@ -1,5 +1,4 @@
-use super::Codec;
-use crate::net::{SecretKey, SecretKey32};
+use crate::net::{Codec, SecretKey, SecretKey32};
 use bytes::{Buf, BufMut, BytesMut};
 use chacha20poly1305::{
     aead::{Aead, NewAead},

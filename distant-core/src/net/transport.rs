@@ -1,13 +1,10 @@
-use crate::net::SecretKeyError;
+use crate::net::{Codec, SecretKeyError};
 use derive_more::{Display, Error, From};
 use futures::{SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::Unpin;
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, FramedRead, FramedWrite};
-
-mod codec;
-pub use codec::*;
 
 mod inmemory;
 pub use inmemory::*;
@@ -20,6 +17,12 @@ mod unix;
 
 #[cfg(unix)]
 pub use unix::*;
+
+#[cfg(windows)]
+mod windows;
+
+#[cfg(windows)]
+pub use windows::*;
 
 #[derive(Debug, Display, Error, From)]
 pub struct SerializeError(#[error(not(source))] String);
@@ -53,9 +56,6 @@ pub enum TransportError {
 pub trait DataStream: AsyncRead + AsyncWrite + Unpin {
     type Read: AsyncRead + Send + Unpin + 'static;
     type Write: AsyncWrite + Send + Unpin + 'static;
-
-    /// Returns a textual description of the connection associated with this stream
-    fn to_connection_tag(&self) -> String;
 
     /// Splits this stream into read and write halves
     fn into_split(self) -> (Self::Read, Self::Write);
@@ -101,11 +101,6 @@ where
         } else {
             Ok(None)
         }
-    }
-
-    /// Returns a textual description of the transport's underlying connection
-    pub fn to_connection_tag(&self) -> String {
-        self.0.get_ref().to_connection_tag()
     }
 
     /// Returns a reference to the underlying I/O stream
@@ -221,6 +216,7 @@ impl Transport<crate::net::InmemoryStream, crate::net::PlainCodec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::PlainCodec;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
