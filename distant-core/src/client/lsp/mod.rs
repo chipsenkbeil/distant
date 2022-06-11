@@ -350,8 +350,8 @@ mod tests {
     use crate::{
         client::Session,
         data::{Request, RequestData, Response, ResponseData},
-        net::{InmemoryStream, PlainCodec, Transport},
     };
+    use distant_net::{InmemoryStream, PlainCodec, Transport};
     use std::{future::Future, time::Duration};
 
     /// Timeout used with timeout function

@@ -2,9 +2,9 @@ use crate::{
     client::{SessionChannel, SessionChannelExt, SessionChannelExtError},
     constants::CLIENT_WATCHER_CAPACITY,
     data::{Change, ChangeKindSet, Error as DistantError, Request, RequestData, ResponseData},
-    net::TransportError,
 };
 use derive_more::{Display, Error, From};
+use distant_net::TransportError;
 use log::*;
 use std::{
     fmt,
@@ -221,8 +221,8 @@ mod tests {
     use crate::{
         client::Session,
         data::{ChangeKind, Response},
-        net::{InmemoryStream, PlainCodec, Transport},
     };
+    use distant_net::{InmemoryStream, PlainCodec, Transport};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

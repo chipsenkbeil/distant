@@ -3,7 +3,7 @@ name = "distant"
 description = "Operate on a remote computer through file and process manipulation"
 categories = ["command-line-utilities"]
 keywords = ["cli"]
-version = "0.16.4"
+version = "0.17.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2018"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -12,7 +12,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["distant-core", "distant-ssh2"]
+members = ["distant-core", "distant-net", "distant-ssh2"]
 
 [profile.release]
 opt-level = 'z'
@@ -26,7 +26,7 @@ ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
-distant-core = { version = "=0.16.4", path = "distant-core", features = ["structopt"] }
+distant-core = { version = "=0.17.0", path = "distant-core", features = ["structopt"] }
 flexi_logger = "0.18.1"
 indoc = "1.0.6"
 log = "0.4.17"
@@ -43,7 +43,7 @@ termwiz = "0.15.0"
 whoami = "1.2.1"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.16.4", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
+distant-ssh2 = { version = "=0.17.0", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.19"

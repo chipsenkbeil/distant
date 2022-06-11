@@ -1,5 +1,5 @@
-use crate::net::{SecretKey32, UnprotectedToHexKey};
 use derive_more::{Display, Error};
+use distant_net::{SecretKey32, UnprotectedToHexKey};
 use std::{
     env,
     net::{IpAddr, SocketAddr},

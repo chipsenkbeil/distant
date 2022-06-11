@@ -31,6 +31,15 @@ impl PortRange {
     }
 }
 
+impl From<u16> for PortRange {
+    fn from(port: u16) -> Self {
+        Self {
+            start: port,
+            end: None,
+        }
+    }
+}
+
 impl From<RangeInclusive<u16>> for PortRange {
     fn from(r: RangeInclusive<u16>) -> Self {
         let (start, end) = r.into_inner();

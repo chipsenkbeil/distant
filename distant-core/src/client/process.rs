@@ -2,9 +2,9 @@ use crate::{
     client::{Mailbox, SessionChannel},
     constants::CLIENT_PIPE_CAPACITY,
     data::{PtySize, Request, RequestData, ResponseData},
-    net::TransportError,
 };
 use derive_more::{Display, Error, From};
+use distant_net::TransportError;
 use log::*;
 use std::sync::Arc;
 use tokio::{
@@ -523,8 +523,8 @@ mod tests {
     use crate::{
         client::Session,
         data::{Error, ErrorKind, Response},
-        net::{InmemoryStream, PlainCodec, Transport},
     };
+    use distant_net::{InmemoryStream, PlainCodec, Transport};
     use std::time::Duration;
 
     fn make_session() -> (Transport<InmemoryStream, PlainCodec>, Session) {

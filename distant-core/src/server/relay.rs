@@ -1,9 +1,9 @@
 use crate::{
     client::{Session, SessionChannel},
     data::{Request, RequestData, ResponseData},
-    net::{Codec, DataStream, Transport},
     server::utils::{ConnTracker, ShutdownTask},
 };
+use distant_net::{Codec, DataStream, Transport};
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use std::{collections::HashMap, marker::Unpin, sync::Arc};
@@ -243,10 +243,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        data::Response,
-        net::{InmemoryStream, PlainCodec},
-    };
+    use crate::data::Response;
+    use distant_net::{InmemoryStream, PlainCodec};
     use std::{pin::Pin, time::Duration};
     use tokio::sync::mpsc;
 

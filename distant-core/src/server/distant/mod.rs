@@ -8,18 +8,16 @@ use state::State;
 use crate::{
     constants::MAX_MSG_CAPACITY,
     data::{Request, Response},
-    net::{Codec, DataStream, Transport, TransportListener, TransportReadHalf, TransportWriteHalf},
-    server::{
-        utils::{ConnTracker, ShutdownTask},
-        PortRange,
-    },
+    server::utils::{ConnTracker, ShutdownTask},
 };
-use futures::stream::{Stream, StreamExt};
+use distant_net::{
+    Codec, DataStream, Listener, MappedListener, PortRange, TcpListener, Transport,
+    TransportReadHalf, TransportWriteHalf,
+};
 use log::*;
 use std::{net::IpAddr, sync::Arc};
 use tokio::{
     io::{self, AsyncRead, AsyncWrite},
-    net::TcpListener,
     sync::{mpsc, Mutex},
     task::{JoinError, JoinHandle},
     time::Duration,
@@ -55,28 +53,27 @@ impl DistantServer {
         opts: DistantServerOptions,
     ) -> io::Result<(Self, u16)>
     where
-        U: Codec + Send + 'static,
+        U: Codec + Send + Sync + 'static,
     {
         debug!("Binding to {} in range {}", addr, port);
-        let listener = TcpListener::bind(port.make_socket_addrs(addr).as_slice()).await?;
+        let listener = TcpListener::bind(addr, port).await?;
 
-        let port = listener.local_addr()?.port();
+        let port = listener.port();
         debug!("Bound to port: {}", port);
 
-        let stream = TransportListener::initialize(listener, move |stream| {
+        let listener = MappedListener::new(listener, move |stream| {
             Transport::new(stream, codec.clone())
-        })
-        .into_stream();
+        });
 
-        Ok((Self::initialize(Box::pin(stream), opts), port))
+        Ok((Self::initialize(Box::pin(listener), opts), port))
     }
 
     /// Initialize a distant server using the provided listener
-    pub fn initialize<T, U, S>(stream: S, opts: DistantServerOptions) -> Self
+    pub fn initialize<T, U, L>(listener: L, opts: DistantServerOptions) -> Self
     where
         T: DataStream + Send + 'static,
-        U: Codec + Send + 'static,
-        S: Stream<Item = Transport<T, U>> + Send + Unpin + 'static,
+        U: Codec + Send + Sync + 'static,
+        L: Listener<Output = Transport<T, U>> + Unpin + 'static,
     {
         // Build our state for the server
         let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
@@ -84,7 +81,7 @@ impl DistantServer {
 
         // Spawn our connection task
         let conn_task = tokio::spawn(async move {
-            connection_loop(stream, state, tracker, shutdown, opts.max_msg_capacity).await
+            connection_loop(listener, state, tracker, shutdown, opts.max_msg_capacity).await
         });
 
         Self { conn_task }
@@ -101,8 +98,8 @@ impl DistantServer {
     }
 }
 
-async fn connection_loop<T, U, S>(
-    mut stream: S,
+async fn connection_loop<T, U, L>(
+    mut listener: L,
     state: Arc<Mutex<State>>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     shutdown: Option<ShutdownTask>,
@@ -110,11 +107,11 @@ async fn connection_loop<T, U, S>(
 ) where
     T: DataStream + Send + 'static,
     U: Codec + Send + 'static,
-    S: Stream<Item = Transport<T, U>> + Send + Unpin + 'static,
+    L: Listener<Output = Transport<T, U>> + Unpin + 'static,
 {
     let inner = async move {
         loop {
-            match stream.next().await {
+            match listener.accept().await {
                 Some(transport) => {
                     let conn_id = rand::random();
                     debug!("<Conn @ {}> Established", conn_id);
@@ -268,22 +265,15 @@ async fn response_loop<T, U>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        data::{RequestData, ResponseData},
-        net::{InmemoryStream, PlainCodec},
-    };
-    use std::pin::Pin;
+    use crate::data::{RequestData, ResponseData};
+    use distant_net::{InmemoryStream, PlainCodec, TestListener};
 
     #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
         mpsc::Sender<Transport<InmemoryStream, PlainCodec>>,
-        Pin<Box<dyn Stream<Item = Transport<InmemoryStream, PlainCodec>> + Send>>,
+        TestListener<Transport<InmemoryStream, PlainCodec>>,
     ) {
-        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream, PlainCodec>>(1);
-        let stream = futures::stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(move |transport| (transport, rx))
-        });
-        (tx, Box::pin(stream))
+        TestListener::channel(1)
     }
 
     #[tokio::test]

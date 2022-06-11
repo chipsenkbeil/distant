@@ -1,4 +1,4 @@
-use crate::net::{Codec, SecretKeyError};
+use crate::{Codec, SecretKeyError};
 use derive_more::{Display, Error, From};
 use futures::{SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
@@ -203,20 +203,20 @@ where
 
 /// Test utilities
 #[cfg(test)]
-impl Transport<crate::net::InmemoryStream, crate::net::PlainCodec> {
+impl Transport<crate::InmemoryStream, crate::PlainCodec> {
     /// Makes a connected pair of inmemory transports
     pub fn make_pair() -> (
-        Transport<crate::net::InmemoryStream, crate::net::PlainCodec>,
-        Transport<crate::net::InmemoryStream, crate::net::PlainCodec>,
+        Transport<crate::InmemoryStream, crate::PlainCodec>,
+        Transport<crate::InmemoryStream, crate::PlainCodec>,
     ) {
-        Self::pair(crate::constants::test::BUFFER_SIZE)
+        Self::pair(100)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::PlainCodec;
+    use crate::PlainCodec;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

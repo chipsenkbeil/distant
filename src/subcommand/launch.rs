@@ -181,7 +181,7 @@ async fn socket_loop(
     let listener = tokio::net::UnixListener::bind(socket_path)?;
 
     let stream =
-        TransportListener::initialize(listener, |stream| Transport::new(stream, PlainCodec::new()))
+        TransportListener::new(listener, |stream| Transport::new(stream, PlainCodec::new()))
             .into_stream();
 
     let server = RelayServer::initialize(session, Box::pin(stream), shutdown_after)?;

@@ -7,9 +7,9 @@ use crate::{
         ChangeKindSet, DirEntry, Error as Failure, Metadata, PtySize, Request, RequestData,
         ResponseData, SystemInfo,
     },
-    net::TransportError,
 };
 use derive_more::{Display, Error, From};
+use distant_net::TransportError;
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 /// Represents an error that can occur related to convenience functions tied to a

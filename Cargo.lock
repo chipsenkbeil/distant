@@ -228,6 +228,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30696a84d817107fc028e049980e09d5e140e8da8f1caeb17e8e950658a3cea9"
 
 [[package]]
+name = "async-trait"
+version = "0.1.56"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96cf8829f67d2eab0b2dfa42c5d0ef737e0724e4a82b01b3e292456202b19716"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -594,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -622,9 +633,42 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "assert_fs",
+ "bitflags",
+ "bytes",
+ "chacha20poly1305",
+ "ciborium",
+ "derive_more",
+ "distant-net",
+ "flexi_logger 0.22.5",
+ "futures",
+ "hex",
+ "indoc",
+ "log",
+ "normpath",
+ "notify",
+ "once_cell",
+ "portable-pty",
+ "predicates",
+ "rand 0.8.5",
+ "rstest 0.13.0",
+ "serde",
+ "serde_json",
+ "structopt",
+ "strum",
+ "tokio",
+ "tokio-util",
+ "walkdir",
+]
+
+[[package]]
+name = "distant-net"
+version = "0.17.0"
+dependencies = [
+ "assert_fs",
+ "async-trait",
  "bitflags",
  "bytes",
  "chacha20poly1305",
@@ -653,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh2"
-version = "0.16.4"
+version = "0.17.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",

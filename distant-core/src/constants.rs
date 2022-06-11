@@ -22,10 +22,3 @@ pub const READ_PAUSE_MILLIS: u64 = 50;
 
 /// Maximum message capacity per connection for the distant server
 pub const MAX_MSG_CAPACITY: usize = 10000;
-
-/// Test-only constants
-#[cfg(test)]
-pub mod test {
-    pub const BUFFER_SIZE: usize = 100;
-    pub const TENANT: &str = "test-tenant";
-}

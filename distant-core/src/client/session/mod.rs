@@ -2,8 +2,8 @@ use crate::{
     client::utils,
     constants::CLIENT_MAILBOX_CAPACITY,
     data::{Request, Response},
-    net::{Codec, DataStream, Transport, TransportError},
 };
+use distant_net::{Codec, DataStream, Transport, TransportError};
 use log::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -393,10 +393,7 @@ impl SessionChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        constants::test::TENANT,
-        data::{RequestData, ResponseData},
-    };
+    use crate::data::{RequestData, ResponseData};
     use std::time::Duration;
 
     #[tokio::test]

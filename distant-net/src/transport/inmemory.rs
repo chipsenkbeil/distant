@@ -1,4 +1,4 @@
-use crate::net::{DataStream, PlainCodec, Transport};
+use crate::{DataStream, PlainCodec, Transport};
 use futures::ready;
 use std::{
     fmt,
