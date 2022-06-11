@@ -1,5 +1,9 @@
-use super::{RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout};
-use crate::{client::SessionChannel, data::PtySize};
+use crate::{
+    client::{
+        DistantChannel, RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout,
+    },
+    data::PtySize,
+};
 use futures::stream::{Stream, StreamExt};
 use std::{
     io::{self, Cursor, Read},
@@ -10,8 +14,8 @@ use tokio::{
     task::JoinHandle,
 };
 
-mod data;
-pub use data::*;
+mod msg;
+pub use msg::*;
 
 /// Represents an LSP server process on a remote machine
 #[derive(Debug)]
@@ -25,14 +29,13 @@ pub struct RemoteLspProcess {
 impl RemoteLspProcess {
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
-    pub async fn spawn<T>(
-        channel: SessionChannel<T>,
+    pub async fn spawn(
+        channel: DistantChannel,
         cmd: impl Into<String>,
-        args: Vec<String>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
-        let mut inner = RemoteProcess::spawn(channel, cmd, args, persist, pty).await?;
+        let mut inner = RemoteProcess::spawn(channel, cmd, persist, pty).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
@@ -115,7 +118,7 @@ impl RemoteLspStdin {
         self.write(data.as_bytes()).await
     }
 
-    fn update_and_read_messages(&mut self, data: &[u8]) -> io::Result<Vec<LspData>> {
+    fn update_and_read_messages(&mut self, data: &[u8]) -> io::Result<Vec<LspMsg>> {
         // Create or insert into our buffer
         match &mut self.buf {
             Some(buf) => buf.extend(data),
@@ -317,7 +320,7 @@ where
     (read_task, rx)
 }
 
-fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspData>)> {
+fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspMsg>)> {
     let mut queue = Vec::new();
 
     // Continue to read complete messages from the input until we either fail to parse or we reach
@@ -325,7 +328,7 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspData>)
     // cursor may have moved partially from lsp successfully reading the start of a message
     let mut cursor = Cursor::new(input);
     let mut pos = 0;
-    while let Ok(data) = LspData::from_buf_reader(&mut cursor) {
+    while let Ok(data) = LspMsg::from_buf_reader(&mut cursor) {
         queue.push(data);
         pos = cursor.position();
     }
@@ -346,26 +349,24 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspData>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        client::Session,
-        data::{DistantRequestData, DistantResponseData, Request, Response},
-    };
-    use distant_net::{InmemoryStream, PlainCodec, Transport};
+    use crate::data::{DistantRequestData, DistantResponseData};
+    use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Request, Response};
     use std::{future::Future, time::Duration};
 
     /// Timeout used with timeout function
     const TIMEOUT: Duration = Duration::from_millis(50);
 
     // Configures an lsp process with a means to send & receive data from outside
-    async fn spawn_lsp_process() -> (Transport<InmemoryStream, PlainCodec>, RemoteLspProcess) {
-        let (mut t1, t2) = Transport::make_pair();
-        let session = Session::initialize(t2).unwrap();
+    async fn spawn_lsp_process() -> (
+        FramedTransport<InmemoryTransport, PlainCodec>,
+        RemoteLspProcess,
+    ) {
+        let (mut t1, t2) = FramedTransport::make_pair();
+        let session = Client::initialize(t2).unwrap();
         let spawn_task = tokio::spawn(async move {
             RemoteLspProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -377,7 +378,6 @@ mod tests {
 
         // Send back a response through the session
         t1.send(Response::new(
-            "test-tenant",
             req.id,
             vec![DistantResponseData::ProcSpawned { id: rand::random() }],
         ))
@@ -625,7 +625,6 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -662,7 +661,6 @@ mod tests {
         // Send half of LSP message over stdout
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -681,7 +679,6 @@ mod tests {
         // Send other half of LSP message over stdout
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -716,7 +713,6 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -760,7 +756,6 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -803,7 +798,6 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -834,7 +828,6 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -871,7 +864,6 @@ mod tests {
         // Send half of LSP message over stderr
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -890,7 +882,6 @@ mod tests {
         // Send other half of LSP message over stderr
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -925,7 +916,6 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -969,7 +959,6 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -1012,7 +1001,6 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .send(Response::new(
-                "test-tenant",
                 proc.origin_id(),
                 vec![DistantResponseData::ProcStderr {
                     id: proc.id(),

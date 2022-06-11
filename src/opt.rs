@@ -690,9 +690,6 @@ pub struct LspSubcommand {
 
     /// Command to run on the remote machine that represents an LSP server
     pub cmd: String,
-
-    /// Additional arguments to supply to the remote machine
-    pub args: Vec<String>,
 }
 
 /// Represents subcommand to execute some shell on a remote machine
@@ -749,7 +746,4 @@ pub struct ShellSubcommand {
 
     /// Command to run on the remote machine as the shell (defaults to $TERM)
     pub cmd: Option<String>,
-
-    /// Additional arguments to supply to the shell (defaults to nothing)
-    pub args: Vec<String>,
 }

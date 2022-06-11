@@ -2,7 +2,7 @@ use crate::{
     constants::SERVER_WATCHER_CAPACITY,
     data::{
         self, Change, ChangeKind, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData,
-        FileType, Metadata, PtySize, Request, Response, RunningProcess, SystemInfo,
+        FileType, Metadata, PtySize, RunningProcess, SystemInfo,
     },
     server::distant::{
         process::{Process, PtyProcess, SimpleProcess},
@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use derive_more::{Display, Error, From};
+use distant_net::{Request, Response};
 use futures::future;
 use log::*;
 use notify::{Config as WatcherConfig, RecursiveMode, Watcher};
@@ -65,6 +66,24 @@ impl From<DistantResponseData> for Outgoing {
     }
 }
 
+///
+/// TODO: Make a generic `Server` trait with all methods to handle our events
+///       have default implementations that error out with unimplemented
+///
+/// TODO: Create a `ServerCtx` struct with a generic for args. Will make a struct for each req args
+///       Should also include a reply function to send async responses
+///       
+///       Each function will still return a result that should be processed BEFORE any other
+///       eent sent by the reply function
+///
+///       Ctx will also support a generic for state that persists across requests
+///
+///
+///
+///
+///
+///
+
 /// Processes the provided request, sending replies using the given sender
 pub(super) async fn process(
     conn_id: usize,
@@ -112,12 +131,9 @@ pub(super) async fn process(
                 canonicalize,
                 resolve_file_type,
             } => metadata(path, canonicalize, resolve_file_type).await,
-            DistantRequestData::ProcSpawn {
-                cmd,
-                args,
-                persist,
-                pty,
-            } => proc_spawn(conn_id, state, reply, cmd, args, persist, pty).await,
+            DistantRequestData::ProcSpawn { cmd, persist, pty } => {
+                proc_spawn(conn_id, state, reply, cmd, persist, pty).await
+            }
             DistantRequestData::ProcKill { id } => proc_kill(conn_id, state, id).await,
             DistantRequestData::ProcStdin { id, data } => {
                 proc_stdin(conn_id, state, id, data).await
@@ -685,14 +701,23 @@ async fn proc_spawn<F>(
     state: HState,
     reply: F,
     cmd: String,
-    args: Vec<String>,
     persist: bool,
     pty: Option<PtySize>,
 ) -> Result<Outgoing, ServerError>
 where
     F: FnMut(Vec<DistantResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
-    debug!("<Conn @ {}> Spawning {} {}", conn_id, cmd, args.join(" "));
+    debug!("<Conn @ {}> Spawning {}", conn_id, cmd);
+
+    // Build out the command and args from our string
+    let (cmd, args) = match cmd.split_once(" ") {
+        Some((cmd_str, args_str)) => (
+            cmd.to_string(),
+            args_str.split(" ").map(ToString::to_string).collect(),
+        ),
+        None => (cmd, Vec::new()),
+    };
+
     let mut child: Box<dyn Process> = match pty {
         Some(size) => Box::new(PtyProcess::spawn(cmd.clone(), args.clone(), size)?),
         None => Box::new(SimpleProcess::spawn(cmd.clone(), args.clone())?),

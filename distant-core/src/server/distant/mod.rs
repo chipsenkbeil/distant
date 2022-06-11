@@ -11,8 +11,8 @@ use crate::{
     server::utils::{ConnTracker, ShutdownTask},
 };
 use distant_net::{
-    Codec, DataStream, Listener, MappedListener, PortRange, TcpListener, Transport,
-    TransportReadHalf, TransportWriteHalf,
+    Codec, FramedTransport, FramedTransportReceiver, FramedTransportSender, Listener,
+    MappedListener, PortRange, TcpListener, Transport,
 };
 use log::*;
 use std::{net::IpAddr, sync::Arc};
@@ -62,7 +62,7 @@ impl DistantServer {
         debug!("Bound to port: {}", port);
 
         let listener = MappedListener::new(listener, move |stream| {
-            Transport::new(stream, codec.clone())
+            FramedTransport::new(stream, codec.clone())
         });
 
         Ok((Self::initialize(Box::pin(listener), opts), port))
@@ -71,9 +71,9 @@ impl DistantServer {
     /// Initialize a distant server using the provided listener
     pub fn initialize<T, U, L>(listener: L, opts: DistantServerOptions) -> Self
     where
-        T: DataStream + Send + 'static,
+        T: Transport + Send + 'static,
         U: Codec + Send + Sync + 'static,
-        L: Listener<Output = Transport<T, U>> + Unpin + 'static,
+        L: Listener<Output = FramedTransport<T, U>> + Unpin + 'static,
     {
         // Build our state for the server
         let state: Arc<Mutex<State>> = Arc::new(Mutex::new(State::default()));
@@ -105,9 +105,9 @@ async fn connection_loop<T, U, L>(
     shutdown: Option<ShutdownTask>,
     max_msg_capacity: usize,
 ) where
-    T: DataStream + Send + 'static,
+    T: Transport + Send + 'static,
     U: Codec + Send + 'static,
-    L: Listener<Output = Transport<T, U>> + Unpin + 'static,
+    L: Listener<Output = FramedTransport<T, U>> + Unpin + 'static,
 {
     let inner = async move {
         loop {
@@ -149,14 +149,14 @@ async fn connection_loop<T, U, L>(
 /// Processes a new connection, performing a handshake, and then spawning two tasks to handle
 /// input and output, returning join handles for the input and output tasks respectively
 async fn on_new_conn<T, U>(
-    transport: Transport<T, U>,
+    transport: FramedTransport<T, U>,
     conn_id: usize,
     state: Arc<Mutex<State>>,
     tracker: Option<Arc<Mutex<ConnTracker>>>,
     max_msg_capacity: usize,
 ) -> io::Result<JoinHandle<()>>
 where
-    T: DataStream,
+    T: Transport,
     U: Codec + Send + 'static,
 {
     // Update our tracker to reflect the new connection
@@ -198,7 +198,7 @@ where
 async fn request_loop<T, U>(
     conn_id: usize,
     state: Arc<Mutex<State>>,
-    mut transport: TransportReadHalf<T, U>,
+    mut transport: FramedTransportReceiver<T, U>,
     tx: mpsc::Sender<Response>,
 ) where
     T: AsyncRead + Send + Unpin + 'static,
@@ -239,7 +239,7 @@ async fn request_loop<T, U>(
 /// Repeatedly sends responses out over the wire
 async fn response_loop<T, U>(
     conn_id: usize,
-    mut transport: TransportWriteHalf<T, U>,
+    mut transport: FramedTransportSender<T, U>,
     mut rx: mpsc::Receiver<Response>,
 ) where
     T: AsyncWrite + Send + Unpin + 'static,
@@ -266,12 +266,12 @@ async fn response_loop<T, U>(
 mod tests {
     use super::*;
     use crate::data::{DistantRequestData, DistantResponseData};
-    use distant_net::{InmemoryStream, PlainCodec, TestListener};
+    use distant_net::{InmemoryTransport, PlainCodec, TestListener};
 
     #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
-        mpsc::Sender<Transport<InmemoryStream, PlainCodec>>,
-        TestListener<Transport<InmemoryStream, PlainCodec>>,
+        mpsc::Sender<FramedTransport<InmemoryTransport, PlainCodec>>,
+        TestListener<FramedTransport<InmemoryTransport, PlainCodec>>,
     ) {
         TestListener::channel(1)
     }
@@ -309,7 +309,7 @@ mod tests {
         let _server = DistantServer::initialize(stream, Default::default());
 
         // Send over a "connection"
-        let (mut t1, t2) = Transport::make_pair();
+        let (mut t1, t2) = FramedTransport::make_pair();
         tx.send(t2).await.unwrap();
 
         // Send a request

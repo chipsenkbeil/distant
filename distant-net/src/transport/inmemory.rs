@@ -1,4 +1,4 @@
-use crate::{DataStream, PlainCodec, Transport};
+use crate::{FramedTransport, PlainCodec, Transport};
 use futures::ready;
 use std::{
     fmt,
@@ -13,16 +13,16 @@ use tokio::{
 
 /// Represents a data stream comprised of two inmemory channels
 #[derive(Debug)]
-pub struct InmemoryStream {
-    incoming: InmemoryStreamReadHalf,
-    outgoing: InmemoryStreamWriteHalf,
+pub struct InmemoryTransport {
+    incoming: InmemoryTransportReadHalf,
+    outgoing: InmemoryTransportWriteHalf,
 }
 
-impl InmemoryStream {
+impl InmemoryTransport {
     pub fn new(incoming: mpsc::Receiver<Vec<u8>>, outgoing: mpsc::Sender<Vec<u8>>) -> Self {
         Self {
-            incoming: InmemoryStreamReadHalf::new(incoming),
-            outgoing: InmemoryStreamWriteHalf::new(outgoing),
+            incoming: InmemoryTransportReadHalf::new(incoming),
+            outgoing: InmemoryTransportWriteHalf::new(outgoing),
         }
     }
 
@@ -46,7 +46,7 @@ impl InmemoryStream {
     }
 }
 
-impl AsyncRead for InmemoryStream {
+impl AsyncRead for InmemoryTransport {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -56,7 +56,7 @@ impl AsyncRead for InmemoryStream {
     }
 }
 
-impl AsyncWrite for InmemoryStream {
+impl AsyncWrite for InmemoryTransport {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -76,12 +76,12 @@ impl AsyncWrite for InmemoryStream {
 
 /// Read portion of an inmemory channel
 #[derive(Debug)]
-pub struct InmemoryStreamReadHalf {
+pub struct InmemoryTransportReadHalf {
     rx: mpsc::Receiver<Vec<u8>>,
     overflow: Vec<u8>,
 }
 
-impl InmemoryStreamReadHalf {
+impl InmemoryTransportReadHalf {
     pub fn new(rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
             rx,
@@ -90,7 +90,7 @@ impl InmemoryStreamReadHalf {
     }
 }
 
-impl AsyncRead for InmemoryStreamReadHalf {
+impl AsyncRead for InmemoryTransportReadHalf {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -133,12 +133,12 @@ impl AsyncRead for InmemoryStreamReadHalf {
 }
 
 /// Write portion of an inmemory channel
-pub struct InmemoryStreamWriteHalf {
+pub struct InmemoryTransportWriteHalf {
     tx: Option<mpsc::Sender<Vec<u8>>>,
     task: Option<Pin<Box<dyn Future<Output = io::Result<usize>> + Send + Sync + 'static>>>,
 }
 
-impl InmemoryStreamWriteHalf {
+impl InmemoryTransportWriteHalf {
     pub fn new(tx: mpsc::Sender<Vec<u8>>) -> Self {
         Self {
             tx: Some(tx),
@@ -147,9 +147,9 @@ impl InmemoryStreamWriteHalf {
     }
 }
 
-impl fmt::Debug for InmemoryStreamWriteHalf {
+impl fmt::Debug for InmemoryTransportWriteHalf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InmemoryStreamWriteHalf")
+        f.debug_struct("InmemoryTransportWrite")
             .field("tx", &self.tx)
             .field(
                 "task",
@@ -163,7 +163,7 @@ impl fmt::Debug for InmemoryStreamWriteHalf {
     }
 }
 
-impl AsyncWrite for InmemoryStreamWriteHalf {
+impl AsyncWrite for InmemoryTransportWriteHalf {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -202,16 +202,16 @@ impl AsyncWrite for InmemoryStreamWriteHalf {
     }
 }
 
-impl DataStream for InmemoryStream {
-    type Read = InmemoryStreamReadHalf;
-    type Write = InmemoryStreamWriteHalf;
+impl Transport for InmemoryTransport {
+    type ReadHalf = InmemoryTransportReadHalf;
+    type WriteHalf = InmemoryTransportWriteHalf;
 
-    fn into_split(self) -> (Self::Read, Self::Write) {
+    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
         (self.incoming, self.outgoing)
     }
 }
 
-impl Transport<InmemoryStream, PlainCodec> {
+impl FramedTransport<InmemoryTransport, PlainCodec> {
     /// Produces a pair of inmemory transports that are connected to each other using
     /// a standard codec
     ///
@@ -219,12 +219,12 @@ impl Transport<InmemoryStream, PlainCodec> {
     pub fn pair(
         buffer: usize,
     ) -> (
-        Transport<InmemoryStream, PlainCodec>,
-        Transport<InmemoryStream, PlainCodec>,
+        FramedTransport<InmemoryTransport, PlainCodec>,
+        FramedTransport<InmemoryTransport, PlainCodec>,
     ) {
-        let (a, b) = InmemoryStream::pair(buffer);
-        let a = Transport::new(a, PlainCodec::new());
-        let b = Transport::new(b, PlainCodec::new());
+        let (a, b) = InmemoryTransport::pair(buffer);
+        let a = FramedTransport::new(a, PlainCodec::new());
+        let b = FramedTransport::new(b, PlainCodec::new());
         (a, b)
     }
 }
@@ -236,7 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn make_should_return_sender_that_sends_data_to_stream() {
-        let (tx, _, mut stream) = InmemoryStream::make(3);
+        let (tx, _, mut stream) = InmemoryTransport::make(3);
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
         tx.send(b"test msg 2".to_vec()).await.unwrap();
@@ -265,7 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn make_should_return_receiver_that_receives_data_from_stream() {
-        let (_, mut rx, mut stream) = InmemoryStream::make(3);
+        let (_, mut rx, mut stream) = InmemoryTransport::make(3);
 
         stream.write_all(b"test msg 1").await.unwrap();
         stream.write_all(b"test msg 2").await.unwrap();
@@ -289,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn into_split_should_provide_a_read_half_that_receives_from_sender() {
-        let (tx, _, stream) = InmemoryStream::make(3);
+        let (tx, _, stream) = InmemoryTransport::make(3);
         let (mut read_half, _) = stream.into_split();
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
@@ -319,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn into_split_should_provide_a_write_half_that_sends_to_receiver() {
-        let (_, mut rx, stream) = InmemoryStream::make(3);
+        let (_, mut rx, stream) = InmemoryTransport::make(3);
         let (_, mut write_half) = stream.into_split();
 
         write_half.write_all(b"test msg 1").await.unwrap();
@@ -344,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_fail_if_buf_has_no_space_remaining() {
-        let (_tx, _rx, stream) = InmemoryStream::make(1);
+        let (_tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         let mut buf = [0u8; 0];
@@ -356,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_update_buf_with_all_overflow_from_last_read_if_it_all_fits() {
-        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         tx.send(vec![1, 2, 3]).await.expect("Failed to send");
@@ -393,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_update_buf_with_some_of_overflow_that_can_fit() {
-        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         tx.send(vec![1, 2, 3, 4, 5]).await.expect("Failed to send");
@@ -424,7 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_update_buf_with_all_of_inner_channel_when_it_fits() {
-        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         let mut buf = [0u8; 5];
@@ -449,7 +449,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_update_buf_with_some_of_inner_channel_that_can_fit_and_add_rest_to_overflow(
     ) {
-        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         let mut buf = [0u8; 1];
@@ -480,7 +480,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_yield_pending_if_no_data_available_on_inner_channel() {
-        let (_tx, _rx, stream) = InmemoryStream::make(1);
+        let (_tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         let mut buf = [0u8; 1];
@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_not_update_buf_if_inner_channel_closed() {
-        let (tx, _rx, stream) = InmemoryStream::make(1);
+        let (tx, _rx, stream) = InmemoryTransport::make(1);
         let (mut t_read, _t_write) = stream.into_split();
 
         let mut buf = [0u8; 1];
@@ -515,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_half_should_return_buf_len_if_can_send_immediately() {
-        let (_tx, mut rx, stream) = InmemoryStream::make(1);
+        let (_tx, mut rx, stream) = InmemoryTransport::make(1);
         let (_t_read, mut t_write) = stream.into_split();
 
         // Write that is not waiting should always succeed with full contents
@@ -529,7 +529,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_half_should_return_support_eventually_sending_by_retrying_when_not_ready() {
-        let (_tx, mut rx, stream) = InmemoryStream::make(1);
+        let (_tx, mut rx, stream) = InmemoryTransport::make(1);
         let (_t_read, mut t_write) = stream.into_split();
 
         // Queue a write already so that we block on the next one
@@ -560,7 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_half_should_zero_if_inner_channel_closed() {
-        let (_tx, rx, stream) = InmemoryStream::make(1);
+        let (_tx, rx, stream) = InmemoryTransport::make(1);
         let (_t_read, mut t_write) = stream.into_split();
 
         // Drop receiving end that transport would talk to

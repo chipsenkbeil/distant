@@ -1,4 +1,4 @@
-use crate::DataStream;
+use crate::Transport;
 use std::{
     ffi::{OsStr, OsString},
     fmt, io,
@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
+    io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf},
     net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer},
 };
 
@@ -22,12 +22,12 @@ mod pipe;
 pub use pipe::NamedPipe;
 
 /// Represents a data stream for a Windows pipe (client or server)
-pub struct WindowsPipeStream {
+pub struct WindowsPipeTransport {
     pub(crate) addr: OsString,
     pub(crate) inner: NamedPipe,
 }
 
-impl WindowsPipeStream {
+impl WindowsPipeTransport {
     /// Establishes a connection to the pipe with the specified name, using the
     /// name for a local pipe address in the form of `\\.\pipe\my_pipe_name` where
     /// `my_pipe_name` is provided to this function
@@ -62,24 +62,24 @@ impl WindowsPipeStream {
     }
 }
 
-impl fmt::Debug for WindowsPipeStream {
+impl fmt::Debug for WindowsPipeTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WindowsPipeStream")
+        f.debug_struct("WindowsPipeTransport")
             .field("addr", &self.addr)
             .finish()
     }
 }
 
-impl DataStream for WindowsPipeStream {
-    type Read = tokio::io::ReadHalf<WindowsPipeStream>;
-    type Write = tokio::io::WriteHalf<WindowsPipeStream>;
+impl Transport for WindowsPipeTransport {
+    type ReadHalf = ReadHalf<WindowsPipeTransport>;
+    type WriteHalf = WriteHalf<WindowsPipeTransport>;
 
-    fn into_split(self) -> (Self::Read, Self::Write) {
+    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
         tokio::io::split(self)
     }
 }
 
-impl AsyncRead for WindowsPipeStream {
+impl AsyncRead for WindowsPipeTransport {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -89,7 +89,7 @@ impl AsyncRead for WindowsPipeStream {
     }
 }
 
-impl AsyncWrite for WindowsPipeStream {
+impl AsyncWrite for WindowsPipeTransport {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

@@ -1,13 +1,13 @@
 use crate::{
-    client::{SessionChannel, SessionChannelExt, SessionChannelExtError},
+    client::{DistantChannel, DistantChannelError, DistantChannelExt},
     constants::CLIENT_WATCHER_CAPACITY,
     data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData, Error as DistantError},
 };
 use derive_more::{Display, Error, From};
-use distant_net::{Request, TransportError};
+use distant_net::Request;
 use log::*;
 use std::{
-    fmt,
+    fmt, io,
     path::{Path, PathBuf},
 };
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -21,7 +21,7 @@ pub enum WatchError {
     ServerError(DistantError),
 
     /// When the communication over the wire has issues
-    TransportError(TransportError),
+    IoError(io::Error),
 
     /// When a queued change is dropped because the response channel closed early
     QueuedChangeDropped,
@@ -32,11 +32,11 @@ pub enum WatchError {
 }
 
 #[derive(Debug, Display, From, Error)]
-pub struct UnwatchError(SessionChannelExtError);
+pub struct UnwatchError(DistantChannelError);
 
 /// Represents a watcher of some path on a remote machine
 pub struct Watcher {
-    channel: DistantSessionChannel,
+    channel: DistantChannel,
     path: PathBuf,
     task: JoinHandle<()>,
     rx: mpsc::Receiver<Change>,
@@ -52,7 +52,7 @@ impl fmt::Debug for Watcher {
 impl Watcher {
     /// Creates a watcher for some remote path
     pub async fn watch(
-        mut channel: DistantSessionChannel,
+        mut channel: DistantChannel,
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
@@ -187,7 +187,7 @@ impl Watcher {
         trace!("Unwatching {:?}", self.path);
         let result = self
             .channel
-            .unwatch(self.tenant.to_string(), self.path.to_path_buf())
+            .unwatch(self.path.to_path_buf())
             .await
             .map_err(UnwatchError::from);
 
@@ -208,14 +208,18 @@ impl Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{client::Session, data::ChangeKind};
-    use distant_net::{InmemoryStream, PlainCodec, Response, Transport};
+    use crate::data::ChangeKind;
+    use crate::DistantSession;
+    use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Response};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, DistantSession) {
-        let (t1, t2) = Transport::make_pair();
-        (t1, Session::initialize(t2).unwrap())
+    fn make_session() -> (
+        FramedTransport<InmemoryTransport, PlainCodec>,
+        DistantSession,
+    ) {
+        let (t1, t2) = FramedTransport::make_pair();
+        (t1, Client::new(t2).unwrap())
     }
 
     #[tokio::test]

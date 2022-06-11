@@ -1,8 +1,7 @@
-use crate::{Codec, DataStream, PostOffice, Request, Response, TcpStream, Transport};
+use crate::{Codec, FramedTransport, Request, Response, TcpTransport, Transport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     convert,
-    marker::PhantomData,
     net::SocketAddr,
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -17,8 +16,8 @@ use tokio::{
 mod channel;
 pub use channel::*;
 
-/// Represents a session with a remote server that can be used to send requests & receive responses
-pub struct Session<T, U>
+/// Represents a client that can be used to send requests & receive responses from a server
+pub struct Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
@@ -31,12 +30,9 @@ where
 
     /// Contains the task that is running to receive responses from a server
     response_task: JoinHandle<()>,
-
-    /// Type associated with responses
-    _response_type: PhantomData<U>,
 }
 
-impl<T, U> Session<T, U>
+impl<T, U> Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
@@ -46,8 +42,8 @@ where
     where
         C: Codec + Send + 'static,
     {
-        let stream = TcpStream::connect(addr).await?;
-        let transport = Transport::new(stream, codec);
+        let stream = TcpTransport::connect(addr).await?;
+        let transport = FramedTransport::new(stream, codec);
         Self::new(transport)
     }
 
@@ -73,7 +69,7 @@ where
 }
 
 #[cfg(unix)]
-impl<T, U> Session<T, U>
+impl<T, U> Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
@@ -84,8 +80,8 @@ where
         C: Codec + Send + 'static,
     {
         let p = path.as_ref();
-        let stream = crate::UnixSocketStream::connect(p).await?;
-        let transport = Transport::new(stream, codec);
+        let stream = crate::UnixSocketTransport::connect(p).await?;
+        let transport = FramedTransport::new(stream, codec);
         Self::new(transport)
     }
 
@@ -105,15 +101,15 @@ where
     }
 }
 
-impl<T, U> Session<T, U>
+impl<T, U> Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
-    /// Initializes a session using the provided transport
-    pub fn new<D, C>(transport: Transport<D, C>) -> io::Result<Self>
+    /// Initializes a client using the provided transport
+    pub fn new<D, C>(transport: FramedTransport<D, C>) -> io::Result<Self>
     where
-        D: DataStream,
+        D: Transport,
         C: Codec + Send + 'static,
     {
         let (mut t_read, mut t_write) = transport.into_split();
@@ -158,23 +154,22 @@ where
             channel,
             request_task,
             response_task,
-            _response_type: PhantomData,
         })
     }
 }
 
-impl<T, U> Session<T, U>
+impl<T, U> Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
-    /// Waits for the session to terminate, which results when the receiving end of the network
-    /// connection is closed (or the session is shutdown)
+    /// Waits for the client to terminate, which results when the receiving end of the network
+    /// connection is closed (or the client is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {
         tokio::try_join!(self.request_task, self.response_task).map(|_| ())
     }
 
-    /// Abort the session's current connection by forcing its tasks to abort
+    /// Abort the client's current connection by forcing its tasks to abort
     pub fn abort(&self) {
         self.request_task.abort();
         self.response_task.abort();
@@ -186,7 +181,7 @@ where
     }
 }
 
-impl<T, U> Deref for Session<T, U>
+impl<T, U> Deref for Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
@@ -198,7 +193,7 @@ where
     }
 }
 
-impl<T, U> DerefMut for Session<T, U>
+impl<T, U> DerefMut for Client<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
@@ -208,12 +203,12 @@ where
     }
 }
 
-impl<T, U> From<Session<T, U>> for Channel<T, U>
+impl<T, U> From<Client<T, U>> for Channel<T, U>
 where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
-    fn from(session: Session<T, U>) -> Self {
-        session.channel
+    fn from(client: Client<T, U>) -> Self {
+        client.channel
     }
 }

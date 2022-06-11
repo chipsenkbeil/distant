@@ -9,7 +9,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    ChangeKindSet, LspData, RemoteProcess, RemoteProcessError, Request, RequestData, Response,
+    ChangeKindSet, LspMsg, RemoteProcess, RemoteProcessError, Request, RequestData, Response,
     ResponseData, Session, TransportError, WatchError, Watcher,
 };
 use tokio::{io, time::Duration};
@@ -82,7 +82,7 @@ async fn start(
     cmd: ActionSubcommand,
     mut session: Session,
     timeout: Duration,
-    lsp_data: Option<LspData>,
+    lsp_data: Option<LspMsg>,
 ) -> Result<(), Error> {
     let is_shell_format = matches!(cmd.format, Format::Shell);
 
@@ -99,7 +99,6 @@ async fn start(
             }),
         ) if is_shell_format => {
             let mut watcher = Watcher::watch(
-                utils::new_tenant(),
                 session.into_channel(),
                 path,
                 recursive,
@@ -120,24 +119,8 @@ async fn start(
 
         // ProcSpawn request w/ shell format is specially handled and we ignore interactive as
         // the stdin will be used for sending ProcStdin to remote process
-        (
-            _,
-            Some(RequestData::ProcSpawn {
-                cmd,
-                args,
-                persist,
-                pty,
-            }),
-        ) if is_shell_format => {
-            let mut proc = RemoteProcess::spawn(
-                utils::new_tenant(),
-                session.clone_channel(),
-                cmd,
-                args,
-                persist,
-                pty,
-            )
-            .await?;
+        (_, Some(RequestData::ProcSpawn { cmd, persist, pty })) if is_shell_format => {
+            let mut proc = RemoteProcess::spawn(session.clone_channel(), cmd, persist, pty).await?;
 
             // If we also parsed an LSP's initialize request for its session, we want to forward
             // it along in the case of a process call

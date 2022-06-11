@@ -1,63 +1,54 @@
 use crate::{
-    client::{
-        RemoteLspProcess, RemoteProcess, RemoteProcessError, SessionChannel, UnwatchError,
-        WatchError, Watcher,
-    },
+    client::{RemoteLspProcess, RemoteProcess, UnwatchError, WatchError, Watcher},
     data::{
         ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Error as Failure,
         Metadata, PtySize, SystemInfo,
     },
 };
-use async_trait::async_trait;
 use derive_more::{Display, Error, From};
-use distant_net::{Request, TransportError};
-use std::path::PathBuf;
+use distant_net::{Channel, Request};
+use std::{future::Future, io, path::PathBuf, pin::Pin};
 
 /// Represents an error that can occur related to convenience functions tied to a
-/// [`SessionChannel`] through [`SessionChannelExt`]
+/// [`SessionChannel`] through [`DistantChannel`]
 #[derive(Debug, Display, Error, From)]
-pub enum SessionChannelExtError {
+pub enum DistantChannelError {
     /// Occurs when the remote action fails
     Failure(#[error(not(source))] Failure),
 
     /// Occurs when a transport error is encountered
-    TransportError(TransportError),
+    IoError(io::Error),
 
     /// Occurs when receiving a response that was not expected
     MismatchedResponse,
 }
 
-pub type SessionChannelExtResult<T> = Result<T, SessionChannelExtError>;
+pub type AsyncReturn<'a, T, E = DistantChannelError> =
+    Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 /// Provides convenience functions on top of a [`SessionChannel`]
-#[async_trait]
-pub trait SessionChannelExt {
+pub trait DistantChannelExt {
     /// Appends to a remote file using the data from a collection of bytes
-    async fn append_file(
+    fn append_file(
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<Vec<u8>>,
-    ) -> SessionChannelExtResult<()>;
+    ) -> AsyncReturn<'_, ()>;
 
     /// Appends to a remote file using the data from a string
     fn append_file_text(
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<String>,
-    ) -> SessionChannelExtResult<()>;
+    ) -> AsyncReturn<'_, ()>;
 
     /// Copies a remote file or directory from src to dst
-    fn copy(
-        &mut self,
-        src: impl Into<PathBuf>,
-        dst: impl Into<PathBuf>,
-    ) -> SessionChannelExtResult<()>;
+    fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
 
     /// Creates a remote directory, optionally creating all parent components if specified
-    fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> SessionChannelExtResult<()>;
+    fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> AsyncReturn<'_, ()>;
 
-    /// Checks if a path exists on a remote machine
-    fn exists(&mut self, path: impl Into<PathBuf>) -> SessionChannelExtResult<bool>;
+    fn exists(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, bool>;
 
     /// Retrieves metadata about a path on a remote machine
     fn metadata(
@@ -65,7 +56,7 @@ pub trait SessionChannelExt {
         path: impl Into<PathBuf>,
         canonicalize: bool,
         resolve_file_type: bool,
-    ) -> SessionChannelExtResult<Metadata>;
+    ) -> AsyncReturn<'_, Metadata>;
 
     /// Reads entries from a directory, returning a tuple of directory entries and failures
     fn read_dir(
@@ -75,24 +66,20 @@ pub trait SessionChannelExt {
         absolute: bool,
         canonicalize: bool,
         include_root: bool,
-    ) -> SessionChannelExtResult<(Vec<DirEntry>, Vec<Failure>)>;
+    ) -> AsyncReturn<'_, (Vec<DirEntry>, Vec<Failure>)>;
 
     /// Reads a remote file as a collection of bytes
-    fn read_file(&mut self, path: impl Into<PathBuf>) -> SessionChannelExtResult<Vec<u8>>;
+    fn read_file(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, Vec<u8>>;
 
     /// Returns a remote file as a string
-    fn read_file_text(&mut self, path: impl Into<PathBuf>) -> SessionChannelExtResult<String>;
+    fn read_file_text(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, String>;
 
     /// Removes a remote file or directory, supporting removal of non-empty directories if
     /// force is true
-    fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> SessionChannelExtResult<()>;
+    fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> AsyncReturn<'_, ()>;
 
     /// Renames a remote file or directory from src to dst
-    fn rename(
-        &mut self,
-        src: impl Into<PathBuf>,
-        dst: impl Into<PathBuf>,
-    ) -> SessionChannelExtResult<()>;
+    fn rename(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
 
     /// Watches a remote file or directory
     fn watch(
@@ -101,10 +88,10 @@ pub trait SessionChannelExt {
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
-    ) -> Result<Watcher, WatchError>;
+    ) -> AsyncReturn<'_, Watcher, WatchError>;
 
     /// Unwatches a remote file or directory
-    fn unwatch(&mut self, path: impl Into<PathBuf>) -> Result<(), UnwatchError>;
+    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, (), UnwatchError>;
 
     /// Spawns a process on the remote machine
     fn spawn(
@@ -112,7 +99,7 @@ pub trait SessionChannelExt {
         cmd: impl Into<String>,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> Result<RemoteProcess, RemoteProcessError>;
+    ) -> AsyncReturn<'_, RemoteProcess>;
 
     /// Spawns an LSP process on the remote machine
     fn spawn_lsp(
@@ -120,33 +107,33 @@ pub trait SessionChannelExt {
         cmd: impl Into<String>,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> Result<RemoteLspProcess, RemoteProcessError>;
+    ) -> AsyncReturn<'_, RemoteLspProcess>;
 
     /// Retrieves information about the remote system
-    fn system_info(&mut self) -> SessionChannelExtResult<SystemInfo>;
+    fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo>;
 
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<Vec<u8>>,
-    ) -> SessionChannelExtResult<()>;
+    ) -> AsyncReturn<'_, ()>;
 
     /// Writes a remote file with the data from a string
     fn write_file_text(
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<String>,
-    ) -> SessionChannelExtResult<()>;
+    ) -> AsyncReturn<'_, ()>;
 }
 
 macro_rules! make_body {
     ($self:expr, $data:expr, @ok) => {
         make_body!($self, $data, |data| {
             match data {
-                ResponseData::Ok => Ok(()),
-                ResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-                _ => Err(SessionChannelExtError::MismatchedResponse),
+                DistantResponseData::Ok => Ok(()),
+                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+                _ => Err(DistantChannelError::MismatchedResponse),
             }
         })
     };
@@ -157,12 +144,12 @@ macro_rules! make_body {
             $self
                 .send(req)
                 .await
-                .map_err(SessionChannelExtError::from)
+                .map_err(DistantChannelError::from)
                 .and_then(|res| {
                     if res.payload.len() == 1 {
                         Ok(res.payload.into_iter().next().unwrap())
                     } else {
-                        Err(SessionChannelExtError::MismatchedResponse)
+                        Err(DistantChannelError::MismatchedResponse)
                     }
                 })
                 .and_then($and_then)
@@ -170,13 +157,12 @@ macro_rules! make_body {
     }};
 }
 
-#[async_trait]
-impl<T> SessionChannelExt for SessionChannel<T> {
+impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseData>> {
     fn append_file(
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<Vec<u8>>,
-    ) -> SessionChannelExtResult<()> {
+    ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::FileAppend { path: path.into(), data: data.into() },
@@ -188,7 +174,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<String>,
-    ) -> SessionChannelExtResult<()> {
+    ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::FileAppendText { path: path.into(), text: data.into() },
@@ -196,11 +182,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         )
     }
 
-    fn copy(
-        &mut self,
-        src: impl Into<PathBuf>,
-        dst: impl Into<PathBuf>,
-    ) -> SessionChannelExtResult<()> {
+    fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::Copy { src: src.into(), dst: dst.into() },
@@ -208,7 +190,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         )
     }
 
-    fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> SessionChannelExtResult<()> {
+    fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::DirCreate { path: path.into(), all },
@@ -216,14 +198,14 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         )
     }
 
-    fn exists(&mut self, path: impl Into<PathBuf>) -> SessionChannelExtResult<bool> {
+    fn exists(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, bool> {
         make_body!(
             self,
             DistantRequestData::Exists { path: path.into() },
             |data| match data {
                 DistantResponseData::Exists { value } => Ok(value),
-                DistantResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-                _ => Err(SessionChannelExtError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+                _ => Err(DistantChannelError::MismatchedResponse),
             }
         )
     }
@@ -233,7 +215,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         path: impl Into<PathBuf>,
         canonicalize: bool,
         resolve_file_type: bool,
-    ) -> SessionChannelExtResult<Metadata> {
+    ) -> AsyncReturn<'_, Metadata> {
         make_body!(
             self,
             DistantRequestData::Metadata {
@@ -243,8 +225,8 @@ impl<T> SessionChannelExt for SessionChannel<T> {
             },
             |data| match data {
                 DistantResponseData::Metadata(x) => Ok(x),
-                DistantResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-                _ => Err(SessionChannelExtError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+                _ => Err(DistantChannelError::MismatchedResponse),
             }
         )
     }
@@ -256,7 +238,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         absolute: bool,
         canonicalize: bool,
         include_root: bool,
-    ) -> SessionChannelExtResult<(Vec<DirEntry>, Vec<Failure>)> {
+    ) -> AsyncReturn<'_, (Vec<DirEntry>, Vec<Failure>)> {
         make_body!(
             self,
             DistantRequestData::DirRead {
@@ -268,37 +250,37 @@ impl<T> SessionChannelExt for SessionChannel<T> {
             },
             |data| match data {
                 DistantResponseData::DirEntries { entries, errors } => Ok((entries, errors)),
-                DistantResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-                _ => Err(SessionChannelExtError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+                _ => Err(DistantChannelError::MismatchedResponse),
             }
         )
     }
 
-    fn read_file(&mut self, path: impl Into<PathBuf>) -> SessionChannelExtResult<Vec<u8>> {
+    fn read_file(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, Vec<u8>> {
         make_body!(
             self,
             DistantRequestData::FileRead { path: path.into() },
             |data| match data {
                 DistantResponseData::Blob { data } => Ok(data),
-                DistantResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-                _ => Err(SessionChannelExtError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+                _ => Err(DistantChannelError::MismatchedResponse),
             }
         )
     }
 
-    fn read_file_text(&mut self, path: impl Into<PathBuf>) -> SessionChannelExtResult<String> {
+    fn read_file_text(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, String> {
         make_body!(
             self,
             DistantRequestData::FileReadText { path: path.into() },
             |data| match data {
                 DistantResponseData::Text { data } => Ok(data),
-                DistantResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-                _ => Err(SessionChannelExtError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+                _ => Err(DistantChannelError::MismatchedResponse),
             }
         )
     }
 
-    fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> SessionChannelExtResult<()> {
+    fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::Remove { path: path.into(), force },
@@ -306,11 +288,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         )
     }
 
-    fn rename(
-        &mut self,
-        src: impl Into<PathBuf>,
-        dst: impl Into<PathBuf>,
-    ) -> SessionChannelExtResult<()> {
+    fn rename(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::Rename { src: src.into(), dst: dst.into() },
@@ -324,18 +302,18 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
-    ) -> Result<Watcher, WatchError> {
+    ) -> AsyncReturn<'_, Watcher, WatchError> {
         let path = path.into();
         let only = only.into();
         let except = except.into();
         Box::pin(async move { Watcher::watch(self.clone(), path, recursive, only, except).await })
     }
 
-    fn unwatch(&mut self, path: impl Into<PathBuf>) -> Result<(), UnwatchError> {
-        fn inner_unwatch<T>(
-            channel: &mut SessionChannel<T>,
+    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, (), UnwatchError> {
+        fn inner_unwatch(
+            channel: &mut Channel<Vec<DistantRequestData>, Vec<DistantResponseData>>,
             path: impl Into<PathBuf>,
-        ) -> SessionChannelExtResult<()> {
+        ) -> AsyncReturn<'_, ()> {
             make_body!(
                 channel,
                 DistantRequestData::Unwatch { path: path.into() },
@@ -351,34 +329,28 @@ impl<T> SessionChannelExt for SessionChannel<T> {
     fn spawn(
         &mut self,
         cmd: impl Into<String>,
-        args: Vec<impl Into<String>>,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> Result<RemoteProcess, RemoteProcessError> {
+    ) -> AsyncReturn<'_, RemoteProcess> {
         let cmd = cmd.into();
-        let args = args.into_iter().map(Into::into).collect();
-        Box::pin(async move { RemoteProcess::spawn(self.clone(), cmd, args, persist, pty).await })
+        Box::pin(async move { RemoteProcess::spawn(self.clone(), cmd, persist, pty).await })
     }
 
     fn spawn_lsp(
         &mut self,
         cmd: impl Into<String>,
-        args: Vec<impl Into<String>>,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> Result<RemoteLspProcess, RemoteProcessError> {
+    ) -> AsyncReturn<'_, RemoteLspProcess> {
         let cmd = cmd.into();
-        let args = args.into_iter().map(Into::into).collect();
-        Box::pin(
-            async move { RemoteLspProcess::spawn(self.clone(), cmd, args, persist, pty).await },
-        )
+        Box::pin(async move { RemoteLspProcess::spawn(self.clone(), cmd, persist, pty).await })
     }
 
-    fn system_info(&mut self) -> SessionChannelExtResult<SystemInfo> {
+    fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo> {
         make_body!(self, DistantRequestData::SystemInfo {}, |data| match data {
             DistantResponseData::SystemInfo(x) => Ok(x),
-            DistantResponseData::Error(x) => Err(SessionChannelExtError::Failure(x)),
-            _ => Err(SessionChannelExtError::MismatchedResponse),
+            DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
+            _ => Err(DistantChannelError::MismatchedResponse),
         })
     }
 
@@ -386,7 +358,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<Vec<u8>>,
-    ) -> SessionChannelExtResult<()> {
+    ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::FileWrite { path: path.into(), data: data.into() },
@@ -398,7 +370,7 @@ impl<T> SessionChannelExt for SessionChannel<T> {
         &mut self,
         path: impl Into<PathBuf>,
         data: impl Into<String>,
-    ) -> SessionChannelExtResult<()> {
+    ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             DistantRequestData::FileWriteText { path: path.into(), text: data.into() },

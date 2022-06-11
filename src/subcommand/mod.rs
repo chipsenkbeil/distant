@@ -1,6 +1,6 @@
 use crate::opt::{Method, SessionInput, SshConnectionOpts};
 use distant_core::{
-    LspData, PlainCodec, Session, SessionInfo, SessionInfoFile, XChaCha20Poly1305Codec,
+    LspMsg, PlainCodec, Session, SessionInfo, SessionInfoFile, XChaCha20Poly1305Codec,
 };
 use std::{
     future::Future,
@@ -32,7 +32,7 @@ impl CommandRunner {
         F1: FnOnce(
             Session,
             Duration,
-            Option<LspData>,
+            Option<LspMsg>,
         ) -> Pin<Box<dyn Future<Output = Result<(), E>>>>,
         F2: Fn(io::Error) -> E + Copy,
         E: std::error::Error,
@@ -107,7 +107,7 @@ enum SessionParams {
     Tcp {
         addr: SocketAddr,
         codec: XChaCha20Poly1305Codec,
-        lsp_data: Option<LspData>,
+        lsp_data: Option<LspMsg>,
     },
     #[cfg(unix)]
     Socket { path: PathBuf, codec: PlainCodec },
@@ -151,7 +151,7 @@ async fn retrieve_session_params(
         }
         SessionInput::Lsp => {
             let mut data =
-                LspData::from_buf_reader(&mut io::stdin().lock()).map_err(io::Error::from)?;
+                LspMsg::from_buf_reader(&mut io::stdin().lock()).map_err(io::Error::from)?;
             let info = data.take_session_info().map_err(io::Error::from)?;
             let addr = info.to_socket_addr().await?;
             let codec = XChaCha20Poly1305Codec::from(info.key);

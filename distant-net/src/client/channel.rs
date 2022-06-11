@@ -1,6 +1,9 @@
-use crate::{Mailbox, PostOffice, Request, Response, TransportError};
-use std::{convert, sync::Weak};
-use tokio::{io, sync::mpsc, time::Duration};
+use crate::{Request, Response};
+use std::{convert, io, sync::Weak};
+use tokio::{sync::mpsc, time::Duration};
+
+mod mailbox;
+pub use mailbox::*;
 
 /// Capacity associated with a channel's mailboxes for receiving multiple responses to a request
 const CHANNEL_MAILBOX_CAPACITY: usize = 10000;
@@ -47,14 +50,14 @@ where
     /// Sends a request and returns a mailbox that can receive one or more responses, failing if
     /// unable to send a request or if the session's receiving line to the remote server has
     /// already been severed
-    pub async fn mail(&mut self, req: Request<T>) -> Result<Mailbox<Response<U>>, TransportError> {
+    pub async fn mail(&mut self, req: Request<T>) -> io::Result<Mailbox<Response<U>>> {
         // First, create a mailbox using the request's id
         let mailbox = Weak::upgrade(&self.post_office)
             .ok_or_else(|| {
-                TransportError::IoError(io::Error::new(
+                io::Error::new(
                     io::ErrorKind::NotConnected,
                     "Session's post office is no longer available",
-                ))
+                )
             })?
             .make_mailbox(req.id, CHANNEL_MAILBOX_CAPACITY)
             .await;
@@ -68,14 +71,15 @@ where
 
     /// Sends a request and waits for a response, failing if unable to send a request or if
     /// the session's receiving line to the remote server has already been severed
-    pub async fn send(&mut self, req: Request<T>) -> Result<Response<U>, TransportError> {
+    pub async fn send(&mut self, req: Request<T>) -> io::Result<Response<U>> {
         // Send mail and get back a mailbox
         let mut mailbox = self.mail(req).await?;
 
         // Wait for first response, and then drop the mailbox
-        mailbox.next().await.ok_or_else(|| {
-            TransportError::IoError(io::Error::from(io::ErrorKind::ConnectionAborted))
-        })
+        mailbox
+            .next()
+            .await
+            .ok_or_else(|| io::Error::from(io::ErrorKind::ConnectionAborted))
     }
 
     /// Sends a request and waits for a response, timing out after duration has passed
@@ -83,32 +87,27 @@ where
         &mut self,
         req: Request<T>,
         duration: Duration,
-    ) -> Result<Response<U>, TransportError> {
+    ) -> io::Result<Response<U>> {
         tokio::time::timeout(duration, self.send(req))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-            .map_err(TransportError::from)
             .and_then(convert::identity)
     }
 
     /// Sends a request without waiting for a response; this method is able to be used even
     /// if the session's receiving line to the remote server has been severed
-    pub async fn fire(&mut self, req: Request<T>) -> Result<(), TransportError> {
-        self.tx.send(req).await.map_err(|x| {
-            TransportError::IoError(io::Error::new(io::ErrorKind::BrokenPipe, x.to_string()))
-        })
+    pub async fn fire(&mut self, req: Request<T>) -> io::Result<()> {
+        self.tx
+            .send(req)
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x.to_string()))
     }
 
     /// Sends a request without waiting for a response, timing out after duration has passed
-    pub async fn fire_timeout(
-        &mut self,
-        req: Request<T>,
-        duration: Duration,
-    ) -> Result<(), TransportError> {
+    pub async fn fire_timeout(&mut self, req: Request<T>, duration: Duration) -> io::Result<()> {
         tokio::time::timeout(duration, self.fire(req))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-            .map_err(TransportError::from)
             .and_then(convert::identity)
     }
 }
@@ -116,15 +115,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Session, Transport};
+    use crate::{Client, FramedTransport};
     use std::time::Duration;
 
-    type TestSession = Session<u8, u8>;
+    type TestSession = Client<u8, u8>;
 
     #[tokio::test]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
-        let (t1, mut t2) = Transport::make_pair();
-        let session: TestSession = Session::new(t1).unwrap();
+        let (t1, mut t2) = FramedTransport::make_pair();
+        let session: TestSession = Client::new(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
@@ -158,8 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
-        let (t1, mut t2) = Transport::make_pair();
-        let session: TestSession = Session::new(t1).unwrap();
+        let (t1, mut t2) = FramedTransport::make_pair();
+        let session: TestSession = Client::new(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
@@ -174,13 +173,13 @@ mod tests {
 
     #[tokio::test]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (t1, mut t2) = Transport::make_pair();
-        let session: TestSession = Session::new(t1).unwrap();
+        let (t1, mut t2) = FramedTransport::make_pair();
+        let session: TestSession = Client::new(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
         match channel.send_timeout(req, Duration::from_millis(30)).await {
-            Err(TransportError::IoError(x)) => assert_eq!(x.kind(), io::ErrorKind::TimedOut),
+            Err(x) => assert_eq!(x.kind(), io::ErrorKind::TimedOut),
             x => panic!("Unexpected response: {:?}", x),
         }
 
@@ -189,8 +188,8 @@ mod tests {
 
     #[tokio::test]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (t1, mut t2) = Transport::make_pair();
-        let session: TestSession = Session::new(t1).unwrap();
+        let (t1, mut t2) = FramedTransport::make_pair();
+        let session: TestSession = Client::new(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);

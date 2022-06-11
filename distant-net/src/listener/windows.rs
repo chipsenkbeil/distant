@@ -1,4 +1,4 @@
-use crate::{Listener, WindowsPipeStream};
+use crate::{Listener, WindowsPipeTransport};
 use async_trait::async_trait;
 use std::{
     ffi::{OsStr, OsString},
@@ -46,7 +46,7 @@ impl fmt::Debug for WindowsPipeListener {
 
 #[async_trait]
 impl Listener for WindowsPipeListener {
-    type Output = WindowsPipeStream;
+    type Output = WindowsPipeTransport;
 
     async fn accept(&mut self) -> io::Result<Self::Output> {
         // Wait for a new connection on the current server pipe
@@ -56,9 +56,9 @@ impl Listener for WindowsPipeListener {
         // as the current pipe is now taken with our existing connection
         let pipe = mem::replace(&mut self.inner, ServerOptions::new().create(&self.addr)?);
 
-        Ok(WindowsPipeStream {
+        Ok(WindowsPipeTransport {
             addr: self.addr.clone(),
-            inner: pipe
+            inner: pipe,
         })
     }
 }

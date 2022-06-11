@@ -5,9 +5,9 @@ mod utils;
 mod watcher;
 
 pub type DistantSession =
-    distant_net::Session<crate::DistantRequestData, crate::DistantResponseData>;
-pub type DistantSessionChannel =
-    distant_net::SessionChannel<crate::DistantRequestData, crate::DistantResponseData>;
+    distant_net::Client<Vec<crate::DistantRequestData>, Vec<crate::DistantResponseData>>;
+pub type DistantChannel =
+    distant_net::Channel<Vec<crate::DistantRequestData>, Vec<crate::DistantResponseData>>;
 
 pub use lsp::*;
 pub use process::*;

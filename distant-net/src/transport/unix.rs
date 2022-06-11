@@ -1,4 +1,4 @@
-use crate::DataStream;
+use crate::Transport;
 use std::{
     fmt, io,
     path::{Path, PathBuf},
@@ -14,15 +14,15 @@ use tokio::{
 };
 
 /// Represents a data stream for a Unix socket
-pub struct UnixSocketStream {
+pub struct UnixSocketTransport {
     pub(crate) path: PathBuf,
     pub(crate) inner: UnixStream,
 }
 
-impl UnixSocketStream {
+impl UnixSocketTransport {
     /// Creates a new stream by connecting to the specified path
     pub async fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
-        let stream = tokio::net::UnixStream::connect(path.as_ref()).await?;
+        let stream = UnixStream::connect(path.as_ref()).await?;
         Ok(Self {
             path: path.as_ref().to_path_buf(),
             inner: stream,
@@ -35,24 +35,24 @@ impl UnixSocketStream {
     }
 }
 
-impl fmt::Debug for UnixSocketStream {
+impl fmt::Debug for UnixSocketTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnixSocketStream")
+        f.debug_struct("UnixSocketTransport")
             .field("path", &self.path)
             .finish()
     }
 }
 
-impl DataStream for UnixSocketStream {
-    type Read = OwnedReadHalf;
-    type Write = OwnedWriteHalf;
+impl Transport for UnixSocketTransport {
+    type ReadHalf = OwnedReadHalf;
+    type WriteHalf = OwnedWriteHalf;
 
-    fn into_split(self) -> (Self::Read, Self::Write) {
-        tokio::net::UnixStream::into_split(self.inner)
+    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
+        UnixStream::into_split(self.inner)
     }
 }
 
-impl AsyncRead for UnixSocketStream {
+impl AsyncRead for UnixSocketTransport {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -62,7 +62,7 @@ impl AsyncRead for UnixSocketStream {
     }
 }
 
-impl AsyncWrite for UnixSocketStream {
+impl AsyncWrite for UnixSocketTransport {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

@@ -6,7 +6,7 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{LspData, PtySize, RemoteLspProcess, RemoteProcessError, Session};
+use distant_core::{LspMsg, PtySize, RemoteLspProcess, RemoteProcessError, Session};
 use terminal_size::{terminal_size, Height, Width};
 use tokio::io;
 
@@ -67,13 +67,11 @@ async fn run_async(cmd: LspSubcommand, opt: CommonOpt) -> Result<(), Error> {
 async fn start(
     cmd: LspSubcommand,
     session: Session,
-    lsp_data: Option<LspData>,
+    lsp_data: Option<LspMsg>,
 ) -> Result<(), Error> {
     let mut proc = RemoteLspProcess::spawn(
-        utils::new_tenant(),
         session.clone_channel(),
         cmd.cmd,
-        cmd.args,
         cmd.persist,
         if cmd.pty {
             terminal_size()

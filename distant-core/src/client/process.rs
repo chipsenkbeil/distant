@@ -1,10 +1,9 @@
 use crate::{
-    client::SessionChannel,
+    client::DistantChannel,
     constants::CLIENT_PIPE_CAPACITY,
     data::{DistantRequestData, DistantResponseData, PtySize},
 };
-use derive_more::{Display, Error, From};
-use distant_net::{Mailbox, Request, TransportError};
+use distant_net::{Mailbox, Request, Response};
 use log::*;
 use std::sync::Arc;
 use tokio::{
@@ -16,26 +15,10 @@ use tokio::{
         },
         RwLock,
     },
-    task::{JoinError, JoinHandle},
+    task::JoinHandle,
 };
 
-type StatusResult = Result<(bool, Option<i32>), RemoteProcessError>;
-
-#[derive(Debug, Display, Error, From)]
-pub enum RemoteProcessError {
-    /// When attempting to relay stdout/stderr over channels, but the channels fail
-    ChannelDead,
-
-    /// When the communication over the wire has issues
-    TransportError(TransportError),
-
-    /// When the stream of responses from the server closes without receiving
-    /// an indicator of the process' exit status
-    UnexpectedEof,
-
-    /// When attempting to wait on the remote process, but the internal task joining failed
-    WaitFailed(JoinError),
-}
+type StatusResult = io::Result<(bool, Option<i32>)>;
 
 /// Represents a process on a remote machine
 #[derive(Debug)]
@@ -76,12 +59,12 @@ pub struct RemoteProcess {
 
 impl RemoteProcess {
     /// Spawns the specified process on the remote machine using the given session
-    pub async fn spawn<T>(
-        mut channel: SessionChannel<T>,
+    pub async fn spawn(
+        mut channel: DistantChannel,
         cmd: impl Into<String>,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> Result<Self, RemoteProcessError> {
+    ) -> io::Result<Self> {
         let cmd = cmd.into();
 
         // Submit our run request and get back a mailbox for responses
@@ -96,34 +79,25 @@ impl RemoteProcess {
         // Wait until we get the first response, and get id from proc started
         let (id, origin_id) = match mailbox.next().await {
             Some(res) if res.payload.len() != 1 => {
-                return Err(RemoteProcessError::TransportError(TransportError::IoError(
-                    io::Error::new(io::ErrorKind::InvalidData, "Got wrong payload size"),
-                )));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Got wrong payload size",
+                ));
             }
             Some(res) => {
                 let origin_id = res.origin_id;
                 match res.payload.into_iter().next().unwrap() {
                     DistantResponseData::ProcSpawned { id } => (id, origin_id),
-                    DistantResponseData::Error(x) => {
-                        return Err(RemoteProcessError::TransportError(TransportError::IoError(
-                            x.into(),
-                        )))
-                    }
+                    DistantResponseData::Error(x) => return Err(x.into()),
                     x => {
-                        return Err(RemoteProcessError::TransportError(TransportError::IoError(
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!("Got response type of {}", x.as_ref()),
-                            ),
-                        )))
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Got response type of {}", x.as_ref()),
+                        ))
                     }
                 }
             }
-            None => {
-                return Err(RemoteProcessError::TransportError(TransportError::IoError(
-                    io::Error::from(io::ErrorKind::ConnectionAborted),
-                )))
-            }
+            None => return Err(io::Error::from(io::ErrorKind::ConnectionAborted)),
         };
 
         // Create channels for our stdin/stdout/stderr
@@ -169,7 +143,7 @@ impl RemoteProcess {
         let wait_task = tokio::spawn(async move {
             let res = match tokio::try_join!(req_task, res_task) {
                 Ok((_, res)) => res,
-                Err(x) => Err(RemoteProcessError::from(x)),
+                Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
             };
             status_2.write().await.replace(res);
         });
@@ -211,7 +185,7 @@ impl RemoteProcess {
     }
 
     /// Waits for the process to terminate, returning the success status and an optional exit code
-    pub async fn wait(self) -> Result<(bool, Option<i32>), RemoteProcessError> {
+    pub async fn wait(self) -> io::Result<(bool, Option<i32>)> {
         // Wait for the process to complete before we try to get the status
         let _ = self.wait_task.await;
 
@@ -220,11 +194,11 @@ impl RemoteProcess {
             .write()
             .await
             .take()
-            .unwrap_or(Err(RemoteProcessError::UnexpectedEof))
+            .unwrap_or_else(|| Err(errors::unexpected_eof()))
     }
 
     /// Resizes the pty of the remote process if it is attached to one
-    pub async fn resize(&self, size: PtySize) -> Result<(), RemoteProcessError> {
+    pub async fn resize(&self, size: PtySize) -> io::Result<()> {
         self.resizer.resize(size).await
     }
 
@@ -234,7 +208,7 @@ impl RemoteProcess {
     }
 
     /// Submits a kill request for the running process
-    pub async fn kill(&mut self) -> Result<(), RemoteProcessError> {
+    pub async fn kill(&mut self) -> io::Result<()> {
         self.killer.kill().await
     }
 
@@ -258,11 +232,11 @@ pub struct RemoteProcessResizer(mpsc::Sender<PtySize>);
 
 impl RemoteProcessResizer {
     /// Resizes the pty of the remote process if it is attached to one
-    pub async fn resize(&self, size: PtySize) -> Result<(), RemoteProcessError> {
+    pub async fn resize(&self, size: PtySize) -> io::Result<()> {
         self.0
             .send(size)
             .await
-            .map_err(|_| RemoteProcessError::ChannelDead)?;
+            .map_err(|_| errors::dead_channel())?;
         Ok(())
     }
 }
@@ -273,11 +247,8 @@ pub struct RemoteProcessKiller(mpsc::Sender<()>);
 
 impl RemoteProcessKiller {
     /// Submits a kill request for the running process
-    pub async fn kill(&mut self) -> Result<(), RemoteProcessError> {
-        self.0
-            .send(())
-            .await
-            .map_err(|_| RemoteProcessError::ChannelDead)?;
+    pub async fn kill(&mut self) -> io::Result<()> {
+        self.0.send(()).await.map_err(|_| errors::dead_channel())?;
         Ok(())
     }
 }
@@ -413,13 +384,13 @@ impl RemoteStderr {
 
 /// Helper function that loops, processing outgoing stdin requests to a remote process as well as
 /// supporting a kill request to terminate the remote process
-async fn process_outgoing_requests<T>(
+async fn process_outgoing_requests(
     id: usize,
-    mut channel: SessionChannel<T>,
+    mut channel: DistantChannel,
     mut stdin_rx: mpsc::Receiver<Vec<u8>>,
     mut resize_rx: mpsc::Receiver<PtySize>,
     mut kill_rx: mpsc::Receiver<()>,
-) -> Result<(), RemoteProcessError> {
+) -> io::Result<()> {
     let result = loop {
         tokio::select! {
             data = stdin_rx.recv() => {
@@ -429,7 +400,7 @@ async fn process_outgoing_requests<T>(
                             vec![DistantRequestData::ProcStdin { id, data }]
                         )
                     ).await?,
-                    None => break Err(RemoteProcessError::ChannelDead),
+                    None => break Err(errors::dead_channel()),
                 }
             }
             size = resize_rx.recv() => {
@@ -439,7 +410,7 @@ async fn process_outgoing_requests<T>(
                             vec![DistantRequestData::ProcResizePty { id, size }]
                         )
                     ).await?,
-                    None => break Err(RemoteProcessError::ChannelDead),
+                    None => break Err(errors::dead_channel()),
                 }
             }
             msg = kill_rx.recv() => {
@@ -449,7 +420,7 @@ async fn process_outgoing_requests<T>(
                     )).await?;
                     break Ok(());
                 } else {
-                    break Err(RemoteProcessError::ChannelDead);
+                    break Err(errors::dead_channel());
                 }
             }
         }
@@ -460,13 +431,13 @@ async fn process_outgoing_requests<T>(
 }
 
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
-async fn process_incoming_responses<T>(
+async fn process_incoming_responses(
     proc_id: usize,
-    mut mailbox: Mailbox<T>,
+    mut mailbox: Mailbox<Response<Vec<DistantResponseData>>>,
     stdout_tx: mpsc::Sender<Vec<u8>>,
     stderr_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
-) -> Result<(bool, Option<i32>), RemoteProcessError> {
+) -> io::Result<(bool, Option<i32>)> {
     while let Some(res) = mailbox.next().await {
         // Check if any of the payload data is the termination
         let exit_status = res.payload.iter().find_map(|data| match data {
@@ -503,22 +474,37 @@ async fn process_incoming_responses<T>(
     let _ = kill_tx.try_send(());
 
     trace!("Process incoming channel closed");
-    Err(RemoteProcessError::UnexpectedEof)
+    Err(errors::unexpected_eof())
+}
+
+mod errors {
+    use std::io;
+
+    pub fn dead_channel() -> io::Error {
+        io::Error::new(io::ErrorKind::BrokenPipe, "Channel is dead")
+    }
+
+    pub fn unexpected_eof() -> io::Error {
+        io::Error::from(io::ErrorKind::UnexpectedEof)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        client::Session,
+        client::DistantSession,
         data::{Error, ErrorKind},
     };
-    use distant_net::{InmemoryStream, PlainCodec, Response, Transport};
+    use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Response};
     use std::time::Duration;
 
-    fn make_session<T>() -> (Transport<InmemoryStream, PlainCodec>, Session<T>) {
-        let (t1, t2) = Transport::make_pair();
-        (t1, Session::initialize(t2).unwrap())
+    fn make_session<T>() -> (
+        FramedTransport<InmemoryTransport, PlainCodec>,
+        DistantSession,
+    ) {
+        let (t1, t2) = FramedTransport::make_pair();
+        (t1, Client::initialize(t2).unwrap())
     }
 
     #[tokio::test]
@@ -547,16 +533,10 @@ mod tests {
             .unwrap();
 
         // Get the spawn result and verify
-        let result = spawn_task.await.unwrap();
-        assert!(
-            matches!(
-                &result,
-                Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
-                    if x.kind() == io::ErrorKind::InvalidData
-            ),
-            "Unexpected result: {:?}",
-            result
-        );
+        match spawn_task.await.unwrap() {
+            Err(x) if x.kind() == io::ErrorKind::InvalidData => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
     #[tokio::test]
@@ -591,16 +571,10 @@ mod tests {
             .unwrap();
 
         // Get the spawn result and verify
-        let result = spawn_task.await.unwrap();
-        assert!(
-            matches!(
-                &result,
-                Err(RemoteProcessError::TransportError(TransportError::IoError(x)))
-                    if x.kind() == io::ErrorKind::BrokenPipe
-            ),
-            "Unexpected result: {:?}",
-            result
-        );
+        match spawn_task.await.unwrap() {
+            Err(x) if x.kind() == io::ErrorKind::BrokenPipe => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
     #[tokio::test]
@@ -639,12 +613,10 @@ mod tests {
         // Ensure that the other tasks are aborted before continuing
         tokio::task::yield_now().await;
 
-        let result = proc.kill().await;
-        assert!(
-            matches!(result, Err(RemoteProcessError::ChannelDead)),
-            "Unexpected result: {:?}",
-            result
-        );
+        match proc.kill().await {
+            Err(x) if x.kind() == io::ErrorKind::BrokenPipe => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
     #[tokio::test]
@@ -1016,11 +988,10 @@ mod tests {
         proc.abort();
 
         let result = proc.wait().await;
-        assert!(
-            matches!(result, Err(RemoteProcessError::WaitFailed(_))),
-            "Unexpected result: {:?}",
-            result
-        );
+        match proc.wait().await {
+            Err(x) if x.kind() == io::ErrorKind::UnexpectedEof => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
     #[tokio::test]
@@ -1064,11 +1035,10 @@ mod tests {
         tokio::task::yield_now().await;
 
         let result = proc.wait().await;
-        assert!(
-            matches!(result, Err(RemoteProcessError::UnexpectedEof)),
-            "Unexpected result: {:?}",
-            result
-        );
+        match proc.wait().await {
+            Err(x) if x.kind() == io::ErrorKind::UnexpectedEof => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
     #[tokio::test]

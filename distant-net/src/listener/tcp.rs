@@ -1,4 +1,4 @@
-use crate::{Listener, PortRange, TcpStream};
+use crate::{Listener, PortRange, TcpTransport};
 use async_trait::async_trait;
 use std::{fmt, io, net::IpAddr};
 use tokio::net::TcpListener as TokioTcpListener;
@@ -49,11 +49,11 @@ impl fmt::Debug for TcpListener {
 
 #[async_trait]
 impl Listener for TcpListener {
-    type Output = TcpStream;
+    type Output = TcpTransport;
 
     async fn accept(&mut self) -> io::Result<Self::Output> {
         let (stream, peer_addr) = TokioTcpListener::accept(&self.inner).await?;
-        Ok(TcpStream {
+        Ok(TcpTransport {
             addr: peer_addr.ip(),
             port: peer_addr.port(),
             inner: stream,

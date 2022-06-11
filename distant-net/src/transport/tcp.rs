@@ -1,4 +1,4 @@
-use crate::DataStream;
+use crate::Transport;
 use std::{
     fmt, io,
     net::IpAddr,
@@ -9,22 +9,22 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
-        ToSocketAddrs,
+        TcpStream, ToSocketAddrs,
     },
 };
 
 /// Represents a data stream for a TCP stream
-pub struct TcpStream {
+pub struct TcpTransport {
     pub(crate) addr: IpAddr,
     pub(crate) port: u16,
-    pub(crate) inner: tokio::net::TcpStream,
+    pub(crate) inner: TcpStream,
 }
 
-impl TcpStream {
+impl TcpTransport {
     /// Creates a new stream by connecting to a remote machine at the specified
     /// IP address and port
     pub async fn connect(addrs: impl ToSocketAddrs) -> io::Result<Self> {
-        let stream = tokio::net::TcpStream::connect(addrs).await?;
+        let stream = TcpStream::connect(addrs).await?;
         let addr = stream.peer_addr()?;
         Ok(Self {
             addr: addr.ip(),
@@ -44,25 +44,25 @@ impl TcpStream {
     }
 }
 
-impl fmt::Debug for TcpStream {
+impl fmt::Debug for TcpTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TcpStream")
+        f.debug_struct("TcpTransport")
             .field("addr", &self.addr)
             .field("port", &self.port)
             .finish()
     }
 }
 
-impl DataStream for TcpStream {
-    type Read = OwnedReadHalf;
-    type Write = OwnedWriteHalf;
+impl Transport for TcpTransport {
+    type ReadHalf = OwnedReadHalf;
+    type WriteHalf = OwnedWriteHalf;
 
-    fn into_split(self) -> (Self::Read, Self::Write) {
-        tokio::net::TcpStream::into_split(self.inner)
+    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
+        TcpStream::into_split(self.inner)
     }
 }
 
-impl AsyncRead for TcpStream {
+impl AsyncRead for TcpTransport {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -72,7 +72,7 @@ impl AsyncRead for TcpStream {
     }
 }
 
-impl AsyncWrite for TcpStream {
+impl AsyncWrite for TcpTransport {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

@@ -3,7 +3,7 @@ use crate::{
     data::{DistantRequestData, DistantResponseData, Request},
     server::utils::{ConnTracker, ShutdownTask},
 };
-use distant_net::{Codec, DataStream, Transport};
+use distant_net::{Codec, FramedTransport, Transport};
 use futures::stream::{Stream, StreamExt};
 use log::*;
 use std::{collections::HashMap, marker::Unpin, sync::Arc};
@@ -28,9 +28,9 @@ impl RelayServer {
         shutdown_after: Option<Duration>,
     ) -> io::Result<Self>
     where
-        T: DataStream + Send + 'static,
+        T: Transport + Send + 'static,
         U: Codec + Send + 'static,
-        S: Stream<Item = Transport<T, U>> + Send + Unpin + 'static,
+        S: Stream<Item = FramedTransport<T, U>> + Send + Unpin + 'static,
     {
         let conns: Arc<Mutex<HashMap<usize, Conn>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -103,12 +103,12 @@ struct Conn {
 
 impl Conn {
     pub async fn initialize<T, U>(
-        transport: Transport<T, U>,
+        transport: FramedTransport<T, U>,
         channel: SessionChannel,
         ct: Option<Arc<Mutex<ConnTracker>>>,
     ) -> io::Result<Self>
     where
-        T: DataStream + 'static,
+        T: Transport + 'static,
         U: Codec + Send + 'static,
     {
         // Create a unique id to associate with the connection since its address
@@ -138,12 +138,12 @@ impl Conn {
 
 async fn spawn_conn_handler<T, U>(
     conn_id: usize,
-    transport: Transport<T, U>,
+    transport: FramedTransport<T, U>,
     mut channel: SessionChannel,
     ct: Option<Arc<Mutex<ConnTracker>>>,
 ) -> JoinHandle<()>
 where
-    T: DataStream,
+    T: Transport,
     U: Codec + Send + 'static,
 {
     let (mut t_reader, t_writer) = transport.into_split();
@@ -244,21 +244,21 @@ where
 mod tests {
     use super::*;
     use crate::data::Response;
-    use distant_net::{InmemoryStream, PlainCodec};
+    use distant_net::{InmemoryTransport, PlainCodec};
     use std::{pin::Pin, time::Duration};
     use tokio::sync::mpsc;
 
-    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, Session) {
-        let (t1, t2) = Transport::make_pair();
+    fn make_session() -> (FramedTransport<InmemoryTransport, PlainCodec>, Session) {
+        let (t1, t2) = FramedTransport::make_pair();
         (t1, Session::initialize(t2).unwrap())
     }
 
     #[allow(clippy::type_complexity)]
     fn make_transport_stream() -> (
-        mpsc::Sender<Transport<InmemoryStream, PlainCodec>>,
-        Pin<Box<dyn Stream<Item = Transport<InmemoryStream, PlainCodec>> + Send>>,
+        mpsc::Sender<FramedTransport<InmemoryTransport, PlainCodec>>,
+        Pin<Box<dyn Stream<Item = FramedTransport<InmemoryTransport, PlainCodec>> + Send>>,
     ) {
-        let (tx, rx) = mpsc::channel::<Transport<InmemoryStream, PlainCodec>>(1);
+        let (tx, rx) = mpsc::channel::<FramedTransport<InmemoryTransport, PlainCodec>>(1);
         let stream = futures::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(move |transport| (transport, rx))
         });
@@ -299,7 +299,7 @@ mod tests {
         let _server = RelayServer::initialize(session, stream, None).unwrap();
 
         // Send over a "connection"
-        let (mut t1, t2) = Transport::make_pair();
+        let (mut t1, t2) = FramedTransport::make_pair();
         tx.send(t2).await.unwrap();
 
         // Send a request
@@ -318,11 +318,11 @@ mod tests {
         let _server = RelayServer::initialize(session, stream, None).unwrap();
 
         // Send over a "connection"
-        let (mut t1, t2) = Transport::make_pair();
+        let (mut t1, t2) = FramedTransport::make_pair();
         tx.send(t2).await.unwrap();
 
         // Send over a second "connection"
-        let (mut t2, t3) = Transport::make_pair();
+        let (mut t2, t3) = FramedTransport::make_pair();
         tx.send(t3).await.unwrap();
 
         // Send a request to mark the tenant of the first connection

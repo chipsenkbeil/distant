@@ -1,4 +1,4 @@
-use crate::{Listener, UnixSocketStream};
+use crate::{Listener, UnixSocketTransport};
 use async_trait::async_trait;
 use std::{
     fmt, io,
@@ -38,11 +38,11 @@ impl fmt::Debug for UnixSocketListener {
 
 #[async_trait]
 impl Listener for UnixSocketListener {
-    type Output = UnixSocketStream;
+    type Output = UnixSocketTransport;
 
     async fn accept(&mut self) -> io::Result<Self::Output> {
         let (stream, addr) = tokio::net::UnixListener::accept(&self.inner).await?;
-        Ok(UnixSocketStream {
+        Ok(UnixSocketTransport {
             path: addr
                 .as_pathname()
                 .ok_or_else(|| {

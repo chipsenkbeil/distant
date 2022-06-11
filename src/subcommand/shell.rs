@@ -6,7 +6,7 @@ use crate::{
     utils,
 };
 use derive_more::{Display, Error, From};
-use distant_core::{LspData, PtySize, RemoteProcess, RemoteProcessError, Session};
+use distant_core::{LspMsg, PtySize, RemoteProcess, RemoteProcessError, Session};
 use log::*;
 use terminal_size::{terminal_size, Height, Width};
 use termwiz::{
@@ -73,13 +73,11 @@ async fn run_async(cmd: ShellSubcommand, opt: CommonOpt) -> Result<(), Error> {
 async fn start(
     cmd: ShellSubcommand,
     session: Session,
-    lsp_data: Option<LspData>,
+    lsp_data: Option<LspMsg>,
 ) -> Result<(), Error> {
     let mut proc = RemoteProcess::spawn(
-        utils::new_tenant(),
         session.clone_channel(),
         cmd.cmd.unwrap_or_else(|| "/bin/sh".to_string()),
-        cmd.args,
         cmd.persist,
         terminal_size().map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
     )
