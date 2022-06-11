@@ -1,8 +1,8 @@
 use crate::{
     constants::SERVER_WATCHER_CAPACITY,
     data::{
-        self, Change, ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, PtySize, Request,
-        RequestData, Response, ResponseData, RunningProcess, SystemInfo,
+        self, Change, ChangeKind, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData,
+        FileType, Metadata, PtySize, Request, Response, RunningProcess, SystemInfo,
     },
     server::distant::{
         process::{Process, PtyProcess, SimpleProcess},
@@ -40,7 +40,7 @@ pub enum ServerError {
     WalkDir(walkdir::Error),
 }
 
-impl From<ServerError> for ResponseData {
+impl From<ServerError> for DistantResponseData {
     fn from(x: ServerError) -> Self {
         match x {
             ServerError::Io(x) => Self::from(x),
@@ -52,12 +52,12 @@ impl From<ServerError> for ResponseData {
 
 type PostHook = Box<dyn FnOnce() + Send>;
 struct Outgoing {
-    data: ResponseData,
+    data: DistantResponseData,
     post_hook: Option<PostHook>,
 }
 
-impl From<ResponseData> for Outgoing {
-    fn from(data: ResponseData) -> Self {
+impl From<DistantResponseData> for Outgoing {
+    fn from(data: DistantResponseData) -> Self {
         Self {
             data,
             post_hook: None,
@@ -75,56 +75,58 @@ pub(super) async fn process(
     async fn inner<F>(
         conn_id: usize,
         state: HState,
-        data: RequestData,
+        data: DistantRequestData,
         reply: F,
     ) -> Result<Outgoing, ServerError>
     where
-        F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+        F: FnMut(Vec<DistantResponseData>) -> ReplyRet + Clone + Send + 'static,
     {
         match data {
-            RequestData::FileRead { path } => file_read(path).await,
-            RequestData::FileReadText { path } => file_read_text(path).await,
-            RequestData::FileWrite { path, data } => file_write(path, data).await,
-            RequestData::FileWriteText { path, text } => file_write(path, text).await,
-            RequestData::FileAppend { path, data } => file_append(path, data).await,
-            RequestData::FileAppendText { path, text } => file_append(path, text).await,
-            RequestData::DirRead {
+            DistantRequestData::FileRead { path } => file_read(path).await,
+            DistantRequestData::FileReadText { path } => file_read_text(path).await,
+            DistantRequestData::FileWrite { path, data } => file_write(path, data).await,
+            DistantRequestData::FileWriteText { path, text } => file_write(path, text).await,
+            DistantRequestData::FileAppend { path, data } => file_append(path, data).await,
+            DistantRequestData::FileAppendText { path, text } => file_append(path, text).await,
+            DistantRequestData::DirRead {
                 path,
                 depth,
                 absolute,
                 canonicalize,
                 include_root,
             } => dir_read(path, depth, absolute, canonicalize, include_root).await,
-            RequestData::DirCreate { path, all } => dir_create(path, all).await,
-            RequestData::Remove { path, force } => remove(path, force).await,
-            RequestData::Copy { src, dst } => copy(src, dst).await,
-            RequestData::Rename { src, dst } => rename(src, dst).await,
-            RequestData::Watch {
+            DistantRequestData::DirCreate { path, all } => dir_create(path, all).await,
+            DistantRequestData::Remove { path, force } => remove(path, force).await,
+            DistantRequestData::Copy { src, dst } => copy(src, dst).await,
+            DistantRequestData::Rename { src, dst } => rename(src, dst).await,
+            DistantRequestData::Watch {
                 path,
                 recursive,
                 only,
                 except,
             } => watch(conn_id, state, reply, path, recursive, only, except).await,
-            RequestData::Unwatch { path } => unwatch(conn_id, state, path).await,
-            RequestData::Exists { path } => exists(path).await,
-            RequestData::Metadata {
+            DistantRequestData::Unwatch { path } => unwatch(conn_id, state, path).await,
+            DistantRequestData::Exists { path } => exists(path).await,
+            DistantRequestData::Metadata {
                 path,
                 canonicalize,
                 resolve_file_type,
             } => metadata(path, canonicalize, resolve_file_type).await,
-            RequestData::ProcSpawn {
+            DistantRequestData::ProcSpawn {
                 cmd,
                 args,
                 persist,
                 pty,
             } => proc_spawn(conn_id, state, reply, cmd, args, persist, pty).await,
-            RequestData::ProcKill { id } => proc_kill(conn_id, state, id).await,
-            RequestData::ProcStdin { id, data } => proc_stdin(conn_id, state, id, data).await,
-            RequestData::ProcResizePty { id, size } => {
+            DistantRequestData::ProcKill { id } => proc_kill(conn_id, state, id).await,
+            DistantRequestData::ProcStdin { id, data } => {
+                proc_stdin(conn_id, state, id, data).await
+            }
+            DistantRequestData::ProcResizePty { id, size } => {
                 proc_resize_pty(conn_id, state, id, size).await
             }
-            RequestData::ProcList {} => proc_list(state).await,
-            RequestData::SystemInfo {} => system_info().await,
+            DistantRequestData::ProcList {} => proc_list(state).await,
+            DistantRequestData::SystemInfo {} => system_info().await,
         }
     }
 
@@ -132,7 +134,7 @@ pub(super) async fn process(
         let origin_id = req.id;
         let tenant = req.tenant.clone();
         let tx_2 = tx.clone();
-        move |payload: Vec<ResponseData>| -> ReplyRet {
+        move |payload: Vec<DistantResponseData>| -> ReplyRet {
             let tx = tx_2.clone();
             let res = Response::new(tenant.to_string(), origin_id, payload);
             Box::pin(async move { tx.send(res).await.is_ok() })
@@ -147,7 +149,7 @@ pub(super) async fn process(
         payload_tasks.push(tokio::spawn(async move {
             match inner(conn_id, state_2, data, reply_2).await {
                 Ok(outgoing) => outgoing,
-                Err(x) => Outgoing::from(ResponseData::from(x)),
+                Err(x) => Outgoing::from(DistantResponseData::from(x)),
             }
         }));
     }
@@ -158,7 +160,7 @@ pub(super) async fn process(
         .into_iter()
         .map(|x| match x {
             Ok(outgoing) => outgoing,
-            Err(x) => Outgoing::from(ResponseData::from(x)),
+            Err(x) => Outgoing::from(DistantResponseData::from(x)),
         })
         .collect();
 
@@ -182,20 +184,20 @@ pub(super) async fn process(
 }
 
 async fn file_read(path: PathBuf) -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(ResponseData::Blob {
+    Ok(Outgoing::from(DistantResponseData::Blob {
         data: tokio::fs::read(path).await?,
     }))
 }
 
 async fn file_read_text(path: PathBuf) -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(ResponseData::Text {
+    Ok(Outgoing::from(DistantResponseData::Text {
         data: tokio::fs::read_to_string(path).await?,
     }))
 }
 
 async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
     tokio::fs::write(path, data).await?;
-    Ok(Outgoing::from(ResponseData::Ok))
+    Ok(Outgoing::from(DistantResponseData::Ok))
 }
 
 async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
@@ -205,7 +207,7 @@ async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, 
         .open(path)
         .await?;
     file.write_all(data.as_ref()).await?;
-    Ok(Outgoing::from(ResponseData::Ok))
+    Ok(Outgoing::from(DistantResponseData::Ok))
 }
 
 async fn dir_read(
@@ -293,7 +295,10 @@ async fn dir_read(
         }
     }
 
-    Ok(Outgoing::from(ResponseData::DirEntries { entries, errors }))
+    Ok(Outgoing::from(DistantResponseData::DirEntries {
+        entries,
+        errors,
+    }))
 }
 
 async fn dir_create(path: PathBuf, all: bool) -> Result<Outgoing, ServerError> {
@@ -303,7 +308,7 @@ async fn dir_create(path: PathBuf, all: bool) -> Result<Outgoing, ServerError> {
         tokio::fs::create_dir(path).await?;
     }
 
-    Ok(Outgoing::from(ResponseData::Ok))
+    Ok(Outgoing::from(DistantResponseData::Ok))
 }
 
 async fn remove(path: PathBuf, force: bool) -> Result<Outgoing, ServerError> {
@@ -318,7 +323,7 @@ async fn remove(path: PathBuf, force: bool) -> Result<Outgoing, ServerError> {
         tokio::fs::remove_file(path).await?;
     }
 
-    Ok(Outgoing::from(ResponseData::Ok))
+    Ok(Outgoing::from(DistantResponseData::Ok))
 }
 
 async fn copy(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
@@ -371,13 +376,13 @@ async fn copy(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
         tokio::fs::copy(src, dst).await?;
     }
 
-    Ok(Outgoing::from(ResponseData::Ok))
+    Ok(Outgoing::from(DistantResponseData::Ok))
 }
 
 async fn rename(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
     tokio::fs::rename(src, dst).await?;
 
-    Ok(Outgoing::from(ResponseData::Ok))
+    Ok(Outgoing::from(DistantResponseData::Ok))
 }
 
 async fn watch<F>(
@@ -390,7 +395,7 @@ async fn watch<F>(
     except: Vec<ChangeKind>,
 ) -> Result<Outgoing, ServerError>
 where
-    F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+    F: FnMut(Vec<DistantResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
     let only = only.into_iter().collect::<ChangeKindSet>();
     let except = except.into_iter().collect::<ChangeKindSet>();
@@ -462,8 +467,11 @@ where
                             paths
                         );
 
-                        fn make_res_data(kind: ChangeKind, paths: &[&PathBuf]) -> ResponseData {
-                            ResponseData::Changed(Change {
+                        fn make_res_data(
+                            kind: ChangeKind,
+                            paths: &[&PathBuf],
+                        ) -> DistantResponseData {
+                            DistantResponseData::Changed(Change {
                                 kind,
                                 paths: paths.iter().map(|p| p.to_path_buf()).collect(),
                             })
@@ -503,11 +511,13 @@ where
                             conn_id, msg, paths
                         );
 
-                        fn make_res_data(msg: &str, paths: &[&PathBuf]) -> ResponseData {
+                        fn make_res_data(msg: &str, paths: &[&PathBuf]) -> DistantResponseData {
                             if paths.is_empty() {
-                                ResponseData::Error(msg.into())
+                                DistantResponseData::Error(msg.into())
                             } else {
-                                ResponseData::Error(format!("{} about {:?}", msg, paths).into())
+                                DistantResponseData::Error(
+                                    format!("{} about {:?}", msg, paths).into(),
+                                )
                             }
                         }
 
@@ -565,7 +575,7 @@ where
             )?;
             debug!("<Conn @ {}> Now watching {:?}", conn_id, wp.path());
             state.watcher_paths.insert(wp, Box::new(reply));
-            Ok(Outgoing::from(ResponseData::Ok))
+            Ok(Outgoing::from(DistantResponseData::Ok))
         }
         None => Err(ServerError::Io(io::Error::new(
             io::ErrorKind::BrokenPipe,
@@ -579,7 +589,7 @@ async fn unwatch(conn_id: usize, state: HState, path: PathBuf) -> Result<Outgoin
         watcher.unwatch(path.as_path())?;
         // TODO: This also needs to remove any path that matches in either raw form
         //       or canonicalized form from the map of PathBuf -> ReplyFn
-        return Ok(Outgoing::from(ResponseData::Ok));
+        return Ok(Outgoing::from(DistantResponseData::Ok));
     }
 
     Err(ServerError::Io(io::Error::new(
@@ -595,9 +605,9 @@ async fn exists(path: PathBuf) -> Result<Outgoing, ServerError> {
     // Following experimental `std::fs::try_exists`, which checks the error kind of the
     // metadata lookup to see if it is not found and filters accordingly
     Ok(match tokio::fs::metadata(path.as_path()).await {
-        Ok(_) => Outgoing::from(ResponseData::Exists { value: true }),
+        Ok(_) => Outgoing::from(DistantResponseData::Exists { value: true }),
         Err(x) if x.kind() == io::ErrorKind::NotFound => {
-            Outgoing::from(ResponseData::Exists { value: false })
+            Outgoing::from(DistantResponseData::Exists { value: false })
         }
         Err(x) => return Err(ServerError::from(x)),
     })
@@ -623,7 +633,7 @@ async fn metadata(
         metadata.file_type()
     };
 
-    Ok(Outgoing::from(ResponseData::Metadata(Metadata {
+    Ok(Outgoing::from(DistantResponseData::Metadata(Metadata {
         canonicalized_path,
         accessed: metadata
             .accessed()
@@ -680,7 +690,7 @@ async fn proc_spawn<F>(
     pty: Option<PtySize>,
 ) -> Result<Outgoing, ServerError>
 where
-    F: FnMut(Vec<ResponseData>) -> ReplyRet + Clone + Send + 'static,
+    F: FnMut(Vec<DistantResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
     debug!("<Conn @ {}> Spawning {} {}", conn_id, cmd, args.join(" "));
     let mut child: Box<dyn Process> = match pty {
@@ -704,7 +714,7 @@ where
                 loop {
                     match stdout.recv().await {
                         Ok(Some(data)) => {
-                            let payload = vec![ResponseData::ProcStdout { id, data }];
+                            let payload = vec![DistantResponseData::ProcStdout { id, data }];
                             if !reply_2(payload).await {
                                 error!("<Conn @ {} | Proc {}> Stdout channel closed", conn_id, id);
                                 break;
@@ -730,7 +740,7 @@ where
                 loop {
                     match stderr.recv().await {
                         Ok(Some(data)) => {
-                            let payload = vec![ResponseData::ProcStderr { id, data }];
+                            let payload = vec![DistantResponseData::ProcStderr { id, data }];
                             if !reply_2(payload).await {
                                 error!("<Conn @ {} | Proc {}> Stderr channel closed", conn_id, id);
                                 break;
@@ -760,7 +770,7 @@ where
 
             match status {
                 Ok(status) => {
-                    let payload = vec![ResponseData::ProcDone {
+                    let payload = vec![DistantResponseData::ProcDone {
                         id,
                         success: status.success,
                         code: status.code,
@@ -770,7 +780,7 @@ where
                     }
                 }
                 Err(x) => {
-                    let payload = vec![ResponseData::from(x)];
+                    let payload = vec![DistantResponseData::from(x)];
                     if !reply_2(payload).await {
                         error!(
                             "<Conn @ {} | Proc {}> Failed to send error for waiting",
@@ -800,7 +810,7 @@ where
         conn_id, id
     );
     Ok(Outgoing {
-        data: ResponseData::ProcSpawned { id },
+        data: DistantResponseData::ProcSpawned { id },
         post_hook: Some(post_hook),
     })
 }
@@ -808,7 +818,7 @@ where
 async fn proc_kill(conn_id: usize, state: HState, id: usize) -> Result<Outgoing, ServerError> {
     if let Some(mut process) = state.lock().await.processes.remove(&id) {
         if process.killer.kill().await.is_ok() {
-            return Ok(Outgoing::from(ResponseData::Ok));
+            return Ok(Outgoing::from(DistantResponseData::Ok));
         }
     }
 
@@ -830,7 +840,7 @@ async fn proc_stdin(
     if let Some(process) = state.lock().await.processes.get_mut(&id) {
         if let Some(stdin) = process.stdin.as_mut() {
             if stdin.send(&data).await.is_ok() {
-                return Ok(Outgoing::from(ResponseData::Ok));
+                return Ok(Outgoing::from(DistantResponseData::Ok));
             }
         }
     }
@@ -853,7 +863,7 @@ async fn proc_resize_pty(
     if let Some(process) = state.lock().await.processes.get(&id) {
         let _ = process.pty.resize_pty(size)?;
 
-        return Ok(Outgoing::from(ResponseData::Ok));
+        return Ok(Outgoing::from(DistantResponseData::Ok));
     }
 
     Err(ServerError::Io(io::Error::new(
@@ -866,7 +876,7 @@ async fn proc_resize_pty(
 }
 
 async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(ResponseData::ProcEntries {
+    Ok(Outgoing::from(DistantResponseData::ProcEntries {
         entries: state
             .lock()
             .await
@@ -885,13 +895,15 @@ async fn proc_list(state: HState) -> Result<Outgoing, ServerError> {
 }
 
 async fn system_info() -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(ResponseData::SystemInfo(SystemInfo {
-        family: env::consts::FAMILY.to_string(),
-        os: env::consts::OS.to_string(),
-        arch: env::consts::ARCH.to_string(),
-        current_dir: env::current_dir().unwrap_or_default(),
-        main_separator: std::path::MAIN_SEPARATOR,
-    })))
+    Ok(Outgoing::from(DistantResponseData::SystemInfo(
+        SystemInfo {
+            family: env::consts::FAMILY.to_string(),
+            os: env::consts::OS.to_string(),
+            arch: env::consts::ARCH.to_string(),
+            current_dir: env::current_dir().unwrap_or_default(),
+            main_separator: std::path::MAIN_SEPARATOR,
+        },
+    )))
 }
 
 #[cfg(test)]
@@ -985,14 +997,14 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let req = Request::new("test-tenant", vec![RequestData::FileRead { path }]);
+        let req = Request::new("test-tenant", vec![DistantRequestData::FileRead { path }]);
 
         process(conn_id, state, req, tx).await.unwrap();
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1008,7 +1020,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileRead {
+            vec![DistantRequestData::FileRead {
                 path: file.path().to_path_buf(),
             }],
         );
@@ -1018,7 +1030,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::Blob { data } => assert_eq!(data, b"some file contents"),
+            DistantResponseData::Blob { data } => assert_eq!(data, b"some file contents"),
             x => panic!("Unexpected response: {:?}", x),
         }
     }
@@ -1030,14 +1042,17 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let req = Request::new("test-tenant", vec![RequestData::FileReadText { path }]);
+        let req = Request::new(
+            "test-tenant",
+            vec![DistantRequestData::FileReadText { path }],
+        );
 
         process(conn_id, state, req, tx).await.unwrap();
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1053,7 +1068,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileReadText {
+            vec![DistantRequestData::FileReadText {
                 path: file.path().to_path_buf(),
             }],
         );
@@ -1063,7 +1078,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::Text { data } => assert_eq!(data, "some file contents"),
+            DistantResponseData::Text { data } => assert_eq!(data, "some file contents"),
             x => panic!("Unexpected response: {:?}", x),
         }
     }
@@ -1079,7 +1094,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileWrite {
+            vec![DistantRequestData::FileWrite {
                 path: file.path().to_path_buf(),
                 data: b"some text".to_vec(),
             }],
@@ -1090,7 +1105,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1110,7 +1125,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileWrite {
+            vec![DistantRequestData::FileWrite {
                 path: file.path().to_path_buf(),
                 data: b"some text".to_vec(),
             }],
@@ -1121,7 +1136,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1142,7 +1157,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileWriteText {
+            vec![DistantRequestData::FileWriteText {
                 path: file.path().to_path_buf(),
                 text: String::from("some text"),
             }],
@@ -1153,7 +1168,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1173,7 +1188,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileWriteText {
+            vec![DistantRequestData::FileWriteText {
                 path: file.path().to_path_buf(),
                 text: String::from("some text"),
             }],
@@ -1184,7 +1199,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1205,7 +1220,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileAppend {
+            vec![DistantRequestData::FileAppend {
                 path: file.path().to_path_buf(),
                 data: b"some extra contents".to_vec(),
             }],
@@ -1216,7 +1231,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1236,7 +1251,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileAppend {
+            vec![DistantRequestData::FileAppend {
                 path: file.path().to_path_buf(),
                 data: b"some extra contents".to_vec(),
             }],
@@ -1247,7 +1262,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1270,7 +1285,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileAppend {
+            vec![DistantRequestData::FileAppend {
                 path: file.path().to_path_buf(),
                 data: b"some extra contents".to_vec(),
             }],
@@ -1281,7 +1296,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1304,7 +1319,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileAppendText {
+            vec![DistantRequestData::FileAppendText {
                 path: file.path().to_path_buf(),
                 text: String::from("some extra contents"),
             }],
@@ -1315,7 +1330,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1335,7 +1350,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileAppendText {
+            vec![DistantRequestData::FileAppendText {
                 path: file.path().to_path_buf(),
                 text: "some extra contents".to_string(),
             }],
@@ -1346,7 +1361,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1369,7 +1384,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::FileAppendText {
+            vec![DistantRequestData::FileAppendText {
                 path: file.path().to_path_buf(),
                 text: String::from("some extra contents"),
             }],
@@ -1380,7 +1395,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1401,7 +1416,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirRead {
+            vec![DistantRequestData::DirRead {
                 path: dir.path().to_path_buf(),
                 depth: 0,
                 absolute: false,
@@ -1415,7 +1430,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1451,7 +1466,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirRead {
+            vec![DistantRequestData::DirRead {
                 path: root_dir.path().to_path_buf(),
                 depth: 1,
                 absolute: false,
@@ -1465,7 +1480,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::DirEntries { entries, .. } => {
+            DistantResponseData::DirEntries { entries, .. } => {
                 assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
                 assert_eq!(entries[0].file_type, FileType::File);
@@ -1493,7 +1508,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirRead {
+            vec![DistantRequestData::DirRead {
                 path: root_dir.path().to_path_buf(),
                 depth: 0,
                 absolute: false,
@@ -1507,7 +1522,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::DirEntries { entries, .. } => {
+            DistantResponseData::DirEntries { entries, .. } => {
                 assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
                 assert_eq!(entries[0].file_type, FileType::File);
@@ -1539,7 +1554,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirRead {
+            vec![DistantRequestData::DirRead {
                 path: root_dir.path().to_path_buf(),
                 depth: 1,
                 absolute: false,
@@ -1553,7 +1568,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::DirEntries { entries, .. } => {
+            DistantResponseData::DirEntries { entries, .. } => {
                 assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
                 // NOTE: Root entry is always absolute, resolved path
@@ -1586,7 +1601,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirRead {
+            vec![DistantRequestData::DirRead {
                 path: root_dir.path().to_path_buf(),
                 depth: 1,
                 absolute: true,
@@ -1600,7 +1615,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::DirEntries { entries, .. } => {
+            DistantResponseData::DirEntries { entries, .. } => {
                 assert_eq!(entries.len(), 3, "Wrong number of entries found");
                 let root_path = root_dir.path().canonicalize().unwrap();
 
@@ -1629,7 +1644,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirRead {
+            vec![DistantRequestData::DirRead {
                 path: root_dir.path().to_path_buf(),
                 depth: 1,
                 absolute: false,
@@ -1643,7 +1658,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::DirEntries { entries, .. } => {
+            DistantResponseData::DirEntries { entries, .. } => {
                 assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
                 assert_eq!(entries[0].file_type, FileType::File);
@@ -1674,7 +1689,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirCreate {
+            vec![DistantRequestData::DirCreate {
                 path: path.to_path_buf(),
                 all: false,
             }],
@@ -1685,7 +1700,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1702,7 +1717,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirCreate {
+            vec![DistantRequestData::DirCreate {
                 path: path.to_path_buf(),
                 all: false,
             }],
@@ -1713,7 +1728,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1730,7 +1745,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::DirCreate {
+            vec![DistantRequestData::DirCreate {
                 path: path.to_path_buf(),
                 all: true,
             }],
@@ -1741,7 +1756,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1758,7 +1773,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Remove {
+            vec![DistantRequestData::Remove {
                 path: file.path().to_path_buf(),
                 force: false,
             }],
@@ -1769,7 +1784,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1787,7 +1802,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Remove {
+            vec![DistantRequestData::Remove {
                 path: dir.path().to_path_buf(),
                 force: false,
             }],
@@ -1798,7 +1813,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1817,7 +1832,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Remove {
+            vec![DistantRequestData::Remove {
                 path: dir.path().to_path_buf(),
                 force: true,
             }],
@@ -1828,7 +1843,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1846,7 +1861,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Remove {
+            vec![DistantRequestData::Remove {
                 path: file.path().to_path_buf(),
                 force: false,
             }],
@@ -1857,7 +1872,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1875,7 +1890,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Copy {
+            vec![DistantRequestData::Copy {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -1886,7 +1901,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1910,7 +1925,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Copy {
+            vec![DistantRequestData::Copy {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -1921,7 +1936,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1943,7 +1958,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Copy {
+            vec![DistantRequestData::Copy {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -1954,7 +1969,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -1979,7 +1994,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Copy {
+            vec![DistantRequestData::Copy {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -1990,7 +2005,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2012,7 +2027,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Copy {
+            vec![DistantRequestData::Copy {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -2023,7 +2038,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2042,7 +2057,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Rename {
+            vec![DistantRequestData::Rename {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -2053,7 +2068,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2077,7 +2092,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Rename {
+            vec![DistantRequestData::Rename {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -2088,7 +2103,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2110,7 +2125,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Rename {
+            vec![DistantRequestData::Rename {
                 src: src.path().to_path_buf(),
                 dst: dst.path().to_path_buf(),
             }],
@@ -2121,7 +2136,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2138,7 +2153,7 @@ mod tests {
         should_panic: bool,
     ) -> bool {
         match &res.payload[0] {
-            ResponseData::Changed(change) if should_panic => {
+            DistantResponseData::Changed(change) if should_panic => {
                 let paths: Vec<PathBuf> = change
                     .paths
                     .iter()
@@ -2148,7 +2163,7 @@ mod tests {
 
                 true
             }
-            ResponseData::Changed(change) => {
+            DistantResponseData::Changed(change) => {
                 let paths: Vec<PathBuf> = change
                     .paths
                     .iter()
@@ -2172,7 +2187,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Watch {
+            vec![DistantRequestData::Watch {
                 path: file.path().to_path_buf(),
                 recursive: false,
                 only: Default::default(),
@@ -2187,7 +2202,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2221,7 +2236,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Watch {
+            vec![DistantRequestData::Watch {
                 path: temp.path().to_path_buf(),
                 recursive: true,
                 only: Default::default(),
@@ -2236,7 +2251,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Ok),
+            matches!(res.payload[0], DistantResponseData::Ok),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2316,7 +2331,7 @@ mod tests {
         let file_1_origin_id = {
             let req = Request::new(
                 "test-tenant",
-                vec![RequestData::Watch {
+                vec![DistantRequestData::Watch {
                     path: file_1.path().to_path_buf(),
                     recursive: false,
                     only: Default::default(),
@@ -2334,7 +2349,7 @@ mod tests {
             let res = rx.recv().await.unwrap();
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             assert!(
-                matches!(res.payload[0], ResponseData::Ok),
+                matches!(res.payload[0], DistantResponseData::Ok),
                 "Unexpected response: {:?}",
                 res.payload[0]
             );
@@ -2346,7 +2361,7 @@ mod tests {
         let file_2_origin_id = {
             let req = Request::new(
                 "test-tenant",
-                vec![RequestData::Watch {
+                vec![DistantRequestData::Watch {
                     path: file_2.path().to_path_buf(),
                     recursive: false,
                     only: Default::default(),
@@ -2362,7 +2377,7 @@ mod tests {
             let res = rx.recv().await.unwrap();
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             assert!(
-                matches!(res.payload[0], ResponseData::Ok),
+                matches!(res.payload[0], DistantResponseData::Ok),
                 "Unexpected response: {:?}",
                 res.payload[0]
             );
@@ -2423,7 +2438,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Exists {
+            vec![DistantRequestData::Exists {
                 path: file.path().to_path_buf(),
             }],
         );
@@ -2432,7 +2447,7 @@ mod tests {
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert_eq!(res.payload[0], ResponseData::Exists { value: true });
+        assert_eq!(res.payload[0], DistantResponseData::Exists { value: true });
     }
 
     #[tokio::test]
@@ -2443,7 +2458,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Exists {
+            vec![DistantRequestData::Exists {
                 path: file.path().to_path_buf(),
             }],
         );
@@ -2452,7 +2467,7 @@ mod tests {
 
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert_eq!(res.payload[0], ResponseData::Exists { value: false });
+        assert_eq!(res.payload[0], DistantResponseData::Exists { value: false });
     }
 
     #[tokio::test]
@@ -2463,7 +2478,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: file.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: false,
@@ -2475,7 +2490,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2490,7 +2505,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: file.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: false,
@@ -2504,7 +2519,7 @@ mod tests {
         assert!(
             matches!(
                 res.payload[0],
-                ResponseData::Metadata(Metadata {
+                DistantResponseData::Metadata(Metadata {
                     canonicalized_path: None,
                     file_type: FileType::File,
                     len: 9,
@@ -2527,7 +2542,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: file.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: false,
@@ -2540,7 +2555,7 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
 
         match &res.payload[0] {
-            ResponseData::Metadata(Metadata { unix, windows, .. }) => {
+            DistantResponseData::Metadata(Metadata { unix, windows, .. }) => {
                 assert!(unix.is_some(), "Unexpectedly missing unix metadata on unix");
                 assert!(
                     windows.is_none(),
@@ -2561,7 +2576,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: file.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: false,
@@ -2574,7 +2589,7 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
 
         match &res.payload[0] {
-            ResponseData::Metadata(Metadata { unix, windows, .. }) => {
+            DistantResponseData::Metadata(Metadata { unix, windows, .. }) => {
                 assert!(
                     windows.is_some(),
                     "Unexpectedly missing windows metadata on windows"
@@ -2594,7 +2609,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: dir.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: false,
@@ -2608,7 +2623,7 @@ mod tests {
         assert!(
             matches!(
                 res.payload[0],
-                ResponseData::Metadata(Metadata {
+                DistantResponseData::Metadata(Metadata {
                     canonicalized_path: None,
                     file_type: FileType::Dir,
                     readonly: false,
@@ -2632,7 +2647,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: symlink.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: false,
@@ -2646,7 +2661,7 @@ mod tests {
         assert!(
             matches!(
                 res.payload[0],
-                ResponseData::Metadata(Metadata {
+                DistantResponseData::Metadata(Metadata {
                     canonicalized_path: None,
                     file_type: FileType::Symlink,
                     readonly: false,
@@ -2670,7 +2685,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: symlink.path().to_path_buf(),
                 canonicalize: true,
                 resolve_file_type: false,
@@ -2682,7 +2697,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::Metadata(Metadata {
+            DistantResponseData::Metadata(Metadata {
                 canonicalized_path: Some(path),
                 file_type: FileType::Symlink,
                 readonly: false,
@@ -2708,7 +2723,7 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::Metadata {
+            vec![DistantRequestData::Metadata {
                 path: symlink.path().to_path_buf(),
                 canonicalize: false,
                 resolve_file_type: true,
@@ -2720,7 +2735,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         match &res.payload[0] {
-            ResponseData::Metadata(Metadata {
+            DistantResponseData::Metadata(Metadata {
                 file_type: FileType::File,
                 ..
             }) => {}
@@ -2734,9 +2749,8 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
+            vec![DistantRequestData::ProcSpawn {
                 cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
-                args: Vec::new(),
                 persist: false,
                 pty: None,
             }],
@@ -2749,7 +2763,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::Error(_)),
+            matches!(&res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2761,9 +2775,8 @@ mod tests {
 
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {}", SCRIPT_RUNNER, ECHO_ARGS_TO_STDOUT_SH),
                 persist: false,
                 pty: None,
             }],
@@ -2776,7 +2789,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
+            matches!(&res.payload[0], DistantResponseData::ProcSpawned { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2792,12 +2805,8 @@ mod tests {
         // Run a program that echoes to stdout
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![
-                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
-                    String::from("some stdout"),
-                ],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {} some stdout", SCRIPT_RUNNER, ECHO_ARGS_TO_STDOUT_SH),
                 persist: false,
                 pty: None,
             }],
@@ -2810,7 +2819,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
+            matches!(&res.payload[0], DistantResponseData::ProcSpawned { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2831,11 +2840,11 @@ mod tests {
         let mut check_res = |res: &Response| {
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             match &res.payload[0] {
-                ResponseData::ProcStdout { data, .. } => {
+                DistantResponseData::ProcStdout { data, .. } => {
                     assert_eq!(data, b"some stdout", "Got wrong stdout");
                     got_stdout = true;
                 }
-                ResponseData::ProcDone { success, .. } => {
+                DistantResponseData::ProcDone { success, .. } => {
                     assert!(success, "Process should have completed successfully");
                     got_done = true;
                 }
@@ -2859,12 +2868,8 @@ mod tests {
         // Run a program that echoes to stderr
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![
-                    ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
-                    String::from("some stderr"),
-                ],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {} some stderr", SCRIPT_RUNNER, ECHO_ARGS_TO_STDERR_SH),
                 persist: false,
                 pty: None,
             }],
@@ -2877,7 +2882,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(&res.payload[0], ResponseData::ProcSpawned { .. }),
+            matches!(&res.payload[0], DistantResponseData::ProcSpawned { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -2898,11 +2903,11 @@ mod tests {
         let mut check_res = |res: &Response| {
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             match &res.payload[0] {
-                ResponseData::ProcStderr { data, .. } => {
+                DistantResponseData::ProcStderr { data, .. } => {
                     assert_eq!(data, b"some stderr", "Got wrong stderr");
                     got_stderr = true;
                 }
-                ResponseData::ProcDone { success, .. } => {
+                DistantResponseData::ProcDone { success, .. } => {
                     assert!(success, "Process should have completed successfully");
                     got_done = true;
                 }
@@ -2926,9 +2931,8 @@ mod tests {
         // Run a program that ends after a little bit
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("0.1")],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {} 0.1", SCRIPT_RUNNER, SLEEP_SH),
                 persist: false,
                 pty: None,
             }],
@@ -2941,7 +2945,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         let id = match &res.payload[0] {
-            ResponseData::ProcSpawned { id } => *id,
+            DistantResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2970,9 +2974,8 @@ mod tests {
         // Run a program that ends slowly
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {} 1", SCRIPT_RUNNER, SLEEP_SH),
                 persist: false,
                 pty: None,
             }],
@@ -2985,7 +2988,7 @@ mod tests {
         let res = rx.recv().await.unwrap();
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         let id = match &res.payload[0] {
-            ResponseData::ProcSpawned { id } => *id,
+            DistantResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
@@ -2997,7 +3000,7 @@ mod tests {
         );
 
         // Send kill signal
-        let req = Request::new("test-tenant", vec![RequestData::ProcKill { id }]);
+        let req = Request::new("test-tenant", vec![DistantRequestData::ProcKill { id }]);
         process(conn_id, Arc::clone(&state), req, tx.clone())
             .await
             .unwrap();
@@ -3021,7 +3024,7 @@ mod tests {
         // Send kill to a non-existent process
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcKill { id: 0xDEADBEEF }],
+            vec![DistantRequestData::ProcKill { id: 0xDEADBEEF }],
         );
 
         process(conn_id, Arc::clone(&state), req, tx.clone())
@@ -3033,7 +3036,7 @@ mod tests {
 
         // Verify that we get an error
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -3046,9 +3049,8 @@ mod tests {
         // First, run a program that sits around (sleep for 1 second)
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {} 1", SCRIPT_RUNNER, SLEEP_SH),
                 persist: false,
                 pty: None,
             }],
@@ -3063,12 +3065,12 @@ mod tests {
 
         // Second, grab the id of the started process
         let id = match &res.payload[0] {
-            ResponseData::ProcSpawned { id } => *id,
+            DistantResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
         // Third, send kill for process
-        let req = Request::new("test-tenant", vec![RequestData::ProcKill { id }]);
+        let req = Request::new("test-tenant", vec![DistantRequestData::ProcKill { id }]);
 
         // NOTE: We cannot let the state get dropped as it results in killing
         //       the child process automatically; so, we clone another reference here
@@ -3090,8 +3092,8 @@ mod tests {
         let mut check_res = |res: &Response| {
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             match &res.payload[0] {
-                ResponseData::Ok => got_ok = true,
-                ResponseData::ProcDone { success, .. } => {
+                DistantResponseData::Ok => got_ok = true,
+                DistantResponseData::ProcDone { success, .. } => {
                     assert!(!success, "Process should not have completed successfully");
                     got_done = true;
                 }
@@ -3112,7 +3114,7 @@ mod tests {
         // Send stdin to a non-existent process
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcStdin {
+            vec![DistantRequestData::ProcStdin {
                 id: 0xDEADBEEF,
                 data: b"some input".to_vec(),
             }],
@@ -3127,7 +3129,7 @@ mod tests {
 
         // Verify that we get an error
         assert!(
-            matches!(res.payload[0], ResponseData::Error(_)),
+            matches!(res.payload[0], DistantResponseData::Error(_)),
             "Unexpected response: {:?}",
             res.payload[0]
         );
@@ -3143,9 +3145,8 @@ mod tests {
         // First, run a program that listens for stdin
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcSpawn {
-                cmd: SCRIPT_RUNNER.to_string(),
-                args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
+            vec![DistantRequestData::ProcSpawn {
+                cmd: format!("{} {}", SCRIPT_RUNNER, ECHO_STDIN_TO_STDOUT_SH),
                 persist: false,
                 pty: None,
             }],
@@ -3160,14 +3161,14 @@ mod tests {
 
         // Second, grab the id of the started process
         let id = match &res.payload[0] {
-            ResponseData::ProcSpawned { id } => *id,
+            DistantResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
         // Third, send stdin to the remote process
         let req = Request::new(
             "test-tenant",
-            vec![RequestData::ProcStdin {
+            vec![DistantRequestData::ProcStdin {
                 id,
                 data: b"hello world\n".to_vec(),
             }],
@@ -3193,8 +3194,8 @@ mod tests {
         let mut check_res = |res: &Response| {
             assert_eq!(res.payload.len(), 1, "Wrong payload size");
             match &res.payload[0] {
-                ResponseData::Ok => got_ok = true,
-                ResponseData::ProcStdout { data, .. } => {
+                DistantResponseData::Ok => got_ok = true,
+                DistantResponseData::ProcStdout { data, .. } => {
                     assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
                     got_stdout = true;
                 }
@@ -3217,13 +3218,12 @@ mod tests {
         let req = Request::new(
             "test-tenant",
             vec![
-                RequestData::ProcSpawn {
-                    cmd: SCRIPT_RUNNER.to_string(),
-                    args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
+                DistantRequestData::ProcSpawn {
+                    cmd: format!("{} {} 1", SCRIPT_RUNNER, SLEEP_SH),
                     persist: false,
                     pty: None,
                 },
-                RequestData::ProcList {},
+                DistantRequestData::ProcList {},
             ],
         );
 
@@ -3234,14 +3234,14 @@ mod tests {
 
         // Grab the id of the started process
         let id = match &res.payload[0] {
-            ResponseData::ProcSpawned { id } => *id,
+            DistantResponseData::ProcSpawned { id } => *id,
             x => panic!("Unexpected response: {:?}", x),
         };
 
         // Verify our process shows up in our entry list
         assert_eq!(
             res.payload[1],
-            ResponseData::ProcEntries {
+            DistantResponseData::ProcEntries {
                 entries: vec![RunningProcess {
                     cmd: SCRIPT_RUNNER.to_string(),
                     args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
@@ -3259,7 +3259,7 @@ mod tests {
     async fn system_info_should_send_system_info_based_on_binary() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
-        let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
+        let req = Request::new("test-tenant", vec![DistantRequestData::SystemInfo {}]);
 
         process(conn_id, state, req, tx).await.unwrap();
 
@@ -3267,7 +3267,7 @@ mod tests {
         assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert_eq!(
             res.payload[0],
-            ResponseData::SystemInfo(SystemInfo {
+            DistantResponseData::SystemInfo(SystemInfo {
                 family: env::consts::FAMILY.to_string(),
                 os: env::consts::OS.to_string(),
                 arch: env::consts::ARCH.to_string(),

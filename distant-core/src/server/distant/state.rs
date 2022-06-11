@@ -1,5 +1,5 @@
 use super::{InputChannel, ProcessKiller, ProcessPty};
-use crate::data::{ChangeKindSet, ResponseData};
+use crate::data::{ChangeKindSet, DistantResponseData};
 use log::*;
 use notify::RecommendedWatcher;
 use std::{
@@ -12,7 +12,7 @@ use std::{
     pin::Pin,
 };
 
-pub type ReplyFn = Box<dyn FnMut(Vec<ResponseData>) -> ReplyRet + Send + 'static>;
+pub type ReplyFn = Box<dyn FnMut(Vec<DistantResponseData>) -> ReplyRet + Send + 'static>;
 pub type ReplyRet = Pin<Box<dyn Future<Output = bool> + Send + 'static>>;
 
 /// Holds state related to multiple connections managed by a server

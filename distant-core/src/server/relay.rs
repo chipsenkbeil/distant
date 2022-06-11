@@ -1,6 +1,6 @@
 use crate::{
     client::{Session, SessionChannel},
-    data::{Request, RequestData, ResponseData},
+    data::{DistantRequestData, DistantResponseData, Request},
     server::utils::{ConnTracker, ShutdownTask},
 };
 use distant_net::{Codec, DataStream, Transport};
@@ -172,7 +172,7 @@ where
                                 {
                                     let mut p_lock = processes.lock().await;
                                     for data in res.payload.iter() {
-                                        if let ResponseData::ProcSpawned { id } = *data {
+                                        if let DistantResponseData::ProcSpawned { id } = *data {
                                             p_lock.push(id);
                                         }
                                     }
@@ -222,7 +222,7 @@ where
                     "relay",
                     p_lock
                         .iter()
-                        .map(|id| RequestData::ProcKill { id: *id })
+                        .map(|id| DistantRequestData::ProcKill { id: *id })
                         .collect(),
                 ))
                 .await
@@ -303,7 +303,7 @@ mod tests {
         tx.send(t2).await.unwrap();
 
         // Send a request
-        let req = Request::new("test-tenant", vec![RequestData::SystemInfo {}]);
+        let req = Request::new("test-tenant", vec![DistantRequestData::SystemInfo {}]);
         t1.send(req.clone()).await.unwrap();
 
         // Verify the request is forwarded out via session
@@ -328,7 +328,7 @@ mod tests {
         // Send a request to mark the tenant of the first connection
         t1.send(Request::new(
             "test-tenant-1",
-            vec![RequestData::SystemInfo {}],
+            vec![DistantRequestData::SystemInfo {}],
         ))
         .await
         .unwrap();
@@ -336,7 +336,7 @@ mod tests {
         // Send a request to mark the tenant of the second connection
         t2.send(Request::new(
             "test-tenant-2",
-            vec![RequestData::SystemInfo {}],
+            vec![DistantRequestData::SystemInfo {}],
         ))
         .await
         .unwrap();
@@ -353,7 +353,7 @@ mod tests {
         };
 
         // Send a response back to a singular connection based on the tenant
-        let res = Response::new("test-tenant-2", origin_id, vec![ResponseData::Ok]);
+        let res = Response::new("test-tenant-2", origin_id, vec![DistantResponseData::Ok]);
         transport.send(res.clone()).await.unwrap();
 
         // Verify that response is only received by a singular connection

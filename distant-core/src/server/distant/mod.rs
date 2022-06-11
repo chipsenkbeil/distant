@@ -265,7 +265,7 @@ async fn response_loop<T, U>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{RequestData, ResponseData};
+    use crate::data::{DistantRequestData, DistantResponseData};
     use distant_net::{InmemoryStream, PlainCodec, TestListener};
 
     #[allow(clippy::type_complexity)]
@@ -315,7 +315,7 @@ mod tests {
         // Send a request
         t1.send(Request::new(
             "test-tenant",
-            vec![RequestData::SystemInfo {}],
+            vec![DistantRequestData::SystemInfo {}],
         ))
         .await
         .unwrap();
@@ -324,7 +324,7 @@ mod tests {
         let res = t1.receive::<Response>().await.unwrap().unwrap();
         assert!(res.payload.len() == 1, "Unexpected payload size");
         assert!(
-            matches!(res.payload[0], ResponseData::SystemInfo { .. }),
+            matches!(res.payload[0], DistantResponseData::SystemInfo { .. }),
             "Unexpected response: {:?}",
             res.payload[0]
         );

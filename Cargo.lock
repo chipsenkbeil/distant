@@ -636,6 +636,7 @@ name = "distant-core"
 version = "0.17.0"
 dependencies = [
  "assert_fs",
+ "async-trait",
  "bitflags",
  "bytes",
  "chacha20poly1305",
@@ -667,32 +668,17 @@ dependencies = [
 name = "distant-net"
 version = "0.17.0"
 dependencies = [
- "assert_fs",
  "async-trait",
- "bitflags",
  "bytes",
  "chacha20poly1305",
  "ciborium",
  "derive_more",
- "flexi_logger 0.22.5",
  "futures",
  "hex",
- "indoc",
- "log",
- "normpath",
- "notify",
- "once_cell",
- "portable-pty",
- "predicates",
  "rand 0.8.5",
- "rstest 0.13.0",
  "serde",
- "serde_json",
- "structopt",
- "strum",
  "tokio",
  "tokio-util",
- "walkdir",
 ]
 
 [[package]]

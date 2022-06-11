@@ -25,15 +25,14 @@ pub struct RemoteLspProcess {
 impl RemoteLspProcess {
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
-    pub async fn spawn(
-        tenant: impl Into<String>,
-        channel: SessionChannel,
+    pub async fn spawn<T>(
+        channel: SessionChannel<T>,
         cmd: impl Into<String>,
         args: Vec<String>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
-        let mut inner = RemoteProcess::spawn(tenant, channel, cmd, args, persist, pty).await?;
+        let mut inner = RemoteProcess::spawn(channel, cmd, args, persist, pty).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
@@ -349,7 +348,7 @@ mod tests {
     use super::*;
     use crate::{
         client::Session,
-        data::{Request, RequestData, Response, ResponseData},
+        data::{DistantRequestData, DistantResponseData, Request, Response},
     };
     use distant_net::{InmemoryStream, PlainCodec, Transport};
     use std::{future::Future, time::Duration};
@@ -380,7 +379,7 @@ mod tests {
         t1.send(Response::new(
             "test-tenant",
             req.id,
-            vec![ResponseData::ProcSpawned { id: rand::random() }],
+            vec![DistantResponseData::ProcSpawned { id: rand::random() }],
         ))
         .await
         .unwrap();
@@ -430,7 +429,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
         assert_eq!(req.payload.len(), 1, "Unexpected payload size");
         match &req.payload[0] {
-            RequestData::ProcStdin { data, .. } => {
+            DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     &make_lsp_msg(serde_json::json!({
@@ -470,7 +469,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
         assert_eq!(req.payload.len(), 1, "Unexpected payload size");
         match &req.payload[0] {
-            RequestData::ProcStdin { data, .. } => {
+            DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     &make_lsp_msg(serde_json::json!({
@@ -506,7 +505,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
         assert_eq!(req.payload.len(), 1, "Unexpected payload size");
         match &req.payload[0] {
-            RequestData::ProcStdin { data, .. } => {
+            DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     &make_lsp_msg(serde_json::json!({
@@ -556,7 +555,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
         assert_eq!(req.payload.len(), 1, "Unexpected payload size");
         match &req.payload[0] {
-            RequestData::ProcStdin { data, .. } => {
+            DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     &make_lsp_msg(serde_json::json!({
@@ -572,7 +571,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
         assert_eq!(req.payload.len(), 1, "Unexpected payload size");
         match &req.payload[0] {
-            RequestData::ProcStdin { data, .. } => {
+            DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     &make_lsp_msg(serde_json::json!({
@@ -603,7 +602,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
         assert_eq!(req.payload.len(), 1, "Unexpected payload size");
         match &req.payload[0] {
-            RequestData::ProcStdin { data, .. } => {
+            DistantRequestData::ProcStdin { data, .. } => {
                 // Verify the contents AND headers are as expected; in this case,
                 // this will also ensure that the Content-Length is adjusted
                 // when the distant scheme was changed to file
@@ -628,7 +627,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "a",
@@ -665,7 +664,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_a.to_vec(),
                 }],
@@ -684,7 +683,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_b.to_vec(),
                 }],
@@ -719,7 +718,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
                 }],
@@ -763,7 +762,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!(
                         "{}{}",
@@ -806,7 +805,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "distant://some/path",
@@ -837,7 +836,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "a",
@@ -874,7 +873,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_a.to_vec(),
                 }],
@@ -893,7 +892,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_b.to_vec(),
                 }],
@@ -928,7 +927,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
                 }],
@@ -972,7 +971,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!(
                         "{}{}",
@@ -1015,7 +1014,7 @@ mod tests {
             .send(Response::new(
                 "test-tenant",
                 proc.origin_id(),
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "distant://some/path",

@@ -1,10 +1,10 @@
 use crate::{
     client::{SessionChannel, SessionChannelExt, SessionChannelExtError},
     constants::CLIENT_WATCHER_CAPACITY,
-    data::{Change, ChangeKindSet, Error as DistantError, Request, RequestData, ResponseData},
+    data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData, Error as DistantError},
 };
 use derive_more::{Display, Error, From};
-use distant_net::TransportError;
+use distant_net::{Request, TransportError};
 use log::*;
 use std::{
     fmt,
@@ -28,7 +28,7 @@ pub enum WatchError {
 
     /// Some unexpected response was received when attempting to watch
     #[display(fmt = "Unexpected response: {:?}", _0)]
-    UnexpectedResponse(#[error(not(source))] ResponseData),
+    UnexpectedResponse(#[error(not(source))] DistantResponseData),
 }
 
 #[derive(Debug, Display, From, Error)]
@@ -36,8 +36,7 @@ pub struct UnwatchError(SessionChannelExtError);
 
 /// Represents a watcher of some path on a remote machine
 pub struct Watcher {
-    tenant: String,
-    channel: SessionChannel,
+    channel: DistantSessionChannel,
     path: PathBuf,
     task: JoinHandle<()>,
     rx: mpsc::Receiver<Change>,
@@ -46,24 +45,19 @@ pub struct Watcher {
 
 impl fmt::Debug for Watcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Watcher")
-            .field("tenant", &self.tenant)
-            .field("path", &self.path)
-            .finish()
+        f.debug_struct("Watcher").field("path", &self.path).finish()
     }
 }
 
 impl Watcher {
     /// Creates a watcher for some remote path
     pub async fn watch(
-        tenant: impl Into<String>,
-        mut channel: SessionChannel,
+        mut channel: DistantSessionChannel,
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
     ) -> Result<Self, WatchError> {
-        let tenant = tenant.into();
         let path = path.into();
         let only = only.into();
         let except = except.into();
@@ -85,15 +79,12 @@ impl Watcher {
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(
-                tenant.as_str(),
-                vec![RequestData::Watch {
-                    path: path.to_path_buf(),
-                    recursive,
-                    only: only.into_vec(),
-                    except: except.into_vec(),
-                }],
-            ))
+            .mail(Request::new(vec![DistantRequestData::Watch {
+                path: path.to_path_buf(),
+                recursive,
+                only: only.into_vec(),
+                except: except.into_vec(),
+            }]))
             .await
             .map_err(WatchError::TransportError)?;
 
@@ -105,11 +96,11 @@ impl Watcher {
         while let Some(res) = mailbox.next().await {
             for data in res.payload {
                 match data {
-                    ResponseData::Changed(change) => queue.push(change),
-                    ResponseData::Ok => {
+                    DistantResponseData::Changed(change) => queue.push(change),
+                    DistantResponseData::Ok => {
                         confirmed = true;
                     }
-                    ResponseData::Error(x) => return Err(WatchError::ServerError(x)),
+                    DistantResponseData::Error(x) => return Err(WatchError::ServerError(x)),
                     x => return Err(WatchError::UnexpectedResponse(x)),
                 }
             }
@@ -144,7 +135,7 @@ impl Watcher {
                 while let Some(res) = mailbox.next().await {
                     for data in res.payload {
                         match data {
-                            ResponseData::Changed(change) => {
+                            DistantResponseData::Changed(change) => {
                                 // If we can't queue up a change anymore, we've
                                 // been closed and therefore want to quit
                                 if tx.is_closed() {
@@ -168,7 +159,6 @@ impl Watcher {
         });
 
         Ok(Self {
-            tenant,
             path,
             channel,
             task,
@@ -218,15 +208,12 @@ impl Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        client::Session,
-        data::{ChangeKind, Response},
-    };
-    use distant_net::{InmemoryStream, PlainCodec, Transport};
+    use crate::{client::Session, data::ChangeKind};
+    use distant_net::{InmemoryStream, PlainCodec, Response, Transport};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, Session) {
+    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, DistantSession) {
         let (t1, t2) = Transport::make_pair();
         (t1, Session::initialize(t2).unwrap())
     }
@@ -240,7 +227,6 @@ mod tests {
         // in a separate async block
         let watch_task = tokio::spawn(async move {
             Watcher::watch(
-                String::from("test-tenant"),
                 session.clone_channel(),
                 test_path,
                 true,
@@ -255,7 +241,7 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .send(Response::new(req.id, vec![DistantResponseData::Ok]))
             .await
             .unwrap();
 
@@ -273,7 +259,6 @@ mod tests {
         // in a separate async block
         let watch_task = tokio::spawn(async move {
             Watcher::watch(
-                String::from("test-tenant"),
                 session.clone_channel(),
                 test_path,
                 true,
@@ -288,7 +273,7 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .send(Response::new(req.id, vec![DistantResponseData::Ok]))
             .await
             .unwrap();
 
@@ -298,14 +283,13 @@ mod tests {
         // Send some changes related to the file
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
                 vec![
-                    ResponseData::Changed(Change {
+                    DistantResponseData::Changed(Change {
                         kind: ChangeKind::Access,
                         paths: vec![test_path.to_path_buf()],
                     }),
-                    ResponseData::Changed(Change {
+                    DistantResponseData::Changed(Change {
                         kind: ChangeKind::Content,
                         paths: vec![test_path.to_path_buf()],
                     }),
@@ -343,7 +327,6 @@ mod tests {
         // in a separate async block
         let watch_task = tokio::spawn(async move {
             Watcher::watch(
-                String::from("test-tenant"),
                 session.clone_channel(),
                 test_path,
                 true,
@@ -358,7 +341,7 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .send(Response::new(req.id, vec![DistantResponseData::Ok]))
             .await
             .unwrap();
 
@@ -368,9 +351,8 @@ mod tests {
         // Send a change from the appropriate origin
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::Changed(Change {
+                vec![DistantResponseData::Changed(Change {
                     kind: ChangeKind::Access,
                     paths: vec![test_path.to_path_buf()],
                 })],
@@ -381,9 +363,8 @@ mod tests {
         // Send a change from a different origin
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id + 1,
-                vec![ResponseData::Changed(Change {
+                vec![DistantResponseData::Changed(Change {
                     kind: ChangeKind::Content,
                     paths: vec![test_path.to_path_buf()],
                 })],
@@ -394,9 +375,8 @@ mod tests {
         // Send a change from the appropriate origin
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::Changed(Change {
+                vec![DistantResponseData::Changed(Change {
                     kind: ChangeKind::Remove,
                     paths: vec![test_path.to_path_buf()],
                 })],
@@ -433,7 +413,6 @@ mod tests {
         // in a separate async block
         let watch_task = tokio::spawn(async move {
             Watcher::watch(
-                String::from("test-tenant"),
                 session.clone_channel(),
                 test_path,
                 true,
@@ -448,25 +427,24 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .send(Response::new(req.id, vec![DistantResponseData::Ok]))
             .await
             .unwrap();
 
         // Send some changes from the appropriate origin
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
                 vec![
-                    ResponseData::Changed(Change {
+                    DistantResponseData::Changed(Change {
                         kind: ChangeKind::Access,
                         paths: vec![test_path.to_path_buf()],
                     }),
-                    ResponseData::Changed(Change {
+                    DistantResponseData::Changed(Change {
                         kind: ChangeKind::Content,
                         paths: vec![test_path.to_path_buf()],
                     }),
-                    ResponseData::Changed(Change {
+                    DistantResponseData::Changed(Change {
                         kind: ChangeKind::Remove,
                         paths: vec![test_path.to_path_buf()],
                     }),
@@ -504,7 +482,7 @@ mod tests {
         let req = transport.receive::<Request>().await.unwrap().unwrap();
 
         transport
-            .send(Response::new("test-tenant", req.id, vec![ResponseData::Ok]))
+            .send(Response::new(req.id, vec![DistantResponseData::Ok]))
             .await
             .unwrap();
 
@@ -513,9 +491,8 @@ mod tests {
 
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::Changed(Change {
+                vec![DistantResponseData::Changed(Change {
                     kind: ChangeKind::Unknown,
                     paths: vec![test_path.to_path_buf()],
                 })],

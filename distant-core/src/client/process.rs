@@ -1,10 +1,10 @@
 use crate::{
-    client::{Mailbox, SessionChannel},
+    client::SessionChannel,
     constants::CLIENT_PIPE_CAPACITY,
-    data::{PtySize, Request, RequestData, ResponseData},
+    data::{DistantRequestData, DistantResponseData, PtySize},
 };
 use derive_more::{Display, Error, From};
-use distant_net::TransportError;
+use distant_net::{Mailbox, Request, TransportError};
 use log::*;
 use std::sync::Arc;
 use tokio::{
@@ -76,28 +76,21 @@ pub struct RemoteProcess {
 
 impl RemoteProcess {
     /// Spawns the specified process on the remote machine using the given session
-    pub async fn spawn(
-        tenant: impl Into<String>,
-        mut channel: SessionChannel,
+    pub async fn spawn<T>(
+        mut channel: SessionChannel<T>,
         cmd: impl Into<String>,
-        args: Vec<String>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> Result<Self, RemoteProcessError> {
-        let tenant = tenant.into();
         let cmd = cmd.into();
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(
-                tenant.as_str(),
-                vec![RequestData::ProcSpawn {
-                    cmd,
-                    args,
-                    persist,
-                    pty,
-                }],
-            ))
+            .mail(Request::new(vec![DistantRequestData::ProcSpawn {
+                cmd,
+                persist,
+                pty,
+            }]))
             .await?;
 
         // Wait until we get the first response, and get id from proc started
@@ -110,8 +103,8 @@ impl RemoteProcess {
             Some(res) => {
                 let origin_id = res.origin_id;
                 match res.payload.into_iter().next().unwrap() {
-                    ResponseData::ProcSpawned { id } => (id, origin_id),
-                    ResponseData::Error(x) => {
+                    DistantResponseData::ProcSpawned { id } => (id, origin_id),
+                    DistantResponseData::Error(x) => {
                         return Err(RemoteProcessError::TransportError(TransportError::IoError(
                             x.into(),
                         )))
@@ -165,7 +158,7 @@ impl RemoteProcess {
                 _ = abort_req_task_rx.recv() => {
                     panic!("killed");
                 }
-                res = process_outgoing_requests(tenant, id, channel, stdin_rx, resize_rx, kill_rx) => {
+                res = process_outgoing_requests( id, channel, stdin_rx, resize_rx, kill_rx) => {
                     res
                 }
             }
@@ -420,10 +413,9 @@ impl RemoteStderr {
 
 /// Helper function that loops, processing outgoing stdin requests to a remote process as well as
 /// supporting a kill request to terminate the remote process
-async fn process_outgoing_requests(
-    tenant: String,
+async fn process_outgoing_requests<T>(
     id: usize,
-    mut channel: SessionChannel,
+    mut channel: SessionChannel<T>,
     mut stdin_rx: mpsc::Receiver<Vec<u8>>,
     mut resize_rx: mpsc::Receiver<PtySize>,
     mut kill_rx: mpsc::Receiver<()>,
@@ -434,8 +426,7 @@ async fn process_outgoing_requests(
                 match data {
                     Some(data) => channel.fire(
                         Request::new(
-                            tenant.as_str(),
-                            vec![RequestData::ProcStdin { id, data }]
+                            vec![DistantRequestData::ProcStdin { id, data }]
                         )
                     ).await?,
                     None => break Err(RemoteProcessError::ChannelDead),
@@ -445,8 +436,7 @@ async fn process_outgoing_requests(
                 match size {
                     Some(size) => channel.fire(
                         Request::new(
-                            tenant.as_str(),
-                            vec![RequestData::ProcResizePty { id, size }]
+                            vec![DistantRequestData::ProcResizePty { id, size }]
                         )
                     ).await?,
                     None => break Err(RemoteProcessError::ChannelDead),
@@ -455,8 +445,7 @@ async fn process_outgoing_requests(
             msg = kill_rx.recv() => {
                 if msg.is_some() {
                     channel.fire(Request::new(
-                        tenant.as_str(),
-                        vec![RequestData::ProcKill { id }],
+                        vec![DistantRequestData::ProcKill { id }],
                     )).await?;
                     break Ok(());
                 } else {
@@ -471,9 +460,9 @@ async fn process_outgoing_requests(
 }
 
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
-async fn process_incoming_responses(
+async fn process_incoming_responses<T>(
     proc_id: usize,
-    mut mailbox: Mailbox,
+    mut mailbox: Mailbox<T>,
     stdout_tx: mpsc::Sender<Vec<u8>>,
     stderr_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
@@ -481,7 +470,7 @@ async fn process_incoming_responses(
     while let Some(res) = mailbox.next().await {
         // Check if any of the payload data is the termination
         let exit_status = res.payload.iter().find_map(|data| match data {
-            ResponseData::ProcDone { id, success, code } if *id == proc_id => {
+            DistantResponseData::ProcDone { id, success, code } if *id == proc_id => {
                 Some((*success, *code))
             }
             _ => None,
@@ -491,10 +480,10 @@ async fn process_incoming_responses(
         // TODO: What should we do about unexpected data? For now, just ignore
         for data in res.payload {
             match data {
-                ResponseData::ProcStdout { id, data } if id == proc_id => {
+                DistantResponseData::ProcStdout { id, data } if id == proc_id => {
                     let _ = stdout_tx.send(data).await;
                 }
-                ResponseData::ProcStderr { id, data } if id == proc_id => {
+                DistantResponseData::ProcStderr { id, data } if id == proc_id => {
                     let _ = stderr_tx.send(data).await;
                 }
                 _ => {}
@@ -522,12 +511,12 @@ mod tests {
     use super::*;
     use crate::{
         client::Session,
-        data::{Error, ErrorKind, Response},
+        data::{Error, ErrorKind},
     };
-    use distant_net::{InmemoryStream, PlainCodec, Transport};
+    use distant_net::{InmemoryStream, PlainCodec, Response, Transport};
     use std::time::Duration;
 
-    fn make_session() -> (Transport<InmemoryStream, PlainCodec>, Session) {
+    fn make_session<T>() -> (Transport<InmemoryStream, PlainCodec>, Session<T>) {
         let (t1, t2) = Transport::make_pair();
         (t1, Session::initialize(t2).unwrap())
     }
@@ -540,10 +529,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -555,7 +542,7 @@ mod tests {
 
         // Send back a response through the session
         transport
-            .send(Response::new("test-tenant", req.id, Vec::new()))
+            .send(Response::new(req.id, Vec::new()))
             .await
             .unwrap();
 
@@ -580,10 +567,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -596,9 +581,8 @@ mod tests {
         // Send back a response through the session
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::Error(Error {
+                vec![DistantResponseData::Error(Error {
                     kind: ErrorKind::BrokenPipe,
                     description: String::from("some error"),
                 })],
@@ -627,10 +611,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -644,9 +626,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -674,10 +655,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -691,9 +670,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -709,7 +687,7 @@ mod tests {
             1,
             "Unexpected payload length for kill request"
         );
-        assert_eq!(req.payload[0], RequestData::ProcKill { id });
+        assert_eq!(req.payload[0], DistantRequestData::ProcKill { id });
 
         // Verify we can no longer write to stdin anymore
         assert_eq!(
@@ -732,10 +710,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -749,9 +725,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -773,7 +748,7 @@ mod tests {
             .unwrap()
             .payload[0]
         {
-            RequestData::ProcStdin { id, data } => {
+            DistantRequestData::ProcStdin { id, data } => {
                 assert_eq!(*id, 12345);
                 assert_eq!(data, b"some input");
             }
@@ -789,10 +764,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -806,9 +779,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -818,9 +790,8 @@ mod tests {
 
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStdout {
+                vec![DistantResponseData::ProcStdout {
                     id,
                     data: b"some out".to_vec(),
                 }],
@@ -840,10 +811,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -857,9 +826,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -869,9 +837,8 @@ mod tests {
 
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcStderr {
+                vec![DistantResponseData::ProcStderr {
                     id,
                     data: b"some err".to_vec(),
                 }],
@@ -891,10 +858,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -908,9 +873,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -930,10 +894,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -947,9 +909,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -977,10 +938,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -994,9 +953,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -1007,9 +965,8 @@ mod tests {
         // Send a process completion response to pass along exit status and conclude wait
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcDone {
+                vec![DistantResponseData::ProcDone {
                     id,
                     success: true,
                     code: Some(123),
@@ -1033,10 +990,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -1050,9 +1005,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -1077,10 +1031,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -1094,9 +1046,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -1128,10 +1079,8 @@ mod tests {
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
             RemoteProcess::spawn(
-                String::from("test-tenant"),
                 session.clone_channel(),
-                String::from("cmd"),
-                vec![String::from("arg")],
+                String::from("cmd arg"),
                 false,
                 None,
             )
@@ -1145,9 +1094,8 @@ mod tests {
         let id = 12345;
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcSpawned { id }],
+                vec![DistantResponseData::ProcSpawned { id }],
             ))
             .await
             .unwrap();
@@ -1159,9 +1107,8 @@ mod tests {
         // Send a process completion response to pass along exit status and conclude wait
         transport
             .send(Response::new(
-                "test-tenant",
                 req.id,
-                vec![ResponseData::ProcDone {
+                vec![DistantResponseData::ProcDone {
                     id,
                     success: false,
                     code: Some(123),

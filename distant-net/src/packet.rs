@@ -2,7 +2,7 @@
 pub type Id = usize;
 
 /// Represents a request to send
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Request<T> {
     /// Unique id associated with the request
     pub id: Id,
@@ -22,7 +22,7 @@ impl<T> Request<T> {
 }
 
 /// Represents a response received related to some request
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Response<T> {
     /// Unique id associated with the response
     pub id: Id,

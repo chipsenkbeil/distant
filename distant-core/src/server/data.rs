@@ -22,47 +22,12 @@ fn parse_byte_vec(src: &str) -> ByteVec {
     src.as_bytes().to_vec()
 }
 
-/// Represents the request to be performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct Request {
-    /// A name tied to the requester (tenant)
-    pub tenant: String,
-
-    /// A unique id associated with the request
-    pub id: usize,
-
-    /// The main payload containing a collection of data comprising one or more actions
-    pub payload: Vec<RequestData>,
-}
-
-impl Request {
-    /// Creates a new request, generating a unique id for it
-    pub fn new(tenant: impl Into<String>, payload: Vec<RequestData>) -> Self {
-        let id = rand::random();
-        Self {
-            tenant: tenant.into(),
-            id,
-            payload,
-        }
-    }
-
-    /// Converts to a string representing the type (or types) contained in the payload
-    pub fn to_payload_type_string(&self) -> String {
-        self.payload
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<&str>>()
-            .join(",")
-    }
-}
-
 /// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
 #[cfg_attr(feature = "structopt", derive(structopt::StructOpt))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[strum(serialize_all = "snake_case")]
-pub enum RequestData {
+pub enum DistantRequestData {
     /// Reads a file from the specified path on the remote machine
     #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["cat"]))]
     FileRead {
@@ -261,12 +226,8 @@ pub enum RequestData {
     /// Spawns a new process on the remote machine
     #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["spawn", "run"]))]
     ProcSpawn {
-        /// Name of the command to run
+        /// The full command to run including arguments
         cmd: String,
-
-        /// Arguments for the command
-        #[serde(default)]
-        args: Vec<String>,
 
         /// Whether or not the process should be persistent, meaning that the process will not be
         /// killed when the associated client disconnects
@@ -312,51 +273,11 @@ pub enum RequestData {
     SystemInfo {},
 }
 
-/// Represents an response to a request performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub struct Response {
-    /// A name tied to the requester (tenant)
-    pub tenant: String,
-
-    /// A unique id associated with the response
-    pub id: usize,
-
-    /// The id of the originating request that yielded this response
-    /// (more than one response may have same origin)
-    pub origin_id: usize,
-
-    /// The main payload containing a collection of data comprising one or more results
-    pub payload: Vec<ResponseData>,
-}
-
-impl Response {
-    /// Creates a new response, generating a unique id for it
-    pub fn new(tenant: impl Into<String>, origin_id: usize, payload: Vec<ResponseData>) -> Self {
-        let id = rand::random();
-        Self {
-            tenant: tenant.into(),
-            id,
-            origin_id,
-            payload,
-        }
-    }
-
-    /// Converts to a string representing the type (or types) contained in the payload
-    pub fn to_payload_type_string(&self) -> String {
-        self.payload
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<&str>>()
-            .join(",")
-    }
-}
-
 /// Represents the payload of a successful response
 #[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[strum(serialize_all = "snake_case")]
-pub enum ResponseData {
+pub enum DistantResponseData {
     /// General okay with no extra data, returned in cases like
     /// creating or removing a directory, copying a file, or renaming
     /// a file
@@ -951,25 +872,25 @@ pub struct RunningProcess {
     pub id: usize,
 }
 
-impl From<io::Error> for ResponseData {
+impl From<io::Error> for DistantResponseData {
     fn from(x: io::Error) -> Self {
         Self::Error(Error::from(x))
     }
 }
 
-impl From<walkdir::Error> for ResponseData {
+impl From<walkdir::Error> for DistantResponseData {
     fn from(x: walkdir::Error) -> Self {
         Self::Error(Error::from(x))
     }
 }
 
-impl From<notify::Error> for ResponseData {
+impl From<notify::Error> for DistantResponseData {
     fn from(x: notify::Error) -> Self {
         Self::Error(Error::from(x))
     }
 }
 
-impl From<tokio::task::JoinError> for ResponseData {
+impl From<tokio::task::JoinError> for DistantResponseData {
     fn from(x: tokio::task::JoinError) -> Self {
         Self::Error(Error::from(x))
     }
