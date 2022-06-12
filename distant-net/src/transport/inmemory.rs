@@ -11,7 +11,7 @@ use tokio::{
     sync::mpsc,
 };
 
-/// Represents a data stream comprised of two inmemory channels
+/// Represents a data transport comprised of two inmemory channels
 #[derive(Debug)]
 pub struct InmemoryTransport {
     incoming: InmemoryTransportReadHalf,
@@ -26,7 +26,7 @@ impl InmemoryTransport {
         }
     }
 
-    /// Returns (incoming_tx, outgoing_rx, stream)
+    /// Returns (incoming_tx, outgoing_rx, transport)
     pub fn make(buffer: usize) -> (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>, Self) {
         let (incoming_tx, incoming_rx) = mpsc::channel(buffer);
         let (outgoing_tx, outgoing_rx) = mpsc::channel(buffer);
@@ -38,11 +38,11 @@ impl InmemoryTransport {
         )
     }
 
-    /// Returns pair of streams that are connected such that one sends to the other and
+    /// Returns pair of transports that are connected such that one sends to the other and
     /// vice versa
     pub fn pair(buffer: usize) -> (Self, Self) {
-        let (tx, rx, stream) = Self::make(buffer);
-        (stream, Self::new(rx, tx))
+        let (tx, rx, transport) = Self::make(buffer);
+        (transport, Self::new(rx, tx))
     }
 }
 
@@ -215,7 +215,7 @@ impl FramedTransport<InmemoryTransport, PlainCodec> {
     /// Produces a pair of inmemory transports that are connected to each other using
     /// a standard codec
     ///
-    /// Sets the buffer for message passing for each underlying stream to the given buffer size
+    /// Sets the buffer for message passing for each underlying transport to the given buffer size
     pub fn pair(
         buffer: usize,
     ) -> (
@@ -235,8 +235,8 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
-    async fn make_should_return_sender_that_sends_data_to_stream() {
-        let (tx, _, mut stream) = InmemoryTransport::make(3);
+    async fn make_should_return_sender_that_sends_data_to_transport() {
+        let (tx, _, mut transport) = InmemoryTransport::make(3);
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
         tx.send(b"test msg 2".to_vec()).await.unwrap();
@@ -244,11 +244,11 @@ mod tests {
 
         // Should get data matching a singular message
         let mut buf = [0; 256];
-        let len = stream.read(&mut buf).await.unwrap();
+        let len = transport.read(&mut buf).await.unwrap();
         assert_eq!(&buf[..len], b"test msg 1");
 
         // Next call would get the second message
-        let len = stream.read(&mut buf).await.unwrap();
+        let len = transport.read(&mut buf).await.unwrap();
         assert_eq!(&buf[..len], b"test msg 2");
 
         // When the last of the senders is dropped, we should still get
@@ -256,20 +256,20 @@ mod tests {
         // an indicator that there is no more data
         drop(tx);
 
-        let len = stream.read(&mut buf).await.unwrap();
+        let len = transport.read(&mut buf).await.unwrap();
         assert_eq!(&buf[..len], b"test msg 3");
 
-        let len = stream.read(&mut buf).await.unwrap();
+        let len = transport.read(&mut buf).await.unwrap();
         assert_eq!(len, 0, "Unexpectedly got more data");
     }
 
     #[tokio::test]
-    async fn make_should_return_receiver_that_receives_data_from_stream() {
-        let (_, mut rx, mut stream) = InmemoryTransport::make(3);
+    async fn make_should_return_receiver_that_receives_data_from_transport() {
+        let (_, mut rx, mut transport) = InmemoryTransport::make(3);
 
-        stream.write_all(b"test msg 1").await.unwrap();
-        stream.write_all(b"test msg 2").await.unwrap();
-        stream.write_all(b"test msg 3").await.unwrap();
+        transport.write_all(b"test msg 1").await.unwrap();
+        transport.write_all(b"test msg 2").await.unwrap();
+        transport.write_all(b"test msg 3").await.unwrap();
 
         // Should get data matching a singular message
         assert_eq!(rx.recv().await, Some(b"test msg 1".to_vec()));
@@ -277,10 +277,10 @@ mod tests {
         // Next call would get the second message
         assert_eq!(rx.recv().await, Some(b"test msg 2".to_vec()));
 
-        // When the stream is dropped, we should still get
+        // When the transport is dropped, we should still get
         // the rest of the data that was sent first before getting
         // an indicator that there is no more data
-        drop(stream);
+        drop(transport);
 
         assert_eq!(rx.recv().await, Some(b"test msg 3".to_vec()));
 
@@ -289,8 +289,8 @@ mod tests {
 
     #[tokio::test]
     async fn into_split_should_provide_a_read_half_that_receives_from_sender() {
-        let (tx, _, stream) = InmemoryTransport::make(3);
-        let (mut read_half, _) = stream.into_split();
+        let (tx, _, transport) = InmemoryTransport::make(3);
+        let (mut read_half, _) = transport.into_split();
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
         tx.send(b"test msg 2".to_vec()).await.unwrap();
@@ -319,8 +319,8 @@ mod tests {
 
     #[tokio::test]
     async fn into_split_should_provide_a_write_half_that_sends_to_receiver() {
-        let (_, mut rx, stream) = InmemoryTransport::make(3);
-        let (_, mut write_half) = stream.into_split();
+        let (_, mut rx, transport) = InmemoryTransport::make(3);
+        let (_, mut write_half) = transport.into_split();
 
         write_half.write_all(b"test msg 1").await.unwrap();
         write_half.write_all(b"test msg 2").await.unwrap();
@@ -332,7 +332,7 @@ mod tests {
         // Next call would get the second message
         assert_eq!(rx.recv().await, Some(b"test msg 2".to_vec()));
 
-        // When the stream is dropped, we should still get
+        // When the transport is dropped, we should still get
         // the rest of the data that was sent first before getting
         // an indicator that there is no more data
         drop(write_half);
@@ -344,8 +344,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_fail_if_buf_has_no_space_remaining() {
-        let (_tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (_tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         let mut buf = [0u8; 0];
         match t_read.read(&mut buf).await {
@@ -356,8 +356,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_update_buf_with_all_overflow_from_last_read_if_it_all_fits() {
-        let (tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         tx.send(vec![1, 2, 3]).await.expect("Failed to send");
 
@@ -393,8 +393,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_update_buf_with_some_of_overflow_that_can_fit() {
-        let (tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         tx.send(vec![1, 2, 3, 4, 5]).await.expect("Failed to send");
 
@@ -424,8 +424,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_update_buf_with_all_of_inner_channel_when_it_fits() {
-        let (tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         let mut buf = [0u8; 5];
 
@@ -449,8 +449,8 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_update_buf_with_some_of_inner_channel_that_can_fit_and_add_rest_to_overflow(
     ) {
-        let (tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         let mut buf = [0u8; 1];
 
@@ -480,8 +480,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_yield_pending_if_no_data_available_on_inner_channel() {
-        let (_tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (_tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         let mut buf = [0u8; 1];
 
@@ -497,8 +497,8 @@ mod tests {
 
     #[tokio::test]
     async fn read_half_should_not_update_buf_if_inner_channel_closed() {
-        let (tx, _rx, stream) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = stream.into_split();
+        let (tx, _rx, transport) = InmemoryTransport::make(1);
+        let (mut t_read, _t_write) = transport.into_split();
 
         let mut buf = [0u8; 1];
 
@@ -515,8 +515,8 @@ mod tests {
 
     #[tokio::test]
     async fn write_half_should_return_buf_len_if_can_send_immediately() {
-        let (_tx, mut rx, stream) = InmemoryTransport::make(1);
-        let (_t_read, mut t_write) = stream.into_split();
+        let (_tx, mut rx, transport) = InmemoryTransport::make(1);
+        let (_t_read, mut t_write) = transport.into_split();
 
         // Write that is not waiting should always succeed with full contents
         let n = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
@@ -529,8 +529,8 @@ mod tests {
 
     #[tokio::test]
     async fn write_half_should_return_support_eventually_sending_by_retrying_when_not_ready() {
-        let (_tx, mut rx, stream) = InmemoryTransport::make(1);
-        let (_t_read, mut t_write) = stream.into_split();
+        let (_tx, mut rx, transport) = InmemoryTransport::make(1);
+        let (_t_read, mut t_write) = transport.into_split();
 
         // Queue a write already so that we block on the next one
         let _ = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
@@ -560,8 +560,8 @@ mod tests {
 
     #[tokio::test]
     async fn write_half_should_zero_if_inner_channel_closed() {
-        let (_tx, rx, stream) = InmemoryTransport::make(1);
-        let (_t_read, mut t_write) = stream.into_split();
+        let (_tx, rx, transport) = InmemoryTransport::make(1);
+        let (_t_read, mut t_write) = transport.into_split();
 
         // Drop receiving end that transport would talk to
         drop(rx);

@@ -78,7 +78,8 @@ impl From<DistantResponseData> for Outgoing {
 ///
 ///       Ctx will also support a generic for state that persists across requests
 ///
-///
+/// TODO: Make an enum that is untagged serde for single or batch series of requests
+///       For deserializing in DistantChannelCtx, should be fine with single
 ///
 ///
 ///

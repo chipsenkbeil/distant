@@ -10,6 +10,8 @@ pub trait Transport: AsyncRead + AsyncWrite + Unpin {
     fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf);
 }
 
+mod router;
+
 mod framed;
 pub use framed::*;
 

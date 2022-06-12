@@ -1,13 +1,12 @@
 use crate::{Codec, Transport};
+use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use std::io;
 use tokio_util::codec::{Framed, FramedRead, FramedWrite};
+
+mod inmemory;
+pub use inmemory::*;
 
 #[cfg(test)]
 mod test;
@@ -23,57 +22,33 @@ pub use write::*;
 
 mod utils;
 
-/// Represents a transport of data across the network using frames
+/// Represents a transport of data across the network using frames in order to support
+/// typed messages instead of arbitrary bytes being sent across the wire.
+///
+/// Note that this type does **not** implement [`Transport`] and instead acts as a wrapper
+/// around a transport to provide a higher-level interface
 #[derive(Debug)]
-pub struct FramedTransport<T, U>(Framed<T, U>)
+pub struct FramedTransport<T, C>(Framed<T, C>)
 where
     T: Transport,
-    U: Codec;
+    C: Codec;
 
-impl<T, U> FramedTransport<T, U>
+impl<T, C> FramedTransport<T, C>
 where
     T: Transport,
-    U: Codec,
+    C: Codec,
 {
     /// Creates a new instance of the transport, wrapping the stream in a `Framed<T, XChaCha20Poly1305Codec>`
-    pub fn new(transport: T, codec: U) -> Self {
+    pub fn new(transport: T, codec: C) -> Self {
         Self(Framed::new(transport, codec))
     }
 
-    /// Returns a reference to the underlying I/O stream
-    ///
-    /// Note that care should be taken to not tamper with the underlying stream of data coming in
-    /// as it may corrupt the stream of frames otherwise being worked with
-    pub fn get_ref(&self) -> &T {
-        self.0.get_ref()
-    }
-
-    /// Returns a reference to the underlying I/O stream
-    ///
-    /// Note that care should be taken to not tamper with the underlying stream of data coming in
-    /// as it may corrupt the stream of frames otherwise being worked with
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0.get_mut()
-    }
-
-    /// Consumes the transport, returning its underlying I/O stream
-    ///
-    /// Note that care should be taken to not tamper with the underlying stream of data coming in
-    /// as it may corrupt the stream of frames otherwise being worked with.
-    pub fn into_inner(self) -> T {
-        self.0.into_inner()
-    }
-}
-
-impl<T, U> Transport for FramedTransport<T, U>
-where
-    T: Transport,
-    U: Codec + Send + 'static,
-{
-    type ReadHalf = FramedTransportReadHalf<T::ReadHalf, U>;
-    type WriteHalf = FramedTransportWriteHalf<T::WriteHalf, U>;
-
-    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
+    pub fn into_split(
+        self,
+    ) -> (
+        FramedTransportReadHalf<T::ReadHalf, C>,
+        FramedTransportWriteHalf<T::WriteHalf, C>,
+    ) {
         let parts = self.0.into_parts();
         let (read_half, write_half) = parts.io.into_split();
 
@@ -92,52 +67,13 @@ where
     }
 }
 
-impl<T, U> AsyncRead for FramedTransport<T, U>
+#[async_trait]
+impl<T, C> FramedTransportWrite for FramedTransport<T, C>
 where
-    T: Transport,
-    U: Codec,
+    T: Transport + Send,
+    C: Codec + Send,
 {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        Pin::new(self.0.get_mut()).poll_read(cx, buf)
-    }
-}
-
-impl<T, U> AsyncWrite for FramedTransport<T, U>
-where
-    T: Transport,
-    U: Codec,
-{
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(self.0.get_mut()).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Pin::new(self.0.get_mut()).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(self.0.get_mut()).poll_shutdown(cx)
-    }
-}
-
-impl<T, U> FramedTransport<T, U>
-where
-    T: Transport,
-    U: Codec,
-{
-    /// Sends some data across the wire, waiting for it to completely send
-    pub async fn send<D: Serialize>(&mut self, data: D) -> io::Result<()> {
+    async fn send<D: Serialize + Send>(&mut self, data: D) -> io::Result<()> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
         let data = utils::serialize_to_vec(&data)?;
@@ -147,14 +83,13 @@ where
     }
 }
 
-impl<T, U> FramedTransport<T, U>
+#[async_trait]
+impl<T, C> FramedTransportRead for FramedTransport<T, C>
 where
-    T: Transport,
-    U: Codec,
+    T: Transport + Send,
+    C: Codec + Send,
 {
-    /// Receives some data from out on the wire, waiting until it's available,
-    /// returning none if the transport is now closed
-    pub async fn receive<D: DeserializeOwned>(&mut self) -> io::Result<Option<D>> {
+    async fn recv<D: DeserializeOwned>(&mut self) -> io::Result<Option<D>> {
         // Use underlying codec to receive data (may decrypt, validate, etc.)
         if let Some(data) = self.0.next().await {
             let data = data?;
@@ -207,7 +142,7 @@ mod tests {
         let (_, _, stream) = InmemoryTransport::make(1);
         let mut transport = FramedTransport::new(stream, PlainCodec::new());
 
-        let result = transport.receive::<TestData>().await;
+        let result = transport.recv::<TestData>().await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -230,7 +165,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = transport.receive::<TestData>().await;
+        let result = transport.recv::<TestData>().await;
         assert!(result.is_err(), "Unexpectedly succeeded")
     }
 
@@ -251,7 +186,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = transport.receive::<TestData>().await.unwrap().unwrap();
+        let received_data = transport.recv::<TestData>().await.unwrap().unwrap();
         assert_eq!(received_data, data);
     }
 }

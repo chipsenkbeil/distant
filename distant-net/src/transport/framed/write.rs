@@ -1,27 +1,35 @@
 use crate::{transport::framed::utils, Codec};
+use async_trait::async_trait;
 use futures::SinkExt;
 use serde::Serialize;
-use std::{
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::io;
 use tokio::io::AsyncWrite;
 use tokio_util::codec::FramedWrite;
 
-/// Represents a transport of data out to the network
-pub struct FramedTransportWriteHalf<T, U>(pub(super) FramedWrite<T, U>)
+/// Interface to write framed data in the form of some seriazable type
+#[async_trait]
+pub trait FramedTransportWrite {
+    /// Sends some data across the wire, waiting for it to completely send
+    async fn send<D: Serialize + Send>(&mut self, data: D) -> io::Result<()>;
+}
+
+/// Represents a transport of outbound data to the network using frames in order to support
+/// typed messages instead of arbitrary bytes being sent across the wire.
+///
+/// Note that this type does **not** implement [`AsyncWrite`] and instead acts as a
+/// wrapper to provide a higher-level interface
+pub struct FramedTransportWriteHalf<T, C>(pub(super) FramedWrite<T, C>)
 where
     T: AsyncWrite,
-    U: Codec;
+    C: Codec;
 
-impl<T, U> FramedTransportWriteHalf<T, U>
+#[async_trait]
+impl<T, C> FramedTransportWrite for FramedTransportWriteHalf<T, C>
 where
-    T: AsyncWrite + Unpin,
-    U: Codec,
+    T: AsyncWrite + Send + Unpin,
+    C: Codec + Send,
 {
-    /// Sends some data across the wire, waiting for it to completely send
-    pub async fn send<D: Serialize>(&mut self, data: D) -> io::Result<()> {
+    async fn send<D: Serialize + Send>(&mut self, data: D) -> io::Result<()> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
         let data = utils::serialize_to_vec(&data)?;
@@ -31,35 +39,10 @@ where
     }
 }
 
-impl<T, U> AsyncWrite for FramedTransportWriteHalf<T, U>
-where
-    T: AsyncWrite + Unpin,
-    U: Codec,
-{
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(self.0.get_mut()).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Pin::new(self.0.get_mut()).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(self.0.get_mut()).poll_shutdown(cx)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FramedTransport, InmemoryTransport, PlainCodec, Transport};
+    use crate::{FramedTransport, InmemoryTransport, PlainCodec};
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

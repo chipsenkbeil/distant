@@ -1,4 +1,7 @@
-use crate::{Codec, FramedTransport, Request, Response, TcpTransport, Transport};
+use crate::{
+    Codec, FramedTransport, FramedTransportRead, FramedTransportWrite, Request, Response,
+    TcpTransport, Transport,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     convert,
@@ -44,7 +47,7 @@ where
     {
         let stream = TcpTransport::connect(addr).await?;
         let transport = FramedTransport::new(stream, codec);
-        Self::new(transport)
+        Self::from_framed_transport(transport)
     }
 
     /// Connect to a remote TCP server, timing out after duration has passed
@@ -82,7 +85,7 @@ where
         let p = path.as_ref();
         let stream = crate::UnixSocketTransport::connect(p).await?;
         let transport = FramedTransport::new(stream, codec);
-        Self::new(transport)
+        Self::from_framed_transport(transport)
     }
 
     /// Connect to a proxy unix socket, timing out after duration has passed
@@ -106,13 +109,12 @@ where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
-    /// Initializes a client using the provided transport
-    pub fn new<D, C>(transport: FramedTransport<D, C>) -> io::Result<Self>
+    /// Initializes a client using the provided reader and writer
+    pub fn new<R, W>(mut reader: R, mut writer: W) -> io::Result<Self>
     where
-        D: Transport,
-        C: Codec + Send + 'static,
+        R: FramedTransportRead + Send + 'static,
+        W: FramedTransportWrite + Send + 'static,
     {
-        let (mut t_read, mut t_write) = transport.into_split();
         let post_office = Arc::new(PostOffice::default());
         let weak_post_office = Arc::downgrade(&post_office);
 
@@ -120,7 +122,7 @@ where
         // post office
         let response_task = tokio::spawn(async move {
             loop {
-                match t_read.receive::<Response<U>>().await {
+                match reader.recv::<Response<U>>().await {
                     Ok(Some(res)) => {
                         // Try to send response to appropriate mailbox
                         // TODO: How should we handle false response? Did logging in past
@@ -139,7 +141,7 @@ where
         let (tx, mut rx) = mpsc::channel::<Request<T>>(1);
         let request_task = tokio::spawn(async move {
             while let Some(req) = rx.recv().await {
-                if t_write.send(req).await.is_err() {
+                if writer.send(req).await.is_err() {
                     break;
                 }
             }
@@ -156,13 +158,22 @@ where
             response_task,
         })
     }
-}
 
-impl<T, U> Client<T, U>
-where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
-{
+    /// Initializes a client using the provided framed transport
+    pub fn from_framed_transport<TR, C>(transport: FramedTransport<TR, C>) -> io::Result<Self>
+    where
+        TR: Transport,
+        C: Codec + Send + 'static,
+    {
+        let (reader, writer) = transport.into_split();
+        Self::new(reader, writer)
+    }
+
+    /// Clones the underlying channel for requests and returns the cloned instance
+    pub fn clone_channel(&self) -> Channel<T, U> {
+        self.channel.clone()
+    }
+
     /// Waits for the client to terminate, which results when the receiving end of the network
     /// connection is closed (or the client is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {
@@ -175,9 +186,9 @@ where
         self.response_task.abort();
     }
 
-    /// Clones the underlying channel for requests and returns the cloned instance
-    pub fn clone_channel(&self) -> Channel<T, U> {
-        self.channel.clone()
+    /// Returns true if client's underlying event processing has finished/terminated
+    pub fn is_finished(&self) -> bool {
+        self.request_task.is_finished() && self.response_task.is_finished()
     }
 }
 
