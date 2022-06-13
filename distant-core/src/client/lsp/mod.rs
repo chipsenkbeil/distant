@@ -361,7 +361,7 @@ mod tests {
         FramedTransport<InmemoryTransport, PlainCodec>,
         RemoteLspProcess,
     ) {
-        let (mut t1, t2) = FramedTransport::make_pair();
+        let (mut t1, t2) = FramedTransport::make_test_pair();
         let session = Client::initialize(t2).unwrap();
         let spawn_task = tokio::spawn(async move {
             RemoteLspProcess::spawn(

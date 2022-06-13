@@ -122,7 +122,7 @@ mod tests {
 
     #[tokio::test]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
-        let (t1, mut t2) = FramedTransport::make_pair();
+        let (t1, mut t2) = FramedTransport::make_test_pair();
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -132,13 +132,13 @@ mod tests {
         let mut mailbox = channel.mail(req).await.unwrap();
 
         // Get first response
-        match tokio::join!(mailbox.next(), t2.send(res)) {
+        match tokio::join!(mailbox.next(), t2.write(res)) {
             (Some(actual), _) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
         }
 
         // Get second response
-        match tokio::join!(mailbox.next(), t2.send(res)) {
+        match tokio::join!(mailbox.next(), t2.write(res)) {
             (Some(actual), _) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -157,14 +157,14 @@ mod tests {
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
-        let (t1, mut t2) = FramedTransport::make_pair();
+        let (t1, mut t2) = FramedTransport::make_test_pair();
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
         let res = Response::new(req.id, 1);
 
-        let (actual, _) = tokio::join!(channel.send(req), t2.send(res));
+        let (actual, _) = tokio::join!(channel.send(req), t2.write(res));
         match actual {
             Ok(actual) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
@@ -173,7 +173,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (t1, mut t2) = FramedTransport::make_pair();
+        let (t1, mut t2) = FramedTransport::make_test_pair();
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -183,7 +183,7 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let _req = TypedAsyncRead::<Request<u8>>::recv(&mut t2)
+        let _req = TypedAsyncRead::<Request<u8>>::read(&mut t2)
             .await
             .unwrap()
             .unwrap();
@@ -191,7 +191,7 @@ mod tests {
 
     #[tokio::test]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (t1, mut t2) = FramedTransport::make_pair();
+        let (t1, mut t2) = FramedTransport::make_test_pair();
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -201,7 +201,7 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let _req = TypedAsyncRead::<Request<u8>>::recv(&mut t2)
+        let _req = TypedAsyncRead::<Request<u8>>::read(&mut t2)
             .await
             .unwrap()
             .unwrap();

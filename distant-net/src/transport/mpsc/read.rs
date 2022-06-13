@@ -16,7 +16,7 @@ impl<T> MpscTransportReadHalf<T> {
 
 #[async_trait]
 impl<T: Send> TypedAsyncRead<T> for MpscTransportReadHalf<T> {
-    async fn recv(&mut self) -> io::Result<Option<T>> {
+    async fn read(&mut self) -> io::Result<Option<T>> {
         Ok(self.rx.recv().await)
     }
 }

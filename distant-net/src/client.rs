@@ -122,7 +122,7 @@ where
         // post office
         let response_task = tokio::spawn(async move {
             loop {
-                match reader.recv().await {
+                match reader.read().await {
                     Ok(Some(res)) => {
                         // Try to send response to appropriate mailbox
                         // TODO: How should we handle false response? Did logging in past
@@ -141,7 +141,7 @@ where
         let (tx, mut rx) = mpsc::channel::<Request<T>>(1);
         let request_task = tokio::spawn(async move {
             while let Some(req) = rx.recv().await {
-                if writer.send(req).await.is_err() {
+                if writer.write(req).await.is_err() {
                     break;
                 }
             }

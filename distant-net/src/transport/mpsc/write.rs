@@ -16,7 +16,7 @@ impl<T> MpscTransportWriteHalf<T> {
 
 #[async_trait]
 impl<T: Send> TypedAsyncWrite<T> for MpscTransportWriteHalf<T> {
-    async fn send(&mut self, data: T) -> io::Result<()> {
+    async fn write(&mut self, data: T) -> io::Result<()> {
         self.tx
             .send(data)
             .await

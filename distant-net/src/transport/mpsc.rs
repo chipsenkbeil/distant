@@ -28,9 +28,9 @@ impl<T, U> MpscTransport<T, U> {
 
 #[async_trait]
 impl<T: Send, U: Send> TypedAsyncWrite<T> for MpscTransport<T, U> {
-    async fn send(&mut self, data: T) -> io::Result<()> {
+    async fn write(&mut self, data: T) -> io::Result<()> {
         self.outbound
-            .send(data)
+            .write(data)
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
     }
@@ -38,8 +38,8 @@ impl<T: Send, U: Send> TypedAsyncWrite<T> for MpscTransport<T, U> {
 
 #[async_trait]
 impl<T: Send, U: Send> TypedAsyncRead<U> for MpscTransport<T, U> {
-    async fn recv(&mut self) -> io::Result<Option<U>> {
-        self.inbound.recv().await
+    async fn read(&mut self) -> io::Result<Option<U>> {
+        self.inbound.read().await
     }
 }
 

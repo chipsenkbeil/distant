@@ -29,13 +29,13 @@ pub trait IntoSplit {
 pub trait TypedAsyncRead<T> {
     /// Reads some data, returning `Some(T)` if available or `None` if the reader
     /// has closed and no longer is providing data
-    async fn recv(&mut self) -> io::Result<Option<T>>;
+    async fn read(&mut self) -> io::Result<Option<T>>;
 }
 
 /// Interface to write some structured data asynchronously
 #[async_trait]
 pub trait TypedAsyncWrite<T> {
-    async fn send(&mut self, data: T) -> io::Result<()>;
+    async fn write(&mut self, data: T) -> io::Result<()>;
 }
 
 mod router;

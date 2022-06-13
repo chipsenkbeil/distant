@@ -23,7 +23,7 @@ where
     W: AsyncWrite + Send + Unpin,
     C: Codec + Send,
 {
-    async fn send(&mut self, data: T) -> io::Result<()> {
+    async fn write(&mut self, data: T) -> io::Result<()> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
         let data = utils::serialize_to_vec(&data)?;
@@ -62,7 +62,7 @@ mod tests {
         frame.extend(len.iter().copied());
         frame.extend(bytes);
 
-        wh.send(data).await.unwrap();
+        wh.write(data).await.unwrap();
 
         let outgoing = rx.recv().await.unwrap();
         assert_eq!(outgoing, frame);

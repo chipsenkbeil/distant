@@ -23,7 +23,7 @@ where
     R: AsyncRead + Send + Unpin,
     C: Codec + Send,
 {
-    async fn recv(&mut self) -> io::Result<Option<T>> {
+    async fn read(&mut self) -> io::Result<Option<T>> {
         // Use underlying codec to receive data (may decrypt, validate, etc.)
         if let Some(data) = self.0.next().await {
             let data = data?;
@@ -55,7 +55,7 @@ mod tests {
         let transport = FramedTransport::new(stream, PlainCodec::new());
         let (mut rh, _) = transport.into_split();
 
-        let result = TypedAsyncRead::<TestData>::recv(&mut rh).await;
+        let result = TypedAsyncRead::<TestData>::read(&mut rh).await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -79,7 +79,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = TypedAsyncRead::<TestData>::recv(&mut rh).await;
+        let result = TypedAsyncRead::<TestData>::read(&mut rh).await;
         assert!(result.is_err(), "Unexpectedly succeeded");
     }
 
@@ -101,7 +101,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = TypedAsyncRead::<TestData>::recv(&mut rh)
+        let received_data = TypedAsyncRead::<TestData>::read(&mut rh)
             .await
             .unwrap()
             .unwrap();

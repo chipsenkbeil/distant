@@ -503,7 +503,7 @@ mod tests {
         FramedTransport<InmemoryTransport, PlainCodec>,
         DistantSession,
     ) {
-        let (t1, t2) = FramedTransport::make_pair();
+        let (t1, t2) = FramedTransport::make_test_pair();
         (t1, Client::initialize(t2).unwrap())
     }
 

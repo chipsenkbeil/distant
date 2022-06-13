@@ -75,7 +75,7 @@ where
     C: Codec + Send,
     D: Serialize + Send + 'static,
 {
-    async fn send(&mut self, data: D) -> io::Result<()> {
+    async fn write(&mut self, data: D) -> io::Result<()> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
         let data = utils::serialize_to_vec(&data)?;
@@ -92,7 +92,7 @@ where
     C: Codec + Send,
     D: DeserializeOwned,
 {
-    async fn recv(&mut self) -> io::Result<Option<D>> {
+    async fn read(&mut self) -> io::Result<Option<D>> {
         // Use underlying codec to receive data (may decrypt, validate, etc.)
         if let Some(data) = self.0.next().await {
             let data = data?;
@@ -134,7 +134,7 @@ mod tests {
         frame.extend(len.iter().copied());
         frame.extend(bytes);
 
-        transport.send(data).await.unwrap();
+        transport.write(data).await.unwrap();
 
         let outgoing = rx.recv().await.unwrap();
         assert_eq!(outgoing, frame);
@@ -145,7 +145,7 @@ mod tests {
         let (_, _, stream) = InmemoryTransport::make(1);
         let mut transport = FramedTransport::new(stream, PlainCodec::new());
 
-        let result = TypedAsyncRead::<TestData>::recv(&mut transport).await;
+        let result = TypedAsyncRead::<TestData>::read(&mut transport).await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -168,7 +168,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = TypedAsyncRead::<TestData>::recv(&mut transport).await;
+        let result = TypedAsyncRead::<TestData>::read(&mut transport).await;
         assert!(result.is_err(), "Unexpectedly succeeded")
     }
 
@@ -189,7 +189,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = TypedAsyncRead::<TestData>::recv(&mut transport)
+        let received_data = TypedAsyncRead::<TestData>::read(&mut transport)
             .await
             .unwrap()
             .unwrap();

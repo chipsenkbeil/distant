@@ -308,11 +308,11 @@ mod tests {
         let _server = DistantServer::initialize(stream, Default::default());
 
         // Send over a "connection"
-        let (mut t1, t2) = FramedTransport::make_pair();
+        let (mut t1, t2) = FramedTransport::make_test_pair();
         tx.send(t2).await.unwrap();
 
         // Send a request
-        t1.send(Request::new(
+        t1.write(Request::new(
             "test-tenant",
             vec![DistantRequestData::SystemInfo {}],
         ))
