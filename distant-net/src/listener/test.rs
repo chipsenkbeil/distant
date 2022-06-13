@@ -1,4 +1,4 @@
-use crate::{Listener, Transport};
+use crate::{Listener, RawTransport};
 use async_trait::async_trait;
 use derive_more::From;
 use std::io;
@@ -9,14 +9,14 @@ use tokio::sync::mpsc;
 #[derive(From)]
 pub struct TestListener<T>
 where
-    T: Transport + Send + Sync + 'static,
+    T: RawTransport + Send + Sync + 'static,
 {
     inner: mpsc::Receiver<T>,
 }
 
 impl<T> TestListener<T>
 where
-    T: Transport + Send + Sync + 'static,
+    T: RawTransport + Send + Sync + 'static,
 {
     pub fn channel(buffer: usize) -> (mpsc::Sender<T>, Self) {
         let (tx, rx) = mpsc::channel(buffer);
@@ -27,7 +27,7 @@ where
 #[async_trait]
 impl<T> Listener for TestListener<T>
 where
-    T: Transport + Send + Sync + 'static,
+    T: RawTransport + Send + Sync + 'static,
 {
     type Output = T;
 

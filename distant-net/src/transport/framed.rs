@@ -1,12 +1,9 @@
-use crate::{Codec, Transport};
+use crate::{Codec, IntoSplit, RawTransport, TypedAsyncRead, TypedAsyncWrite};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
 use tokio_util::codec::{Framed, FramedRead, FramedWrite};
-
-mod inmemory;
-pub use inmemory::*;
 
 #[cfg(test)]
 mod test;
@@ -25,30 +22,34 @@ mod utils;
 /// Represents a transport of data across the network using frames in order to support
 /// typed messages instead of arbitrary bytes being sent across the wire.
 ///
-/// Note that this type does **not** implement [`Transport`] and instead acts as a wrapper
+/// Note that this type does **not** implement [`RawTransport`] and instead acts as a wrapper
 /// around a transport to provide a higher-level interface
 #[derive(Debug)]
 pub struct FramedTransport<T, C>(Framed<T, C>)
 where
-    T: Transport,
+    T: RawTransport,
     C: Codec;
 
 impl<T, C> FramedTransport<T, C>
 where
-    T: Transport,
+    T: RawTransport,
     C: Codec,
 {
     /// Creates a new instance of the transport, wrapping the stream in a `Framed<T, XChaCha20Poly1305Codec>`
     pub fn new(transport: T, codec: C) -> Self {
         Self(Framed::new(transport, codec))
     }
+}
 
-    pub fn into_split(
-        self,
-    ) -> (
-        FramedTransportReadHalf<T::ReadHalf, C>,
-        FramedTransportWriteHalf<T::WriteHalf, C>,
-    ) {
+impl<T, C> IntoSplit for FramedTransport<T, C>
+where
+    T: RawTransport,
+    C: Codec,
+{
+    type Left = FramedTransportReadHalf<T::ReadHalf, C>;
+    type Right = FramedTransportWriteHalf<T::WriteHalf, C>;
+
+    fn into_split(self) -> (Self::Left, Self::Right) {
         let parts = self.0.into_parts();
         let (read_half, write_half) = parts.io.into_split();
 
@@ -68,12 +69,13 @@ where
 }
 
 #[async_trait]
-impl<T, C> FramedTransportWrite for FramedTransport<T, C>
+impl<T, C, D> TypedAsyncWrite<D> for FramedTransport<T, C>
 where
-    T: Transport + Send,
+    T: RawTransport + Send,
     C: Codec + Send,
+    D: Serialize + Send + 'static,
 {
-    async fn send<D: Serialize + Send>(&mut self, data: D) -> io::Result<()> {
+    async fn send(&mut self, data: D) -> io::Result<()> {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
         let data = utils::serialize_to_vec(&data)?;
@@ -84,12 +86,13 @@ where
 }
 
 #[async_trait]
-impl<T, C> FramedTransportRead for FramedTransport<T, C>
+impl<T, C, D> TypedAsyncRead<D> for FramedTransport<T, C>
 where
-    T: Transport + Send,
+    T: RawTransport + Send,
     C: Codec + Send,
+    D: DeserializeOwned,
 {
-    async fn recv<D: DeserializeOwned>(&mut self) -> io::Result<Option<D>> {
+    async fn recv(&mut self) -> io::Result<Option<D>> {
         // Use underlying codec to receive data (may decrypt, validate, etc.)
         if let Some(data) = self.0.next().await {
             let data = data?;
@@ -142,7 +145,7 @@ mod tests {
         let (_, _, stream) = InmemoryTransport::make(1);
         let mut transport = FramedTransport::new(stream, PlainCodec::new());
 
-        let result = transport.recv::<TestData>().await;
+        let result = TypedAsyncRead::<TestData>::recv(&mut transport).await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -165,7 +168,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = transport.recv::<TestData>().await;
+        let result = TypedAsyncRead::<TestData>::recv(&mut transport).await;
         assert!(result.is_err(), "Unexpectedly succeeded")
     }
 
@@ -186,7 +189,10 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = transport.recv::<TestData>().await.unwrap().unwrap();
+        let received_data = TypedAsyncRead::<TestData>::recv(&mut transport)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(received_data, data);
     }
 }

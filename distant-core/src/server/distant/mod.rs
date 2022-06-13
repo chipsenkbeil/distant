@@ -7,12 +7,11 @@ use state::State;
 
 use crate::{
     constants::MAX_MSG_CAPACITY,
-    data::{Request, Response},
     server::utils::{ConnTracker, ShutdownTask},
 };
 use distant_net::{
-    Codec, FramedTransport, FramedTransportReceiver, FramedTransportSender, Listener,
-    MappedListener, PortRange, TcpListener, Transport,
+    Codec, FramedTransport, Listener, MappedListener, PortRange, RawTransport, Request, Response,
+    TcpListener, TypedAsyncRead, TypedAsyncWrite,
 };
 use log::*;
 use std::{net::IpAddr, sync::Arc};
@@ -71,7 +70,7 @@ impl DistantServer {
     /// Initialize a distant server using the provided listener
     pub fn initialize<T, U, L>(listener: L, opts: DistantServerOptions) -> Self
     where
-        T: Transport + Send + 'static,
+        T: WireTransport + Send + 'static,
         U: Codec + Send + Sync + 'static,
         L: Listener<Output = FramedTransport<T, U>> + Unpin + 'static,
     {
@@ -105,7 +104,7 @@ async fn connection_loop<T, U, L>(
     shutdown: Option<ShutdownTask>,
     max_msg_capacity: usize,
 ) where
-    T: Transport + Send + 'static,
+    T: WireTransport + Send + 'static,
     U: Codec + Send + 'static,
     L: Listener<Output = FramedTransport<T, U>> + Unpin + 'static,
 {
@@ -156,7 +155,7 @@ async fn on_new_conn<T, U>(
     max_msg_capacity: usize,
 ) -> io::Result<JoinHandle<()>>
 where
-    T: Transport,
+    T: WireTransport,
     U: Codec + Send + 'static,
 {
     // Update our tracker to reflect the new connection

@@ -1,4 +1,4 @@
-use crate::Transport;
+use crate::{IntoSplit, RawTransport, RawTransportRead, RawTransportWrite};
 use std::{
     fmt, io,
     path::{Path, PathBuf},
@@ -43,11 +43,21 @@ impl fmt::Debug for UnixSocketTransport {
     }
 }
 
-impl Transport for UnixSocketTransport {
+impl RawTransport for UnixSocketTransport {
     type ReadHalf = OwnedReadHalf;
     type WriteHalf = OwnedWriteHalf;
+}
+impl RawTransportRead for UnixSocketTransport {}
+impl RawTransportWrite for UnixSocketTransport {}
 
-    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
+impl RawTransportRead for OwnedReadHalf {}
+impl RawTransportWrite for OwnedWriteHalf {}
+
+impl IntoSplit for UnixSocketTransport {
+    type Left = OwnedReadHalf;
+    type Right = OwnedWriteHalf;
+
+    fn into_split(self) -> (Self::Left, Self::Right) {
         UnixStream::into_split(self.inner)
     }
 }
@@ -80,5 +90,100 @@ impl AsyncWrite for UnixSocketTransport {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::UnixListener,
+        sync::oneshot,
+        task::JoinHandle,
+    };
+
+    #[tokio::test]
+    async fn should_fail_to_connect_if_socket_does_not_exist() {
+        // Generate a socket path and delete the file after so there is nothing there
+        let path = NamedTempFile::new()
+            .expect("Failed to create socket file")
+            .path()
+            .to_path_buf();
+
+        // Now this should fail as we're already bound to the name
+        UnixSocketTransport::connect(&path)
+            .await
+            .expect_err("Unexpectedly succeeded in connecting to missing socket");
+    }
+
+    #[tokio::test]
+    async fn should_fail_to_connect_if_path_is_not_a_socket() {
+        // Generate a regular file
+        let path = NamedTempFile::new()
+            .expect("Failed to create socket file")
+            .into_temp_path();
+
+        // Now this should fail as this file is not a socket
+        UnixSocketTransport::connect(&path)
+            .await
+            .expect_err("Unexpectedly succeeded in connecting to regular file");
+    }
+
+    #[tokio::test]
+    async fn should_be_able_to_send_and_receive_data() {
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
+            // Generate a socket path and delete the file after so there is nothing there
+            let path = NamedTempFile::new()
+                .expect("Failed to create socket file")
+                .path()
+                .to_path_buf();
+
+            // Start listening at the socket path
+            let socket = UnixListener::bind(&path)?;
+
+            // Send the path back to our main test thread
+            tx.send(path)
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x.display().to_string()))?;
+
+            // Get the connection
+            let (mut conn, _) = socket.accept().await?;
+
+            // Send some data to the connection (10 bytes)
+            conn.write_all(b"hello conn").await?;
+
+            // Receive some data from the connection (12 bytes)
+            let mut buf: [u8; 12] = [0; 12];
+            let _ = conn.read_exact(&mut buf).await?;
+            assert_eq!(&buf, b"hello server");
+
+            Ok(())
+        });
+
+        // Wait for the server to be ready
+        let path = rx.await.expect("Failed to get server socket path");
+
+        // Connect to the socket, send some bytes, and get some bytes
+        let mut buf: [u8; 10] = [0; 10];
+
+        let mut conn = UnixSocketTransport::connect(&path)
+            .await
+            .expect("Conn failed to connect");
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
     }
 }

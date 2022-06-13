@@ -1,6 +1,6 @@
 use crate::{
-    Codec, FramedTransport, FramedTransportRead, FramedTransportWrite, Request, Response,
-    TcpTransport, Transport,
+    Codec, FramedTransport, IntoSplit, RawTransport, Request, Response, TcpTransport,
+    TypedAsyncRead, TypedAsyncWrite,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -106,14 +106,14 @@ where
 
 impl<T, U> Client<T, U>
 where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
+    T: Send + Sync + Serialize,
+    U: Send + Sync + DeserializeOwned,
 {
     /// Initializes a client using the provided reader and writer
     pub fn new<R, W>(mut reader: R, mut writer: W) -> io::Result<Self>
     where
-        R: FramedTransportRead + Send + 'static,
-        W: FramedTransportWrite + Send + 'static,
+        R: TypedAsyncRead<Response<U>> + Send + 'static,
+        W: TypedAsyncWrite<Request<T>> + Send + 'static,
     {
         let post_office = Arc::new(PostOffice::default());
         let weak_post_office = Arc::downgrade(&post_office);
@@ -122,7 +122,7 @@ where
         // post office
         let response_task = tokio::spawn(async move {
             loop {
-                match reader.recv::<Response<U>>().await {
+                match reader.recv().await {
                     Ok(Some(res)) => {
                         // Try to send response to appropriate mailbox
                         // TODO: How should we handle false response? Did logging in past
@@ -162,7 +162,7 @@ where
     /// Initializes a client using the provided framed transport
     pub fn from_framed_transport<TR, C>(transport: FramedTransport<TR, C>) -> io::Result<Self>
     where
-        TR: Transport,
+        TR: RawTransport + 'static,
         C: Codec + Send + 'static,
     {
         let (reader, writer) = transport.into_split();

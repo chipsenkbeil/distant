@@ -115,15 +115,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, FramedTransport, FramedTransportRead, FramedTransportWrite};
+    use crate::{Client, FramedTransport, TypedAsyncRead, TypedAsyncWrite};
     use std::time::Duration;
 
-    type TestSession = Client<u8, u8>;
+    type TestClient = Client<u8, u8>;
 
     #[tokio::test]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
         let (t1, mut t2) = FramedTransport::make_pair();
-        let session: TestSession = Client::from_framed_transport(t1).unwrap();
+        let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
         let (t1, mut t2) = FramedTransport::make_pair();
-        let session: TestSession = Client::from_framed_transport(t1).unwrap();
+        let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
@@ -174,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
         let (t1, mut t2) = FramedTransport::make_pair();
-        let session: TestSession = Client::from_framed_transport(t1).unwrap();
+        let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
@@ -183,13 +183,16 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let _req = t2.recv::<Request<u8>>().await.unwrap().unwrap();
+        let _req = TypedAsyncRead::<Request<u8>>::recv(&mut t2)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
     async fn fire_should_send_request_and_not_wait_for_response() {
         let (t1, mut t2) = FramedTransport::make_pair();
-        let session: TestSession = Client::from_framed_transport(t1).unwrap();
+        let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
@@ -198,6 +201,9 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let _req = t2.recv::<Request<u8>>().await.unwrap().unwrap();
+        let _req = TypedAsyncRead::<Request<u8>>::recv(&mut t2)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

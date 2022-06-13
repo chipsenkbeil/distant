@@ -1,4 +1,4 @@
-use crate::{transport::framed::utils, Codec};
+use crate::{transport::framed::utils, Codec, TypedAsyncRead};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
@@ -6,31 +6,24 @@ use std::io;
 use tokio::io::AsyncRead;
 use tokio_util::codec::FramedRead;
 
-/// Interface to read framed data in the form of some deserializable type
-#[async_trait]
-pub trait FramedTransportRead {
-    /// Receives some data from out on the wire, waiting until it's available,
-    /// returning none if the transport is now closed
-    async fn recv<R: DeserializeOwned>(&mut self) -> io::Result<Option<R>>;
-}
-
 /// Represents a transport of inbound data from the network using frames in order to support
 /// typed messages instead of arbitrary bytes being sent across the wire.
 ///
 /// Note that this type does **not** implement [`AsyncRead`] and instead acts as a
 /// wrapper to provide a higher-level interface
-pub struct FramedTransportReadHalf<T, C>(pub(super) FramedRead<T, C>)
+pub struct FramedTransportReadHalf<R, C>(pub(super) FramedRead<R, C>)
 where
-    T: AsyncRead,
+    R: AsyncRead,
     C: Codec;
 
 #[async_trait]
-impl<T, C> FramedTransportRead for FramedTransportReadHalf<T, C>
+impl<T, R, C> TypedAsyncRead<T> for FramedTransportReadHalf<R, C>
 where
-    T: AsyncRead + Send + Unpin,
+    T: DeserializeOwned,
+    R: AsyncRead + Send + Unpin,
     C: Codec + Send,
 {
-    async fn recv<R: DeserializeOwned>(&mut self) -> io::Result<Option<R>> {
+    async fn recv(&mut self) -> io::Result<Option<T>> {
         // Use underlying codec to receive data (may decrypt, validate, etc.)
         if let Some(data) = self.0.next().await {
             let data = data?;
@@ -47,7 +40,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FramedTransport, InmemoryTransport, PlainCodec};
+    use crate::{FramedTransport, InmemoryTransport, IntoSplit, PlainCodec};
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,7 +55,7 @@ mod tests {
         let transport = FramedTransport::new(stream, PlainCodec::new());
         let (mut rh, _) = transport.into_split();
 
-        let result = rh.recv::<TestData>().await;
+        let result = TypedAsyncRead::<TestData>::recv(&mut rh).await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -86,7 +79,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = rh.recv::<TestData>().await;
+        let result = TypedAsyncRead::<TestData>::recv(&mut rh).await;
         assert!(result.is_err(), "Unexpectedly succeeded");
     }
 
@@ -108,7 +101,10 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = rh.recv::<TestData>().await.unwrap().unwrap();
+        let received_data = TypedAsyncRead::<TestData>::recv(&mut rh)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(received_data, data);
     }
 }

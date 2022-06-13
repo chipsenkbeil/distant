@@ -1,4 +1,4 @@
-use crate::Transport;
+use crate::{IntoSplit, RawTransport, RawTransportRead, RawTransportWrite};
 use std::{
     ffi::{OsStr, OsString},
     fmt, io,
@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf},
-    net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer},
+    net::windows::named_pipe::ClientOptions,
 };
 
 // Equivalent to winapi::shared::winerror::ERROR_PIPE_BUSY
@@ -53,7 +53,10 @@ impl WindowsPipeTransport {
             tokio::time::sleep(Duration::from_millis(BUSY_PIPE_SLEEP_MILLIS)).await;
         };
 
-        Ok(Self { addr, inner: pipe })
+        Ok(Self {
+            addr,
+            inner: NamedPipe::from(pipe),
+        })
     }
 
     /// Returns the addr that the listener is bound to
@@ -70,11 +73,21 @@ impl fmt::Debug for WindowsPipeTransport {
     }
 }
 
-impl Transport for WindowsPipeTransport {
+impl RawTransport for WindowsPipeTransport {
     type ReadHalf = ReadHalf<WindowsPipeTransport>;
     type WriteHalf = WriteHalf<WindowsPipeTransport>;
+}
+impl RawTransportRead for WindowsPipeTransport {}
+impl RawTransportWrite for WindowsPipeTransport {}
 
-    fn into_split(self) -> (Self::ReadHalf, Self::WriteHalf) {
+impl RawTransportRead for ReadHalf<WindowsPipeTransport> {}
+impl RawTransportWrite for WriteHalf<WindowsPipeTransport> {}
+
+impl IntoSplit for WindowsPipeTransport {
+    type Left = ReadHalf<WindowsPipeTransport>;
+    type Right = WriteHalf<WindowsPipeTransport>;
+
+    fn into_split(self) -> (Self::Left, Self::Right) {
         tokio::io::split(self)
     }
 }
@@ -107,5 +120,85 @@ impl AsyncWrite for WindowsPipeTransport {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::windows::named_pipe::ServerOptions,
+        sync::oneshot,
+        task::JoinHandle,
+    };
+
+    #[tokio::test]
+    async fn should_fail_to_connect_if_pipe_does_not_exist() {
+        // Generate a pipe name
+        let name = format!("test_pipe_{}", rand::random::<usize>());
+
+        // Now this should fail as we're already bound to the name
+        WindowsPipeTransport::connect_local(&name)
+            .await
+            .expect_err("Unexpectedly succeeded in connecting to missing pipe");
+    }
+
+    #[tokio::test]
+    async fn should_be_able_to_send_and_receive_data() {
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
+            // Generate a pipe address (not just a name)
+            let addr = format!(r"\\.\pipe\test_pipe_{}", rand::random::<usize>());
+
+            // Listen at the pipe
+            let pipe = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&addr)?;
+
+            // Send the address back to our main test thread
+            tx.send(addr)
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+            // Get the connection
+            let mut conn = {
+                pipe.connect().await?;
+                pipe
+            };
+
+            // Send some data to the connection (10 bytes)
+            conn.write_all(b"hello conn").await?;
+
+            // Receive some data from the connection (12 bytes)
+            let mut buf: [u8; 12] = [0; 12];
+            let _ = conn.read_exact(&mut buf).await?;
+            assert_eq!(&buf, b"hello server");
+
+            Ok(())
+        });
+
+        // Wait for the server to be ready
+        let address = rx.await.expect("Failed to get server address");
+
+        // Connect to the pipe, send some bytes, and get some bytes
+        let mut buf: [u8; 10] = [0; 10];
+
+        let mut conn = WindowsPipeTransport::connect(&address)
+            .await
+            .expect("Conn failed to connect");
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
     }
 }
