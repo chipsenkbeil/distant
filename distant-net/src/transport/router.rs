@@ -1,11 +1,34 @@
-/// Creates a new struct around a [`FramedTransport`] that routes incoming and outgoing messages
+/// Creates a new struct around a [`FramedTransport`](crate::FramedTransport) that routes incoming
+/// and outgoing messages to different transports, enabling the ability to transform a singular,
+/// framed transport into multiple typed transports that can be combined with
+/// [`Client`](crate::Client) and [`Server`](crate::Server) to mix having a variety of clients and
+/// servers available on the same underlying [`FramedTransport`](crate::FramedTransport).
 ///
-/// ```
+/// ```no_run
+/// use distant_net::router;
 ///
+/// # // To send, the data needs to be serializable
+/// # // To receive, the data needs to be deserializable
+/// # #[derive(serde::Serialize, serde::Deserialize)]
+/// # struct CustomData(u8, u8);
+///
+/// router! {
+///     TestRouter:
+///         u8 -> String,
+///         bool -> CustomData,
+/// }
+///
+/// # let (transport, _) = distant_net::FramedTransport::pair(1);
+///
+/// let router = TestRouter::new(
+///     /* FramedTransport */ transport,
+///     /* inbound_buffer  */ 100,
+///     /* outbound_buffer */ 100,
+/// );
 /// ```
 #[macro_export]
 macro_rules! router {
-    ($vis:vis $name:ident: $($req:ident -> $res:ident),+) => {
+    ($vis:vis $name:ident: $($req:ident -> $res:ident),+ $(,)?) => {
         $crate::paste::paste! {
             #[allow(dead_code)]
             $vis struct $name {
@@ -126,7 +149,7 @@ mod tests {
         TestRouter:
             String -> CustomData,
             u8 -> String,
-            bool -> bool
+            bool -> bool,
     }
 
     #[tokio::test]
