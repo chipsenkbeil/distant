@@ -19,6 +19,7 @@ ciborium = "0.2.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
 futures = "0.3.21"
 hex = "0.4.3"
+log = "0.4.17"
 paste = "1.0.7"
 rand = { version = "0.8.4", features = ["getrandom"] }
 serde = { version = "1.0.126", features = ["derive"] }

@@ -675,6 +675,7 @@ dependencies = [
  "derive_more",
  "futures",
  "hex",
+ "log",
  "paste",
  "rand 0.8.5",
  "serde",

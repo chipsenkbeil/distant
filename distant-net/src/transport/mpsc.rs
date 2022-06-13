@@ -24,6 +24,17 @@ impl<T, U> MpscTransport<T, U> {
             inbound: MpscTransportReadHalf::new(inbound),
         }
     }
+
+    /// Creates a pair of connected transports using `buffer` as maximum
+    /// channel capacity for each
+    pub fn pair(buffer: usize) -> (MpscTransport<T, U>, MpscTransport<U, T>) {
+        let (t_tx, t_rx) = mpsc::channel(buffer);
+        let (u_tx, u_rx) = mpsc::channel(buffer);
+        (
+            MpscTransport::new(t_tx, u_rx),
+            MpscTransport::new(u_tx, t_rx),
+        )
+    }
 }
 
 #[async_trait]
