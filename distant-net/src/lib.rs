@@ -1,3 +1,4 @@
+mod auth;
 mod client;
 mod codec;
 mod key;
@@ -7,6 +8,7 @@ mod port;
 mod server;
 mod transport;
 
+pub use auth::*;
 pub use client::*;
 pub use codec::*;
 pub use key::*;
