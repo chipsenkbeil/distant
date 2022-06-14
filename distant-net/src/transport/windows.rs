@@ -88,7 +88,8 @@ impl IntoSplit for WindowsPipeTransport {
     type Write = WriteHalf<WindowsPipeTransport>;
 
     fn into_split(self) -> (Self::Write, Self::Read) {
-        tokio::io::split(self)
+        let (reader, writer) = tokio::io::split(self);
+        (writer, reader)
     }
 }
 

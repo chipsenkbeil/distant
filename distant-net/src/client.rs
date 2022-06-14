@@ -1,11 +1,9 @@
 use crate::{
-    Codec, FramedTransport, IntoSplit, RawTransport, Request, Response, TcpTransport,
-    TypedAsyncRead, TypedAsyncWrite,
+    Codec, FramedTransport, IntoSplit, RawTransport, Request, Response, TypedAsyncRead,
+    TypedAsyncWrite,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    convert,
-    net::SocketAddr,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -13,11 +11,13 @@ use tokio::{
     io,
     sync::mpsc,
     task::{JoinError, JoinHandle},
-    time::Duration,
 };
 
 mod channel;
 pub use channel::*;
+
+mod ext;
+pub use ext::*;
 
 /// Represents a client that can be used to send requests & receive responses from a server
 pub struct Client<T, U>
@@ -33,75 +33,6 @@ where
 
     /// Contains the task that is running to receive responses from a server
     response_task: JoinHandle<()>,
-}
-
-impl<T, U> Client<T, U>
-where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
-{
-    /// Connect to a remote TCP server using the provided information
-    pub async fn tcp_connect<C>(addr: SocketAddr, codec: C) -> io::Result<Self>
-    where
-        C: Codec + Send + 'static,
-    {
-        let stream = TcpTransport::connect(addr).await?;
-        let transport = FramedTransport::new(stream, codec);
-        Self::from_framed_transport(transport)
-    }
-
-    /// Connect to a remote TCP server, timing out after duration has passed
-    pub async fn tcp_connect_timeout<C>(
-        addr: SocketAddr,
-        codec: C,
-        duration: Duration,
-    ) -> io::Result<Self>
-    where
-        C: Codec + Send + 'static,
-    {
-        tokio::time::timeout(duration, Self::tcp_connect(addr, codec))
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-            .and_then(convert::identity)
-    }
-
-    /// Convert into underlying channel
-    pub fn into_channel(self) -> Channel<T, U> {
-        self.channel
-    }
-}
-
-#[cfg(unix)]
-impl<T, U> Client<T, U>
-where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
-{
-    /// Connect to a proxy unix socket
-    pub async fn unix_connect<C>(path: impl AsRef<std::path::Path>, codec: C) -> io::Result<Self>
-    where
-        C: Codec + Send + 'static,
-    {
-        let p = path.as_ref();
-        let stream = crate::UnixSocketTransport::connect(p).await?;
-        let transport = FramedTransport::new(stream, codec);
-        Self::from_framed_transport(transport)
-    }
-
-    /// Connect to a proxy unix socket, timing out after duration has passed
-    pub async fn unix_connect_timeout<C>(
-        path: impl AsRef<std::path::Path>,
-        codec: C,
-        duration: Duration,
-    ) -> io::Result<Self>
-    where
-        C: Codec + Send + 'static,
-    {
-        tokio::time::timeout(duration, Self::unix_connect(path, codec))
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-            .and_then(convert::identity)
-    }
 }
 
 impl<T, U> Client<T, U>
@@ -167,6 +98,11 @@ where
     {
         let (writer, reader) = transport.into_split();
         Self::new(writer, reader)
+    }
+
+    /// Convert into underlying channel
+    pub fn into_channel(self) -> Channel<T, U> {
+        self.channel
     }
 
     /// Clones the underlying channel for requests and returns the cloned instance

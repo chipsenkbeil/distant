@@ -11,6 +11,12 @@ pub use context::*;
 mod ext;
 pub use ext::*;
 
+mod r#ref;
+pub use r#ref::*;
+
+mod reply;
+pub use reply::*;
+
 mod state;
 pub use state::*;
 
@@ -31,7 +37,7 @@ pub trait Server: Send {
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.
     async fn on_request(
-        ctx: &ServerRequestCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
+        ctx: &ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
     ) -> io::Result<()>;
 
     /// When an error occurs within the server while it is handling a request, this function will
@@ -43,7 +49,7 @@ pub trait Server: Send {
     /// to either be swallowed or at best reported within the server in some other way.
     #[allow(unused_variables)]
     async fn on_error_with_request(
-        ctx: &ServerRequestCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
+        ctx: &ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
         err: io::Error,
     ) {
         // Do nothing!

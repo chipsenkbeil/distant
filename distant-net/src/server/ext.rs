@@ -1,11 +1,26 @@
 use crate::{
-    Listener, Request, Response, Server, ServerConnection, ServerCtxReply, ServerRequestCtx,
+    Listener, Request, Response, Server, ServerConnection, ServerCtx, ServerRef, ServerReply,
     ServerState, TypedAsyncRead, TypedAsyncWrite,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, sync::Arc};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
+
+mod tcp;
+pub use tcp::*;
+
+#[cfg(unix)]
+mod unix;
+
+#[cfg(unix)]
+pub use unix::*;
+
+#[cfg(windows)]
+mod windows;
+
+#[cfg(windows)]
+pub use windows::*;
 
 /// Extension trait to provide a reference implementation of starting a server
 /// that will listen for new connections (exposed as [`TypedAsyncWrite`] and [`TypedAsyncRead`])
@@ -15,28 +30,11 @@ pub trait ServerExt {
     type Response;
 
     /// Start a new server using the provided listener
-    fn start<L, R, W>(listener: L) -> io::Result<ServerRef>
+    fn start<L, R, W>(listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener<Output = (W, R)> + 'static,
         R: TypedAsyncRead<Request<Self::Request>> + Send + 'static,
         W: TypedAsyncWrite<Response<Self::Response>> + Send + 'static;
-}
-
-/// Reference to an actively-running server
-pub struct ServerRef {
-    task: JoinHandle<()>,
-}
-
-impl ServerRef {
-    /// Returns true if the server is no longer running
-    pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
-    }
-
-    /// Kills the internal task processing new inbound requests
-    pub fn abort(&self) {
-        self.task.abort();
-    }
 }
 
 impl<S, Req, Res, Gdata, Ldata> ServerExt for S
@@ -50,7 +48,7 @@ where
     type Request = Req;
     type Response = Res;
 
-    fn start<L, R, W>(mut listener: L) -> io::Result<ServerRef>
+    fn start<L, R, W>(mut listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener<Output = (W, R)> + 'static,
         R: TypedAsyncRead<Request<Self::Request>> + Send + 'static,
@@ -88,12 +86,12 @@ where
                             loop {
                                 match reader.read().await {
                                     Ok(Some(request)) => {
-                                        let reply = ServerCtxReply {
+                                        let reply = ServerReply {
                                             origin_id: request.id,
                                             tx: tx.clone(),
                                         };
 
-                                        let ctx = ServerRequestCtx {
+                                        let ctx = ServerCtx {
                                             connection_id,
                                             request,
                                             reply: reply.clone(),
@@ -140,7 +138,7 @@ where
             }
         });
 
-        Ok(ServerRef { task })
+        Ok(Box::new(task))
     }
 }
 
@@ -156,16 +154,11 @@ mod tests {
     impl Server for TestServer {
         type Request = u16;
         type Response = String;
-        type GlobalData = String;
+        type GlobalData = ();
         type LocalData = ();
 
         async fn on_request(
-            ctx: &ServerRequestCtx<
-                Self::Request,
-                Self::Response,
-                Self::GlobalData,
-                Self::LocalData,
-            >,
+            ctx: &ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
         ) -> io::Result<()> {
             // Always send back "hello"
             ctx.reply.send("hello".to_string()).await.unwrap();
@@ -186,7 +179,7 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let _server = TestServer::start(listener).expect("Failed to start server");
+        let _server = <TestServer as ServerExt>::start(listener).expect("Failed to start server");
 
         transport
             .write(Request::new(123))
