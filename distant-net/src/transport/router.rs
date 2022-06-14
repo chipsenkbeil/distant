@@ -74,7 +74,7 @@ macro_rules! router {
                     }
 
                     use $crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite};
-                    let (mut reader, mut writer) = transport.into_split();
+                    let (mut writer, mut reader) = transport.into_split();
                     let reader_task = tokio::spawn(async move {
                         loop {
                             match reader.read().await {$(

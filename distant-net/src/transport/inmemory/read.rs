@@ -79,7 +79,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_fail_if_buf_has_no_space_remaining() {
         let (_tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         let mut buf = [0u8; 0];
         match t_read.read(&mut buf).await {
@@ -91,7 +91,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_update_buf_with_all_overflow_from_last_read_if_it_all_fits() {
         let (tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         tx.send(vec![1, 2, 3]).await.expect("Failed to send");
 
@@ -128,7 +128,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_update_buf_with_some_of_overflow_that_can_fit() {
         let (tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         tx.send(vec![1, 2, 3, 4, 5]).await.expect("Failed to send");
 
@@ -159,7 +159,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_update_buf_with_all_of_inner_channel_when_it_fits() {
         let (tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         let mut buf = [0u8; 5];
 
@@ -184,7 +184,7 @@ mod tests {
     async fn read_half_should_update_buf_with_some_of_inner_channel_that_can_fit_and_add_rest_to_overflow(
     ) {
         let (tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         let mut buf = [0u8; 1];
 
@@ -215,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_yield_pending_if_no_data_available_on_inner_channel() {
         let (_tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         let mut buf = [0u8; 1];
 
@@ -232,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn read_half_should_not_update_buf_if_inner_channel_closed() {
         let (tx, _rx, transport) = InmemoryTransport::make(1);
-        let (mut t_read, _t_write) = transport.into_split();
+        let (_t_write, mut t_read) = transport.into_split();
 
         let mut buf = [0u8; 1];
 

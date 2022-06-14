@@ -84,10 +84,10 @@ impl RawTransportRead for ReadHalf<WindowsPipeTransport> {}
 impl RawTransportWrite for WriteHalf<WindowsPipeTransport> {}
 
 impl IntoSplit for WindowsPipeTransport {
-    type Left = ReadHalf<WindowsPipeTransport>;
-    type Right = WriteHalf<WindowsPipeTransport>;
+    type Read = ReadHalf<WindowsPipeTransport>;
+    type Write = WriteHalf<WindowsPipeTransport>;
 
-    fn into_split(self) -> (Self::Left, Self::Right) {
+    fn into_split(self) -> (Self::Write, Self::Read) {
         tokio::io::split(self)
     }
 }

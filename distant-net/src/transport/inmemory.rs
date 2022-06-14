@@ -59,11 +59,11 @@ impl RawTransport for InmemoryTransport {
 impl RawTransportRead for InmemoryTransport {}
 impl RawTransportWrite for InmemoryTransport {}
 impl IntoSplit for InmemoryTransport {
-    type Left = InmemoryTransportReadHalf;
-    type Right = InmemoryTransportWriteHalf;
+    type Read = InmemoryTransportReadHalf;
+    type Write = InmemoryTransportWriteHalf;
 
-    fn into_split(self) -> (Self::Left, Self::Right) {
-        (self.incoming, self.outgoing)
+    fn into_split(self) -> (Self::Write, Self::Read) {
+        (self.outgoing, self.incoming)
     }
 }
 
@@ -174,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn into_split_should_provide_a_read_half_that_receives_from_sender() {
         let (tx, _, transport) = InmemoryTransport::make(3);
-        let (mut read_half, _) = transport.into_split();
+        let (_, mut read_half) = transport.into_split();
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
         tx.send(b"test msg 2".to_vec()).await.unwrap();
@@ -204,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn into_split_should_provide_a_write_half_that_sends_to_receiver() {
         let (_, mut rx, transport) = InmemoryTransport::make(3);
-        let (_, mut write_half) = transport.into_split();
+        let (mut write_half, _) = transport.into_split();
 
         write_half.write_all(b"test msg 1").await.unwrap();
         write_half.write_all(b"test msg 2").await.unwrap();

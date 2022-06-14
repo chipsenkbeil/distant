@@ -46,12 +46,12 @@ where
     T: RawTransport,
     C: Codec,
 {
-    type Left = FramedTransportReadHalf<T::ReadHalf, C>;
-    type Right = FramedTransportWriteHalf<T::WriteHalf, C>;
+    type Read = FramedTransportReadHalf<T::ReadHalf, C>;
+    type Write = FramedTransportWriteHalf<T::WriteHalf, C>;
 
-    fn into_split(self) -> (Self::Left, Self::Right) {
+    fn into_split(self) -> (Self::Write, Self::Read) {
         let parts = self.0.into_parts();
-        let (read_half, write_half) = parts.io.into_split();
+        let (write_half, read_half) = parts.io.into_split();
 
         // Create our split read half and populate its buffer with existing contents
         let mut f_read = FramedRead::new(read_half, parts.codec.clone());
@@ -64,7 +64,7 @@ where
         let read_half = FramedTransportReadHalf(f_read);
         let write_half = FramedTransportWriteHalf(f_write);
 
-        (read_half, write_half)
+        (write_half, read_half)
     }
 }
 

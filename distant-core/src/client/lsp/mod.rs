@@ -1,7 +1,5 @@
 use crate::{
-    client::{
-        DistantChannel, RemoteProcess, RemoteProcessError, RemoteStderr, RemoteStdin, RemoteStdout,
-    },
+    client::{DistantChannel, RemoteProcess, RemoteStderr, RemoteStdin, RemoteStdout},
     data::PtySize,
 };
 use futures::stream::{Stream, StreamExt};

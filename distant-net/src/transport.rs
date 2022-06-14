@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Interface representing a transport of raw bytes into and out of the system
 pub trait RawTransport:
-    RawTransportRead + RawTransportWrite + IntoSplit<Left = Self::ReadHalf, Right = Self::WriteHalf>
+    RawTransportRead + RawTransportWrite + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
 {
     type ReadHalf: RawTransportRead;
     type WriteHalf: RawTransportWrite;
@@ -16,12 +16,12 @@ pub trait RawTransportRead: AsyncRead + Send + Unpin {}
 /// Interface representing a transport of raw bytes out of the system
 pub trait RawTransportWrite: AsyncWrite + Send + Unpin {}
 
-/// Interface to split something into left and right sides
+/// Interface to split something into writing and reading halves
 pub trait IntoSplit {
-    type Left;
-    type Right;
+    type Write;
+    type Read;
 
-    fn into_split(self) -> (Self::Left, Self::Right);
+    fn into_split(self) -> (Self::Write, Self::Read);
 }
 
 /// Interface to read some structured data asynchronously

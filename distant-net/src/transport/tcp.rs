@@ -64,11 +64,12 @@ impl RawTransportRead for OwnedReadHalf {}
 impl RawTransportWrite for OwnedWriteHalf {}
 
 impl IntoSplit for TcpTransport {
-    type Left = OwnedReadHalf;
-    type Right = OwnedWriteHalf;
+    type Read = OwnedReadHalf;
+    type Write = OwnedWriteHalf;
 
-    fn into_split(self) -> (Self::Left, Self::Right) {
-        TcpStream::into_split(self.inner)
+    fn into_split(self) -> (Self::Write, Self::Read) {
+        let (r, w) = TcpStream::into_split(self.inner);
+        (w, r)
     }
 }
 

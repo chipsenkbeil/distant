@@ -90,7 +90,7 @@ mod tests {
     #[tokio::test]
     async fn write_half_should_return_buf_len_if_can_send_immediately() {
         let (_tx, mut rx, transport) = InmemoryTransport::make(1);
-        let (_t_read, mut t_write) = transport.into_split();
+        let (mut t_write, _t_read) = transport.into_split();
 
         // Write that is not waiting should always succeed with full contents
         let n = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
@@ -104,7 +104,7 @@ mod tests {
     #[tokio::test]
     async fn write_half_should_return_support_eventually_sending_by_retrying_when_not_ready() {
         let (_tx, mut rx, transport) = InmemoryTransport::make(1);
-        let (_t_read, mut t_write) = transport.into_split();
+        let (mut t_write, _t_read) = transport.into_split();
 
         // Queue a write already so that we block on the next one
         let _ = t_write.write(&[1, 2, 3]).await.expect("Failed to write");
@@ -135,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn write_half_should_zero_if_inner_channel_closed() {
         let (_tx, rx, transport) = InmemoryTransport::make(1);
-        let (_t_read, mut t_write) = transport.into_split();
+        let (mut t_write, _t_read) = transport.into_split();
 
         // Drop receiving end that transport would talk to
         drop(rx);

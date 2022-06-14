@@ -53,9 +53,9 @@ mod tests {
     async fn receive_should_return_none_if_stream_is_closed() {
         let (_, _, stream) = InmemoryTransport::make(1);
         let transport = FramedTransport::new(stream, PlainCodec::new());
-        let (mut rh, _) = transport.into_split();
+        let (_, mut reader) = transport.into_split();
 
-        let result = TypedAsyncRead::<TestData>::read(&mut rh).await;
+        let result = TypedAsyncRead::<TestData>::read(&mut reader).await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -66,7 +66,7 @@ mod tests {
     async fn receive_should_fail_if_unable_to_convert_to_type() {
         let (tx, _rx, stream) = InmemoryTransport::make(1);
         let transport = FramedTransport::new(stream, PlainCodec::new());
-        let (mut rh, _) = transport.into_split();
+        let (_, mut reader) = transport.into_split();
 
         #[derive(Serialize, Deserialize)]
         struct OtherTestData(usize);
@@ -79,7 +79,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = TypedAsyncRead::<TestData>::read(&mut rh).await;
+        let result = TypedAsyncRead::<TestData>::read(&mut reader).await;
         assert!(result.is_err(), "Unexpectedly succeeded");
     }
 
@@ -87,7 +87,7 @@ mod tests {
     async fn receive_should_return_some_instance_of_type_when_coming_into_stream() {
         let (tx, _rx, stream) = InmemoryTransport::make(1);
         let transport = FramedTransport::new(stream, PlainCodec::new());
-        let (mut rh, _) = transport.into_split();
+        let (_, mut reader) = transport.into_split();
 
         let data = TestData {
             name: String::from("test"),
@@ -101,7 +101,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = TypedAsyncRead::<TestData>::read(&mut rh)
+        let received_data = TypedAsyncRead::<TestData>::read(&mut reader)
             .await
             .unwrap()
             .unwrap();

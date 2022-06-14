@@ -55,10 +55,10 @@ impl<T: Send, U: Send> TypedAsyncRead<U> for MpscTransport<T, U> {
 }
 
 impl<T, U> IntoSplit for MpscTransport<T, U> {
-    type Left = MpscTransportReadHalf<U>;
-    type Right = MpscTransportWriteHalf<T>;
+    type Read = MpscTransportReadHalf<U>;
+    type Write = MpscTransportWriteHalf<T>;
 
-    fn into_split(self) -> (Self::Left, Self::Right) {
-        (self.inbound, self.outbound)
+    fn into_split(self) -> (Self::Write, Self::Read) {
+        (self.outbound, self.inbound)
     }
 }

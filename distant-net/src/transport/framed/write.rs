@@ -49,7 +49,7 @@ mod tests {
     async fn send_should_convert_data_into_byte_stream_and_send_through_stream() {
         let (_tx, mut rx, stream) = InmemoryTransport::make(1);
         let transport = FramedTransport::new(stream, PlainCodec::new());
-        let (_, mut wh) = transport.into_split();
+        let (mut wh, _) = transport.into_split();
 
         let data = TestData {
             name: String::from("test"),

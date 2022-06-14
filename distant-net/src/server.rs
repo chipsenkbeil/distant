@@ -177,7 +177,8 @@ mod tests {
         let (tx, listener) = TestListener::channel(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (transport, connection) = MpscTransport::<Request<u16>, Response<String>>::pair(100);
+        let (mut transport, connection) =
+            MpscTransport::<Request<u16>, Response<String>>::pair(100);
         tx.send(connection.into_split())
             .await
             .expect("Failed to feed listener a connection");
@@ -189,6 +190,12 @@ mod tests {
             .await
             .expect("Failed to send request");
 
+        // TODO: This hangs as we never send back a response because of the error
+        //       Server needs to support having an error handler that is given a reply context
+        //       so we have the option of replying, yet still provide a means to do nothing
+        //
+        //       This is because the protocol doesn't inherently have error handling built in.
+        //       This is a user-level feature to provide an error type and send that back
         let response: Response<String> = transport.read().await.unwrap().unwrap();
         assert_eq!(response.payload, "hello");
     }

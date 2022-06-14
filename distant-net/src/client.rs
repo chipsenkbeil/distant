@@ -110,7 +110,7 @@ where
     U: Send + Sync + DeserializeOwned,
 {
     /// Initializes a client using the provided reader and writer
-    pub fn new<R, W>(mut reader: R, mut writer: W) -> io::Result<Self>
+    pub fn new<R, W>(mut writer: W, mut reader: R) -> io::Result<Self>
     where
         R: TypedAsyncRead<Response<U>> + Send + 'static,
         W: TypedAsyncWrite<Request<T>> + Send + 'static,
@@ -165,8 +165,8 @@ where
         TR: RawTransport + 'static,
         C: Codec + Send + 'static,
     {
-        let (reader, writer) = transport.into_split();
-        Self::new(reader, writer)
+        let (writer, reader) = transport.into_split();
+        Self::new(writer, reader)
     }
 
     /// Clones the underlying channel for requests and returns the cloned instance
