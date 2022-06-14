@@ -3,7 +3,7 @@ use std::{io, sync::Arc};
 use tokio::sync::mpsc;
 
 /// Represents contextual information for working with an inbound request
-pub struct ServerCtx<RequestData, ResponseData, GlobalData, LocalData> {
+pub struct ServerRequestCtx<RequestData, ResponseData, GlobalData, LocalData> {
     /// Unique identifer associated with the connection that sent the request
     pub connection_id: Id,
 
