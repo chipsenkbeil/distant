@@ -7,7 +7,7 @@ pub enum Auth {
     /// Represents a request to perform an authentication handshake,
     /// providing the public key and salt from one side in order to
     /// derive the shared key
-    Handshake(PubKey, Salt),
+    Handshake { public_key: PubKey, salt: Salt },
 
     /// Represents the bytes of an encrypted message
     ///
@@ -19,23 +19,34 @@ pub enum Auth {
 /// a challenge, verifying information, presenting information, or highlighting an error
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AuthRequest {
-    Challenge(Questions, AuthExtra),
-    Verify(AuthVerifyKind, String),
-    Info(String),
-    Error(AuthErrorKind, String),
+    Challenge {
+        questions: Questions,
+        extra: AuthExtra,
+    },
+    Verify {
+        kind: AuthVerifyKind,
+        text: String,
+    },
+    Info {
+        text: String,
+    },
+    Error {
+        kind: AuthErrorKind,
+        text: String,
+    },
 }
 
 /// Represents authentication messages that are responses to auth requests such
 /// as answers to challenges or verifying information
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AuthResponse {
-    Challenge(Answers),
+    Challenge { answers: Answers },
     Yes,
     No,
 }
 
 /// Represents the type of verification being requested
-#[derive(Copy, Clone, Debug, ParialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthVerifyKind {
     /// An ask to verify the host such as with SSH
     Host,
@@ -62,3 +73,17 @@ pub struct Question {
 /// Represents a collection of answers
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Answers(Vec<String>);
+
+/// Represents the type of error encountered during authentication
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub enum AuthErrorKind {
+    /// When the answer(s) to a challenge do not pass authentication
+    FailedChallenge,
+
+    /// When verification during authentication fails
+    /// (e.g. a host is not allowed or blocked)
+    FailedVerification,
+
+    /// When the error is unknown
+    Unknown,
+}
