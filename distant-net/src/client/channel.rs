@@ -50,7 +50,9 @@ where
     /// Sends a request and returns a mailbox that can receive one or more responses, failing if
     /// unable to send a request or if the session's receiving line to the remote server has
     /// already been severed
-    pub async fn mail(&mut self, req: Request<T>) -> io::Result<Mailbox<Response<U>>> {
+    pub async fn mail(&mut self, req: impl Into<Request<T>>) -> io::Result<Mailbox<Response<U>>> {
+        let req = req.into();
+
         // First, create a mailbox using the request's id
         let mailbox = Weak::upgrade(&self.post_office)
             .ok_or_else(|| {
@@ -71,7 +73,7 @@ where
 
     /// Sends a request and waits for a response, failing if unable to send a request or if
     /// the session's receiving line to the remote server has already been severed
-    pub async fn send(&mut self, req: Request<T>) -> io::Result<Response<U>> {
+    pub async fn send(&mut self, req: impl Into<Request<T>>) -> io::Result<Response<U>> {
         // Send mail and get back a mailbox
         let mut mailbox = self.mail(req).await?;
 
@@ -96,15 +98,19 @@ where
 
     /// Sends a request without waiting for a response; this method is able to be used even
     /// if the session's receiving line to the remote server has been severed
-    pub async fn fire(&mut self, req: Request<T>) -> io::Result<()> {
+    pub async fn fire(&mut self, req: impl Into<Request<T>>) -> io::Result<()> {
         self.tx
-            .send(req)
+            .send(req.into())
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x.to_string()))
     }
 
     /// Sends a request without waiting for a response, timing out after duration has passed
-    pub async fn fire_timeout(&mut self, req: Request<T>, duration: Duration) -> io::Result<()> {
+    pub async fn fire_timeout(
+        &mut self,
+        req: impl Into<Request<T>>,
+        duration: Duration,
+    ) -> io::Result<()> {
         tokio::time::timeout(duration, self.fire(req))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))

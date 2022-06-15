@@ -21,6 +21,12 @@ impl<T> Request<T> {
     }
 }
 
+impl<T> From<T> for Request<T> {
+    fn from(payload: T) -> Self {
+        Self::new(payload)
+    }
+}
+
 /// Represents a response received related to some request
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Response<T> {

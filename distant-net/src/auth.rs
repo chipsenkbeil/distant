@@ -2,8 +2,8 @@ use p256::EncodedPoint;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/* mod client;
-pub use client::*; */
+mod client;
+pub use client::*;
 
 mod handshake;
 pub use handshake::*;
@@ -28,7 +28,7 @@ pub enum Auth {
     /// Represents the bytes of an encrypted message
     ///
     /// Underneath, will be one of either [`AuthRequest`] or [`AuthResponse`]
-    Msg(Vec<u8>),
+    Msg { encrypted_payload: Vec<u8> },
 }
 
 /// Represents authentication messages that act as initiators such as providing
@@ -37,8 +37,8 @@ pub enum Auth {
 pub enum AuthRequest {
     /// Represents a challenge comprising a series of questions to be presented
     Challenge {
-        questions: Questions,
-        extra: AuthExtra,
+        questions: Vec<Question>,
+        extra: HashMap<String, String>,
     },
 
     /// Represents an ask to verify some information
@@ -56,7 +56,7 @@ pub enum AuthRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AuthResponse {
     /// Represents the answers to a previously-asked challenge
-    Challenge { answers: Answers },
+    Challenge { answers: Vec<String> },
 
     /// Represents the answer to a previously-asked verify
     Verify { valid: bool },
@@ -69,27 +69,26 @@ pub enum AuthVerifyKind {
     Host,
 }
 
-/// Format for extra data included in some auth message
-pub type AuthExtra = HashMap<String, String>;
-
-/// Represents a collection of questions
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Questions(Vec<Question>);
-
 /// Represents a single question in a challenge
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Question {
     /// The text of the question
-    text: String,
+    pub text: String,
 
     /// Any extra information specific to a particular auth domain
     /// such as including a username and instructions for SSH authentication
-    extra: AuthExtra,
+    pub extra: HashMap<String, String>,
 }
 
-/// Represents a collection of answers
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Answers(Vec<String>);
+impl Question {
+    /// Creates a new question without any extra data
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            extra: HashMap::new(),
+        }
+    }
+}
 
 /// Represents the type of error encountered during authentication
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]

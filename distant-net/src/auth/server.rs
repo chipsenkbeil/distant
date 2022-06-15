@@ -1,16 +1,16 @@
 use crate::{
-    utils, Answers, Auth, AuthErrorKind, AuthExtra, AuthRequest, AuthResponse, AuthVerifyKind,
-    Codec, Handshake, Questions, Server, ServerCtx, XChaCha20Poly1305Codec,
+    utils, Auth, AuthErrorKind, AuthRequest, AuthResponse, AuthVerifyKind, Codec, Handshake,
+    Question, Server, ServerCtx, XChaCha20Poly1305Codec,
 };
 use async_trait::async_trait;
 use bytes::BytesMut;
 use log::*;
-use std::io;
+use std::{collections::HashMap, io};
 
 /// Server that handles authentication
 pub struct AuthServer<ChallengeFn, VerifyFn, InfoFn, ErrorFn>
 where
-    ChallengeFn: Fn(Questions, AuthExtra) -> Answers + Send + Sync,
+    ChallengeFn: Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync,
     VerifyFn: Fn(AuthVerifyKind, String) -> bool + Send + Sync,
     InfoFn: Fn(String) + Send + Sync,
     ErrorFn: Fn(AuthErrorKind, String) + Send + Sync,
@@ -25,7 +25,7 @@ where
 impl<ChallengeFn, VerifyFn, InfoFn, ErrorFn> Server
     for AuthServer<ChallengeFn, VerifyFn, InfoFn, ErrorFn>
 where
-    ChallengeFn: Fn(Questions, AuthExtra) -> Answers + Send + Sync,
+    ChallengeFn: Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync,
     VerifyFn: Fn(AuthVerifyKind, String) -> bool + Send + Sync,
     InfoFn: Fn(String) + Send + Sync,
     ErrorFn: Fn(AuthErrorKind, String) + Send + Sync,
@@ -67,15 +67,16 @@ where
                     }
                 }
             }
-            Auth::Msg(ref msg) => {
+            Auth::Msg {
+                ref encrypted_payload,
+            } => {
                 // Attempt to decrypt the message so we can understand what to do
                 let request = ctx.with_mut_local_data(move |codec| match codec {
                     Some(codec) => {
-                        let mut msg = BytesMut::from(msg.as_slice());
-                        match codec.decode(&mut msg) {
-                            Ok(Some(decrypted_msg)) => {
-                                utils::deserialize_from_slice::<AuthRequest>(&decrypted_msg)
-                                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+                        let mut payload = BytesMut::from(encrypted_payload.as_slice());
+                        match codec.decode(&mut payload) {
+                            Ok(Some(payload)) => {
+                                utils::deserialize_from_slice::<AuthRequest>(&payload)
                             }
                             Ok(None) => Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
@@ -123,9 +124,9 @@ where
                 };
 
                 // Serialize and encrypt the message before sending it back
-                let msg = ctx.with_mut_local_data(move |codec| match codec {
+                let encrypted_payload = ctx.with_mut_local_data(move |codec| match codec {
                     Some(codec) => {
-                        let mut encrypted_msg = BytesMut::new();
+                        let mut encrypted_payload = BytesMut::new();
 
                         // Convert the response into bytes for us to send back
                         let bytes = match utils::serialize_to_vec(&response) {
@@ -133,8 +134,8 @@ where
                             Err(x) => return Err(x),
                         };
 
-                        match codec.encode(&bytes, &mut encrypted_msg) {
-                            Ok(_) => Ok(encrypted_msg.freeze().to_vec()),
+                        match codec.encode(&bytes, &mut encrypted_payload) {
+                            Ok(_) => Ok(encrypted_payload.freeze().to_vec()),
                             Err(x) => Err(x),
                         }
                     }
@@ -144,9 +145,9 @@ where
                     )),
                 });
 
-                match msg.await {
-                    Some(Ok(msg)) => {
-                        if let Err(x) = reply.send(Auth::Msg(msg)).await {
+                match encrypted_payload.await {
+                    Some(Ok(encrypted_payload)) => {
+                        if let Err(x) = reply.send(Auth::Msg { encrypted_payload }).await {
                             error!("[Conn {}] {}", ctx.connection_id, x);
                             return;
                         }
