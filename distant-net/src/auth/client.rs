@@ -143,3 +143,618 @@ impl AuthClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Client, FramedTransport, Request, Response, TypedAsyncRead, TypedAsyncWrite};
+    use serde::{de::DeserializeOwned, Serialize};
+
+    const TIMEOUT_MILLIS: u64 = 100;
+
+    #[tokio::test]
+    async fn handshake_should_fail_if_get_unexpected_response_from_server() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move { client.handshake().await });
+
+        // Get the request, but send a bad response
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Handshake { .. } => server
+                .write(Response::new(
+                    request.id,
+                    Auth::Msg {
+                        encrypted_payload: Vec::new(),
+                    },
+                ))
+                .await
+                .unwrap(),
+            _ => panic!("Server received unexpected payload"),
+        }
+
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Handshake succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn challenge_should_fail_if_handshake_not_finished() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move { client.challenge(Vec::new(), HashMap::new()).await });
+
+        // Wait for a request, failing if we get one as the failure
+        // should have prevented sending anything, but we should
+        tokio::select! {
+            x = TypedAsyncRead::<Request<Auth>>::read(&mut server) => {
+                match x {
+                    Ok(Some(x)) => panic!("Unexpectedly resolved: {:?}", x),
+                    Ok(None) => {},
+                    Err(x) => panic!("Unexpectedly failed on server side: {}", x),
+                }
+            },
+            _ = wait_ms(TIMEOUT_MILLIS) => {
+                panic!("Should have gotten server closure as part of client exit");
+            }
+        }
+
+        // Verify that we got an error with the method
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Challenge succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn challenge_should_fail_if_receive_wrong_response() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client.handshake().await.unwrap();
+            client
+                .challenge(
+                    vec![
+                        Question::new("question1".to_string()),
+                        Question {
+                            text: "question2".to_string(),
+                            extra: vec![("key2".to_string(), "value2".to_string())]
+                                .into_iter()
+                                .collect(),
+                        },
+                    ],
+                    vec![("key".to_string(), "value".to_string())]
+                        .into_iter()
+                        .collect(),
+                )
+                .await
+        });
+
+        // Wait for a handshake request and set up our encryption codec
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        let mut codec = match request.payload {
+            Auth::Handshake { public_key, salt } => {
+                let handshake = Handshake::default();
+                let key = handshake.handshake(public_key, salt).unwrap();
+                server
+                    .write(Response::new(
+                        request.id,
+                        Auth::Handshake {
+                            public_key: handshake.pk_bytes(),
+                            salt: *handshake.salt(),
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                XChaCha20Poly1305Codec::new(&key)
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Wait for a challenge request and send back wrong response
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Msg { encrypted_payload } => {
+                match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                    AuthRequest::Challenge { .. } => {
+                        server
+                            .write(Response::new(
+                                request.id,
+                                Auth::Msg {
+                                    encrypted_payload: serialize_and_encrypt(
+                                        &mut codec,
+                                        &AuthResponse::Verify { valid: true },
+                                    )
+                                    .unwrap(),
+                                },
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    _ => panic!("Server received wrong request type"),
+                }
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Verify that we got an error with the method
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Challenge succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn challenge_should_return_answers_received_from_server() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client.handshake().await.unwrap();
+            client
+                .challenge(
+                    vec![
+                        Question::new("question1".to_string()),
+                        Question {
+                            text: "question2".to_string(),
+                            extra: vec![("key2".to_string(), "value2".to_string())]
+                                .into_iter()
+                                .collect(),
+                        },
+                    ],
+                    vec![("key".to_string(), "value".to_string())]
+                        .into_iter()
+                        .collect(),
+                )
+                .await
+        });
+
+        // Wait for a handshake request and set up our encryption codec
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        let mut codec = match request.payload {
+            Auth::Handshake { public_key, salt } => {
+                let handshake = Handshake::default();
+                let key = handshake.handshake(public_key, salt).unwrap();
+                server
+                    .write(Response::new(
+                        request.id,
+                        Auth::Handshake {
+                            public_key: handshake.pk_bytes(),
+                            salt: *handshake.salt(),
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                XChaCha20Poly1305Codec::new(&key)
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Wait for a challenge request and send back wrong response
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Msg { encrypted_payload } => {
+                match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                    AuthRequest::Challenge { questions, extra } => {
+                        assert_eq!(
+                            questions,
+                            vec![
+                                Question::new("question1".to_string()),
+                                Question {
+                                    text: "question2".to_string(),
+                                    extra: vec![("key2".to_string(), "value2".to_string())]
+                                        .into_iter()
+                                        .collect(),
+                                },
+                            ],
+                        );
+
+                        assert_eq!(
+                            extra,
+                            vec![("key".to_string(), "value".to_string())]
+                                .into_iter()
+                                .collect(),
+                        );
+
+                        server
+                            .write(Response::new(
+                                request.id,
+                                Auth::Msg {
+                                    encrypted_payload: serialize_and_encrypt(
+                                        &mut codec,
+                                        &AuthResponse::Challenge {
+                                            answers: vec![
+                                                "answer1".to_string(),
+                                                "answer2".to_string(),
+                                            ],
+                                        },
+                                    )
+                                    .unwrap(),
+                                },
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    _ => panic!("Server received wrong request type"),
+                }
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Verify that we got the right results
+        let answers = task.await.unwrap().unwrap();
+        assert_eq!(answers, vec!["answer1".to_string(), "answer2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn verify_should_fail_if_handshake_not_finished() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client
+                .verify(AuthVerifyKind::Host, "some text".to_string())
+                .await
+        });
+
+        // Wait for a request, failing if we get one as the failure
+        // should have prevented sending anything, but we should
+        tokio::select! {
+            x = TypedAsyncRead::<Request<Auth>>::read(&mut server) => {
+                match x {
+                    Ok(Some(x)) => panic!("Unexpectedly resolved: {:?}", x),
+                    Ok(None) => {},
+                    Err(x) => panic!("Unexpectedly failed on server side: {}", x),
+                }
+            },
+            _ = wait_ms(TIMEOUT_MILLIS) => {
+                panic!("Should have gotten server closure as part of client exit");
+            }
+        }
+
+        // Verify that we got an error with the method
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Verify succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn verify_should_fail_if_receive_wrong_response() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client.handshake().await.unwrap();
+            client
+                .verify(AuthVerifyKind::Host, "some text".to_string())
+                .await
+        });
+
+        // Wait for a handshake request and set up our encryption codec
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        let mut codec = match request.payload {
+            Auth::Handshake { public_key, salt } => {
+                let handshake = Handshake::default();
+                let key = handshake.handshake(public_key, salt).unwrap();
+                server
+                    .write(Response::new(
+                        request.id,
+                        Auth::Handshake {
+                            public_key: handshake.pk_bytes(),
+                            salt: *handshake.salt(),
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                XChaCha20Poly1305Codec::new(&key)
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Wait for a verify request and send back wrong response
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Msg { encrypted_payload } => {
+                match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                    AuthRequest::Verify { .. } => {
+                        server
+                            .write(Response::new(
+                                request.id,
+                                Auth::Msg {
+                                    encrypted_payload: serialize_and_encrypt(
+                                        &mut codec,
+                                        &AuthResponse::Challenge {
+                                            answers: Vec::new(),
+                                        },
+                                    )
+                                    .unwrap(),
+                                },
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    _ => panic!("Server received wrong request type"),
+                }
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Verify that we got an error with the method
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Verify succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn verify_should_return_valid_bool_received_from_server() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client.handshake().await.unwrap();
+            client
+                .verify(AuthVerifyKind::Host, "some text".to_string())
+                .await
+        });
+
+        // Wait for a handshake request and set up our encryption codec
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        let mut codec = match request.payload {
+            Auth::Handshake { public_key, salt } => {
+                let handshake = Handshake::default();
+                let key = handshake.handshake(public_key, salt).unwrap();
+                server
+                    .write(Response::new(
+                        request.id,
+                        Auth::Handshake {
+                            public_key: handshake.pk_bytes(),
+                            salt: *handshake.salt(),
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                XChaCha20Poly1305Codec::new(&key)
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Wait for a challenge request and send back wrong response
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Msg { encrypted_payload } => {
+                match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                    AuthRequest::Verify { kind, text } => {
+                        assert_eq!(kind, AuthVerifyKind::Host);
+                        assert_eq!(text, "some text");
+
+                        server
+                            .write(Response::new(
+                                request.id,
+                                Auth::Msg {
+                                    encrypted_payload: serialize_and_encrypt(
+                                        &mut codec,
+                                        &AuthResponse::Verify { valid: true },
+                                    )
+                                    .unwrap(),
+                                },
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    _ => panic!("Server received wrong request type"),
+                }
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Verify that we got the right results
+        let valid = task.await.unwrap().unwrap();
+        assert!(valid, "Got verify response, but valid was set incorrectly");
+    }
+
+    #[tokio::test]
+    async fn info_should_fail_if_handshake_not_finished() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move { client.info("some text".to_string()).await });
+
+        // Wait for a request, failing if we get one as the failure
+        // should have prevented sending anything, but we should
+        tokio::select! {
+            x = TypedAsyncRead::<Request<Auth>>::read(&mut server) => {
+                match x {
+                    Ok(Some(x)) => panic!("Unexpectedly resolved: {:?}", x),
+                    Ok(None) => {},
+                    Err(x) => panic!("Unexpectedly failed on server side: {}", x),
+                }
+            },
+            _ = wait_ms(TIMEOUT_MILLIS) => {
+                panic!("Should have gotten server closure as part of client exit");
+            }
+        }
+
+        // Verify that we got an error with the method
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Info succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn info_should_send_the_server_a_request_but_not_wait_for_a_response() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client.handshake().await.unwrap();
+            client.info("some text".to_string()).await
+        });
+
+        // Wait for a handshake request and set up our encryption codec
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        let mut codec = match request.payload {
+            Auth::Handshake { public_key, salt } => {
+                let handshake = Handshake::default();
+                let key = handshake.handshake(public_key, salt).unwrap();
+                server
+                    .write(Response::new(
+                        request.id,
+                        Auth::Handshake {
+                            public_key: handshake.pk_bytes(),
+                            salt: *handshake.salt(),
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                XChaCha20Poly1305Codec::new(&key)
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Wait for a request
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Msg { encrypted_payload } => {
+                match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                    AuthRequest::Info { text } => {
+                        assert_eq!(text, "some text");
+                    }
+                    _ => panic!("Server received wrong request type"),
+                }
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Verify that we got the right results
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn error_should_fail_if_handshake_not_finished() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client
+                .error(AuthErrorKind::FailedChallenge, "some text".to_string())
+                .await
+        });
+
+        // Wait for a request, failing if we get one as the failure
+        // should have prevented sending anything, but we should
+        tokio::select! {
+            x = TypedAsyncRead::<Request<Auth>>::read(&mut server) => {
+                match x {
+                    Ok(Some(x)) => panic!("Unexpectedly resolved: {:?}", x),
+                    Ok(None) => {},
+                    Err(x) => panic!("Unexpectedly failed on server side: {}", x),
+                }
+            },
+            _ = wait_ms(TIMEOUT_MILLIS) => {
+                panic!("Should have gotten server closure as part of client exit");
+            }
+        }
+
+        // Verify that we got an error with the method
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "Error succeeded unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn error_should_send_the_server_a_request_but_not_wait_for_a_response() {
+        let (t, mut server) = FramedTransport::make_test_pair();
+        let mut client = AuthClient::from(Client::from_framed_transport(t).unwrap());
+
+        // We start a separate task for the client to avoid blocking since
+        // we also need to receive the client's request and respond
+        let task = tokio::spawn(async move {
+            client.handshake().await.unwrap();
+            client
+                .error(AuthErrorKind::FailedChallenge, "some text".to_string())
+                .await
+        });
+
+        // Wait for a handshake request and set up our encryption codec
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        let mut codec = match request.payload {
+            Auth::Handshake { public_key, salt } => {
+                let handshake = Handshake::default();
+                let key = handshake.handshake(public_key, salt).unwrap();
+                server
+                    .write(Response::new(
+                        request.id,
+                        Auth::Handshake {
+                            public_key: handshake.pk_bytes(),
+                            salt: *handshake.salt(),
+                        },
+                    ))
+                    .await
+                    .unwrap();
+                XChaCha20Poly1305Codec::new(&key)
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Wait for a request
+        let request: Request<Auth> = server.read().await.unwrap().unwrap();
+        match request.payload {
+            Auth::Msg { encrypted_payload } => {
+                match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                    AuthRequest::Error { kind, text } => {
+                        assert_eq!(kind, AuthErrorKind::FailedChallenge);
+                        assert_eq!(text, "some text");
+                    }
+                    _ => panic!("Server received wrong request type"),
+                }
+            }
+            _ => panic!("Server received unexpected payload"),
+        };
+
+        // Verify that we got the right results
+        task.await.unwrap().unwrap();
+    }
+
+    async fn wait_ms(ms: u64) {
+        use std::time::Duration;
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+
+    fn serialize_and_encrypt<T: Serialize>(
+        codec: &mut XChaCha20Poly1305Codec,
+        payload: &T,
+    ) -> io::Result<Vec<u8>> {
+        let mut encryped_payload = BytesMut::new();
+        let payload = utils::serialize_to_vec(payload)?;
+        codec.encode(&payload, &mut encryped_payload)?;
+        Ok(encryped_payload.freeze().to_vec())
+    }
+
+    fn decrypt_and_deserialize<T: DeserializeOwned>(
+        codec: &mut XChaCha20Poly1305Codec,
+        payload: &[u8],
+    ) -> io::Result<T> {
+        let mut payload = BytesMut::from(payload);
+        match codec.decode(&mut payload)? {
+            Some(payload) => utils::deserialize_from_slice::<T>(&payload),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Incomplete message received",
+            )),
+        }
+    }
+}
