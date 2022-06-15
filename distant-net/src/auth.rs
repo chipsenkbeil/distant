@@ -70,7 +70,7 @@ pub enum AuthVerifyKind {
 }
 
 /// Represents a single question in a challenge
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Question {
     /// The text of the question
     pub text: String,
@@ -91,7 +91,7 @@ impl Question {
 }
 
 /// Represents the type of error encountered during authentication
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthErrorKind {
     /// When the answer(s) to a challenge do not pass authentication
     FailedChallenge,

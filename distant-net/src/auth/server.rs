@@ -168,3 +168,460 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        IntoSplit, MpscTransport, Request, Response, ServerExt, ServerRef, TestListener,
+        TypedAsyncRead, TypedAsyncWrite,
+    };
+    use tokio::sync::mpsc;
+
+    const TIMEOUT_MILLIS: u64 = 100;
+
+    #[tokio::test]
+    async fn should_not_reply_if_receive_encrypted_msg_without_handshake_first() {
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */ |_, _| Vec::new(),
+            /* on_verify    */ |_, _| false,
+            /* on_info      */ |_| {},
+            /* on_error     */ |_, _| {},
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send an encrypted message before establishing a handshake
+        t.write(Request::new(Auth::Msg {
+            encrypted_payload: Vec::new(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Wait for a response, failing if we get one
+        tokio::select! {
+            x = t.read() => panic!("Unexpectedly resolved: {:?}", x),
+            _ = wait_ms(TIMEOUT_MILLIS) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn should_reply_to_handshake_request_with_new_public_key_and_salt() {
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */ |_, _| Vec::new(),
+            /* on_verify    */ |_, _| false,
+            /* on_info      */ |_| {},
+            /* on_error     */ |_, _| {},
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send a handshake
+        let handshake = Handshake::default();
+        t.write(Request::new(Auth::Handshake {
+            public_key: handshake.pk_bytes(),
+            salt: *handshake.salt(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Wait for a handshake response
+        tokio::select! {
+            x = t.read() => {
+                let response = x.expect("Request failed").expect("Response missing");
+                match response.payload {
+                    Auth::Handshake { .. } => {},
+                    Auth::Msg { .. } => panic!("Received unexpected encryped message during handshake"),
+                }
+            }
+            _ = wait_ms(TIMEOUT_MILLIS) => panic!("Ran out of time waiting on response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_not_reply_if_receive_invalid_encrypted_msg() {
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */ |_, _| Vec::new(),
+            /* on_verify    */ |_, _| false,
+            /* on_info      */ |_| {},
+            /* on_error     */ |_, _| {},
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send a handshake
+        let handshake = Handshake::default();
+        t.write(Request::new(Auth::Handshake {
+            public_key: handshake.pk_bytes(),
+            salt: *handshake.salt(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Complete handshake
+        let key = match t.read().await.unwrap().unwrap().payload {
+            Auth::Handshake { public_key, salt } => handshake.handshake(public_key, salt).unwrap(),
+            Auth::Msg { .. } => panic!("Received unexpected encryped message during handshake"),
+        };
+
+        // Send a bad chunk of data
+        let _codec = XChaCha20Poly1305Codec::new(&key);
+        t.write(Request::new(Auth::Msg {
+            encrypted_payload: vec![1, 2, 3, 4],
+        }))
+        .await
+        .unwrap();
+
+        // Wait for a response, failing if we get one
+        tokio::select! {
+            x = t.read() => panic!("Unexpectedly resolved: {:?}", x),
+            _ = wait_ms(TIMEOUT_MILLIS) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn should_invoke_appropriate_function_when_receive_challenge_request_and_reply() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */
+            move |questions, extra| {
+                tx.try_send((questions, extra)).unwrap();
+                vec!["answer1".to_string(), "answer2".to_string()]
+            },
+            /* on_verify    */ |_, _| false,
+            /* on_info      */ |_| {},
+            /* on_error     */ |_, _| {},
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send a handshake
+        let handshake = Handshake::default();
+        t.write(Request::new(Auth::Handshake {
+            public_key: handshake.pk_bytes(),
+            salt: *handshake.salt(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Complete handshake
+        let key = match t.read().await.unwrap().unwrap().payload {
+            Auth::Handshake { public_key, salt } => handshake.handshake(public_key, salt).unwrap(),
+            Auth::Msg { .. } => panic!("Received unexpected encryped message during handshake"),
+        };
+
+        // Send an error request
+        let mut codec = XChaCha20Poly1305Codec::new(&key);
+        t.write(Request::new(Auth::Msg {
+            encrypted_payload: serialize_and_encrypt(
+                &mut codec,
+                &AuthRequest::Challenge {
+                    questions: vec![
+                        Question::new("question1".to_string()),
+                        Question {
+                            text: "question2".to_string(),
+                            extra: vec![("key".to_string(), "value".to_string())]
+                                .into_iter()
+                                .collect(),
+                        },
+                    ],
+                    extra: vec![("hello".to_string(), "world".to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+            )
+            .unwrap(),
+        }))
+        .await
+        .unwrap();
+
+        // Verify that the handler was triggered
+        let (questions, extra) = rx.recv().await.expect("Channel closed unexpectedly");
+        assert_eq!(
+            questions,
+            vec![
+                Question::new("question1".to_string()),
+                Question {
+                    text: "question2".to_string(),
+                    extra: vec![("key".to_string(), "value".to_string())]
+                        .into_iter()
+                        .collect(),
+                }
+            ]
+        );
+        assert_eq!(
+            extra,
+            vec![("hello".to_string(), "world".to_string())]
+                .into_iter()
+                .collect()
+        );
+
+        // Wait for a response and verify that it matches what we expect
+        tokio::select! {
+            x = t.read() => {
+                let response = x.expect("Request failed").expect("Response missing");
+                match response.payload {
+                    Auth::Handshake { .. } => panic!("Received unexpected handshake"),
+                    Auth::Msg { encrypted_payload } => {
+                        match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                            AuthResponse::Challenge { answers } =>
+                                assert_eq!(
+                                    answers,
+                                    vec!["answer1".to_string(), "answer2".to_string()]
+                                ),
+                            _ => panic!("Got wrong response for verify"),
+                        }
+                    },
+                }
+            }
+            _ = wait_ms(TIMEOUT_MILLIS) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn should_invoke_appropriate_function_when_receive_verify_request_and_reply() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */ |_, _| Vec::new(),
+            /* on_verify    */
+            move |kind, text| {
+                tx.try_send((kind, text)).unwrap();
+                true
+            },
+            /* on_info      */ |_| {},
+            /* on_error     */ |_, _| {},
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send a handshake
+        let handshake = Handshake::default();
+        t.write(Request::new(Auth::Handshake {
+            public_key: handshake.pk_bytes(),
+            salt: *handshake.salt(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Complete handshake
+        let key = match t.read().await.unwrap().unwrap().payload {
+            Auth::Handshake { public_key, salt } => handshake.handshake(public_key, salt).unwrap(),
+            Auth::Msg { .. } => panic!("Received unexpected encryped message during handshake"),
+        };
+
+        // Send an error request
+        let mut codec = XChaCha20Poly1305Codec::new(&key);
+        t.write(Request::new(Auth::Msg {
+            encrypted_payload: serialize_and_encrypt(
+                &mut codec,
+                &AuthRequest::Verify {
+                    kind: AuthVerifyKind::Host,
+                    text: "some text".to_string(),
+                },
+            )
+            .unwrap(),
+        }))
+        .await
+        .unwrap();
+
+        // Verify that the handler was triggered
+        let (kind, text) = rx.recv().await.expect("Channel closed unexpectedly");
+        assert_eq!(kind, AuthVerifyKind::Host);
+        assert_eq!(text, "some text");
+
+        // Wait for a response and verify that it matches what we expect
+        tokio::select! {
+            x = t.read() => {
+                let response = x.expect("Request failed").expect("Response missing");
+                match response.payload {
+                    Auth::Handshake { .. } => panic!("Received unexpected handshake"),
+                    Auth::Msg { encrypted_payload } => {
+                        match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
+                            AuthResponse::Verify { valid } =>
+                                assert!(valid, "Got verify, but valid was wrong"),
+                            _ => panic!("Got wrong response for verify"),
+                        }
+                    },
+                }
+            }
+            _ = wait_ms(TIMEOUT_MILLIS) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn should_invoke_appropriate_function_when_receive_info_request() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */ |_, _| Vec::new(),
+            /* on_verify    */ |_, _| false,
+            /* on_info      */
+            move |text| {
+                tx.try_send(text).unwrap();
+            },
+            /* on_error     */ |_, _| {},
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send a handshake
+        let handshake = Handshake::default();
+        t.write(Request::new(Auth::Handshake {
+            public_key: handshake.pk_bytes(),
+            salt: *handshake.salt(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Complete handshake
+        let key = match t.read().await.unwrap().unwrap().payload {
+            Auth::Handshake { public_key, salt } => handshake.handshake(public_key, salt).unwrap(),
+            Auth::Msg { .. } => panic!("Received unexpected encryped message during handshake"),
+        };
+
+        // Send an error request
+        let mut codec = XChaCha20Poly1305Codec::new(&key);
+        t.write(Request::new(Auth::Msg {
+            encrypted_payload: serialize_and_encrypt(
+                &mut codec,
+                &AuthRequest::Info {
+                    text: "some text".to_string(),
+                },
+            )
+            .unwrap(),
+        }))
+        .await
+        .unwrap();
+
+        // Verify that the handler was triggered
+        let text = rx.recv().await.expect("Channel closed unexpectedly");
+        assert_eq!(text, "some text");
+
+        // Wait for a response, failing if we get one
+        tokio::select! {
+            x = t.read() => panic!("Unexpectedly resolved: {:?}", x),
+            _ = wait_ms(TIMEOUT_MILLIS) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn should_invoke_appropriate_function_when_receive_error_request() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (mut t, _) = spawn_auth_server(
+            /* on_challenge */ |_, _| Vec::new(),
+            /* on_verify    */ |_, _| false,
+            /* on_info      */ |_| {},
+            /* on_error     */
+            move |kind, text| {
+                tx.try_send((kind, text)).unwrap();
+            },
+        )
+        .await
+        .expect("Failed to spawn server");
+
+        // Send a handshake
+        let handshake = Handshake::default();
+        t.write(Request::new(Auth::Handshake {
+            public_key: handshake.pk_bytes(),
+            salt: *handshake.salt(),
+        }))
+        .await
+        .expect("Failed to send request to server");
+
+        // Complete handshake
+        let key = match t.read().await.unwrap().unwrap().payload {
+            Auth::Handshake { public_key, salt } => handshake.handshake(public_key, salt).unwrap(),
+            Auth::Msg { .. } => panic!("Received unexpected encryped message during handshake"),
+        };
+
+        // Send an error request
+        let mut codec = XChaCha20Poly1305Codec::new(&key);
+        t.write(Request::new(Auth::Msg {
+            encrypted_payload: serialize_and_encrypt(
+                &mut codec,
+                &AuthRequest::Error {
+                    kind: AuthErrorKind::FailedChallenge,
+                    text: "some text".to_string(),
+                },
+            )
+            .unwrap(),
+        }))
+        .await
+        .unwrap();
+
+        // Verify that the handler was triggered
+        let (kind, text) = rx.recv().await.expect("Channel closed unexpectedly");
+        assert_eq!(kind, AuthErrorKind::FailedChallenge);
+        assert_eq!(text, "some text");
+
+        // Wait for a response, failing if we get one
+        tokio::select! {
+            x = t.read() => panic!("Unexpectedly resolved: {:?}", x),
+            _ = wait_ms(TIMEOUT_MILLIS) => {}
+        }
+    }
+
+    async fn wait_ms(ms: u64) {
+        use std::time::Duration;
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+
+    fn serialize_and_encrypt(
+        codec: &mut XChaCha20Poly1305Codec,
+        payload: &AuthRequest,
+    ) -> io::Result<Vec<u8>> {
+        let mut encryped_payload = BytesMut::new();
+        let payload = utils::serialize_to_vec(payload)?;
+        codec.encode(&payload, &mut encryped_payload)?;
+        Ok(encryped_payload.freeze().to_vec())
+    }
+
+    fn decrypt_and_deserialize(
+        codec: &mut XChaCha20Poly1305Codec,
+        payload: &[u8],
+    ) -> io::Result<AuthResponse> {
+        let mut payload = BytesMut::from(payload);
+        match codec.decode(&mut payload)? {
+            Some(payload) => utils::deserialize_from_slice::<AuthResponse>(&payload),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Incomplete message received",
+            )),
+        }
+    }
+
+    async fn spawn_auth_server<ChallengeFn, VerifyFn, InfoFn, ErrorFn>(
+        on_challenge: ChallengeFn,
+        on_verify: VerifyFn,
+        on_info: InfoFn,
+        on_error: ErrorFn,
+    ) -> io::Result<(
+        MpscTransport<Request<Auth>, Response<Auth>>,
+        Box<dyn ServerRef>,
+    )>
+    where
+        ChallengeFn:
+            Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync + 'static,
+        VerifyFn: Fn(AuthVerifyKind, String) -> bool + Send + Sync + 'static,
+        InfoFn: Fn(String) + Send + Sync + 'static,
+        ErrorFn: Fn(AuthErrorKind, String) + Send + Sync + 'static,
+    {
+        let server = AuthServer {
+            on_challenge,
+            on_verify,
+            on_info,
+            on_error,
+        };
+
+        // Create a test listener where we will forward a connection
+        let (tx, listener) = TestListener::channel(100);
+
+        // Make bounded transport pair and send off one of them to act as our connection
+        let (transport, connection) = MpscTransport::<Request<Auth>, Response<Auth>>::pair(100);
+        tx.send(connection.into_split())
+            .await
+            .expect("Failed to feed listener a connection");
+
+        let server = server.start(listener)?;
+        Ok((transport, server))
+    }
+}
