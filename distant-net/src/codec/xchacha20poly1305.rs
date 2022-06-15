@@ -22,12 +22,18 @@ pub struct XChaCha20Poly1305Codec {
 }
 impl_traits_for_codec!(XChaCha20Poly1305Codec);
 
+impl XChaCha20Poly1305Codec {
+    pub fn new(key: &[u8]) -> Self {
+        let key = Key::from_slice(key);
+        let cipher = XChaCha20Poly1305::new(key);
+        Self { cipher }
+    }
+}
+
 impl From<SecretKey32> for XChaCha20Poly1305Codec {
     /// Create a new XChaCha20Poly1305 codec with a 32-byte key
     fn from(secret_key: SecretKey32) -> Self {
-        let key = Key::from_slice(secret_key.unprotected_as_bytes());
-        let cipher = XChaCha20Poly1305::new(key);
-        Self { cipher }
+        Self::new(secret_key.unprotected_as_bytes())
     }
 }
 

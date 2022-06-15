@@ -17,27 +17,30 @@ pub trait WindowsPipeServerExt {
     type Response;
 
     /// Start a new server at the specified address using the given codec
-    async fn start<A, C>(addr: A, codec: C) -> io::Result<WindowsPipeServerRef>
+    async fn start<A, C>(self, addr: A, codec: C) -> io::Result<WindowsPipeServerRef>
     where
         A: AsRef<OsStr> + Send,
         C: Codec + Send + Sync + 'static;
 
     /// Start a new server at the specified address via `\\.\pipe\{name}` using the given codec
-    async fn start_local<N, C>(name: N, codec: C) -> io::Result<WindowsPipeServerRef>
+    async fn start_local<N, C>(self, name: N, codec: C) -> io::Result<WindowsPipeServerRef>
     where
+        Self: Sized,
         N: AsRef<OsStr> + Send,
         C: Codec + Send + Sync + 'static,
     {
         let mut addr = OsString::from(r"\\.\pipe\");
         addr.push(name.as_ref());
-        Self::start(addr, codec).await
+        self.start(addr, codec).await
     }
 }
 
 #[async_trait]
 impl<S, Req, Res, Gdata, Ldata> WindowsPipeServerExt for S
 where
-    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>,
+    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>
+        + Sync
+        + 'static,
     Req: DeserializeOwned + Send + Sync,
     Res: Serialize + Send + 'static,
     Gdata: Default + Send + Sync + 'static,
@@ -46,7 +49,7 @@ where
     type Request = Req;
     type Response = Res;
 
-    async fn start<A, C>(addr: A, codec: C) -> io::Result<WindowsPipeServerRef>
+    async fn start<A, C>(self, addr: A, codec: C) -> io::Result<WindowsPipeServerRef>
     where
         A: AsRef<OsStr> + Send,
         C: Codec + Send + Sync + 'static,
@@ -59,7 +62,7 @@ where
             let transport = FramedTransport::new(transport, codec.clone());
             transport.into_split()
         });
-        let inner = <S as ServerExt>::start(listener)?;
+        let inner = ServerExt::start(self, listener)?;
         Ok(WindowsPipeServerRef { addr, inner })
     }
 }
@@ -79,21 +82,21 @@ mod tests {
         type LocalData = ();
 
         async fn on_request(
-            ctx: &ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
-        ) -> io::Result<()> {
+            &self,
+            ctx: ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
+        ) {
             // Echo back what we received
             ctx.reply
                 .send(ctx.request.payload.to_string())
                 .await
                 .unwrap();
-
-            Ok(())
         }
     }
 
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
-        let server = <TestServer as WindowsPipeServerExt>::start_local(
+        let server = WindowsPipeServerExt::start_local(
+            TestServer,
             format!("test_pip_{}", rand::random::<usize>()),
             PlainCodec,
         )

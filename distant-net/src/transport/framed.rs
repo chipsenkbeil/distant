@@ -1,4 +1,4 @@
-use crate::{Codec, IntoSplit, RawTransport, TypedAsyncRead, TypedAsyncWrite};
+use crate::{utils, Codec, IntoSplit, RawTransport, TypedAsyncRead, TypedAsyncWrite};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
@@ -16,8 +16,6 @@ pub use read::*;
 
 mod write;
 pub use write::*;
-
-mod utils;
 
 /// Represents a transport of data across the network using frames in order to support
 /// typed messages instead of arbitrary bytes being sent across the wire.

@@ -14,14 +14,17 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 async-trait = "0.1.56"
 bytes = "1.1.0"
-chacha20poly1305 = "0.9.0"
+chacha20poly1305 = "0.10.0-pre"
 ciborium = "0.2.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
 futures = "0.3.21"
 hex = "0.4.3"
+hkdf = "0.12.3"
 log = "0.4.17"
 paste = "1.0.7"
+p256 = { version = "0.11.1", features = ["ecdh", "pem", "serde"] }
 rand = { version = "0.8.4", features = ["getrandom"] }
+sha2 = "0.10.2"
 serde = { version = "1.0.126", features = ["derive"] }
 tokio = { version = "1.12.0", features = ["full"] }
 tokio-util = { version = "0.6.7", features = ["codec"] }

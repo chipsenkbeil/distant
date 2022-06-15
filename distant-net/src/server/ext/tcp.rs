@@ -14,7 +14,7 @@ pub trait TcpServerExt {
     type Response;
 
     /// Start a new server using the provided listener
-    async fn start<P, C>(addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
+    async fn start<P, C>(self, addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
     where
         P: Into<PortRange> + Send,
         C: Codec + Send + Sync + 'static;
@@ -23,7 +23,9 @@ pub trait TcpServerExt {
 #[async_trait]
 impl<S, Req, Res, Gdata, Ldata> TcpServerExt for S
 where
-    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>,
+    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>
+        + Sync
+        + 'static,
     Req: DeserializeOwned + Send + Sync,
     Res: Serialize + Send + 'static,
     Gdata: Default + Send + Sync + 'static,
@@ -32,7 +34,7 @@ where
     type Request = Req;
     type Response = Res;
 
-    async fn start<P, C>(addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
+    async fn start<P, C>(self, addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
     where
         P: Into<PortRange> + Send,
         C: Codec + Send + Sync + 'static,
@@ -44,7 +46,7 @@ where
             let transport = FramedTransport::new(transport, codec.clone());
             transport.into_split()
         });
-        let inner = <S as ServerExt>::start(listener)?;
+        let inner = <S as ServerExt>::start(self, listener)?;
         Ok(TcpServerRef { addr, port, inner })
     }
 }
@@ -65,22 +67,21 @@ mod tests {
         type LocalData = ();
 
         async fn on_request(
-            ctx: &ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
-        ) -> io::Result<()> {
+            &self,
+            ctx: ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
+        ) {
             // Echo back what we received
             ctx.reply
                 .send(ctx.request.payload.to_string())
                 .await
                 .unwrap();
-
-            Ok(())
         }
     }
 
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
         let server =
-            <TestServer as TcpServerExt>::start(IpAddr::V6(Ipv6Addr::LOCALHOST), 0, PlainCodec)
+            TcpServerExt::start(TestServer, IpAddr::V6(Ipv6Addr::LOCALHOST), 0, PlainCodec)
                 .await
                 .expect("Failed to start TCP server");
 

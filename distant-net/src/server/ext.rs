@@ -30,7 +30,7 @@ pub trait ServerExt {
     type Response;
 
     /// Start a new server using the provided listener
-    fn start<L, R, W>(listener: L) -> io::Result<Box<dyn ServerRef>>
+    fn start<L, R, W>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener<Output = (W, R)> + 'static,
         R: TypedAsyncRead<Request<Self::Request>> + Send + 'static,
@@ -39,7 +39,9 @@ pub trait ServerExt {
 
 impl<S, Req, Res, Gdata, Ldata> ServerExt for S
 where
-    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>,
+    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>
+        + Sync
+        + 'static,
     Req: DeserializeOwned + Send + Sync,
     Res: Serialize + Send + 'static,
     Gdata: Default + Send + Sync + 'static,
@@ -48,17 +50,18 @@ where
     type Request = Req;
     type Response = Res;
 
-    fn start<L, R, W>(mut listener: L) -> io::Result<Box<dyn ServerRef>>
+    fn start<L, R, W>(self, mut listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener<Output = (W, R)> + 'static,
         R: TypedAsyncRead<Request<Self::Request>> + Send + 'static,
         W: TypedAsyncWrite<Response<Self::Response>> + Send + 'static,
     {
-        // let handler = Arc::new(handler);
+        let server = Arc::new(self);
         let state = Arc::new(ServerState::new(Gdata::default()));
 
         let task = tokio::spawn(async move {
             loop {
+                let server = Arc::clone(&server);
                 match listener.accept().await {
                     Ok((mut writer, mut reader)) => {
                         let mut connection = ServerConnection::new(Ldata::default());
@@ -97,17 +100,8 @@ where
                                             reply: reply.clone(),
                                             state: Arc::clone(&reader_state),
                                         };
-                                        match S::on_request(&ctx).await {
-                                            Ok(_) => {}
-                                            Err(x) => {
-                                                error!(
-                                                    "[Conn {}] Handler error: {}",
-                                                    connection_id, x
-                                                );
-                                                S::on_error_with_request(&ctx, x).await;
-                                                continue;
-                                            }
-                                        }
+
+                                        server.on_request(ctx).await;
                                     }
                                     Ok(None) => {
                                         debug!("[Conn {}] Connection closed", connection_id);
@@ -158,12 +152,11 @@ mod tests {
         type LocalData = ();
 
         async fn on_request(
-            ctx: &ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
-        ) -> io::Result<()> {
+            &self,
+            ctx: ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
+        ) {
             // Always send back "hello"
             ctx.reply.send("hello".to_string()).await.unwrap();
-
-            Ok(())
         }
     }
 
@@ -179,7 +172,7 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let _server = <TestServer as ServerExt>::start(listener).expect("Failed to start server");
+        let _server = ServerExt::start(TestServer, listener).expect("Failed to start server");
 
         transport
             .write(Request::new(123))

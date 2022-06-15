@@ -7,6 +7,7 @@ mod packet;
 mod port;
 mod server;
 mod transport;
+mod utils;
 
 pub use auth::*;
 pub use client::*;

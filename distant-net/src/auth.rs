@@ -1,5 +1,15 @@
+use p256::EncodedPoint;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/* mod client;
+pub use client::*; */
+
+mod handshake;
+pub use handshake::*;
+
+mod server;
+pub use server::*;
 
 /// Represents authentication messages that can be sent over the wire
 #[derive(Debug, Serialize, Deserialize)]
@@ -7,7 +17,13 @@ pub enum Auth {
     /// Represents a request to perform an authentication handshake,
     /// providing the public key and salt from one side in order to
     /// derive the shared key
-    Handshake { public_key: PubKey, salt: Salt },
+    Handshake {
+        /// Bytes of the public key
+        public_key: EncodedPoint,
+
+        /// Randomly generated salt
+        salt: Salt,
+    },
 
     /// Represents the bytes of an encrypted message
     ///
@@ -19,30 +35,31 @@ pub enum Auth {
 /// a challenge, verifying information, presenting information, or highlighting an error
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AuthRequest {
+    /// Represents a challenge comprising a series of questions to be presented
     Challenge {
         questions: Questions,
         extra: AuthExtra,
     },
-    Verify {
-        kind: AuthVerifyKind,
-        text: String,
-    },
-    Info {
-        text: String,
-    },
-    Error {
-        kind: AuthErrorKind,
-        text: String,
-    },
+
+    /// Represents an ask to verify some information
+    Verify { kind: AuthVerifyKind, text: String },
+
+    /// Represents some information to be presented
+    Info { text: String },
+
+    /// Represents some error that occurred
+    Error { kind: AuthErrorKind, text: String },
 }
 
 /// Represents authentication messages that are responses to auth requests such
 /// as answers to challenges or verifying information
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AuthResponse {
+    /// Represents the answers to a previously-asked challenge
     Challenge { answers: Answers },
-    Yes,
-    No,
+
+    /// Represents the answer to a previously-asked verify
+    Verify { valid: bool },
 }
 
 /// Represents the type of verification being requested
