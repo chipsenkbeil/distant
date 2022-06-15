@@ -20,59 +20,60 @@ use tokio::{
 
 type StatusResult = io::Result<(bool, Option<i32>)>;
 
-/// Represents a process on a remote machine
-#[derive(Debug)]
-pub struct RemoteProcess {
-    /// Id of the process
-    id: usize,
-
-    /// Id used to map back to mailbox
-    origin_id: usize,
-
-    // Sender to abort req task
-    abort_req_task_tx: mpsc::Sender<()>,
-
-    // Sender to abort res task
-    abort_res_task_tx: mpsc::Sender<()>,
-
-    /// Sender for stdin
-    pub stdin: Option<RemoteStdin>,
-
-    /// Receiver for stdout
-    pub stdout: Option<RemoteStdout>,
-
-    /// Receiver for stderr
-    pub stderr: Option<RemoteStderr>,
-
-    /// Sender for resize events
-    resizer: RemoteProcessResizer,
-
-    /// Sender for kill events
-    killer: RemoteProcessKiller,
-
-    /// Task that waits for the process to complete
-    wait_task: JoinHandle<()>,
-
-    /// Handles the success and exit code for a completed process
-    status: Arc<RwLock<Option<StatusResult>>>,
+/// A [`RemoteProcess`] builder providing support to configure
+/// before spawning the process on a remote machine
+pub struct RemoteCommand {
+    channel: Option<DistantChannel>,
+    cmd: Option<String>,
+    persist: bool,
+    pty: Option<PtySize>,
 }
 
-impl RemoteProcess {
-    /// Spawns the specified process on the remote machine using the given session
+impl Default for RemoteCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RemoteCommand {
+    /// Creates a new set of options for a remote process
+    pub fn new() -> Self {
+        Self {
+            channel: None,
+            cmd: None,
+            persist: false,
+            pty: None,
+        }
+    }
+
+    /// Sets whether or not the process will be persistent,
+    /// meaning that it will not be terminated when the
+    /// connection to the remote machine is terminated
+    pub fn persist(&mut self, persist: bool) -> &mut Self {
+        self.persist = persist;
+        self
+    }
+
+    /// Configures the process to leverage a PTY with the specified size
+    pub fn pty(&mut self, pty: PtySize) -> &mut Self {
+        self.pty = Some(pty);
+        self
+    }
+
+    /// Spawns the specified process on the remote machine using the given
     pub async fn spawn(
+        &mut self,
         mut channel: DistantChannel,
         cmd: impl Into<String>,
-        persist: bool,
-        pty: Option<PtySize>,
-    ) -> io::Result<Self> {
+    ) -> io::Result<RemoteProcess> {
         let cmd = cmd.into();
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
             .mail(Request::new(vec![DistantRequestData::ProcSpawn {
                 cmd,
-                persist,
-                pty,
+                persist: self.persist,
+                pty: self.pty,
             }]))
             .await?;
 
@@ -148,7 +149,7 @@ impl RemoteProcess {
             status_2.write().await.replace(res);
         });
 
-        Ok(Self {
+        Ok(RemoteProcess {
             id,
             origin_id,
             abort_req_task_tx,
@@ -162,7 +163,46 @@ impl RemoteProcess {
             status,
         })
     }
+}
 
+/// Represents a process on a remote machine
+#[derive(Debug)]
+pub struct RemoteProcess {
+    /// Id of the process
+    id: usize,
+
+    /// Id used to map back to mailbox
+    origin_id: usize,
+
+    // Sender to abort req task
+    abort_req_task_tx: mpsc::Sender<()>,
+
+    // Sender to abort res task
+    abort_res_task_tx: mpsc::Sender<()>,
+
+    /// Sender for stdin
+    pub stdin: Option<RemoteStdin>,
+
+    /// Receiver for stdout
+    pub stdout: Option<RemoteStdout>,
+
+    /// Receiver for stderr
+    pub stderr: Option<RemoteStderr>,
+
+    /// Sender for resize events
+    resizer: RemoteProcessResizer,
+
+    /// Sender for kill events
+    killer: RemoteProcessKiller,
+
+    /// Task that waits for the process to complete
+    wait_task: JoinHandle<()>,
+
+    /// Handles the success and exit code for a completed process
+    status: Arc<RwLock<Option<StatusResult>>>,
+}
+
+impl RemoteProcess {
     /// Returns the id of the running process
     pub fn id(&self) -> usize {
         self.id

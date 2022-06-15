@@ -32,7 +32,7 @@ impl RemoteLspProcess {
         cmd: impl Into<String>,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> Result<Self, RemoteProcessError> {
+    ) -> io::Result<Self> {
         let mut inner = RemoteProcess::spawn(channel, cmd, persist, pty).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
@@ -47,7 +47,7 @@ impl RemoteLspProcess {
     }
 
     /// Waits for the process to terminate, returning the success status and an optional exit code
-    pub async fn wait(self) -> Result<(bool, Option<i32>), RemoteProcessError> {
+    pub async fn wait(self) -> io::Result<(bool, Option<i32>)> {
         self.inner.wait().await
     }
 }

@@ -1,3 +1,9 @@
+use crate::DistantApi;
+use distant_net::Server;
+
+mod process;
+mod state;
+
 use crate::{
     constants::SERVER_WATCHER_CAPACITY,
     data::{
