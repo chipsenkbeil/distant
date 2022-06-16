@@ -1,200 +1,319 @@
-use crate::DistantApi;
-use distant_net::Server;
-
-mod process;
-mod state;
+use crate::{DistantApi, DistantCtx};
+use async_trait::async_trait;
 
 use crate::{
     constants::SERVER_WATCHER_CAPACITY,
     data::{
-        self, Change, ChangeKind, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData,
-        FileType, Metadata, PtySize, RunningProcess, SystemInfo,
-    },
-    server::distant::{
-        process::{Process, PtyProcess, SimpleProcess},
-        state::{ProcessState, State, WatcherPath},
+        self, Change, ChangeKind, ChangeKindSet, DirEntry, DistantResponseData, FileType, Metadata,
+        PtySize, RunningProcess, SystemInfo,
     },
 };
-use derive_more::{Display, Error, From};
-use distant_net::{Request, Response};
-use futures::future;
 use log::*;
 use notify::{Config as WatcherConfig, RecursiveMode, Watcher};
 use std::{
-    env,
-    future::Future,
+    env, io,
     path::{Path, PathBuf},
-    pin::Pin,
     sync::Arc,
     time::SystemTime,
 };
 use tokio::{
-    io::{self, AsyncWriteExt},
-    sync::{
-        mpsc::{self, error::TrySendError},
-        Mutex,
-    },
+    io::AsyncWriteExt,
+    sync::mpsc::{self, error::TrySendError},
 };
 use walkdir::WalkDir;
 
-#[derive(Debug, Display, Error, From)]
-pub enum ServerError {
-    Io(io::Error),
-    Notify(notify::Error),
-    WalkDir(walkdir::Error),
+mod process;
+use process::*;
+
+mod state;
+use state::*;
+
+pub struct DistantServer {
+    state: GlobalState,
 }
 
-impl From<ServerError> for DistantResponseData {
-    fn from(x: ServerError) -> Self {
-        match x {
-            ServerError::Io(x) => Self::from(x),
-            ServerError::Notify(x) => Self::from(x),
-            ServerError::WalkDir(x) => Self::from(x),
+impl DistantServer {
+    pub fn new() -> Self {
+        Self {
+            state: GlobalState::default(),
         }
     }
 }
 
-async fn file_read(path: PathBuf) -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(DistantResponseData::Blob {
-        data: tokio::fs::read(path).await?,
-    }))
+impl Default for DistantServer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-async fn file_read_text(path: PathBuf) -> Result<Outgoing, ServerError> {
-    Ok(Outgoing::from(DistantResponseData::Text {
-        data: tokio::fs::read_to_string(path).await?,
-    }))
-}
+#[async_trait]
+impl DistantApi for DistantServer {
+    type LocalData = ();
 
-async fn file_write(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
-    tokio::fs::write(path, data).await?;
-    Ok(Outgoing::from(DistantResponseData::Ok))
-}
-
-async fn file_append(path: PathBuf, data: impl AsRef<[u8]>) -> Result<Outgoing, ServerError> {
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await?;
-    file.write_all(data.as_ref()).await?;
-    Ok(Outgoing::from(DistantResponseData::Ok))
-}
-
-async fn dir_read(
-    path: PathBuf,
-    depth: usize,
-    absolute: bool,
-    canonicalize: bool,
-    include_root: bool,
-) -> Result<Outgoing, ServerError> {
-    // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
-    let root_path = tokio::fs::canonicalize(path).await?;
-
-    // Traverse, but don't include root directory in entries (hence min depth 1), unless indicated
-    // to do so (min depth 0)
-    let dir = WalkDir::new(root_path.as_path())
-        .min_depth(if include_root { 0 } else { 1 })
-        .sort_by_file_name();
-
-    // If depth > 0, will recursively traverse to specified max depth, otherwise
-    // performs infinite traversal
-    let dir = if depth > 0 { dir.max_depth(depth) } else { dir };
-
-    // Determine our entries and errors
-    let mut entries = Vec::new();
-    let mut errors = Vec::new();
-
-    #[inline]
-    fn map_file_type(ft: std::fs::FileType) -> FileType {
-        if ft.is_dir() {
-            FileType::Dir
-        } else if ft.is_file() {
-            FileType::File
-        } else {
-            FileType::Symlink
-        }
+    async fn read_file(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+    ) -> io::Result<Vec<u8>> {
+        tokio::fs::read(path).await
     }
 
-    for entry in dir {
-        match entry.map_err(data::Error::from) {
-            // For entries within the root, we want to transform the path based on flags
-            Ok(e) if e.depth() > 0 => {
-                // Canonicalize the path if specified, otherwise just return
-                // the path as is
-                let mut path = if canonicalize {
-                    match tokio::fs::canonicalize(e.path()).await {
-                        Ok(path) => path,
-                        Err(x) => {
-                            errors.push(data::Error::from(x));
-                            continue;
+    async fn read_file_text(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+    ) -> io::Result<String> {
+        tokio::fs::read_to_string(path).await
+    }
+
+    async fn write_file(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        data: Vec<u8>,
+    ) -> io::Result<()> {
+        tokio::fs::write(path, data).await
+    }
+
+    async fn write_file_text(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        data: String,
+    ) -> io::Result<()> {
+        tokio::fs::write(path, data).await
+    }
+
+    async fn append_file(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        data: Vec<u8>,
+    ) -> io::Result<()> {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        file.write_all(data.as_ref()).await
+    }
+
+    async fn append_file_text(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        data: String,
+    ) -> io::Result<()> {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        file.write_all(data.as_ref()).await
+    }
+
+    async fn read_dir(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        depth: usize,
+        absolute: bool,
+        canonicalize: bool,
+        include_root: bool,
+    ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
+        // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
+        let root_path = tokio::fs::canonicalize(path).await?;
+
+        // Traverse, but don't include root directory in entries (hence min depth 1), unless indicated
+        // to do so (min depth 0)
+        let dir = WalkDir::new(root_path.as_path())
+            .min_depth(if include_root { 0 } else { 1 })
+            .sort_by_file_name();
+
+        // If depth > 0, will recursively traverse to specified max depth, otherwise
+        // performs infinite traversal
+        let dir = if depth > 0 { dir.max_depth(depth) } else { dir };
+
+        // Determine our entries and errors
+        let mut entries = Vec::new();
+        let mut errors = Vec::new();
+
+        #[inline]
+        fn map_file_type(ft: std::fs::FileType) -> FileType {
+            if ft.is_dir() {
+                FileType::Dir
+            } else if ft.is_file() {
+                FileType::File
+            } else {
+                FileType::Symlink
+            }
+        }
+
+        for entry in dir {
+            match entry.map_err(data::Error::from) {
+                // For entries within the root, we want to transform the path based on flags
+                Ok(e) if e.depth() > 0 => {
+                    // Canonicalize the path if specified, otherwise just return
+                    // the path as is
+                    let mut path = if canonicalize {
+                        match tokio::fs::canonicalize(e.path()).await {
+                            Ok(path) => path,
+                            Err(x) => {
+                                errors.push(data::Error::from(x));
+                                continue;
+                            }
                         }
-                    }
-                } else {
-                    e.path().to_path_buf()
-                };
+                    } else {
+                        e.path().to_path_buf()
+                    };
 
-                // Strip the path of its prefix based if not flagged as absolute
-                if !absolute {
-                    // NOTE: In the situation where we canonicalized the path earlier,
-                    //       there is no guarantee that our root path is still the
-                    //       parent of the symlink's destination; so, in that case we MUST just
-                    //       return the path if the strip_prefix fails
-                    path = path
-                        .strip_prefix(root_path.as_path())
-                        .map(Path::to_path_buf)
-                        .unwrap_or(path);
-                };
+                    // Strip the path of its prefix based if not flagged as absolute
+                    if !absolute {
+                        // NOTE: In the situation where we canonicalized the path earlier,
+                        //       there is no guarantee that our root path is still the
+                        //       parent of the symlink's destination; so, in that case we MUST just
+                        //       return the path if the strip_prefix fails
+                        path = path
+                            .strip_prefix(root_path.as_path())
+                            .map(Path::to_path_buf)
+                            .unwrap_or(path);
+                    };
 
-                entries.push(DirEntry {
-                    path,
-                    file_type: map_file_type(e.file_type()),
-                    depth: e.depth(),
-                });
+                    entries.push(DirEntry {
+                        path,
+                        file_type: map_file_type(e.file_type()),
+                        depth: e.depth(),
+                    });
+                }
+
+                // For the root, we just want to echo back the entry as is
+                Ok(e) => {
+                    entries.push(DirEntry {
+                        path: e.path().to_path_buf(),
+                        file_type: map_file_type(e.file_type()),
+                        depth: e.depth(),
+                    });
+                }
+
+                Err(x) => errors.push(x.into()),
             }
-
-            // For the root, we just want to echo back the entry as is
-            Ok(e) => {
-                entries.push(DirEntry {
-                    path: e.path().to_path_buf(),
-                    file_type: map_file_type(e.file_type()),
-                    depth: e.depth(),
-                });
-            }
-
-            Err(x) => errors.push(x),
         }
+
+        Ok((entries, errors))
     }
 
-    Ok(Outgoing::from(DistantResponseData::DirEntries {
-        entries,
-        errors,
-    }))
-}
-
-async fn dir_create(path: PathBuf, all: bool) -> Result<Outgoing, ServerError> {
-    if all {
-        tokio::fs::create_dir_all(path).await?;
-    } else {
-        tokio::fs::create_dir(path).await?;
-    }
-
-    Ok(Outgoing::from(DistantResponseData::Ok))
-}
-
-async fn remove(path: PathBuf, force: bool) -> Result<Outgoing, ServerError> {
-    let path_metadata = tokio::fs::metadata(path.as_path()).await?;
-    if path_metadata.is_dir() {
-        if force {
-            tokio::fs::remove_dir_all(path).await?;
+    async fn create_dir(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        all: bool,
+    ) -> io::Result<()> {
+        if all {
+            tokio::fs::create_dir_all(path).await
         } else {
-            tokio::fs::remove_dir(path).await?;
+            tokio::fs::create_dir(path).await
         }
-    } else {
-        tokio::fs::remove_file(path).await?;
     }
 
-    Ok(Outgoing::from(DistantResponseData::Ok))
+    async fn remove(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        force: bool,
+    ) -> io::Result<()> {
+        let path_metadata = tokio::fs::metadata(path.as_path()).await?;
+        if path_metadata.is_dir() {
+            if force {
+                tokio::fs::remove_dir_all(path).await
+            } else {
+                tokio::fs::remove_dir(path).await
+            }
+        } else {
+            tokio::fs::remove_file(path).await
+        }
+    }
+
+    async fn rename(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        src: PathBuf,
+        dst: PathBuf,
+    ) -> io::Result<()> {
+        tokio::fs::rename(src, dst).await
+    }
+
+    async fn watch(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        recursive: bool,
+        only: Vec<ChangeKind>,
+        except: Vec<ChangeKind>,
+    ) -> io::Result<()> {
+        let only = only.into_iter().collect::<ChangeKindSet>();
+        let except = except.into_iter().collect::<ChangeKindSet>();
+
+        match state.watcher.as_mut() {
+            Some(watcher) => {
+                let wp = WatcherPath::new(&path, recursive, only)?;
+                watcher.watch(
+                    path.as_path(),
+                    if recursive {
+                        RecursiveMode::Recursive
+                    } else {
+                        RecursiveMode::NonRecursive
+                    },
+                )?;
+                debug!("[Conn {}] Now watching {:?}", conn_id, wp.path());
+                state.watcher_paths.insert(wp, Box::new(reply));
+                Ok(Outgoing::from(DistantResponseData::Ok))
+            }
+            None => Err(ServerError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("[Conn {}] Unable to initialize watcher", conn_id),
+            ))),
+        }
+    }
+
+    async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()>;
+
+    async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool>;
+
+    async fn metadata(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        canonicalize: bool,
+        resolve_file_type: bool,
+    ) -> io::Result<Metadata>;
+
+    async fn proc_spawn(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        cmd: String,
+        persist: bool,
+        pty: Option<PtySize>,
+    ) -> io::Result<usize>;
+
+    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()>;
+
+    async fn proc_stdin(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        id: usize,
+        data: Vec<u8>,
+    ) -> io::Result<()>;
+
+    async fn proc_resize_pty(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        id: usize,
+        size: PtySize,
+    ) -> io::Result<()>;
+
+    async fn proc_list(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<()>;
+
+    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<()>;
 }
 
 async fn copy(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
@@ -297,26 +416,26 @@ where
 
         // Attempt to configure watcher, but don't fail if these configurations fail
         match watcher.configure(WatcherConfig::PreciseEvents(true)) {
-            Ok(true) => debug!("<Conn @ {}> Watcher configured for precise events", conn_id),
+            Ok(true) => debug!("[Conn {}] Watcher configured for precise events", conn_id),
             Ok(false) => debug!(
-                "<Conn @ {}> Watcher not configured for precise events",
+                "[Conn {}] Watcher not configured for precise events",
                 conn_id,
             ),
             Err(x) => error!(
-                "<Conn @ {}> Watcher configuration for precise events failed: {}",
+                "[Conn {}] Watcher configuration for precise events failed: {}",
                 conn_id, x
             ),
         }
 
         // Attempt to configure watcher, but don't fail if these configurations fail
         match watcher.configure(WatcherConfig::NoticeEvents(true)) {
-            Ok(true) => debug!("<Conn @ {}> Watcher configured for notice events", conn_id),
+            Ok(true) => debug!("[Conn {}] Watcher configured for notice events", conn_id),
             Ok(false) => debug!(
-                "<Conn @ {}> Watcher not configured for notice events",
+                "[Conn {}] Watcher not configured for notice events",
                 conn_id,
             ),
             Err(x) => error!(
-                "<Conn @ {}> Watcher configuration for notice events failed: {}",
+                "[Conn {}] Watcher configuration for notice events failed: {}",
                 conn_id, x
             ),
         }
@@ -332,7 +451,7 @@ where
                         let kind = ChangeKind::from(x.kind);
 
                         trace!(
-                            "<Conn @ {}> Watcher detected '{}' change for {:?}",
+                            "[Conn {}] Watcher detected '{}' change for {:?}",
                             conn_id,
                             kind,
                             paths
@@ -357,7 +476,7 @@ where
                                 || (!except.is_empty() && except.contains(&kind))
                             {
                                 trace!(
-                                    "<Conn @ {}> Skipping change '{}' for {:?}",
+                                    "[Conn {}] Skipping change '{}' for {:?}",
                                     conn_id,
                                     kind,
                                     paths
@@ -378,7 +497,7 @@ where
                         let msg = x.to_string();
 
                         error!(
-                            "<Conn @ {}> Watcher encountered an error {} for {:?}",
+                            "[Conn {}] Watcher encountered an error {} for {:?}",
                             conn_id, msg, paths
                         );
 
@@ -396,7 +515,7 @@ where
 
                         // If we have no paths for the errors, then we send the error to everyone
                         if paths.is_empty() {
-                            trace!("<Conn @ {}> Relaying error to all watchers", conn_id);
+                            trace!("[Conn {}] Relaying error to all watchers", conn_id);
                             for reply in state.watcher_paths.values_mut() {
                                 if !reply(vec![make_res_data(&msg, &[])]).await {
                                     is_ok = false;
@@ -409,7 +528,7 @@ where
                             let results = state.map_paths_to_watcher_paths_and_replies(&paths);
 
                             trace!(
-                                "<Conn @ {}> Relaying error to {} watchers",
+                                "[Conn {}] Relaying error to {} watchers",
                                 conn_id,
                                 results.len()
                             );
@@ -426,7 +545,7 @@ where
                 };
 
                 if !is_ok {
-                    error!("<Conn @ {}> Watcher channel closed", conn_id);
+                    error!("[Conn {}] Watcher channel closed", conn_id);
                     break;
                 }
             }
@@ -444,13 +563,13 @@ where
                     RecursiveMode::NonRecursive
                 },
             )?;
-            debug!("<Conn @ {}> Now watching {:?}", conn_id, wp.path());
+            debug!("[Conn {}] Now watching {:?}", conn_id, wp.path());
             state.watcher_paths.insert(wp, Box::new(reply));
             Ok(Outgoing::from(DistantResponseData::Ok))
         }
         None => Err(ServerError::Io(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("<Conn @ {}> Unable to initialize watcher", conn_id),
+            format!("[Conn {}] Unable to initialize watcher", conn_id),
         ))),
     }
 }
@@ -466,7 +585,7 @@ async fn unwatch(conn_id: usize, state: HState, path: PathBuf) -> Result<Outgoin
     Err(ServerError::Io(io::Error::new(
         io::ErrorKind::BrokenPipe,
         format!(
-            "<Conn @ {}> Unable to unwatch as watcher not initialized",
+            "[Conn {}] Unable to unwatch as watcher not initialized",
             conn_id,
         ),
     )))
@@ -562,7 +681,7 @@ async fn proc_spawn<F>(
 where
     F: FnMut(Vec<DistantResponseData>) -> ReplyRet + Clone + Send + 'static,
 {
-    debug!("<Conn @ {}> Spawning {}", conn_id, cmd);
+    debug!("[Conn {}] Spawning {}", conn_id, cmd);
 
     // Build out the command and args from our string
     let (cmd, args) = match cmd.split_once(" ") {
