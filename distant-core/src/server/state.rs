@@ -1,5 +1,7 @@
-use super::{InputChannel, ProcessKiller, ProcessPty};
-use crate::data::{ChangeKindSet, DistantResponseData};
+use crate::{
+    data::{ChangeKindSet, DistantResponseData},
+    InputChannel, ProcessKiller, ProcessPty,
+};
 use log::*;
 use notify::RecommendedWatcher;
 use std::{

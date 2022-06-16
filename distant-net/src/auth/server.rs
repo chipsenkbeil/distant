@@ -32,13 +32,9 @@ where
 {
     type Request = Auth;
     type Response = Auth;
-    type GlobalData = ();
     type LocalData = Option<XChaCha20Poly1305Codec>;
 
-    async fn on_request(
-        &self,
-        ctx: ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
-    ) {
+    async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         let reply = ctx.reply.clone();
 
         match ctx.request.payload {

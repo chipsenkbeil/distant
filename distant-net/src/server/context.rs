@@ -2,7 +2,7 @@ use crate::{Id, Request, ServerReply, ServerState};
 use std::sync::Arc;
 
 /// Represents contextual information for working with an inbound request
-pub struct ServerCtx<RequestData, ResponseData, GlobalData, LocalData> {
+pub struct ServerCtx<RequestData, ResponseData, LocalData> {
     /// Unique identifer associated with the connection that sent the request
     pub connection_id: Id,
 
@@ -13,12 +13,10 @@ pub struct ServerCtx<RequestData, ResponseData, GlobalData, LocalData> {
     pub reply: ServerReply<ResponseData>,
 
     /// Reference to the server's state
-    pub state: Arc<ServerState<GlobalData, LocalData>>,
+    pub state: Arc<ServerState<LocalData>>,
 }
 
-impl<RequestData, ResponseData, GlobalData, LocalData>
-    ServerCtx<RequestData, ResponseData, GlobalData, LocalData>
-{
+impl<RequestData, ResponseData, LocalData> ServerCtx<RequestData, ResponseData, LocalData> {
     /// Invokes `f` with a reference to the local data for the connection
     pub async fn with_local_data<T, F>(&self, f: F) -> Option<T>
     where

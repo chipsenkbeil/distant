@@ -37,15 +37,12 @@ pub trait ServerExt {
         W: TypedAsyncWrite<Response<Self::Response>> + Send + 'static;
 }
 
-impl<S, Req, Res, Gdata, Ldata> ServerExt for S
+impl<S, Req, Res, Data> ServerExt for S
 where
-    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>
-        + Sync
-        + 'static,
+    S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
     Req: DeserializeOwned + Send + Sync,
     Res: Serialize + Send + 'static,
-    Gdata: Default + Send + Sync + 'static,
-    Ldata: Default + Send + Sync + 'static,
+    Data: Default + Send + Sync + 'static,
 {
     type Request = Req;
     type Response = Res;
@@ -57,14 +54,14 @@ where
         W: TypedAsyncWrite<Response<Self::Response>> + Send + 'static,
     {
         let server = Arc::new(self);
-        let state = Arc::new(ServerState::new(Gdata::default()));
+        let state = Arc::new(ServerState::new());
 
         let task = tokio::spawn(async move {
             loop {
                 let server = Arc::clone(&server);
                 match listener.accept().await {
                     Ok((mut writer, mut reader)) => {
-                        let mut connection = ServerConnection::new(Ldata::default());
+                        let mut connection = ServerConnection::new(Data::default());
                         let connection_id = connection.id;
 
                         let state = Arc::clone(&state);
@@ -148,13 +145,9 @@ mod tests {
     impl Server for TestServer {
         type Request = u16;
         type Response = String;
-        type GlobalData = ();
         type LocalData = ();
 
-        async fn on_request(
-            &self,
-            ctx: ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
-        ) {
+        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Always send back "hello"
             ctx.reply.send("hello".to_string()).await.unwrap();
         }

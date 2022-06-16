@@ -23,8 +23,6 @@ type StatusResult = io::Result<(bool, Option<i32>)>;
 /// A [`RemoteProcess`] builder providing support to configure
 /// before spawning the process on a remote machine
 pub struct RemoteCommand {
-    channel: Option<DistantChannel>,
-    cmd: Option<String>,
     persist: bool,
     pty: Option<PtySize>,
 }
@@ -39,8 +37,6 @@ impl RemoteCommand {
     /// Creates a new set of options for a remote process
     pub fn new() -> Self {
         Self {
-            channel: None,
-            cmd: None,
             persist: false,
             pty: None,
         }

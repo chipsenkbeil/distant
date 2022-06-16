@@ -36,15 +36,12 @@ pub trait WindowsPipeServerExt {
 }
 
 #[async_trait]
-impl<S, Req, Res, Gdata, Ldata> WindowsPipeServerExt for S
+impl<S, Req, Res, Data> WindowsPipeServerExt for S
 where
-    S: Server<Request = Req, Response = Res, GlobalData = Gdata, LocalData = Ldata>
-        + Sync
-        + 'static,
+    S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
     Req: DeserializeOwned + Send + Sync,
     Res: Serialize + Send + 'static,
-    Gdata: Default + Send + Sync + 'static,
-    Ldata: Default + Send + Sync + 'static,
+    Data: Default + Send + Sync + 'static,
 {
     type Request = Req;
     type Response = Res;
@@ -78,13 +75,9 @@ mod tests {
     impl Server for TestServer {
         type Request = String;
         type Response = String;
-        type GlobalData = ();
         type LocalData = ();
 
-        async fn on_request(
-            &self,
-            ctx: ServerCtx<Self::Request, Self::Response, Self::GlobalData, Self::LocalData>,
-        ) {
+        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received
             ctx.reply
                 .send(ctx.request.payload.to_string())

@@ -1,5 +1,7 @@
 use crate::{
-    client::{DistantChannel, RemoteProcess, RemoteStderr, RemoteStdin, RemoteStdout},
+    client::{
+        DistantChannel, RemoteCommand, RemoteProcess, RemoteStderr, RemoteStdin, RemoteStdout,
+    },
     data::PtySize,
 };
 use futures::stream::{Stream, StreamExt};
@@ -15,25 +17,48 @@ use tokio::{
 mod msg;
 pub use msg::*;
 
-/// Represents an LSP server process on a remote machine
-#[derive(Debug)]
-pub struct RemoteLspProcess {
-    inner: RemoteProcess,
-    pub stdin: Option<RemoteLspStdin>,
-    pub stdout: Option<RemoteLspStdout>,
-    pub stderr: Option<RemoteLspStderr>,
+/// A [`RemoteLspProcess`] builder providing support to configure
+/// before spawning the process on a remote machine
+pub struct RemoteLspCommand {
+    persist: bool,
+    pty: Option<PtySize>,
 }
 
-impl RemoteLspProcess {
+impl RemoteLspCommand {
+    /// Creates a new set of options for a remote LSP process
+    pub fn new() -> Self {
+        Self {
+            persist: false,
+            pty: None,
+        }
+    }
+
+    /// Sets whether or not the process will be persistent,
+    /// meaning that it will not be terminated when the
+    /// connection to the remote machine is terminated
+    pub fn persist(&mut self, persist: bool) -> &mut Self {
+        self.persist = persist;
+        self
+    }
+
+    /// Configures the process to leverage a PTY with the specified size
+    pub fn pty(&mut self, pty: PtySize) -> &mut Self {
+        self.pty = Some(pty);
+        self
+    }
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
     pub async fn spawn(
+        &mut self,
         channel: DistantChannel,
         cmd: impl Into<String>,
-        persist: bool,
-        pty: Option<PtySize>,
-    ) -> io::Result<Self> {
-        let mut inner = RemoteProcess::spawn(channel, cmd, persist, pty).await?;
+    ) -> io::Result<RemoteLspProcess> {
+        let mut command = RemoteCommand::new().persist(self.persist);
+        if let Some(pty) = self.pty {
+            command = command.pty(pty);
+        }
+
+        let mut inner = command.spawn(channel, cmd).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);
         let stdout = inner.stdout.take().map(RemoteLspStdout::new);
         let stderr = inner.stderr.take().map(RemoteLspStderr::new);
@@ -45,7 +70,18 @@ impl RemoteLspProcess {
             stderr,
         })
     }
+}
 
+/// Represents an LSP server process on a remote machine
+#[derive(Debug)]
+pub struct RemoteLspProcess {
+    inner: RemoteProcess,
+    pub stdin: Option<RemoteLspStdin>,
+    pub stdout: Option<RemoteLspStdout>,
+    pub stderr: Option<RemoteLspStderr>,
+}
+
+impl RemoteLspProcess {
     /// Waits for the process to terminate, returning the success status and an optional exit code
     pub async fn wait(self) -> io::Result<(bool, Option<i32>)> {
         self.inner.wait().await
