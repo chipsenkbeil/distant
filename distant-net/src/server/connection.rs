@@ -2,12 +2,9 @@ use crate::Id;
 use tokio::task::JoinHandle;
 
 /// Represents an individual connection on the server
-pub struct ServerConnection<T> {
+pub struct ServerConnection {
     /// Unique identifier tied to the connection
     pub id: Id,
-
-    /// Data associated with the connection
-    pub data: T,
 
     /// Task that is processing incoming requests from the connection
     pub(crate) reader_task: Option<JoinHandle<()>>,
@@ -16,19 +13,17 @@ pub struct ServerConnection<T> {
     pub(crate) writer_task: Option<JoinHandle<()>>,
 }
 
-impl<T: Default> Default for ServerConnection<T> {
+impl Default for ServerConnection {
     fn default() -> Self {
-        Self::new(T::default())
+        Self::new()
     }
 }
 
-impl<T> ServerConnection<T> {
-    /// Creates a new connection using provided data as default,
-    /// generating a unique id to represent the connection
-    pub fn new(data: T) -> Self {
+impl ServerConnection {
+    /// Creates a new connection, generating a unique id to represent the connection
+    pub fn new() -> Self {
         Self {
             id: rand::random(),
-            data,
             reader_task: None,
             writer_task: None,
         }

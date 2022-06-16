@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// Contains all top-level state for the server
-pub struct ServerState<T> {
+pub struct ServerState {
     /// Mapping of connection ids to their transports
-    pub connections: RwLock<HashMap<Id, ServerConnection<T>>>,
+    pub connections: RwLock<HashMap<Id, ServerConnection>>,
 }
 
-impl<T> ServerState<T> {
+impl ServerState {
     pub fn new() -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
@@ -16,7 +16,7 @@ impl<T> ServerState<T> {
     }
 }
 
-impl<T> Default for ServerState<T> {
+impl Default for ServerState {
     fn default() -> Self {
         Self::new()
     }

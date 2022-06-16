@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use log::*;
 use std::{collections::HashMap, io};
+use tokio::sync::RwLock;
 
 /// Server that handles authentication
 pub struct AuthServer<ChallengeFn, VerifyFn, InfoFn, ErrorFn>
@@ -32,7 +33,7 @@ where
 {
     type Request = Auth;
     type Response = Auth;
-    type LocalData = Option<XChaCha20Poly1305Codec>;
+    type LocalData = RwLock<Option<XChaCha20Poly1305Codec>>;
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         let reply = ctx.reply.clone();
@@ -42,10 +43,10 @@ where
                 let handshake = Handshake::default();
                 match handshake.handshake(public_key, salt) {
                     Ok(key) => {
-                        ctx.with_mut_local_data(move |data| {
-                            data.replace(XChaCha20Poly1305Codec::new(&key))
-                        })
-                        .await;
+                        ctx.local_data
+                            .write()
+                            .await
+                            .replace(XChaCha20Poly1305Codec::new(&key));
 
                         if let Err(x) = reply
                             .send(Auth::Handshake {
@@ -67,7 +68,7 @@ where
                 ref encrypted_payload,
             } => {
                 // Attempt to decrypt the message so we can understand what to do
-                let request = ctx.with_mut_local_data(move |codec| match codec {
+                let request = match ctx.local_data.write().await.as_mut() {
                     Some(codec) => {
                         let mut payload = BytesMut::from(encrypted_payload.as_slice());
                         match codec.decode(&mut payload) {
@@ -85,10 +86,10 @@ where
                         io::ErrorKind::Other,
                         "Handshake must be performed first",
                     )),
-                });
+                };
 
-                let response = match request.await {
-                    Some(Ok(request)) => match request {
+                let response = match request {
+                    Ok(request) => match request {
                         AuthRequest::Challenge { questions, extra } => {
                             let answers = (self.on_challenge)(questions, extra);
                             AuthResponse::Challenge { answers }
@@ -106,32 +107,23 @@ where
                             return;
                         }
                     },
-                    Some(Err(x)) => {
+                    Err(x) => {
                         error!("[Conn {}] {}", ctx.connection_id, x);
-                        return;
-                    }
-                    None => {
-                        error!(
-                            "[Conn {}] Key unavailable for decryption",
-                            ctx.connection_id
-                        );
                         return;
                     }
                 };
 
                 // Serialize and encrypt the message before sending it back
-                let encrypted_payload = ctx.with_mut_local_data(move |codec| match codec {
+                let encrypted_payload = match ctx.local_data.write().await.as_mut() {
                     Some(codec) => {
                         let mut encrypted_payload = BytesMut::new();
 
                         // Convert the response into bytes for us to send back
-                        let bytes = match utils::serialize_to_vec(&response) {
-                            Ok(x) => x,
-                            Err(x) => return Err(x),
-                        };
-
-                        match codec.encode(&bytes, &mut encrypted_payload) {
-                            Ok(_) => Ok(encrypted_payload.freeze().to_vec()),
+                        match utils::serialize_to_vec(&response) {
+                            Ok(bytes) => match codec.encode(&bytes, &mut encrypted_payload) {
+                                Ok(_) => Ok(encrypted_payload.freeze().to_vec()),
+                                Err(x) => Err(x),
+                            },
                             Err(x) => Err(x),
                         }
                     }
@@ -139,24 +131,17 @@ where
                         io::ErrorKind::Other,
                         "Handshake must be performed first",
                     )),
-                });
+                };
 
-                match encrypted_payload.await {
-                    Some(Ok(encrypted_payload)) => {
+                match encrypted_payload {
+                    Ok(encrypted_payload) => {
                         if let Err(x) = reply.send(Auth::Msg { encrypted_payload }).await {
                             error!("[Conn {}] {}", ctx.connection_id, x);
                             return;
                         }
                     }
-                    Some(Err(x)) => {
+                    Err(x) => {
                         error!("[Conn {}] {}", ctx.connection_id, x);
-                        return;
-                    }
-                    None => {
-                        error!(
-                            "[Conn {}] Key unavailable for decryption",
-                            ctx.connection_id
-                        );
                         return;
                     }
                 }

@@ -61,7 +61,7 @@ where
                 let server = Arc::clone(&server);
                 match listener.accept().await {
                     Ok((mut writer, mut reader)) => {
-                        let mut connection = ServerConnection::new(Data::default());
+                        let mut connection = ServerConnection::new();
                         let connection_id = connection.id;
 
                         let state = Arc::clone(&state);
@@ -81,8 +81,9 @@ where
 
                         // Start a reader task that reads requests and processes them
                         // using the provided handler
-                        let reader_state = Arc::clone(&state);
                         connection.reader_task = Some(tokio::spawn(async move {
+                            let local_data = Arc::new(Data::default());
+
                             loop {
                                 match reader.read().await {
                                     Ok(Some(request)) => {
@@ -95,7 +96,7 @@ where
                                             connection_id,
                                             request,
                                             reply: reply.clone(),
-                                            state: Arc::clone(&reader_state),
+                                            local_data: Arc::clone(&local_data),
                                         };
 
                                         server.on_request(ctx).await;

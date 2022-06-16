@@ -81,7 +81,7 @@ impl<T: DistantApi> Server for T {
             connection_id,
             request,
             reply,
-            state,
+            local_data,
         } = ctx;
 
         let ctx = DistantCtx {
