@@ -39,7 +39,7 @@ impl<T> ServerReply<T> {
         QueuedServerReply {
             inner: self,
             queue: Arc::new(Mutex::new(Vec::new())),
-            hold: Arc::new(AtomicBool::new(true)),
+            hold: Arc::new(Mutex::new(true)),
         }
     }
 }
@@ -52,7 +52,7 @@ impl<T> ServerReply<T> {
 pub struct QueuedServerReply<T> {
     inner: ServerReply<T>,
     queue: Arc<Mutex<Vec<T>>>,
-    hold: Arc<AtomicBool>,
+    hold: Arc<Mutex<bool>>,
 }
 
 impl<T> QueuedServerReply<T> {
@@ -60,12 +60,12 @@ impl<T> QueuedServerReply<T> {
     ///
     /// * If true, all messages are held until the queue is flushed
     /// * If false, messages are sent directly as they come in
-    pub fn hold(&self, hold: bool) {
-        self.hold.store(hold, Ordering::Relaxed);
+    pub async fn hold(&self, hold: bool) {
+        *self.hold.lock().await = hold;
     }
 
     pub async fn send(&self, data: T) -> io::Result<()> {
-        if self.hold.load(Ordering::Relaxed) {
+        if *self.hold.lock().await {
             self.queue.lock().await.push(data);
             Ok(())
         } else {
@@ -74,24 +74,22 @@ impl<T> QueuedServerReply<T> {
     }
 
     /// Sends all pending msgs queued up and clears the queue
-    pub async fn flush(&self) -> io::Result<()> {
-        // TODO: We need to lock access to send, specifically block when checking the
-        //       hold status as we want to avoid additional messages being queued
-        //       if we flush and want to remove the hold.
-        //
-        //       E.g. we flush, but in parallel a call to send goes out prior
-        //       to the hold getting cleared, and that send call is waiting at
-        //       `self.queue.lock().await`, which means when we go to clear the
-        //       hold after this, the message would go into the queue and not
-        //       be sent, so it would stay in the queue forever
-        //
-        //       Instead, we want to support flush clearing the hold, and the
-        //       hold access check needs to lock to prevent send from going
-        //       down the wrong path while we're flushing
+    ///
+    /// Additionally, takes `hold` to indicate whether or not new msgs
+    /// after the flush should continue to be held within the queue
+    /// or if all future msgs will be sent immediately
+    pub async fn flush(&self, hold: bool) -> io::Result<()> {
+        // Lock hold so we can ensure that nothing gets sent
+        // to the queue after we clear it
+        let mut hold_lock = self.hold.lock().await;
 
+        // Clear the queue by sending everything
         for data in self.queue.lock().await.drain(..) {
             self.inner.send(data).await?;
         }
+
+        // Update hold to
+        *hold_lock = hold;
 
         Ok(())
     }
