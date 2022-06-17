@@ -57,13 +57,11 @@ impl WatcherState {
         }
 
         self.watcher.replace();
-        let _ = state.watcher.insert(watcher);
 
         tokio::spawn(async move {
             while let Some(res) = rx.recv().await {
                 let is_ok = match res {
                     Ok(mut x) => {
-                        let mut state = state_2.lock().await;
                         let paths: Vec<_> = x.paths.drain(..).collect();
                         let kind = ChangeKind::from(x.kind);
 
@@ -109,7 +107,6 @@ impl WatcherState {
                         is_ok
                     }
                     Err(mut x) => {
-                        let mut state = state_2.lock().await;
                         let paths: Vec<_> = x.paths.drain(..).collect();
                         let msg = x.to_string();
 

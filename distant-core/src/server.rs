@@ -2932,52 +2932,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proc_list_should_send_proc_entry_list() {
-        let (conn_id, state, tx, mut rx) = setup(1);
-
-        // Run a process and get the list that includes that process
-        // at the same time (using sleep of 1 second)
-        let req = Request::new(
-            "test-tenant",
-            vec![
-                DistantRequestData::ProcSpawn {
-                    cmd: format!("{} {} 1", SCRIPT_RUNNER, SLEEP_SH),
-                    persist: false,
-                    pty: None,
-                },
-                DistantRequestData::ProcList {},
-            ],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 2, "Wrong payload size");
-
-        // Grab the id of the started process
-        let id = match &res.payload[0] {
-            DistantResponseData::ProcSpawned { id } => *id,
-            x => panic!("Unexpected response: {:?}", x),
-        };
-
-        // Verify our process shows up in our entry list
-        assert_eq!(
-            res.payload[1],
-            DistantResponseData::ProcEntries {
-                entries: vec![RunningProcess {
-                    cmd: SCRIPT_RUNNER.to_string(),
-                    args: vec![SLEEP_SH.to_str().unwrap().to_string(), String::from("1")],
-                    persist: false,
-                    pty: None,
-                    id,
-                }],
-            },
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
-    }
-
-    #[tokio::test]
     async fn system_info_should_send_system_info_based_on_binary() {
         let (conn_id, state, tx, mut rx) = setup(1);
 
