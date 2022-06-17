@@ -1,11 +1,5 @@
 use crate::{Id, Response};
-use std::{
-    io,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{io, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 
 /// Utility to send ad-hoc replies from the server back through the connection
@@ -64,9 +58,20 @@ impl<T> QueuedServerReply<T> {
         *self.hold.lock().await = hold;
     }
 
+    /// Send this message, adding it to a queue if holding messages
     pub async fn send(&self, data: T) -> io::Result<()> {
         if *self.hold.lock().await {
             self.queue.lock().await.push(data);
+            Ok(())
+        } else {
+            self.inner.send(data).await
+        }
+    }
+
+    /// Send this message before anything else in the queue
+    pub async fn send_before(&self, data: T) -> io::Result<()> {
+        if *self.hold.lock().await {
+            self.queue.lock().await.insert(0, data);
             Ok(())
         } else {
             self.inner.send(data).await

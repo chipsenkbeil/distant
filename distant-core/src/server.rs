@@ -233,6 +233,64 @@ impl DistantApi for DistantServer {
         }
     }
 
+    async fn copy(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        src: PathBuf,
+        dst: PathBuf,
+    ) -> io::Result<()> {
+        let src_metadata = tokio::fs::metadata(src.as_path()).await?;
+        if src_metadata.is_dir() {
+            // Create the destination directory first, regardless of if anything
+            // is in the source directory
+            tokio::fs::create_dir_all(dst.as_path()).await?;
+
+            for entry in WalkDir::new(src.as_path())
+                .min_depth(1)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| {
+                    e.file_type().is_file() || e.file_type().is_dir() || e.path_is_symlink()
+                })
+            {
+                let entry = entry?;
+
+                // Get unique portion of path relative to src
+                // NOTE: Because we are traversing files that are all within src, this
+                //       should always succeed
+                let local_src = entry.path().strip_prefix(src.as_path()).unwrap();
+
+                // Get the file without any directories
+                let local_src_file_name = local_src.file_name().unwrap();
+
+                // Get the directory housing the file
+                // NOTE: Because we enforce files/symlinks, there will always be a parent
+                let local_src_dir = local_src.parent().unwrap();
+
+                // Map out the path to the destination
+                let dst_parent_dir = dst.join(local_src_dir);
+
+                // Create the destination directory for the file when copying
+                tokio::fs::create_dir_all(dst_parent_dir.as_path()).await?;
+
+                let dst_path = dst_parent_dir.join(local_src_file_name);
+
+                // Perform copying from entry to destination (if a file/symlink)
+                if !entry.file_type().is_dir() {
+                    tokio::fs::copy(entry.path(), dst_path).await?;
+
+                // Otherwise, if a directory, create it
+                } else {
+                    tokio::fs::create_dir(dst_path).await?;
+                }
+            }
+        } else {
+            tokio::fs::copy(src, dst).await?;
+        }
+
+        Ok(())
+    }
+
     async fn rename(
         &self,
         _ctx: DistantCtx<Self::LocalData>,
@@ -266,12 +324,12 @@ impl DistantApi for DistantServer {
                 )?;
                 debug!("[Conn {}] Now watching {:?}", conn_id, wp.path());
                 state.watcher_paths.insert(wp, Box::new(reply));
-                Ok(Outgoing::from(DistantResponseData::Ok))
+                Ok(())
             }
-            None => Err(ServerError::Io(io::Error::new(
+            None => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 format!("[Conn {}] Unable to initialize watcher", conn_id),
-            ))),
+            )),
         }
     }
 
@@ -311,9 +369,9 @@ impl DistantApi for DistantServer {
         size: PtySize,
     ) -> io::Result<()>;
 
-    async fn proc_list(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<()>;
+    async fn proc_list(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Vec<RunningProcess>>;
 
-    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<()>;
+    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo>;
 }
 
 async fn copy(src: PathBuf, dst: PathBuf) -> Result<Outgoing, ServerError> {
