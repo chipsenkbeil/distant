@@ -21,6 +21,10 @@ impl WatcherState {
     }
 
     pub async fn initialize(&mut self) {
+        if self.is_initialized() {
+            return;
+        }
+
         // NOTE: Cannot be something small like 1 as this seems to cause a deadlock sometimes
         //       with a large volume of watch requests
         let (tx, mut rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
@@ -52,6 +56,7 @@ impl WatcherState {
             Err(x) => error!("Watcher configuration for notice events failed: {}", x),
         }
 
+        self.watcher.replace();
         let _ = state.watcher.insert(watcher);
 
         tokio::spawn(async move {

@@ -1,5 +1,5 @@
 use crate::{
-    data::{ChangeKind, DirEntry, Error, Metadata, PtySize, RunningProcess, SystemInfo},
+    data::{ChangeKind, DirEntry, Error, Metadata, PtySize, SystemInfo},
     DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
@@ -20,6 +20,15 @@ where
     T: DistantApi<LocalData = D>,
 {
     api: T,
+}
+
+impl<T, D> DistantApiServer<T, D>
+where
+    T: DistantApi<LocalData = D>,
+{
+    pub fn new(api: T) -> Self {
+        Self { api }
+    }
 }
 
 /// Interface to support the suite of functionality available with distant,
@@ -132,7 +141,6 @@ pub trait DistantApi {
         id: usize,
         size: PtySize,
     ) -> io::Result<()>;
-    async fn proc_list(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Vec<RunningProcess>>;
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo>;
 }
 
@@ -294,12 +302,6 @@ where
                 .proc_resize_pty(ctx, id, size)
                 .await
                 .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::ProcList {} => self
-                .api
-                .proc_list(ctx)
-                .await
-                .map(|entries| DistantResponseData::ProcEntries { entries })
                 .unwrap_or_else(DistantResponseData::from),
             DistantRequestData::SystemInfo {} => self
                 .api
