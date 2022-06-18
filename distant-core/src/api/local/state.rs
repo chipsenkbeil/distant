@@ -4,9 +4,6 @@ use tokio::sync::{Mutex, RwLock};
 mod connection;
 pub use connection::*;
 
-mod process;
-pub use process::*;
-
 mod watcher;
 pub use watcher::*;
 

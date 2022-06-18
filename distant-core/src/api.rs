@@ -1,6 +1,7 @@
 use crate::{
+    api::local::ConnectionState,
     data::{ChangeKind, DirEntry, Error, Metadata, PtySize, SystemInfo},
-    ConnectionState, DistantRequestData, DistantResponseData,
+    DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
 use distant_net::{QueuedServerReply, Server, ServerCtx};
