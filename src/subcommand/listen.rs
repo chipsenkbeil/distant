@@ -4,7 +4,7 @@ use crate::{
 };
 use derive_more::{Display, Error, From};
 use distant_core::{
-    DistantServer, DistantServerOptions, SecretKey32, UnprotectedToHexKey, XChaCha20Poly1305Codec,
+    DistantServerOptions, LocalDistantApi, SecretKey32, UnprotectedToHexKey, XChaCha20Poly1305Codec,
 };
 use log::*;
 use tokio::{
@@ -114,7 +114,7 @@ async fn run_async(cmd: ListenSubcommand, _opt: CommonOpt, is_forked: bool) -> R
     let key_hex_string = key.unprotected_to_hex_key();
     let codec = XChaCha20Poly1305Codec::from(key);
 
-    let (server, port) = DistantServer::bind(
+    let (server, port) = LocalDistantApi::bind(
         addr,
         cmd.port,
         codec,

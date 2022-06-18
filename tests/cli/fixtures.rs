@@ -44,7 +44,7 @@ impl DistantServerCtx {
                     let key_hex_string = key.unprotected_to_hex_key();
                     let codec = XChaCha20Poly1305Codec::from(key);
                     let (_server, port) =
-                        DistantServer::bind(ip_addr, "0".parse().unwrap(), codec, opts)
+                        LocalDistantApi::bind(ip_addr, "0".parse().unwrap(), codec, opts)
                             .await
                             .unwrap();
 

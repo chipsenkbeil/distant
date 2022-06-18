@@ -1,11 +1,14 @@
 use crate::{
     data::{ChangeKind, DirEntry, Error, Metadata, PtySize, SystemInfo},
-    DistantRequestData, DistantResponseData,
+    ConnectionState, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
 use distant_net::{QueuedServerReply, Server, ServerCtx};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
+
+mod local;
+pub use local::LocalDistantApi;
 
 /// Represents the context provided to the [`DistantApi`] for incoming requests
 pub struct DistantCtx<T> {
@@ -28,6 +31,12 @@ where
 {
     pub fn new(api: T) -> Self {
         Self { api }
+    }
+}
+
+impl Default for DistantApiServer<LocalDistantApi, ConnectionState> {
+    fn default() -> Self {
+        Self::new(LocalDistantApi::new())
     }
 }
 

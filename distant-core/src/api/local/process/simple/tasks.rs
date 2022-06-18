@@ -1,6 +1,7 @@
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS};
+use std::io;
 use tokio::{
-    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
     task::JoinHandle,
 };

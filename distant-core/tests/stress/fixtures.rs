@@ -1,5 +1,5 @@
 use crate::stress::utils;
-use distant_core::{DistantServer, SecretKey, SecretKey32, Session, XChaCha20Poly1305Codec};
+use distant_core::{LocalDistantApi, SecretKey, SecretKey32, Session, XChaCha20Poly1305Codec};
 use rstest::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -22,7 +22,7 @@ impl DistantSessionCtx {
             let key = SecretKey::default();
             let codec = XChaCha20Poly1305Codec::from(key.clone());
             let (_server, port) =
-                DistantServer::bind(ip_addr, "0".parse().unwrap(), codec, Default::default())
+                LocalDistantApi::bind(ip_addr, "0".parse().unwrap(), codec, Default::default())
                     .await
                     .unwrap();
 
