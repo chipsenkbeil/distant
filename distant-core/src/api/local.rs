@@ -308,13 +308,17 @@ impl DistantApi for LocalDistantApi {
     ) -> io::Result<()> {
         let only = only.into_iter().collect::<ChangeKindSet>();
         let except = except.into_iter().collect::<ChangeKindSet>();
+        let path = RegisteredPath::register(
+            ctx.connection_id,
+            path.as_path(),
+            recursive,
+            only,
+            except,
+            ctx.reply,
+        )
+        .await?;
 
-        self.state
-            .watcher
-            .lock()
-            .await
-            .watch(path.as_path(), recursive, only, except, ctx.reply)
-            .await?;
+        self.state.watcher.lock().await.watch(path).await?;
 
         debug!("[Conn {}] Now watching {:?}", ctx.connection_id, path);
         Ok(())
@@ -325,7 +329,7 @@ impl DistantApi for LocalDistantApi {
             .watcher
             .lock()
             .await
-            .unwrap(path.as_path())
+            .unwrap(ctx.connection_id, path.as_path())
             .await?;
         debug!("[Conn {}] No longer watching {:?}", ctx.connection_id, path);
         Ok(())

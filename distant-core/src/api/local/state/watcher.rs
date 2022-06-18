@@ -22,9 +22,9 @@ use tokio::sync::{
     Mutex,
 };
 
-type PathMap = Mutex<HashMap<PathBuf, Vec<RegisteredPath>>>;
-type StrongPathMap = Arc<PathMap>;
-type WeakPathMap = Weak<PathMap>;
+type PathCntMap = Mutex<HashMap<PathBuf, usize>>;
+type StrongPathCntMap = Arc<PathCntMap>;
+type WeakPathCntMap = Weak<PathCntMap>;
 
 pub struct WatcherState {
     // NOTE: I think the design of the watcher will only spawn a thread once
@@ -33,8 +33,8 @@ pub struct WatcherState {
     //       created and not worry about causing unexpected threads
     watcher: RecommendedWatcher,
 
-    /// Mapping of path -> [registered path]
-    paths: StrongPathMap,
+    /// Mapping of path -> total registered paths
+    path_cnt: StrongPathCntMap,
 }
 
 impl WatcherState {
@@ -72,30 +72,32 @@ impl WatcherState {
             Err(x) => error!("Watcher configuration for notice events failed: {}", x),
         }
 
-        let paths = Arc::new(Mutex::new(HashMap::new()));
-        let weak_paths = Arc::downgrade(&paths);
-        tokio::spawn(watcher_task(rx, weak_paths));
+        let path_cnt = Arc::new(Mutex::new(HashMap::new()));
+        let weak_path_cnt = Arc::downgrade(&path_cnt);
+        tokio::spawn(watcher_event_task(rx, weak_path_cnt));
 
-        Ok(Self { watcher, paths })
+        Ok(Self { watcher, path_cnt })
     }
 
-    fn spawn_watcher_channel(
-        mut rx: mpsc::Receiver<Result<WatcherEvent, WatcherError>>,
-        paths: WeakPathMap,
-    ) {
-        tokio::spawn(async move {});
+    pub async fn watch(&self, path: RegisteredPath) -> io::Result<()> {
+        self.watcher.watch()
+    }
+
+    pub async fn unwatch(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let path = tokio::fs::canonicalize(path.as_ref())
+            .await
+            .unwrap_or_else(|_| path.as_ref().to_path_buf());
+
+        if let Some(cnt) = self.path_cnt.lock().await.get_mut(&path) {
+            // No more paths, so we want to remove entirely
+            if cnt == 0 || cnt - 1 == 0 {}
+        }
     }
 }
 
-struct WatcherPathMatch {
-    pub only: ChangeKindSet,
-    pub except: ChangeKindSet,
-    pub reply: QueuedServerReply<DistantResponseData>,
-}
-
-async fn watcher_task(
+async fn watcher_event_task(
     mut rx: mpsc::Receiver<Result<WatcherEvent, WatcherError>>,
-    paths: WeakPathMap,
+    path_cnt: WeakPathCntMap,
 ) {
     while let Some(res) = rx.recv().await {
         let is_ok = match res {
@@ -103,15 +105,13 @@ async fn watcher_task(
                 let ev_paths: Vec<_> = x.paths.drain(..).collect();
                 let kind = ChangeKind::from(x.kind);
 
-                fn make_res_data(kind: ChangeKind, paths: &[&PathBuf]) -> DistantResponseData {
-                    DistantResponseData::Changed(Change {
-                        kind,
-                        paths: paths.iter().map(|p| p.to_path_buf()).collect(),
-                    })
-                }
-
                 let results = find_matches(&paths, &ev_paths).await;
                 let mut is_ok = true;
+                if let Some(path_cnt) = Weak::upgrade(&path_cnt) {
+                    for path in paths {
+                        path
+                    }
+                }
 
                 for (paths, wp) in results {
                     // Skip sending this change if we are not watching it
@@ -135,14 +135,6 @@ async fn watcher_task(
                 let msg = x.to_string();
 
                 error!("Watcher encountered an error {} for {:?}", msg, ev_paths);
-
-                fn make_res_data(msg: &str, paths: &[&PathBuf]) -> DistantResponseData {
-                    if paths.is_empty() {
-                        DistantResponseData::Error(msg.into())
-                    } else {
-                        DistantResponseData::Error(format!("{} about {:?}", msg, paths).into())
-                    }
-                }
 
                 let mut is_ok = true;
 
@@ -184,38 +176,4 @@ async fn watcher_task(
             break;
         }
     }
-}
-
-/// Given a collection of paths, finds all of the paths that map to a given reply
-/// and returns a list of paths -> sender
-async fn find_matches<'a>(
-    watcher_paths: &WeakPathMap,
-    paths: &'a [PathBuf],
-) -> Vec<(Vec<&'a PathBuf>, WatcherPathMatch)> {
-    let mut results = Vec::new();
-
-    if let Some(watcher_paths) = Weak::upgrade(&watcher_paths) {
-        for paths in watcher_paths.lock().await.values_mut() {
-            for path in paths {
-                let mut wp_paths = Vec::new();
-                for reg_path in paths {
-                    if reg_path.applies_to_path(path) {
-                        wp_paths.push(path);
-                    }
-                }
-                if !wp_paths.is_empty() {
-                    results.push((
-                        wp_paths,
-                        WatcherPathMatch {
-                            only: reg_path.only().clone(),
-                            except: reg_path.except().clone(),
-                            reply: reg_path.reply().clone(),
-                        },
-                    ));
-                }
-            }
-        }
-    }
-
-    results
 }

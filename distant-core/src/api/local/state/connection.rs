@@ -5,7 +5,7 @@ use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     io,
     path::Path,
-    sync::Weak,
+    sync::{Arc, Weak},
 };
 
 mod path;
@@ -31,6 +31,8 @@ impl ConnectionState {
     pub async fn watch(&mut self, path: RegisteredPath) -> io::Result<()> {
         let global_state = Weak::upgrade(&self.global_state)
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Global state is unavailable"))?;
+
+        let path = Arc::new(path);
 
         global_state.watcher.lock().await.watch(
             path.path(),

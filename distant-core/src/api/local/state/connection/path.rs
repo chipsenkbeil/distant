@@ -11,6 +11,9 @@ use std::{
 /// the ability to reply with
 #[derive(Clone)]
 pub struct RegisteredPath {
+    /// Unique id tied to the path to distinguish it
+    id: usize,
+
     /// The raw path provided to the watcher, which is not canonicalized
     raw_path: PathBuf,
 
@@ -63,6 +66,7 @@ impl Hash for RegisteredPath {
 impl RegisteredPath {
     /// Registers a new path to be watched (does not actually do any watching)
     pub async fn register(
+        id: usize,
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
@@ -74,6 +78,7 @@ impl RegisteredPath {
         let only = only.into();
         let except = except.into();
         Ok(Self {
+            id,
             raw_path,
             path,
             recursive,
@@ -81,6 +86,12 @@ impl RegisteredPath {
             except,
             reply,
         })
+    }
+
+    /// Represents a unique id to distinguish this path from other registrations
+    /// of the same path
+    pub fn id(&self) -> usize {
+        self.id
     }
 
     /// Represents the path provided during registration before canonicalization
@@ -130,8 +141,16 @@ impl RegisteredPath {
         }
     }
 
-    /// Sends an error message an includes paths if provided
-    pub async fn send_error<T>(&self, msg: &str, paths: T) -> io::Result<()>
+    /// Sends an error message and includes paths if provided, skipping sending the message if
+    /// no paths provided and `skip_if_no_paths` is true
+    ///
+    /// Returns true if message was sent, and false if not
+    pub async fn filter_and_send_error<T>(
+        &self,
+        msg: &str,
+        paths: T,
+        skip_if_no_paths: bool,
+    ) -> io::Result<bool>
     where
         T: IntoIterator,
         T::Item: AsRef<Path>,
@@ -142,13 +161,18 @@ impl RegisteredPath {
             .map(|p| p.as_ref().to_path_buf())
             .collect();
 
-        self.reply
-            .send(if paths.is_empty() {
-                DistantResponseData::Error(Error::from(msg))
-            } else {
-                DistantResponseData::Error(Error::from(format!("{} about {:?}", msg, paths)))
-            })
-            .await
+        if !paths.is_empty() || !skip_if_no_paths {
+            self.reply
+                .send(if paths.is_empty() {
+                    DistantResponseData::Error(Error::from(msg))
+                } else {
+                    DistantResponseData::Error(Error::from(format!("{} about {:?}", msg, paths)))
+                })
+                .await
+                .map(|_| true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Returns true if this path applies to the given path.
