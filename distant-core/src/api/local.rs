@@ -340,7 +340,7 @@ impl DistantApi for LocalDistantApi {
 
     async fn metadata(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        _ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -356,181 +356,20 @@ impl DistantApi for LocalDistantApi {
         pty: Option<PtySize>,
     ) -> io::Result<usize> {
         debug!("[Conn {}] Spawning {}", ctx.connection_id, cmd);
-
-        // Build out the command and args from our string
-        let (cmd, args) = match cmd.split_once(" ") {
-            Some((cmd_str, args_str)) => (
-                cmd.to_string(),
-                args_str.split(" ").map(ToString::to_string).collect(),
-            ),
-            None => (cmd, Vec::new()),
-        };
-
-        let mut child: Box<dyn Process> = match pty {
-            Some(size) => Box::new(PtyProcess::spawn(cmd.clone(), args.clone(), size)?),
-            None => Box::new(SimpleProcess::spawn(cmd.clone(), args.clone())?),
-        };
-
-        let id = child.id();
-        let stdin = child.take_stdin();
-        let stdout = child.take_stdout();
-        let stderr = child.take_stderr();
-        let killer = child.clone_killer();
-        let pty = child.clone_pty();
-
-        let state_2 = Arc::clone(&state);
-        let post_hook = Box::new(move || {
-            // Spawn a task that sends stdout as a response
-            if let Some(mut stdout) = stdout {
-                let mut reply_2 = reply.clone();
-                let _ = tokio::spawn(async move {
-                    loop {
-                        match stdout.recv().await {
-                            Ok(Some(data)) => {
-                                let payload = vec![DistantResponseData::ProcStdout { id, data }];
-                                if !reply_2(payload).await {
-                                    error!(
-                                        "<Conn @ {} | Proc {}> Stdout channel closed",
-                                        conn_id, id
-                                    );
-                                    break;
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(x) => {
-                                error!(
-                                    "<Conn @ {} | Proc {}> Reading stdout failed: {}",
-                                    conn_id, id, x
-                                );
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Spawn a task that sends stderr as a response
-            if let Some(mut stderr) = stderr {
-                let mut reply_2 = reply.clone();
-                let _ = tokio::spawn(async move {
-                    loop {
-                        match stderr.recv().await {
-                            Ok(Some(data)) => {
-                                let payload = vec![DistantResponseData::ProcStderr { id, data }];
-                                if !reply_2(payload).await {
-                                    error!(
-                                        "<Conn @ {} | Proc {}> Stderr channel closed",
-                                        conn_id, id
-                                    );
-                                    break;
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(x) => {
-                                error!(
-                                    "<Conn @ {} | Proc {}> Reading stderr failed: {}",
-                                    conn_id, id, x
-                                );
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Spawn a task that waits on the process to exit but can also
-            // kill the process when triggered
-            let mut reply_2 = reply.clone();
-            let _ = tokio::spawn(async move {
-                let status = child.wait().await;
-                debug!("<Conn @ {} | Proc {}> Completed {:?}", conn_id, id, status);
-
-                state_2.lock().await.remove_process(conn_id, id);
-
-                match status {
-                    Ok(status) => {
-                        let payload = vec![DistantResponseData::ProcDone {
-                            id,
-                            success: status.success,
-                            code: status.code,
-                        }];
-                        if !reply_2(payload).await {
-                            error!("<Conn @ {} | Proc {}> Failed to send done", conn_id, id,);
-                        }
-                    }
-                    Err(x) => {
-                        let payload = vec![DistantResponseData::from(x)];
-                        if !reply_2(payload).await {
-                            error!(
-                                "<Conn @ {} | Proc {}> Failed to send error for waiting",
-                                conn_id, id,
-                            );
-                        }
-                    }
-                }
-            });
-        });
-
-        state.lock().await.push_process_state(
-            conn_id,
-            ProcessState {
-                cmd,
-                args,
-                persist,
-                id,
-                stdin,
-                killer,
-                pty,
-            },
-        );
-
-        debug!(
-            "<Conn @ {} | Proc {}> Spawned successfully! Will enter post hook later",
-            conn_id, id
-        );
-        Ok(Outgoing {
-            data: DistantResponseData::ProcSpawned { id },
-            post_hook: Some(post_hook),
-        })
+        self.state.process.spawn(cmd, persist, pty, ctx.reply).await
     }
 
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
-        if let Some(mut process) = state.lock().await.processes.remove(&id) {
-            if process.killer.kill().await.is_ok() {
-                return Ok(Outgoing::from(DistantResponseData::Ok));
-            }
-        }
-
-        Err(ServerError::Io(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!(
-                "<Conn @ {} | Proc {}> Unable to send kill signal to process",
-                conn_id, id
-            ),
-        )))
+    async fn proc_kill(&self, _ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+        self.state.process.kill(id).await
     }
 
     async fn proc_stdin(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        _ctx: DistantCtx<Self::LocalData>,
         id: usize,
         data: Vec<u8>,
     ) -> io::Result<()> {
-        if let Some(process) = state.lock().await.processes.get_mut(&id) {
-            if let Some(stdin) = process.stdin.as_mut() {
-                if stdin.send(&data).await.is_ok() {
-                    return Ok(Outgoing::from(DistantResponseData::Ok));
-                }
-            }
-        }
-
-        Err(ServerError::Io(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!(
-                "<Conn @ {} | Proc {}> Unable to send stdin to process",
-                conn_id, id,
-            ),
-        )))
+        self.state.process.send_stdin(id, data).await
     }
 
     async fn proc_resize_pty(
@@ -539,19 +378,7 @@ impl DistantApi for LocalDistantApi {
         id: usize,
         size: PtySize,
     ) -> io::Result<()> {
-        if let Some(process) = ctx.local_data.processes.lock().await.get(&id) {
-            let _ = process.pty.resize_pty(size)?;
-
-            return Ok(Outgoing::from(DistantResponseData::Ok));
-        }
-
-        Err(ServerError::Io(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!(
-                "<Conn @ {} | Proc {}> Unable to resize pty to {:?}",
-                conn_id, id, size,
-            ),
-        )))
+        self.state.process.resize_pty(id, size).await
     }
 
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {

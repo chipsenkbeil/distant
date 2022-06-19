@@ -7,6 +7,7 @@ use notify::{
 use std::{
     collections::HashMap,
     io,
+    ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
 };
@@ -26,7 +27,7 @@ type StrongPathMap = Arc<PathMap>;
 type WeakPathMap = Weak<PathMap>;
 
 pub struct WatcherState {
-    tx: mpsc::Sender<InnerWatcherMsg>,
+    channel: WatcherChannel,
     task: JoinHandle<()>,
 }
 
@@ -74,11 +75,35 @@ impl WatcherState {
         }
 
         Ok(Self {
-            tx,
+            channel: WatcherChannel { tx },
             task: tokio::spawn(watcher_task(watcher, rx)),
         })
     }
 
+    pub fn clone_channel(&self) -> WatcherChannel {
+        self.channel.clone()
+    }
+
+    /// Aborts the watcher task
+    pub fn abort(&self) {
+        self.task.abort();
+    }
+}
+
+impl Deref for WatcherState {
+    type Target = WatcherChannel;
+
+    fn deref(&self) -> &Self::Target {
+        &self.channel
+    }
+}
+
+#[derive(Clone)]
+pub struct WatcherChannel {
+    tx: mpsc::Sender<InnerWatcherMsg>,
+}
+
+impl WatcherChannel {
     /// Watch a path for a specific connection denoted by the id within the registered path
     pub async fn watch(&self, registered_path: RegisteredPath) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
@@ -107,11 +132,6 @@ impl WatcherState {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal watcher task closed"))?;
         rx.await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to unwatch dropped"))?
-    }
-
-    /// Aborts the watcher task
-    pub fn abort(&self) {
-        self.task.abort();
     }
 }
 

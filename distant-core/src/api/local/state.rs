@@ -1,5 +1,4 @@
-use std::{collections::HashMap, io};
-use tokio::sync::RwLock;
+use std::io;
 
 mod process;
 pub use process::*;
@@ -9,8 +8,8 @@ pub use watcher::*;
 
 /// Holds global state state managed by the server
 pub struct GlobalState {
-    /// Map of all processes running on the server by their id
-    pub processes: RwLock<HashMap<usize, ProcessState>>,
+    /// State that holds information about processes running on the server
+    pub process: ProcessState,
 
     /// Watcher used for filesystem events
     pub watcher: WatcherState,
@@ -19,7 +18,7 @@ pub struct GlobalState {
 impl GlobalState {
     pub fn initialize() -> io::Result<Self> {
         Ok(Self {
-            processes: RwLock::new(HashMap::new()),
+            process: ProcessState::new(),
             watcher: WatcherState::initialize()?,
         })
     }
