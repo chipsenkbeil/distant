@@ -1,7 +1,7 @@
 use derive_more::{Display, Error};
 use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
-use std::{num::ParseIntError, str::FromStr};
+use std::{fmt, num::ParseIntError, str::FromStr};
 
 /// Represents the size associated with a remote PTY
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +51,20 @@ impl From<PtySize> for PortablePtySize {
             pixel_width: size.pixel_width,
             pixel_height: size.pixel_height,
         }
+    }
+}
+
+impl fmt::Display for PtySize {
+    /// Prints out `rows,cols[,pixel_width,pixel_height]` where the
+    /// pixel width and pixel height are only included if either
+    /// one of them is not zero
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{},{}", self.rows, self.cols)?;
+        if self.pixel_width > 0 || self.pixel_height > 0 {
+            write!(f, ",{},{}", self.pixel_width, self.pixel_height)?;
+        }
+
+        Ok(())
     }
 }
 

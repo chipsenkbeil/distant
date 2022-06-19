@@ -1,8 +1,5 @@
 use crate::{
-    data::{
-        ChangeKind, ChangeKindSet, DirEntry, DistantResponseData, FileType, Metadata, PtySize,
-        SystemInfo,
-    },
+    data::{ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, PtySize, SystemInfo},
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
@@ -10,13 +7,11 @@ use log::*;
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 mod process;
-use process::*;
 
 mod state;
 pub use state::ConnectionState;
@@ -45,44 +40,69 @@ impl DistantApi for LocalDistantApi {
 
     async fn read_file(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
     ) -> io::Result<Vec<u8>> {
+        debug!(
+            "[Conn {}] Reading bytes from file {:?}",
+            ctx.connection_id, path
+        );
+
         tokio::fs::read(path).await
     }
 
     async fn read_file_text(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
     ) -> io::Result<String> {
+        debug!(
+            "[Conn {}] Reading text from file {:?}",
+            ctx.connection_id, path
+        );
+
         tokio::fs::read_to_string(path).await
     }
 
     async fn write_file(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: Vec<u8>,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Writing bytes to file {:?}",
+            ctx.connection_id, path
+        );
+
         tokio::fs::write(path, data).await
     }
 
     async fn write_file_text(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Writing text to file {:?}",
+            ctx.connection_id, path
+        );
+
         tokio::fs::write(path, data).await
     }
 
     async fn append_file(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: Vec<u8>,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Appending bytes to file {:?}",
+            ctx.connection_id, path
+        );
+
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -97,6 +117,11 @@ impl DistantApi for LocalDistantApi {
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Appending text to file {:?}",
+            ctx.connection_id, path
+        );
+
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -107,13 +132,18 @@ impl DistantApi for LocalDistantApi {
 
     async fn read_dir(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         depth: usize,
         absolute: bool,
         canonicalize: bool,
         include_root: bool,
     ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
+        debug!(
+            "[Conn {}] Reading directory {:?} {{depth: {}, absolute: {}, canonicalize: {}, include_root: {}}}",
+            ctx.connection_id, path, depth, absolute, canonicalize, include_root
+        );
+
         // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
         let root_path = tokio::fs::canonicalize(path).await?;
 
@@ -197,10 +227,14 @@ impl DistantApi for LocalDistantApi {
 
     async fn create_dir(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         all: bool,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Creating directory {:?} {{all: {}}}",
+            ctx.connection_id, path, all
+        );
         if all {
             tokio::fs::create_dir_all(path).await
         } else {
@@ -210,10 +244,14 @@ impl DistantApi for LocalDistantApi {
 
     async fn remove(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         force: bool,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Removing {:?} {{force: {}}}",
+            ctx.connection_id, path, force
+        );
         let path_metadata = tokio::fs::metadata(path.as_path()).await?;
         if path_metadata.is_dir() {
             if force {
@@ -228,10 +266,14 @@ impl DistantApi for LocalDistantApi {
 
     async fn copy(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         src: PathBuf,
         dst: PathBuf,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Copying {:?} to {:?}",
+            ctx.connection_id, src, dst
+        );
         let src_metadata = tokio::fs::metadata(src.as_path()).await?;
         if src_metadata.is_dir() {
             // Create the destination directory first, regardless of if anything
@@ -286,10 +328,14 @@ impl DistantApi for LocalDistantApi {
 
     async fn rename(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         src: PathBuf,
         dst: PathBuf,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Renaming {:?} to {:?}",
+            ctx.connection_id, src, dst
+        );
         tokio::fs::rename(src, dst).await
     }
 
@@ -303,6 +349,11 @@ impl DistantApi for LocalDistantApi {
     ) -> io::Result<()> {
         let only = only.into_iter().collect::<ChangeKindSet>();
         let except = except.into_iter().collect::<ChangeKindSet>();
+        debug!(
+            "[Conn {}] Watching {:?} {{recursive: {}, only: {}, except: {}}}",
+            ctx.connection_id, path, recursive, only, except
+        );
+
         let path = RegisteredPath::register(
             ctx.connection_id,
             path.as_path(),
@@ -315,20 +366,22 @@ impl DistantApi for LocalDistantApi {
 
         self.state.watcher.watch(path).await?;
 
-        debug!("[Conn {}] Now watching {:?}", ctx.connection_id, path);
         Ok(())
     }
 
     async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
+        debug!("[Conn {}] Unwatching {:?}", ctx.connection_id, path);
+
         self.state
             .watcher
             .unwatch(ctx.connection_id, path.as_path())
             .await?;
-        debug!("[Conn {}] No longer watching {:?}", ctx.connection_id, path);
         Ok(())
     }
 
     async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
+        debug!("[Conn {}] Checking if {:?} exists", ctx.connection_id, path);
+
         // Following experimental `std::fs::try_exists`, which checks the error kind of the
         // metadata lookup to see if it is not found and filters accordingly
         match tokio::fs::metadata(path.as_path()).await {
@@ -340,11 +393,15 @@ impl DistantApi for LocalDistantApi {
 
     async fn metadata(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> io::Result<Metadata> {
+        debug!(
+            "[Conn {}] Reading metadata for {:?} {{canonicalize: {}, resolve_file_type: {}}}",
+            ctx.connection_id, path, canonicalize, resolve_file_type
+        );
         Metadata::read(path, canonicalize, resolve_file_type).await
     }
 
@@ -355,20 +412,28 @@ impl DistantApi for LocalDistantApi {
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<usize> {
-        debug!("[Conn {}] Spawning {}", ctx.connection_id, cmd);
+        debug!(
+            "[Conn {}] Spawning {} {{persist: {}, pty: {:?}}}",
+            ctx.connection_id, cmd, persist, pty
+        );
         self.state.process.spawn(cmd, persist, pty, ctx.reply).await
     }
 
-    async fn proc_kill(&self, _ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+        debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
         self.state.process.kill(id).await
     }
 
     async fn proc_stdin(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx<Self::LocalData>,
         id: usize,
         data: Vec<u8>,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Sending stdin to process {}",
+            ctx.connection_id, id
+        );
         self.state.process.send_stdin(id, data).await
     }
 
@@ -378,6 +443,10 @@ impl DistantApi for LocalDistantApi {
         id: usize,
         size: PtySize,
     ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Resizing pty of process {} to {}",
+            ctx.connection_id, id, size
+        );
         self.state.process.resize_pty(id, size).await
     }
 
