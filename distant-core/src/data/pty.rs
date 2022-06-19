@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, num::ParseIntError, str::FromStr};
 
 /// Represents the size associated with a remote PTY
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PtySize {
     /// Number of lines of text
     pub rows: u16,

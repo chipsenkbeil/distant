@@ -38,7 +38,11 @@ where
 /// which can be used to build other servers that are compatible with distant
 #[async_trait]
 pub trait DistantApi {
-    type LocalData;
+    type LocalData: Send + Sync;
+
+    async fn on_connection(&self, local_data: Self::LocalData) -> Self::LocalData {
+        local_data
+    }
 
     async fn read_file(
         &self,
@@ -151,11 +155,16 @@ pub trait DistantApi {
 impl<T, D> Server for DistantApiServer<T, D>
 where
     T: DistantApi<LocalData = D> + Send + Sync,
-    D: Default + Send + Sync,
+    D: Send + Sync,
 {
     type Request = DistantRequestData;
     type Response = DistantResponseData;
     type LocalData = D;
+
+    /// Overridden to leverage [`DistantApi`] implementation of `on_connection`
+    async fn on_connection(&self, local_data: Self::LocalData) -> Self::LocalData {
+        T::on_connection(&self.api, local_data).await
+    }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         let ServerCtx {
@@ -165,7 +174,10 @@ where
             local_data,
         } = ctx;
 
+        // Convert our reply to a queued reply so we can ensure that the result
+        // of an API function is sent back before anything else
         let reply = reply.queue();
+
         let ctx = DistantCtx {
             connection_id,
             reply: reply.clone(),
@@ -314,8 +326,13 @@ where
                 .unwrap_or_else(DistantResponseData::from),
         };
 
+        // Report outgoing errors in our debug logs
+        if let DistantResponseData::Error(x) = &response {
+            debug!("[Conn {}] {}", connection_id, x);
+        }
+
         // Queue up our result to go before ANY of the other messages that might be sent.
-        // This is important to avoid situations where a process is started, but before
+        // This is important to avoid situations such as when a process is started, but before
         // the confirmation can be sent some stdout or stderr is captured and sent first.
         if let Err(x) = reply.send_before(response).await {
             error!("[Conn {}] Failed to send response: {}", connection_id, x);

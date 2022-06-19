@@ -6,7 +6,8 @@ use crate::{
 };
 use distant_net::QueuedServerReply;
 use log::*;
-use std::io;
+use std::{future::Future, io};
+use tokio::task::JoinHandle;
 
 /// Holds information related to a spawned process on the server
 pub struct ProcessInstance {
@@ -18,6 +19,10 @@ pub struct ProcessInstance {
     pub stdin: Option<Box<dyn InputChannel>>,
     pub killer: Box<dyn ProcessKiller>,
     pub pty: Box<dyn ProcessPty>,
+
+    stdout_task: Option<JoinHandle<io::Result<()>>>,
+    stderr_task: Option<JoinHandle<io::Result<()>>>,
+    wait_task: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl Drop for ProcessInstance {
@@ -67,20 +72,30 @@ impl ProcessInstance {
         let pty = child.clone_pty();
 
         // Spawn a task that sends stdout as a response
-        if let Some(stdout) = stdout {
-            let reply = reply.clone();
-            let _ = tokio::spawn(async move { stdout_task(id, stdout, reply).await });
-        }
+        let stdout_task = match stdout {
+            Some(stdout) => {
+                let reply = reply.clone();
+                let task = tokio::spawn(async move { stdout_task(id, stdout, reply).await });
+                Some(task)
+            }
+            None => None,
+        };
 
         // Spawn a task that sends stderr as a response
-        if let Some(stderr) = stderr {
-            let reply = reply.clone();
-            let _ = tokio::spawn(async move { stderr_task(id, stderr, reply).await });
-        }
+        let stderr_task = match stderr {
+            Some(stderr) => {
+                let reply = reply.clone();
+                let task = tokio::spawn(async move { stderr_task(id, stderr, reply).await });
+                Some(task)
+            }
+            None => None,
+        };
 
         // Spawn a task that waits on the process to exit but can also
         // kill the process when triggered
-        let _ = tokio::spawn(async move { wait_task(id, child, reply).await });
+        let wait_task = Some(tokio::spawn(
+            async move { wait_task(id, child, reply).await },
+        ));
 
         Ok(ProcessInstance {
             cmd,
@@ -90,7 +105,42 @@ impl ProcessInstance {
             stdin,
             killer,
             pty,
+            stdout_task,
+            stderr_task,
+            wait_task,
         })
+    }
+
+    /// Invokes the function once the process has completed
+    ///
+    /// NOTE: Can only be used with one function. All future calls
+    ///       will do nothing
+    pub fn on_done<F, R>(&mut self, f: F)
+    where
+        F: FnOnce(io::Result<()>) -> R + Send + 'static,
+        R: Future<Output = ()> + Send,
+    {
+        if let Some(task) = self.wait_task.take() {
+            tokio::spawn(async move {
+                f(task
+                    .await
+                    .unwrap_or_else(|x| Err(io::Error::new(io::ErrorKind::Other, x))))
+                .await
+            });
+        }
+    }
+
+    /// Kill stdout, stderr, and wait tasks if they are still attached
+    pub fn abort(&self) {
+        if let Some(task) = self.stdout_task.as_ref() {
+            task.abort();
+        }
+        if let Some(task) = self.stderr_task.as_ref() {
+            task.abort();
+        }
+        if let Some(task) = self.wait_task.as_ref() {
+            task.abort();
+        }
     }
 }
 

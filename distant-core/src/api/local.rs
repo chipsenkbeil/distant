@@ -38,6 +38,13 @@ impl LocalDistantApi {
 impl DistantApi for LocalDistantApi {
     type LocalData = ConnectionState;
 
+    /// Injects the global channels into the local connection
+    async fn on_connection(&self, mut local_data: Self::LocalData) -> Self::LocalData {
+        local_data.process_channel = self.state.process.clone_channel();
+        local_data.watcher_channel = self.state.watcher.clone_channel();
+        local_data
+    }
+
     async fn read_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,

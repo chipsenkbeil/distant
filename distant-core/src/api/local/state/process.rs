@@ -18,7 +18,7 @@ pub struct ProcessState {
 impl ProcessState {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(1);
-        let task = tokio::spawn(process_task(rx));
+        let task = tokio::spawn(process_task(tx.clone(), rx));
 
         Self {
             channel: ProcessChannel { tx },
@@ -47,6 +47,14 @@ impl Deref for ProcessState {
 #[derive(Clone)]
 pub struct ProcessChannel {
     tx: mpsc::Sender<InnerProcessMsg>,
+}
+
+impl Default for ProcessChannel {
+    /// Creates a new channel that is closed by default
+    fn default() -> Self {
+        let (tx, _) = mpsc::channel(1);
+        Self { tx }
+    }
 }
 
 impl ProcessChannel {
@@ -134,9 +142,12 @@ enum InnerProcessMsg {
         id: usize,
         cb: oneshot::Sender<io::Result<()>>,
     },
+    InternalRemove {
+        id: usize,
+    },
 }
 
-async fn process_task(mut rx: mpsc::Receiver<InnerProcessMsg>) {
+async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<InnerProcessMsg>) {
     let mut processes: HashMap<usize, ProcessInstance> = HashMap::new();
 
     while let Some(msg) = rx.recv().await {
@@ -149,8 +160,16 @@ async fn process_task(mut rx: mpsc::Receiver<InnerProcessMsg>) {
                 cb,
             } => {
                 let _ = cb.send(match ProcessInstance::spawn(cmd, persist, pty, reply) {
-                    Ok(process) => {
+                    Ok(mut process) => {
                         let id = process.id;
+
+                        // Attach a callback for when the process is finished where
+                        // we will remove it from our above list
+                        let tx = tx.clone();
+                        process.on_done(move |_| async move {
+                            let _ = tx.send(InnerProcessMsg::InternalRemove { id }).await;
+                        });
+
                         processes.insert(id, process);
                         Ok(id)
                     }
@@ -189,6 +208,9 @@ async fn process_task(mut rx: mpsc::Receiver<InnerProcessMsg>) {
                         format!("No process found with id {}", id),
                     )),
                 });
+            }
+            InnerProcessMsg::InternalRemove { id } => {
+                processes.remove(&id);
             }
         }
     }

@@ -1,30 +1,19 @@
 use crate::{
-    client::{RemoteLspProcess, RemoteProcess, UnwatchError, WatchError, Watcher},
+    client::{RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteProcess, Watcher},
     data::{
         ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Error as Failure,
         Metadata, PtySize, SystemInfo,
     },
 };
-use derive_more::{Display, Error, From};
 use distant_net::{Channel, Request};
 use std::{future::Future, io, path::PathBuf, pin::Pin};
 
-/// Represents an error that can occur related to convenience functions tied to a
-/// [`SessionChannel`] through [`DistantChannel`]
-#[derive(Debug, Display, Error, From)]
-pub enum DistantChannelError {
-    /// Occurs when the remote action fails
-    Failure(#[error(not(source))] Failure),
-
-    /// Occurs when a transport error is encountered
-    IoError(io::Error),
-
-    /// Occurs when receiving a response that was not expected
-    MismatchedResponse,
-}
-
-pub type AsyncReturn<'a, T, E = DistantChannelError> =
+pub type AsyncReturn<'a, T, E = io::Error> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
+
+fn mismatched_response() -> io::Error {
+    io::Error::new(io::ErrorKind::Other, "Mismatched response")
+}
 
 /// Provides convenience functions on top of a [`SessionChannel`]
 pub trait DistantChannelExt {
@@ -88,10 +77,10 @@ pub trait DistantChannelExt {
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
-    ) -> AsyncReturn<'_, Watcher, WatchError>;
+    ) -> AsyncReturn<'_, Watcher>;
 
     /// Unwatches a remote file or directory
-    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, (), UnwatchError>;
+    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
 
     /// Spawns a process on the remote machine
     fn spawn(
@@ -132,8 +121,8 @@ macro_rules! make_body {
         make_body!($self, $data, |data| {
             match data {
                 DistantResponseData::Ok => Ok(()),
-                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-                _ => Err(DistantChannelError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
             }
         })
     };
@@ -144,12 +133,11 @@ macro_rules! make_body {
             $self
                 .send(req)
                 .await
-                .map_err(DistantChannelError::from)
                 .and_then(|res| {
                     if res.payload.len() == 1 {
                         Ok(res.payload.into_iter().next().unwrap())
                     } else {
-                        Err(DistantChannelError::MismatchedResponse)
+                        Err(mismatched_response())
                     }
                 })
                 .and_then($and_then)
@@ -204,8 +192,8 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
             DistantRequestData::Exists { path: path.into() },
             |data| match data {
                 DistantResponseData::Exists { value } => Ok(value),
-                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-                _ => Err(DistantChannelError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
             }
         )
     }
@@ -225,8 +213,8 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
             },
             |data| match data {
                 DistantResponseData::Metadata(x) => Ok(x),
-                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-                _ => Err(DistantChannelError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
             }
         )
     }
@@ -250,8 +238,8 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
             },
             |data| match data {
                 DistantResponseData::DirEntries { entries, errors } => Ok((entries, errors)),
-                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-                _ => Err(DistantChannelError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
             }
         )
     }
@@ -262,8 +250,8 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
             DistantRequestData::FileRead { path: path.into() },
             |data| match data {
                 DistantResponseData::Blob { data } => Ok(data),
-                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-                _ => Err(DistantChannelError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
             }
         )
     }
@@ -274,8 +262,8 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
             DistantRequestData::FileReadText { path: path.into() },
             |data| match data {
                 DistantResponseData::Text { data } => Ok(data),
-                DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-                _ => Err(DistantChannelError::MismatchedResponse),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
             }
         )
     }
@@ -302,14 +290,18 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
-    ) -> AsyncReturn<'_, Watcher, WatchError> {
+    ) -> AsyncReturn<'_, Watcher> {
         let path = path.into();
         let only = only.into();
         let except = except.into();
-        Box::pin(async move { Watcher::watch(self.clone(), path, recursive, only, except).await })
+        Box::pin(async move {
+            Watcher::watch(self.clone(), path, recursive, only, except)
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        })
     }
 
-    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, (), UnwatchError> {
+    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         fn inner_unwatch(
             channel: &mut Channel<Vec<DistantRequestData>, Vec<DistantResponseData>>,
             path: impl Into<PathBuf>,
@@ -323,7 +315,11 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
 
         let path = path.into();
 
-        Box::pin(async move { inner_unwatch(self, path).await.map_err(UnwatchError::from) })
+        Box::pin(async move {
+            inner_unwatch(self, path)
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        })
     }
 
     fn spawn(
@@ -333,7 +329,13 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess> {
         let cmd = cmd.into();
-        Box::pin(async move { RemoteProcess::spawn(self.clone(), cmd, persist, pty).await })
+        Box::pin(async move {
+            RemoteCommand::new()
+                .persist(persist)
+                .pty(pty)
+                .spawn(self.clone(), cmd)
+                .await
+        })
     }
 
     fn spawn_lsp(
@@ -343,14 +345,20 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess> {
         let cmd = cmd.into();
-        Box::pin(async move { RemoteLspProcess::spawn(self.clone(), cmd, persist, pty).await })
+        Box::pin(async move {
+            RemoteLspCommand::new()
+                .persist(persist)
+                .pty(pty)
+                .spawn(self.clone(), cmd)
+                .await
+        })
     }
 
     fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo> {
         make_body!(self, DistantRequestData::SystemInfo {}, |data| match data {
             DistantResponseData::SystemInfo(x) => Ok(x),
-            DistantResponseData::Error(x) => Err(DistantChannelError::Failure(x)),
-            _ => Err(DistantChannelError::MismatchedResponse),
+            DistantResponseData::Error(x) => Err(io::Error::from(x)),
+            _ => Err(mismatched_response()),
         })
     }
 

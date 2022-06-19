@@ -42,8 +42,8 @@ impl RemoteLspCommand {
     }
 
     /// Configures the process to leverage a PTY with the specified size
-    pub fn pty(&mut self, pty: PtySize) -> &mut Self {
-        self.pty = Some(pty);
+    pub fn pty(&mut self, pty: Option<PtySize>) -> &mut Self {
+        self.pty = pty;
         self
     }
     /// Spawns the specified process on the remote machine using the given session, treating
@@ -53,10 +53,9 @@ impl RemoteLspCommand {
         channel: DistantChannel,
         cmd: impl Into<String>,
     ) -> io::Result<RemoteLspProcess> {
-        let mut command = RemoteCommand::new().persist(self.persist);
-        if let Some(pty) = self.pty {
-            command = command.pty(pty);
-        }
+        let mut command = RemoteCommand::new();
+        command.persist(self.persist);
+        command.pty(self.pty);
 
         let mut inner = command.spawn(channel, cmd).await?;
         let stdin = inner.stdin.take().map(RemoteLspStdin::new);

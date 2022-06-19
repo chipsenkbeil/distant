@@ -82,7 +82,9 @@ where
                         // Start a reader task that reads requests and processes them
                         // using the provided handler
                         connection.reader_task = Some(tokio::spawn(async move {
-                            let local_data = Arc::new(Data::default());
+                            // Create some default data for the new connection and pass it
+                            // to the callback prior to processing new requests
+                            let local_data = Arc::new(server.on_connection(Data::default()).await);
 
                             loop {
                                 match reader.read().await {

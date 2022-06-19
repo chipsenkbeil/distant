@@ -51,8 +51,8 @@ impl RemoteCommand {
     }
 
     /// Configures the process to leverage a PTY with the specified size
-    pub fn pty(&mut self, pty: PtySize) -> &mut Self {
-        self.pty = Some(pty);
+    pub fn pty(&mut self, pty: Option<PtySize>) -> &mut Self {
+        self.pty = pty;
         self
     }
 

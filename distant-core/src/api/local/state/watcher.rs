@@ -9,12 +9,11 @@ use std::{
     io,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, Weak},
 };
 use tokio::{
     sync::{
         mpsc::{self, error::TrySendError},
-        oneshot, RwLock,
+        oneshot,
     },
     task::JoinHandle,
 };
@@ -22,10 +21,7 @@ use tokio::{
 mod path;
 pub use path::*;
 
-type PathMap = RwLock<HashMap<PathBuf, Vec<RegisteredPath>>>;
-type StrongPathMap = Arc<PathMap>;
-type WeakPathMap = Weak<PathMap>;
-
+/// Holds information related to watched paths on the server
 pub struct WatcherState {
     channel: WatcherChannel,
     task: JoinHandle<()>,
@@ -101,6 +97,14 @@ impl Deref for WatcherState {
 #[derive(Clone)]
 pub struct WatcherChannel {
     tx: mpsc::Sender<InnerWatcherMsg>,
+}
+
+impl Default for WatcherChannel {
+    /// Creates a new channel that is closed by default
+    fn default() -> Self {
+        let (tx, _) = mpsc::channel(1);
+        Self { tx }
+    }
 }
 
 impl WatcherChannel {
