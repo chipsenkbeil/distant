@@ -1,6 +1,6 @@
 use crate::stress::fixtures::*;
 use assert_fs::prelude::*;
-use distant_core::{ChangeKindSet, SessionChannelExt};
+use distant_core::{data::ChangeKindSet, DistantChannelExt};
 use rstest::*;
 
 const MAX_FILES: usize = 500;
@@ -8,9 +8,9 @@ const MAX_FILES: usize = 500;
 #[rstest]
 #[tokio::test]
 #[ignore]
-async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantSessionCtx) {
+async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantClientCtx) {
     let ctx = ctx.await;
-    let mut channel = ctx.session.clone_channel();
+    let mut channel = ctx.client.clone_channel();
 
     let tenant = "watch-stress-test";
     let root = assert_fs::TempDir::new().unwrap();
@@ -25,7 +25,6 @@ async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantSessi
         eprintln!("Watching {:?}", file.path());
         let watcher = channel
             .watch(
-                tenant,
                 file.path(),
                 false,
                 ChangeKindSet::modify_set(),
