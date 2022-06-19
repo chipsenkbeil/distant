@@ -27,12 +27,19 @@ pub struct WatcherState {
     task: JoinHandle<()>,
 }
 
+impl Drop for WatcherState {
+    /// Aborts the task that handles watcher path operations and management
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
 impl WatcherState {
     /// Will create a watcher and initialize watched paths to be empty
     pub fn initialize() -> io::Result<Self> {
         // NOTE: Cannot be something small like 1 as this seems to cause a deadlock sometimes
         //       with a large volume of watch requests
-        let (tx, mut rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
+        let (tx, rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
 
         let mut watcher = {
             let tx = tx.clone();

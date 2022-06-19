@@ -1,7 +1,6 @@
 mod lsp;
 mod process;
 mod session;
-mod utils;
 mod watcher;
 
 pub type DistantSession =

@@ -9,7 +9,6 @@ use std::{
 
 /// Represents a path registered with a watcher that includes relevant state including
 /// the ability to reply with
-#[derive(Clone)]
 pub struct RegisteredPath {
     /// Unique id tied to the path to distinguish it
     id: usize,
@@ -129,7 +128,7 @@ impl RegisteredPath {
         T: IntoIterator,
         T::Item: AsRef<Path>,
     {
-        if !self.allowed.contains(&kind) {
+        if !self.allowed().contains(&kind) {
             return Ok(false);
         }
 

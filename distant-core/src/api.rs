@@ -72,6 +72,7 @@ pub trait DistantApi {
     /// * `path` - the path to the file
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn read_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -85,6 +86,7 @@ pub trait DistantApi {
     /// * `path` - the path to the file
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn read_file_text(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -99,6 +101,7 @@ pub trait DistantApi {
     /// * `data` - the data to write
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn write_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -114,6 +117,7 @@ pub trait DistantApi {
     /// * `data` - the data to write
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn write_file_text(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -129,6 +133,7 @@ pub trait DistantApi {
     /// * `data` - the data to append
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn append_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -144,6 +149,7 @@ pub trait DistantApi {
     /// * `data` - the data to append
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn append_file_text(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -162,6 +168,7 @@ pub trait DistantApi {
     /// * `include_root` - if true, will include the directory specified in the entries
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn read_dir(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -180,6 +187,7 @@ pub trait DistantApi {
     /// * `all` - if true, will create all missing parent components
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn create_dir(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -195,6 +203,7 @@ pub trait DistantApi {
     /// * `dst` - the path where the copy will be placed
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn copy(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -210,6 +219,7 @@ pub trait DistantApi {
     /// * `force` - if true, will remove non-empty directories
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn remove(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -225,6 +235,7 @@ pub trait DistantApi {
     /// * `dst` - the new name for the file or directory
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn rename(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -242,6 +253,7 @@ pub trait DistantApi {
     /// * `except` - if non-empty, will limit reported changes to those not included in this list
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn watch(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -258,6 +270,7 @@ pub trait DistantApi {
     /// * `path` - the path to the file or directory
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
         unsupported()
     }
@@ -267,6 +280,7 @@ pub trait DistantApi {
     /// * `path` - the path to the file or directory
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
         unsupported()
     }
@@ -278,6 +292,7 @@ pub trait DistantApi {
     /// * `resolve_file_type` - if true, will resolve symlinks to underlying type (file or dir)
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn metadata(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -296,6 +311,7 @@ pub trait DistantApi {
     /// * `pty` - if provided, will run the process within a PTY of the given size
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn proc_spawn(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -311,6 +327,7 @@ pub trait DistantApi {
     /// * `id` - the unique id of the process
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
         unsupported()
     }
@@ -321,6 +338,7 @@ pub trait DistantApi {
     /// * `data` - the bytes to send to stdin
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn proc_stdin(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -336,6 +354,7 @@ pub trait DistantApi {
     /// * `size` - the new size of the pty
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn proc_resize_pty(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -348,6 +367,7 @@ pub trait DistantApi {
     /// Retrieves information about the system.
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
         unsupported()
     }
@@ -381,7 +401,7 @@ where
         let reply = reply.queue();
 
         // Process single vs batch requests
-        let response = match ctx.request.payload {
+        let response = match request.payload {
             DistantMsg::Single(data) => {
                 let ctx = DistantCtx {
                     connection_id,
@@ -405,7 +425,7 @@ where
                     let ctx = DistantCtx {
                         connection_id,
                         reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
-                        local_data,
+                        local_data: Arc::clone(&local_data),
                     };
 
                     let data = handle_request(self, ctx, data).await;

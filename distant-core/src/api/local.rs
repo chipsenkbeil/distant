@@ -189,7 +189,7 @@ impl DistantApi for LocalDistantApi {
                         match tokio::fs::canonicalize(e.path()).await {
                             Ok(path) => path,
                             Err(x) => {
-                                errors.push(io::Error::from(x));
+                                errors.push(x);
                                 continue;
                             }
                         }
@@ -458,6 +458,7 @@ impl DistantApi for LocalDistantApi {
     }
 
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+        debug!("[Conn {}] Reading system information", ctx.connection_id);
         Ok(SystemInfo::default())
     }
 }
@@ -465,10 +466,12 @@ impl DistantApi for LocalDistantApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::DistantResponseData;
     use assert_fs::prelude::*;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
+    use tokio::sync::mpsc;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
         Lazy::new(|| assert_fs::TempDir::new().unwrap());
@@ -529,71 +532,50 @@ mod tests {
     static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
         Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
-    fn setup(
-        buffer: usize,
-    ) -> (
-        usize,
-        Arc<Mutex<State>>,
-        mpsc::Sender<Response>,
-        mpsc::Receiver<Response>,
+    async fn setup() -> (
+        LocalDistantApi,
+        DistantCtx<ConnectionState>,
+        mpsc::Receiver<DistantResponseData>,
     ) {
-        let (tx, rx) = mpsc::channel(buffer);
-        (
-            rand::random(),
-            Arc::new(Mutex::new(State::default())),
-            tx,
-            rx,
-        )
+        let api = LocalDistantApi::initialize().unwrap();
+        let (tx, rx) = mpsc::channel(1);
+        let ctx = DistantCtx {
+            connection_id: rand::random(),
+            reply: Box::new(tx),
+            local_data: Arc::new(DistantApi::on_connection(&api, ConnectionState::default()).await),
+        };
+        (api, ctx, rx)
     }
 
     #[tokio::test]
-    async fn file_read_should_send_error_if_fails_to_read_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
-
+    async fn read_file_should_fail_if_file_missing() {
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let req = Request::new("test-tenant", vec![DistantRequestData::FileRead { path }]);
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
+            api.read_file(ctx, path).await.is_err(),
+            "read_file unexpectedly succeeded"
         );
     }
 
     #[tokio::test]
-    async fn file_read_should_send_blob_with_file_contents() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn read_file_should_send_blob_with_file_contents() {
+        let (api, ctx, _rx) = setup().await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileRead {
-                path: file.path().to_path_buf(),
-            }],
+        assert_eq!(
+            api.read_file(ctx, file.path().to_path_buf()).await.unwrap(),
+            b"some file contents"
         );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::Blob { data } => assert_eq!(data, b"some file contents"),
-            x => panic!("Unexpected response: {:?}", x),
-        }
     }
 
     #[tokio::test]
     async fn file_read_text_should_send_error_if_fails_to_read_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, rx) = setup().await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
@@ -2124,7 +2106,7 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
-    async fn metadata_should_include_unix_specific_metadata_on_windows_platform() {
+    async fn metadata_should_include_windows_specific_metadata_on_windows_platform() {
         let (conn_id, state, tx, mut rx) = setup(1);
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");

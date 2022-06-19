@@ -1,7 +1,11 @@
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
-use strum::{AsRefStr, VariantNames};
+use strum::AsRefStr;
+
+// NOTE: For some reason, we get a warning about this even though it's used below
+#[allow(unused_imports)]
+use strum::VariantNames;
 
 mod change;
 pub use change::*;

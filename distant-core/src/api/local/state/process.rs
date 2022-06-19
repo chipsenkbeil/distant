@@ -15,6 +15,13 @@ pub struct ProcessState {
     task: JoinHandle<()>,
 }
 
+impl Drop for ProcessState {
+    /// Aborts the task that handles process operations and management
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
 impl ProcessState {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(1);

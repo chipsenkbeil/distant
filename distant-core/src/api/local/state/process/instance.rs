@@ -31,13 +31,28 @@ impl Drop for ProcessInstance {
         // Drop stdin first to close it
         self.stdin = None;
 
+        // Clear out our tasks if we still have them
+        let stdout_task = self.stdout_task.take();
+        let stderr_task = self.stderr_task.take();
+        let wait_task = self.wait_task.take();
+
         // Attempt to kill the process, which is an async operation that we
         // will spawn a task to handle
         let id = self.id;
-        let killer = self.killer.clone_killer();
+        let mut killer = self.killer.clone_killer();
         tokio::spawn(async move {
             if let Err(x) = killer.kill().await {
                 error!("Failed to kill process {} when dropped: {}", id, x);
+
+                if let Some(task) = stdout_task.as_ref() {
+                    task.abort();
+                }
+                if let Some(task) = stderr_task.as_ref() {
+                    task.abort();
+                }
+                if let Some(task) = wait_task.as_ref() {
+                    task.abort();
+                }
             }
         });
     }
@@ -51,10 +66,10 @@ impl ProcessInstance {
         reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<Self> {
         // Build out the command and args from our string
-        let (cmd, args) = match cmd.split_once(" ") {
+        let (cmd, args) = match cmd.split_once(' ') {
             Some((cmd_str, args_str)) => (
-                cmd.to_string(),
-                args_str.split(" ").map(ToString::to_string).collect(),
+                cmd_str.to_string(),
+                args_str.split(' ').map(ToString::to_string).collect(),
             ),
             None => (cmd, Vec::new()),
         };
@@ -74,8 +89,8 @@ impl ProcessInstance {
         // Spawn a task that sends stdout as a response
         let stdout_task = match stdout {
             Some(stdout) => {
-                let reply = reply.clone();
-                let task = tokio::spawn(async move { stdout_task(id, stdout, reply).await });
+                let reply = reply.clone_reply();
+                let task = tokio::spawn(stdout_task(id, stdout, reply));
                 Some(task)
             }
             None => None,
@@ -84,8 +99,8 @@ impl ProcessInstance {
         // Spawn a task that sends stderr as a response
         let stderr_task = match stderr {
             Some(stderr) => {
-                let reply = reply.clone();
-                let task = tokio::spawn(async move { stderr_task(id, stderr, reply).await });
+                let reply = reply.clone_reply();
+                let task = tokio::spawn(stderr_task(id, stderr, reply));
                 Some(task)
             }
             None => None,
@@ -93,9 +108,7 @@ impl ProcessInstance {
 
         // Spawn a task that waits on the process to exit but can also
         // kill the process when triggered
-        let wait_task = Some(tokio::spawn(
-            async move { wait_task(id, child, reply).await },
-        ));
+        let wait_task = Some(tokio::spawn(wait_task(id, child, reply)));
 
         Ok(ProcessInstance {
             cmd,
@@ -127,19 +140,6 @@ impl ProcessInstance {
                     .unwrap_or_else(|x| Err(io::Error::new(io::ErrorKind::Other, x))))
                 .await
             });
-        }
-    }
-
-    /// Kill stdout, stderr, and wait tasks if they are still attached
-    pub fn abort(&self) {
-        if let Some(task) = self.stdout_task.as_ref() {
-            task.abort();
-        }
-        if let Some(task) = self.stderr_task.as_ref() {
-            task.abort();
-        }
-        if let Some(task) = self.wait_task.as_ref() {
-            task.abort();
         }
     }
 }

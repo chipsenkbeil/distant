@@ -3,7 +3,7 @@ use std::{future::Future, io, pin::Pin, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 
 /// Interface to send a reply to some request
-pub trait Reply: Send {
+pub trait Reply: Send + Sync {
     type Data;
 
     /// Sends a reply out from the server
@@ -11,6 +11,22 @@ pub trait Reply: Send {
 
     /// Clones this reply
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>>;
+}
+
+impl<T: Send + 'static> Reply for mpsc::Sender<T> {
+    type Data = T;
+
+    fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            self.send(data)
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))
+        })
+    }
+
+    fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {
+        Box::new(self.clone())
+    }
 }
 
 /// Utility to send ad-hoc replies from the server back through the connection
