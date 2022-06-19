@@ -537,15 +537,19 @@ mod tests {
         client::DistantClient,
         data::{Error, ErrorKind},
     };
-    use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Response};
+    use distant_net::{
+        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
+        TypedAsyncRead, TypedAsyncWrite,
+    };
     use std::time::Duration;
 
     fn make_session<T>() -> (
         FramedTransport<InmemoryTransport, PlainCodec>,
         DistantClient,
     ) {
-        let (t1, t2) = FramedTransport::make_test_pair();
-        (t1, Client::initialize(t2).unwrap())
+        let (t1, t2) = FramedTransport::pair(100);
+        let (writer, reader) = t2.into_split();
+        (t1, Client::new(writer, reader).unwrap())
     }
 
     #[tokio::test]
@@ -555,13 +559,9 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session

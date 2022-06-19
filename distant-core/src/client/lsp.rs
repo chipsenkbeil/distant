@@ -24,6 +24,12 @@ pub struct RemoteLspCommand {
     pty: Option<PtySize>,
 }
 
+impl Default for RemoteLspCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RemoteLspCommand {
     /// Creates a new set of options for a remote LSP process
     pub fn new() -> Self {
