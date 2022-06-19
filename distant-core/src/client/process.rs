@@ -543,7 +543,7 @@ mod tests {
     };
     use std::time::Duration;
 
-    fn make_session<T>() -> (
+    fn make_session() -> (
         FramedTransport<InmemoryTransport, PlainCodec>,
         DistantClient,
     ) {
@@ -553,7 +553,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_should_return_invalid_data_if_payload_size_unexpected() {
+    async fn spawn_should_return_invalid_data_if_received_batch_response() {
         let (mut transport, session) = make_session();
 
         // Create a task for process spawning as we need to handle the request and a response
@@ -565,11 +565,14 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
-            .send(Response::new(req.id, Vec::new()))
+            .write(Response::new(
+                req.id,
+                DistantMsg::Batch(vec![DistantResponseData::ProcSpawned { id: 1 }]),
+            ))
             .await
             .unwrap();
 
@@ -587,26 +590,22 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::Error(Error {
+                DistantMsg::Single(DistantResponseData::Error(Error {
                     kind: ErrorKind::BrokenPipe,
                     description: String::from("some error"),
-                })],
+                })),
             ))
             .await
             .unwrap();
@@ -625,24 +624,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -667,24 +662,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -694,13 +685,13 @@ mod tests {
         assert!(proc.kill().await.is_ok(), "Failed to send kill request");
 
         // Verify the kill request was sent
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
-        assert_eq!(
-            req.payload.len(),
-            1,
-            "Unexpected payload length for kill request"
-        );
-        assert_eq!(req.payload[0], DistantRequestData::ProcKill { id });
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        match req.payload {
+            DistantMsg::Single(DistantRequestData::ProcKill { id: proc_id }) => {
+                assert_eq!(proc_id, id)
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
 
         // Verify we can no longer write to stdin anymore
         assert_eq!(
@@ -722,24 +713,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -754,15 +741,9 @@ mod tests {
             .unwrap();
 
         // Verify that a request is made through the session
-        match &transport
-            .receive::<Request>()
-            .await
-            .unwrap()
-            .unwrap()
-            .payload[0]
-        {
-            DistantRequestData::ProcStdin { id, data } => {
-                assert_eq!(*id, 12345);
+        match transport.read().await.unwrap().unwrap() {
+            DistantMsg::Single(DistantRequestData::ProcStdin { id, data }) => {
+                assert_eq!(id, 12345);
                 assert_eq!(data, b"some input");
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -776,24 +757,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -802,12 +779,12 @@ mod tests {
         let mut proc = spawn_task.await.unwrap().unwrap();
 
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcStdout {
+                DistantMsg::Single(DistantResponseData::ProcStdout {
                     id,
                     data: b"some out".to_vec(),
-                }],
+                }),
             ))
             .await
             .unwrap();
@@ -823,24 +800,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -849,12 +822,12 @@ mod tests {
         let mut proc = spawn_task.await.unwrap().unwrap();
 
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcStderr {
+                DistantMsg::Single(DistantResponseData::ProcStderr {
                     id,
                     data: b"some err".to_vec(),
-                }],
+                }),
             ))
             .await
             .unwrap();
@@ -870,24 +843,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -906,24 +875,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -950,24 +915,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -977,13 +938,13 @@ mod tests {
 
         // Send a process completion response to pass along exit status and conclude wait
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcDone {
+                DistantMsg::Single(DistantResponseData::ProcDone {
                     id,
                     success: true,
                     code: Some(123),
-                }],
+                }),
             ))
             .await
             .unwrap();
@@ -1002,24 +963,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1028,7 +985,6 @@ mod tests {
         let proc = spawn_task.await.unwrap().unwrap();
         proc.abort();
 
-        let result = proc.wait().await;
         match proc.wait().await {
             Err(x) if x.kind() == io::ErrorKind::UnexpectedEof => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -1042,24 +998,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1075,7 +1027,6 @@ mod tests {
         // Ensure that the other tasks are cancelled before continuing
         tokio::task::yield_now().await;
 
-        let result = proc.wait().await;
         match proc.wait().await {
             Err(x) if x.kind() == io::ErrorKind::UnexpectedEof => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -1089,24 +1040,20 @@ mod tests {
         // Create a task for process spawning as we need to handle the request and a response
         // in a separate async block
         let spawn_task = tokio::spawn(async move {
-            RemoteProcess::spawn(
-                session.clone_channel(),
-                String::from("cmd arg"),
-                false,
-                None,
-            )
-            .await
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
         });
 
         // Wait until we get the request from the session
-        let req = transport.receive::<Request>().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcSpawned { id }],
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1117,13 +1064,13 @@ mod tests {
 
         // Send a process completion response to pass along exit status and conclude wait
         transport
-            .send(Response::new(
+            .write(Response::new(
                 req.id,
-                vec![DistantResponseData::ProcDone {
+                DistantMsg::Single(DistantResponseData::ProcDone {
                     id,
                     success: false,
                     code: Some(123),
-                }],
+                }),
             ))
             .await
             .unwrap();
