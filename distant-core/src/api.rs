@@ -30,6 +30,16 @@ pub enum DistantMsg<T> {
     Batch(Vec<T>),
 }
 
+impl<T> DistantMsg<T> {
+    /// Convert into a collection of payload data
+    pub fn into_vec(self) -> Vec<T> {
+        match self {
+            Self::Single(x) => vec![x],
+            Self::Batch(x) => x,
+        }
+    }
+}
+
 /// Represents a server that leverages an API compliant with `distant`
 pub struct DistantApiServer<T, D>
 where

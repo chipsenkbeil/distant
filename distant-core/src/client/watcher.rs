@@ -2,6 +2,7 @@ use crate::{
     client::{DistantChannel, DistantChannelExt},
     constants::CLIENT_WATCHER_CAPACITY,
     data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData},
+    DistantMsg,
 };
 use distant_net::Request;
 use log::*;
@@ -56,12 +57,14 @@ impl Watcher {
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(vec![DistantRequestData::Watch {
-                path: path.to_path_buf(),
-                recursive,
-                only: only.into_vec(),
-                except: except.into_vec(),
-            }]))
+            .mail(Request::new(DistantMsg::Single(
+                DistantRequestData::Watch {
+                    path: path.to_path_buf(),
+                    recursive,
+                    only: only.into_vec(),
+                    except: except.into_vec(),
+                },
+            )))
             .await?;
 
         let (tx, rx) = mpsc::channel(CLIENT_WATCHER_CAPACITY);
@@ -70,7 +73,7 @@ impl Watcher {
         let mut queue: Vec<Change> = Vec::new();
         let mut confirmed = false;
         while let Some(res) = mailbox.next().await {
-            for data in res.payload {
+            for data in res.payload.into_vec() {
                 match data {
                     DistantResponseData::Changed(change) => queue.push(change),
                     DistantResponseData::Ok => {
@@ -114,7 +117,7 @@ impl Watcher {
             let path = path.clone();
             async move {
                 while let Some(res) = mailbox.next().await {
-                    for data in res.payload {
+                    for data in res.payload.into_vec() {
                         match data {
                             DistantResponseData::Changed(change) => {
                                 // If we can't queue up a change anymore, we've
@@ -180,7 +183,7 @@ impl Watcher {
 mod tests {
     use super::*;
     use crate::data::ChangeKind;
-    use crate::DistantSession;
+    use crate::DistantClient;
     use distant_net::{
         Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
         TypedAsyncRead, TypedAsyncWrite,
@@ -190,7 +193,7 @@ mod tests {
 
     fn make_session() -> (
         FramedTransport<InmemoryTransport, PlainCodec>,
-        DistantSession,
+        DistantClient,
     ) {
         let (t1, t2) = FramedTransport::pair(100);
         let (writer, reader) = t2.into_split();

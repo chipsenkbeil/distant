@@ -4,6 +4,7 @@ use crate::{
         ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Error as Failure,
         Metadata, PtySize, SystemInfo,
     },
+    DistantMsg,
 };
 use distant_net::{Channel, Request};
 use std::{future::Future, io, path::PathBuf, pin::Pin};
@@ -128,24 +129,23 @@ macro_rules! make_body {
     };
 
     ($self:expr, $data:expr, $and_then:expr) => {{
-        let req = Request::new(vec![$data]);
+        let req = Request::new(DistantMsg::Single($data));
         Box::pin(async move {
             $self
                 .send(req)
                 .await
-                .and_then(|res| {
-                    if res.payload.len() == 1 {
-                        Ok(res.payload.into_iter().next().unwrap())
-                    } else {
-                        Err(mismatched_response())
-                    }
+                .and_then(|res| match res.payload {
+                    DistantMsg::Single(x) => Ok(x),
+                    _ => Err(mismatched_response()),
                 })
                 .and_then($and_then)
         })
     }};
 }
 
-impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseData>> {
+impl DistantChannelExt
+    for Channel<DistantMsg<DistantRequestData>, DistantMsg<DistantResponseData>>
+{
     fn append_file(
         &mut self,
         path: impl Into<PathBuf>,
@@ -303,7 +303,7 @@ impl DistantChannelExt for Channel<Vec<DistantRequestData>, Vec<DistantResponseD
 
     fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         fn inner_unwatch(
-            channel: &mut Channel<Vec<DistantRequestData>, Vec<DistantResponseData>>,
+            channel: &mut Channel<DistantMsg<DistantRequestData>, DistantMsg<DistantResponseData>>,
             path: impl Into<PathBuf>,
         ) -> AsyncReturn<'_, ()> {
             make_body!(

@@ -2,6 +2,7 @@ use crate::{
     client::DistantChannel,
     constants::CLIENT_PIPE_CAPACITY,
     data::{DistantRequestData, DistantResponseData, PtySize},
+    DistantMsg,
 };
 use distant_net::{Mailbox, Request, Response};
 use log::*;
@@ -66,31 +67,33 @@ impl RemoteCommand {
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(vec![DistantRequestData::ProcSpawn {
-                cmd,
-                persist: self.persist,
-                pty: self.pty,
-            }]))
+            .mail(Request::new(DistantMsg::Single(
+                DistantRequestData::ProcSpawn {
+                    cmd,
+                    persist: self.persist,
+                    pty: self.pty,
+                },
+            )))
             .await?;
 
         // Wait until we get the first response, and get id from proc started
         let (id, origin_id) = match mailbox.next().await {
-            Some(res) if res.payload.len() != 1 => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Got wrong payload size",
-                ));
-            }
             Some(res) => {
                 let origin_id = res.origin_id;
-                match res.payload.into_iter().next().unwrap() {
-                    DistantResponseData::ProcSpawned { id } => (id, origin_id),
-                    DistantResponseData::Error(x) => return Err(x.into()),
-                    x => {
+                match res.payload {
+                    DistantMsg::Single(DistantResponseData::ProcSpawned { id }) => (id, origin_id),
+                    DistantMsg::Single(DistantResponseData::Error(x)) => return Err(x.into()),
+                    DistantMsg::Single(x) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!("Got response type of {}", x.as_ref()),
                         ))
+                    }
+                    DistantMsg::Batch(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Got batch instead of single response",
+                        ));
                     }
                 }
             }
@@ -433,7 +436,7 @@ async fn process_outgoing_requests(
                 match data {
                     Some(data) => channel.fire(
                         Request::new(
-                            vec![DistantRequestData::ProcStdin { id, data }]
+                            DistantMsg::Single(DistantRequestData::ProcStdin { id, data })
                         )
                     ).await?,
                     None => break Err(errors::dead_channel()),
@@ -443,7 +446,7 @@ async fn process_outgoing_requests(
                 match size {
                     Some(size) => channel.fire(
                         Request::new(
-                            vec![DistantRequestData::ProcResizePty { id, size }]
+                            DistantMsg::Single(DistantRequestData::ProcResizePty { id, size })
                         )
                     ).await?,
                     None => break Err(errors::dead_channel()),
@@ -452,7 +455,7 @@ async fn process_outgoing_requests(
             msg = kill_rx.recv() => {
                 if msg.is_some() {
                     channel.fire(Request::new(
-                        vec![DistantRequestData::ProcKill { id }],
+                        DistantMsg::Single(DistantRequestData::ProcKill { id })
                     )).await?;
                     break Ok(());
                 } else {
@@ -469,14 +472,16 @@ async fn process_outgoing_requests(
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
 async fn process_incoming_responses(
     proc_id: usize,
-    mut mailbox: Mailbox<Response<Vec<DistantResponseData>>>,
+    mut mailbox: Mailbox<Response<DistantMsg<DistantResponseData>>>,
     stdout_tx: mpsc::Sender<Vec<u8>>,
     stderr_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
 ) -> io::Result<(bool, Option<i32>)> {
     while let Some(res) = mailbox.next().await {
+        let payload = res.payload.into_vec();
+
         // Check if any of the payload data is the termination
-        let exit_status = res.payload.iter().find_map(|data| match data {
+        let exit_status = payload.iter().find_map(|data| match data {
             DistantResponseData::ProcDone { id, success, code } if *id == proc_id => {
                 Some((*success, *code))
             }
@@ -485,7 +490,7 @@ async fn process_incoming_responses(
 
         // Next, check for stdout/stderr and send them along our channels
         // TODO: What should we do about unexpected data? For now, just ignore
-        for data in res.payload {
+        for data in payload {
             match data {
                 DistantResponseData::ProcStdout { id, data } if id == proc_id => {
                     let _ = stdout_tx.send(data).await;
@@ -529,7 +534,7 @@ mod errors {
 mod tests {
     use super::*;
     use crate::{
-        client::DistantSession,
+        client::DistantClient,
         data::{Error, ErrorKind},
     };
     use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Response};
@@ -537,7 +542,7 @@ mod tests {
 
     fn make_session<T>() -> (
         FramedTransport<InmemoryTransport, PlainCodec>,
-        DistantSession,
+        DistantClient,
     ) {
         let (t1, t2) = FramedTransport::make_test_pair();
         (t1, Client::initialize(t2).unwrap())

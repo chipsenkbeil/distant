@@ -1,12 +1,13 @@
+use crate::{DistantMsg, DistantRequestData, DistantResponseData};
+use distant_net::{Channel, Client};
+
 mod lsp;
 mod process;
 mod session;
 mod watcher;
 
-pub type DistantSession =
-    distant_net::Client<Vec<crate::DistantRequestData>, Vec<crate::DistantResponseData>>;
-pub type DistantChannel =
-    distant_net::Channel<Vec<crate::DistantRequestData>, Vec<crate::DistantResponseData>>;
+pub type DistantClient = Client<DistantMsg<DistantRequestData>, DistantMsg<DistantResponseData>>;
+pub type DistantChannel = Channel<DistantMsg<DistantRequestData>, DistantMsg<DistantResponseData>>;
 
 pub use lsp::*;
 pub use process::*;
