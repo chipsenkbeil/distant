@@ -1,5 +1,5 @@
 use crate::data::{DistantResponseData, PtySize};
-use distant_net::QueuedServerReply;
+use distant_net::Reply;
 use std::{collections::HashMap, io, ops::Deref};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -64,7 +64,7 @@ impl ProcessChannel {
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-        reply: QueuedServerReply<DistantResponseData>,
+        reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<usize> {
         let (cb, rx) = oneshot::channel();
         let _ = self
@@ -125,7 +125,7 @@ enum InnerProcessMsg {
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-        reply: QueuedServerReply<DistantResponseData>,
+        reply: Box<dyn Reply<Data = DistantResponseData>>,
         cb: oneshot::Sender<io::Result<usize>>,
     },
     Resize {

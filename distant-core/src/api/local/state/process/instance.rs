@@ -4,7 +4,7 @@ use crate::{
     },
     data::{DistantResponseData, PtySize},
 };
-use distant_net::QueuedServerReply;
+use distant_net::Reply;
 use log::*;
 use std::{future::Future, io};
 use tokio::task::JoinHandle;
@@ -48,7 +48,7 @@ impl ProcessInstance {
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-        reply: QueuedServerReply<DistantResponseData>,
+        reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<Self> {
         // Build out the command and args from our string
         let (cmd, args) = match cmd.split_once(" ") {
@@ -147,7 +147,7 @@ impl ProcessInstance {
 async fn stdout_task(
     id: usize,
     mut stdout: Box<dyn OutputChannel>,
-    reply: QueuedServerReply<DistantResponseData>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> io::Result<()> {
     loop {
         match stdout.recv().await {
@@ -168,7 +168,7 @@ async fn stdout_task(
 async fn stderr_task(
     id: usize,
     mut stderr: Box<dyn OutputChannel>,
-    reply: QueuedServerReply<DistantResponseData>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> io::Result<()> {
     loop {
         match stderr.recv().await {
@@ -189,7 +189,7 @@ async fn stderr_task(
 async fn wait_task(
     id: usize,
     mut child: Box<dyn Process>,
-    reply: QueuedServerReply<DistantResponseData>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> io::Result<()> {
     let status = child.wait().await;
 

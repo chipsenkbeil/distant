@@ -3,18 +3,31 @@ use crate::{
     DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::{QueuedServerReply, Server, ServerCtx};
+use derive_more::From;
+use distant_net::{Reply, Server, ServerCtx};
 use log::*;
+use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf, sync::Arc};
 
 mod local;
 pub use local::LocalDistantApi;
 
+mod reply;
+use reply::DistantSingleReply;
+
 /// Represents the context provided to the [`DistantApi`] for incoming requests
 pub struct DistantCtx<T> {
     pub connection_id: usize,
-    pub reply: QueuedServerReply<DistantResponseData>,
+    pub reply: Box<dyn Reply<Data = DistantResponseData>>,
     pub local_data: Arc<T>,
+}
+
+/// Represents a wrapper around a distant message, supporting single and batch requests
+#[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DistantMsg<T> {
+    Single(T),
+    Batch(Vec<T>),
 }
 
 /// Represents a server that leverages an API compliant with `distant`
@@ -157,8 +170,8 @@ where
     T: DistantApi<LocalData = D> + Send + Sync,
     D: Send + Sync,
 {
-    type Request = DistantRequestData;
-    type Response = DistantResponseData;
+    type Request = DistantMsg<DistantRequestData>;
+    type Response = DistantMsg<DistantResponseData>;
     type LocalData = D;
 
     /// Overridden to leverage [`DistantApi`] implementation of `on_connection`
@@ -178,158 +191,47 @@ where
         // of an API function is sent back before anything else
         let reply = reply.queue();
 
-        let ctx = DistantCtx {
-            connection_id,
-            reply: reply.clone(),
-            local_data,
+        // Process single vs batch requests
+        let response = match ctx.request.payload {
+            DistantMsg::Single(data) => {
+                let ctx = DistantCtx {
+                    connection_id,
+                    reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
+                    local_data,
+                };
+
+                let data = handle_request(self, ctx, data).await;
+
+                // Report outgoing errors in our debug logs
+                if let DistantResponseData::Error(x) = &data {
+                    debug!("[Conn {}] {}", connection_id, x);
+                }
+
+                DistantMsg::Single(data)
+            }
+            DistantMsg::Batch(list) => {
+                let mut out = Vec::new();
+
+                for data in list {
+                    let ctx = DistantCtx {
+                        connection_id,
+                        reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
+                        local_data,
+                    };
+
+                    let data = handle_request(self, ctx, data).await;
+
+                    // Report outgoing errors in our debug logs
+                    if let DistantResponseData::Error(x) = &data {
+                        debug!("[Conn {}] {}", connection_id, x);
+                    }
+
+                    out.push(data);
+                }
+
+                DistantMsg::Batch(out)
+            }
         };
-
-        let response = match request.payload {
-            DistantRequestData::FileRead { path } => self
-                .api
-                .read_file(ctx, path)
-                .await
-                .map(|data| DistantResponseData::Blob { data })
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::FileReadText { path } => self
-                .api
-                .read_file_text(ctx, path)
-                .await
-                .map(|data| DistantResponseData::Text { data })
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::FileWrite { path, data } => self
-                .api
-                .write_file(ctx, path, data)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::FileWriteText { path, text } => self
-                .api
-                .write_file_text(ctx, path, text)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::FileAppend { path, data } => self
-                .api
-                .append_file(ctx, path, data)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::FileAppendText { path, text } => self
-                .api
-                .append_file_text(ctx, path, text)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::DirRead {
-                path,
-                depth,
-                absolute,
-                canonicalize,
-                include_root,
-            } => self
-                .api
-                .read_dir(ctx, path, depth, absolute, canonicalize, include_root)
-                .await
-                .map(|(entries, errors)| DistantResponseData::DirEntries {
-                    entries,
-                    errors: errors.into_iter().map(Error::from).collect(),
-                })
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::DirCreate { path, all } => self
-                .api
-                .create_dir(ctx, path, all)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Remove { path, force } => self
-                .api
-                .remove(ctx, path, force)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Copy { src, dst } => self
-                .api
-                .copy(ctx, src, dst)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Rename { src, dst } => self
-                .api
-                .rename(ctx, src, dst)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Watch {
-                path,
-                recursive,
-                only,
-                except,
-            } => self
-                .api
-                .watch(ctx, path, recursive, only, except)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Unwatch { path } => self
-                .api
-                .unwatch(ctx, path)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Exists { path } => self
-                .api
-                .exists(ctx, path)
-                .await
-                .map(|value| DistantResponseData::Exists { value })
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::Metadata {
-                path,
-                canonicalize,
-                resolve_file_type,
-            } => self
-                .api
-                .metadata(ctx, path, canonicalize, resolve_file_type)
-                .await
-                .map(DistantResponseData::Metadata)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::ProcSpawn { cmd, persist, pty } => self
-                .api
-                .proc_spawn(ctx, cmd, persist, pty)
-                .await
-                .map(|id| DistantResponseData::ProcSpawned { id })
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::ProcKill { id } => self
-                .api
-                .proc_kill(ctx, id)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::ProcStdin { id, data } => self
-                .api
-                .proc_stdin(ctx, id, data)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-
-            DistantRequestData::ProcResizePty { id, size } => self
-                .api
-                .proc_resize_pty(ctx, id, size)
-                .await
-                .map(|_| DistantResponseData::Ok)
-                .unwrap_or_else(DistantResponseData::from),
-            DistantRequestData::SystemInfo {} => self
-                .api
-                .system_info(ctx)
-                .await
-                .map(DistantResponseData::SystemInfo)
-                .unwrap_or_else(DistantResponseData::from),
-        };
-
-        // Report outgoing errors in our debug logs
-        if let DistantResponseData::Error(x) = &response {
-            debug!("[Conn {}] {}", connection_id, x);
-        }
 
         // Queue up our result to go before ANY of the other messages that might be sent.
         // This is important to avoid situations such as when a process is started, but before
@@ -345,5 +247,158 @@ where
                 connection_id, x
             );
         }
+    }
+}
+
+/// Processes an incoming request
+async fn handle_request<T, D>(
+    server: &DistantApiServer<T, D>,
+    ctx: DistantCtx<D>,
+    request: DistantRequestData,
+) -> DistantResponseData
+where
+    T: DistantApi<LocalData = D> + Send + Sync,
+    D: Send + Sync,
+{
+    match request {
+        DistantRequestData::FileRead { path } => server
+            .api
+            .read_file(ctx, path)
+            .await
+            .map(|data| DistantResponseData::Blob { data })
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::FileReadText { path } => server
+            .api
+            .read_file_text(ctx, path)
+            .await
+            .map(|data| DistantResponseData::Text { data })
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::FileWrite { path, data } => server
+            .api
+            .write_file(ctx, path, data)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::FileWriteText { path, text } => server
+            .api
+            .write_file_text(ctx, path, text)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::FileAppend { path, data } => server
+            .api
+            .append_file(ctx, path, data)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::FileAppendText { path, text } => server
+            .api
+            .append_file_text(ctx, path, text)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::DirRead {
+            path,
+            depth,
+            absolute,
+            canonicalize,
+            include_root,
+        } => server
+            .api
+            .read_dir(ctx, path, depth, absolute, canonicalize, include_root)
+            .await
+            .map(|(entries, errors)| DistantResponseData::DirEntries {
+                entries,
+                errors: errors.into_iter().map(Error::from).collect(),
+            })
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::DirCreate { path, all } => server
+            .api
+            .create_dir(ctx, path, all)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Remove { path, force } => server
+            .api
+            .remove(ctx, path, force)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Copy { src, dst } => server
+            .api
+            .copy(ctx, src, dst)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Rename { src, dst } => server
+            .api
+            .rename(ctx, src, dst)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Watch {
+            path,
+            recursive,
+            only,
+            except,
+        } => server
+            .api
+            .watch(ctx, path, recursive, only, except)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Unwatch { path } => server
+            .api
+            .unwatch(ctx, path)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Exists { path } => server
+            .api
+            .exists(ctx, path)
+            .await
+            .map(|value| DistantResponseData::Exists { value })
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Metadata {
+            path,
+            canonicalize,
+            resolve_file_type,
+        } => server
+            .api
+            .metadata(ctx, path, canonicalize, resolve_file_type)
+            .await
+            .map(DistantResponseData::Metadata)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::ProcSpawn { cmd, persist, pty } => server
+            .api
+            .proc_spawn(ctx, cmd, persist, pty)
+            .await
+            .map(|id| DistantResponseData::ProcSpawned { id })
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::ProcKill { id } => server
+            .api
+            .proc_kill(ctx, id)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::ProcStdin { id, data } => server
+            .api
+            .proc_stdin(ctx, id, data)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+
+        DistantRequestData::ProcResizePty { id, size } => server
+            .api
+            .proc_resize_pty(ctx, id, size)
+            .await
+            .map(|_| DistantResponseData::Ok)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::SystemInfo {} => server
+            .api
+            .system_info(ctx)
+            .await
+            .map(DistantResponseData::SystemInfo)
+            .unwrap_or_else(DistantResponseData::from),
     }
 }

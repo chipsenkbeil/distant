@@ -1,6 +1,17 @@
 use crate::{Id, Response};
-use std::{io, sync::Arc};
+use std::{future::Future, io, pin::Pin, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
+
+/// Interface to send a reply to some request
+pub trait Reply: Send {
+    type Data;
+
+    /// Sends a reply out from the server
+    fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>>;
+
+    /// Clones this reply
+    fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>>;
+}
 
 /// Utility to send ad-hoc replies from the server back through the connection
 pub struct ServerReply<T> {
@@ -38,15 +49,36 @@ impl<T> ServerReply<T> {
     }
 }
 
+impl<T: Send + 'static> Reply for ServerReply<T> {
+    type Data = T;
+
+    fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+        Box::pin(ServerReply::send(self, data))
+    }
+
+    fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {
+        Box::new(self.clone())
+    }
+}
+
 /// Represents a reply where all sends are queued up but not sent until
 /// after the flush method is called. This reply supports injecting
 /// at the front of the queue in order to support sending messages
 /// but ensuring that some specific message is sent out first
-#[derive(Clone)]
 pub struct QueuedServerReply<T> {
     inner: ServerReply<T>,
     queue: Arc<Mutex<Vec<T>>>,
     hold: Arc<Mutex<bool>>,
+}
+
+impl<T> Clone for QueuedServerReply<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            queue: Arc::clone(&self.queue),
+            hold: Arc::clone(&self.hold),
+        }
+    }
 }
 
 impl<T> QueuedServerReply<T> {
@@ -101,5 +133,17 @@ impl<T> QueuedServerReply<T> {
 
     pub fn is_closed(&self) -> bool {
         self.inner.is_closed()
+    }
+}
+
+impl<T: Send + 'static> Reply for QueuedServerReply<T> {
+    type Data = T;
+
+    fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+        Box::pin(QueuedServerReply::send(self, data))
+    }
+
+    fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {
+        Box::new(self.clone())
     }
 }

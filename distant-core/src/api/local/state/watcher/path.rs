@@ -1,5 +1,5 @@
 use crate::data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error};
-use distant_net::QueuedServerReply;
+use distant_net::Reply;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -30,7 +30,7 @@ pub struct RegisteredPath {
     allowed: ChangeKindSet,
 
     /// Used to send a reply through the connection watching this path
-    reply: QueuedServerReply<DistantResponseData>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 }
 
 impl fmt::Debug for RegisteredPath {
@@ -70,7 +70,7 @@ impl RegisteredPath {
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
-        reply: QueuedServerReply<DistantResponseData>,
+        reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<Self> {
         let raw_path = path.into();
         let path = tokio::fs::canonicalize(raw_path.as_path()).await?;
