@@ -1260,7 +1260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rename_should_send_error_on_failure() {
+    async fn rename_should_fail_if_path_missing() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
@@ -1269,7 +1269,7 @@ mod tests {
         let _ = api
             .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
-            .unwrap();
+            .unwrap_err();
 
         // Also, verify that destination does not exist
         dst.assert(predicate::path::missing());
@@ -1553,7 +1553,7 @@ mod tests {
         let file = temp.child("file");
 
         let exists = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
-        assert!(exists, "Expected exists to be false, but was true");
+        assert!(!exists, "Expected exists to be false, but was true");
     }
 
     #[tokio::test]
@@ -1624,6 +1624,7 @@ mod tests {
             .await
             .unwrap();
 
+        #[allow(clippy::match_single_binding)]
         match metadata {
             Metadata { unix, windows, .. } => {
                 assert!(unix.is_some(), "Unexpectedly missing unix metadata on unix");
@@ -1653,6 +1654,7 @@ mod tests {
             .await
             .unwrap();
 
+        #[allow(clippy::match_single_binding)]
         match metadata {
             Metadata { unix, windows, .. } => {
                 assert!(
@@ -1824,8 +1826,8 @@ mod tests {
                 /* cmd */
                 format!(
                     "{} {}",
-                    SCRIPT_RUNNER.to_string(),
-                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()
+                    *SCRIPT_RUNNER,
+                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
                 ),
                 /* persist */ false,
                 /* pty */ None,
@@ -1848,8 +1850,8 @@ mod tests {
                 /* cmd */
                 format!(
                     "{} {} some stdout",
-                    SCRIPT_RUNNER.to_string(),
-                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()
+                    *SCRIPT_RUNNER,
+                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
                 ),
                 /* persist */ false,
                 /* pty */ None,
@@ -1911,8 +1913,8 @@ mod tests {
                 /* cmd */
                 format!(
                     "{} {} some stderr",
-                    SCRIPT_RUNNER.to_string(),
-                    ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string()
+                    *SCRIPT_RUNNER,
+                    ECHO_ARGS_TO_STDERR_SH.to_str().unwrap()
                 ),
                 /* persist */ false,
                 /* pty */ None,
@@ -1972,11 +1974,7 @@ mod tests {
             .proc_spawn(
                 ctx,
                 /* cmd */
-                format!(
-                    "{} {} 0.1",
-                    SCRIPT_RUNNER.to_string(),
-                    SLEEP_SH.to_str().unwrap().to_string()
-                ),
+                format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -2011,11 +2009,7 @@ mod tests {
             .proc_spawn(
                 ctx_1,
                 /* cmd */
-                format!(
-                    "{} {} 1",
-                    SCRIPT_RUNNER.to_string(),
-                    SLEEP_SH.to_str().unwrap().to_string()
-                ),
+                format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -2078,8 +2072,8 @@ mod tests {
                 /* cmd */
                 format!(
                     "{} {}",
-                    SCRIPT_RUNNER.to_string(),
-                    ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()
+                    *SCRIPT_RUNNER,
+                    ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap()
                 ),
                 /* persist */ false,
                 /* pty */ None,

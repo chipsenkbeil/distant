@@ -12,7 +12,6 @@ async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantClien
     let ctx = ctx.await;
     let mut channel = ctx.client.clone_channel();
 
-    let tenant = "watch-stress-test";
     let root = assert_fs::TempDir::new().unwrap();
 
     let mut files_and_watchers = Vec::new();

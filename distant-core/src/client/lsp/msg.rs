@@ -397,9 +397,6 @@ impl FromStr for LspContent {
 mod tests {
     use super::*;
 
-    // 32-byte test hex key (64 hex characters)
-    const TEST_HEX_KEY: &str = "ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD";
-
     macro_rules! make_obj {
         ($($tail:tt)*) => {
             match serde_json::json!($($tail)*) {
@@ -410,8 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn data_display_should_output_header_and_content() {
-        let data = LspMsg {
+    fn msg_display_should_output_header_and_content() {
+        let msg = LspMsg {
             header: LspHeader {
                 content_length: 123,
                 content_type: Some(String::from("some content type")),
@@ -419,7 +416,7 @@ mod tests {
             content: LspContent(make_obj!({"hello": "world"})),
         };
 
-        let output = data.to_string();
+        let output = msg.to_string();
         assert_eq!(
             output,
             concat!(
@@ -434,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn data_from_buf_reader_should_be_successful_if_valid_data_received() {
+    fn msg_from_buf_reader_should_be_successful_if_valid_msg_received() {
         let mut input = io::Cursor::new(concat!(
             "Content-Length: 22\r\n",
             "Content-Type: some content type\r\n",
@@ -443,17 +440,17 @@ mod tests {
             "  \"hello\": \"world\"\n",
             "}",
         ));
-        let data = LspMsg::from_buf_reader(&mut input).unwrap();
-        assert_eq!(data.header.content_length, 22);
+        let msg = LspMsg::from_buf_reader(&mut input).unwrap();
+        assert_eq!(msg.header.content_length, 22);
         assert_eq!(
-            data.header.content_type.as_deref(),
+            msg.header.content_type.as_deref(),
             Some("some content type")
         );
-        assert_eq!(data.content.as_ref(), &make_obj!({ "hello": "world" }));
+        assert_eq!(msg.content.as_ref(), &make_obj!({ "hello": "world" }));
     }
 
     #[test]
-    fn data_from_buf_reader_should_fail_if_reach_eof_before_received_full_data() {
+    fn msg_from_buf_reader_should_fail_if_reach_eof_before_received_full_msg() {
         // No line termination
         let err = LspMsg::from_buf_reader(&mut io::Cursor::new("Content-Length: 22")).unwrap_err();
         assert!(
@@ -480,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn data_from_buf_reader_should_fail_if_missing_proper_line_termination_for_header_field() {
+    fn msg_from_buf_reader_should_fail_if_missing_proper_line_termination_for_header_field() {
         let err = LspMsg::from_buf_reader(&mut io::Cursor::new(concat!(
             "Content-Length: 22\n",
             "\r\n",
@@ -497,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn data_from_buf_reader_should_fail_if_bad_header_provided() {
+    fn msg_from_buf_reader_should_fail_if_bad_header_provided() {
         // Invalid content length
         let err = LspMsg::from_buf_reader(&mut io::Cursor::new(concat!(
             "Content-Length: -1\r\n",
@@ -522,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn data_from_buf_reader_should_fail_if_bad_content_provided() {
+    fn msg_from_buf_reader_should_fail_if_bad_content_provided() {
         // Not full content
         let err = LspMsg::from_buf_reader(&mut io::Cursor::new(concat!(
             "Content-Length: 21\r\n",
@@ -535,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn data_from_buf_reader_should_fail_if_non_utf8_data_encountered_for_content() {
+    fn msg_from_buf_reader_should_fail_if_non_utf8_msg_encountered_for_content() {
         // Not utf-8 content
         let mut raw = b"Content-Length: 2\r\n\r\n".to_vec();
         raw.extend(vec![0, 159]);

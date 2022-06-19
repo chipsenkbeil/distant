@@ -741,7 +741,8 @@ mod tests {
             .unwrap();
 
         // Verify that a request is made through the session
-        match transport.read().await.unwrap().unwrap() {
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        match req.payload {
             DistantMsg::Single(DistantRequestData::ProcStdin { id, data }) => {
                 assert_eq!(id, 12345);
                 assert_eq!(data, b"some input");
