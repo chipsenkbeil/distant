@@ -47,50 +47,121 @@ where
     }
 }
 
+#[inline]
+fn unsupported<T>() -> io::Result<T> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
+
 /// Interface to support the suite of functionality available with distant,
 /// which can be used to build other servers that are compatible with distant
 #[async_trait]
 pub trait DistantApi {
     type LocalData: Send + Sync;
 
+    /// Invoked whenever a new connection is established, providing the newly-created
+    /// local data, and returning the local data to be used for all requests. This
+    /// is a way to support modifying local data before it is used.
+    ///
+    /// By default, this returns the local data unmodified.
     async fn on_connection(&self, local_data: Self::LocalData) -> Self::LocalData {
         local_data
     }
 
+    /// Reads bytes from a file.
+    ///
+    /// * `path` - the path to the file
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn read_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
-    ) -> io::Result<Vec<u8>>;
+    ) -> io::Result<Vec<u8>> {
+        unsupported()
+    }
+
+    /// Reads bytes from a file as text.
+    ///
+    /// * `path` - the path to the file
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn read_file_text(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
-    ) -> io::Result<String>;
+    ) -> io::Result<String> {
+        unsupported()
+    }
+
+    /// Writes bytes to a file, overwriting the file if it exists.
+    ///
+    /// * `path` - the path to the file
+    /// * `data` - the data to write
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn write_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: Vec<u8>,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Writes text to a file, overwriting the file if it exists.
+    ///
+    /// * `path` - the path to the file
+    /// * `data` - the data to write
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn write_file_text(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: String,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Writes bytes to the end of a file, creating it if it is missing.
+    ///
+    /// * `path` - the path to the file
+    /// * `data` - the data to append
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn append_file(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: Vec<u8>,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Writes bytes to the end of a file, creating it if it is missing.
+    ///
+    /// * `path` - the path to the file
+    /// * `data` - the data to append
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn append_file_text(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         data: String,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Reads entries from a directory.
+    ///
+    /// * `path` - the path to the directory
+    /// * `depth` - how far to traverse the directory, 0 being unlimited
+    /// * `absolute` - if true, will return absolute paths instead of relative paths
+    /// * `canonicalize` - if true, will canonicalize entry paths before returned
+    /// * `include_root` - if true, will include the directory specified in the entries
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn read_dir(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -99,31 +170,78 @@ pub trait DistantApi {
         absolute: bool,
         canonicalize: bool,
         include_root: bool,
-    ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)>;
+    ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
+        unsupported()
+    }
+
+    /// Creates a directory.
+    ///
+    /// * `path` - the path to the directory
+    /// * `all` - if true, will create all missing parent components
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn create_dir(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         all: bool,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Copies some file or directory.
+    ///
+    /// * `src` - the path to the file or directory to copy
+    /// * `dst` - the path where the copy will be placed
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn copy(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         src: PathBuf,
         dst: PathBuf,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Removes some file or directory.
+    ///
+    /// * `path` - the path to a file or directory
+    /// * `force` - if true, will remove non-empty directories
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn remove(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         force: bool,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Renames some file or directory.
+    ///
+    /// * `src` - the path to the file or directory to rename
+    /// * `dst` - the new name for the file or directory
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn rename(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         src: PathBuf,
         dst: PathBuf,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Watches a file or directory for changes.
+    ///
+    /// * `path` - the path to the file or directory
+    /// * `recursive` - if true, will watch for changes within subdirectories and beyond
+    /// * `only` - if non-empty, will limit reported changes to those included in this list
+    /// * `except` - if non-empty, will limit reported changes to those not included in this list
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn watch(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -131,37 +249,108 @@ pub trait DistantApi {
         recursive: bool,
         only: Vec<ChangeKind>,
         except: Vec<ChangeKind>,
-    ) -> io::Result<()>;
-    async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()>;
-    async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Removes a file or directory from being watched.
+    ///
+    /// * `path` - the path to the file or directory
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Checks if the specified path exists.
+    ///
+    /// * `path` - the path to the file or directory
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
+        unsupported()
+    }
+
+    /// Reads metadata for a file or directory.
+    ///
+    /// * `path` - the path to the file or directory
+    /// * `canonicalize` - if true, will include a canonicalized path in the metadata
+    /// * `resolve_file_type` - if true, will resolve symlinks to underlying type (file or dir)
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn metadata(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
-    ) -> io::Result<Metadata>;
+    ) -> io::Result<Metadata> {
+        unsupported()
+    }
+
+    /// Spawns a new process, returning its id.
+    ///
+    /// * `cmd` - the full command to run as a new process (including arguments)
+    /// * `persist` - if true, the process will continue running even after the connection that
+    ///               spawned the process has terminated
+    /// * `pty` - if provided, will run the process within a PTY of the given size
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn proc_spawn(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> io::Result<usize>;
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()>;
+    ) -> io::Result<usize> {
+        unsupported()
+    }
+
+    /// Kills a running process by its id.
+    ///
+    /// * `id` - the unique id of the process
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Sends data to the stdin of the process with the specified id.
+    ///
+    /// * `id` - the unique id of the process
+    /// * `data` - the bytes to send to stdin
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn proc_stdin(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         id: usize,
         data: Vec<u8>,
-    ) -> io::Result<()>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Resizes the PTY of the process with the specified id.
+    ///
+    /// * `id` - the unique id of the process
+    /// * `size` - the new size of the pty
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
     async fn proc_resize_pty(
         &self,
         ctx: DistantCtx<Self::LocalData>,
         id: usize,
         size: PtySize,
-    ) -> io::Result<()>;
-    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo>;
+    ) -> io::Result<()> {
+        unsupported()
+    }
+
+    /// Retrieves information about the system.
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+        unsupported()
+    }
 }
 
 #[async_trait]
