@@ -273,7 +273,7 @@ impl From<NotifyEventKind> for ChangeKind {
 }
 
 /// Represents a distinct set of different change kinds
-#[derive(Clone, Debug, Deref, DerefMut, IntoIterator, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deref, DerefMut, IntoIterator, Serialize, Deserialize)]
 pub struct ChangeKindSet(HashSet<ChangeKind>);
 
 impl ChangeKindSet {
@@ -375,6 +375,14 @@ impl fmt::Display for ChangeKindSet {
         write!(f, "{}", kinds.join(","))
     }
 }
+
+impl PartialEq for ChangeKindSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_string() == other.to_string()
+    }
+}
+
+impl Eq for ChangeKindSet {}
 
 impl Hash for ChangeKindSet {
     /// Hashes based on the output of [`fmt::Display`]
