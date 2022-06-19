@@ -468,6 +468,7 @@ mod tests {
     use super::*;
     use crate::data::DistantResponseData;
     use assert_fs::prelude::*;
+    use distant_net::Reply;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
     use std::{sync::Arc, time::Duration};
@@ -532,152 +533,109 @@ mod tests {
     static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
         Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
-    async fn setup() -> (
+    async fn setup(
+        buffer: usize,
+    ) -> (
         LocalDistantApi,
         DistantCtx<ConnectionState>,
         mpsc::Receiver<DistantResponseData>,
     ) {
         let api = LocalDistantApi::initialize().unwrap();
-        let (tx, rx) = mpsc::channel(1);
+        let (reply, rx) = make_reply(buffer);
         let ctx = DistantCtx {
             connection_id: rand::random(),
-            reply: Box::new(tx),
+            reply,
             local_data: Arc::new(DistantApi::on_connection(&api, ConnectionState::default()).await),
         };
         (api, ctx, rx)
     }
 
+    fn make_reply(
+        buffer: usize,
+    ) -> (
+        Box<dyn Reply<Data = DistantResponseData>>,
+        mpsc::Receiver<DistantResponseData>,
+    ) {
+        let (tx, rx) = mpsc::channel(buffer);
+        (Box::new(tx), rx)
+    }
+
     #[tokio::test]
     async fn read_file_should_fail_if_file_missing() {
-        let (api, ctx, _rx) = setup().await;
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        assert!(
-            api.read_file(ctx, path).await.is_err(),
-            "read_file unexpectedly succeeded"
-        );
+        let _ = api.read_file(ctx, path).await.unwrap_err();
     }
 
     #[tokio::test]
     async fn read_file_should_send_blob_with_file_contents() {
-        let (api, ctx, _rx) = setup().await;
+        let (api, ctx, _rx) = setup(1).await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        assert_eq!(
-            api.read_file(ctx, file.path().to_path_buf()).await.unwrap(),
-            b"some file contents"
-        );
+        let bytes = api.read_file(ctx, file.path().to_path_buf()).await.unwrap();
+        assert_eq!(bytes, b"some file contents");
     }
 
     #[tokio::test]
-    async fn file_read_text_should_send_error_if_fails_to_read_file() {
-        let (api, ctx, rx) = setup().await;
+    async fn read_file_text_should_send_error_if_fails_to_read_file() {
+        let (api, ctx, _rx) = setup(1).await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileReadText { path }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api.read_file_text(ctx, path).await.unwrap_err();
     }
 
     #[tokio::test]
-    async fn file_read_text_should_send_text_with_file_contents() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn read_file_text_should_send_text_with_file_contents() {
+        let (api, ctx, _rx) = setup(1).await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileReadText {
-                path: file.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::Text { data } => assert_eq!(data, "some file contents"),
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        let text = api
+            .read_file_text(ctx, file.path().to_path_buf())
+            .await
+            .unwrap();
+        assert_eq!(text, "some file contents");
     }
 
     #[tokio::test]
-    async fn file_write_should_send_error_if_fails_to_write_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn write_file_should_send_error_if_fails_to_write_file() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileWrite {
-                path: file.path().to_path_buf(),
-                data: b"some text".to_vec(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .write_file(ctx, file.path().to_path_buf(), b"some text".to_vec())
+            .await
+            .unwrap_err();
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
-    async fn file_write_should_send_ok_when_successful() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn write_file_should_send_ok_when_successful() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Path should point to a file that does not exist, but all
         // other components leading up to it do
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileWrite {
-                path: file.path().to_path_buf(),
-                data: b"some text".to_vec(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        api.write_file(ctx, file.path().to_path_buf(), b"some text".to_vec())
+            .await
+            .unwrap();
 
         // Also verify that we actually did create the file
         // with the associated contents
@@ -685,62 +643,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_write_text_should_send_error_if_fails_to_write_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn write_file_text_should_send_error_if_fails_to_write_file() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileWriteText {
-                path: file.path().to_path_buf(),
-                text: String::from("some text"),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
+            .await
+            .unwrap_err();
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
-    async fn file_write_text_should_send_ok_when_successful() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn write_file_text_should_send_ok_when_successful() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Path should point to a file that does not exist, but all
         // other components leading up to it do
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileWriteText {
-                path: file.path().to_path_buf(),
-                text: String::from("some text"),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
+            .await
+            .unwrap();
 
         // Also verify that we actually did create the file
         // with the associated contents
@@ -748,62 +680,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_append_should_send_error_if_fails_to_create_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn append_file_should_send_error_if_fails_to_create_file() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileAppend {
-                path: file.path().to_path_buf(),
-                data: b"some extra contents".to_vec(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .append_file(
+                ctx,
+                file.path().to_path_buf(),
+                b"some extra contents".to_vec(),
+            )
+            .await
+            .unwrap_err();
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
-    async fn file_append_should_create_file_if_missing() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn append_file_should_create_file_if_missing() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Don't create the file directly, but define path
         // where the file should be
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileAppend {
-                path: file.path().to_path_buf(),
-                data: b"some extra contents".to_vec(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .append_file(
+                ctx,
+                file.path().to_path_buf(),
+                b"some extra contents".to_vec(),
+            )
+            .await
+            .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -813,31 +727,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_append_should_send_ok_when_successful() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn append_file_should_send_ok_when_successful() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create a temporary file and fill it with some contents
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileAppend {
-                path: file.path().to_path_buf(),
-                data: b"some extra contents".to_vec(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .append_file(
+                ctx,
+                file.path().to_path_buf(),
+                b"some extra contents".to_vec(),
+            )
+            .await
+            .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -847,62 +752,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_append_text_should_send_error_if_fails_to_create_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn append_file_text_should_send_error_if_fails_to_create_file() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileAppendText {
-                path: file.path().to_path_buf(),
-                text: String::from("some extra contents"),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .append_file_text(
+                ctx,
+                file.path().to_path_buf(),
+                "some extra contents".to_string(),
+            )
+            .await
+            .unwrap_err();
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
     }
 
     #[tokio::test]
-    async fn file_append_text_should_create_file_if_missing() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn append_file_text_should_create_file_if_missing() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Don't create the file directly, but define path
         // where the file should be
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileAppendText {
-                path: file.path().to_path_buf(),
-                text: "some extra contents".to_string(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .append_file_text(
+                ctx,
+                file.path().to_path_buf(),
+                "some extra contents".to_string(),
+            )
+            .await
+            .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -912,31 +799,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_append_text_should_send_ok_when_successful() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn append_file_text_should_send_ok_when_successful() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create a temporary file and fill it with some contents
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::FileAppendText {
-                path: file.path().to_path_buf(),
-                text: String::from("some extra contents"),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .append_file_text(
+                ctx,
+                file.path().to_path_buf(),
+                "some extra contents".to_string(),
+            )
+            .await
+            .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -947,31 +825,22 @@ mod tests {
 
     #[tokio::test]
     async fn dir_read_should_send_error_if_directory_does_not_exist() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("test-dir");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirRead {
-                path: dir.path().to_path_buf(),
-                depth: 0,
-                absolute: false,
-                canonicalize: false,
-                include_root: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .read_dir(
+                ctx,
+                dir.path().to_path_buf(),
+                /* depth */ 0,
+                /* absolute */ false,
+                /* canonicalize */ false,
+                /* include_root */ false,
+            )
+            .await
+            .unwrap_err();
     }
 
     // /root/
@@ -997,307 +866,228 @@ mod tests {
 
     #[tokio::test]
     async fn dir_read_should_support_depth_limits() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirRead {
-                path: root_dir.path().to_path_buf(),
-                depth: 1,
-                absolute: false,
-                canonicalize: false,
-                include_root: false,
-            }],
-        );
+        let (entries, _) = api
+            .read_dir(
+                ctx,
+                root_dir.path().to_path_buf(),
+                /* depth */ 1,
+                /* absolute */ false,
+                /* canonicalize */ false,
+                /* include_root */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
+        assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+        assert_eq!(entries[0].file_type, FileType::File);
+        assert_eq!(entries[0].path, Path::new("file1"));
+        assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[0].file_type, FileType::File);
-                assert_eq!(entries[0].path, Path::new("file1"));
-                assert_eq!(entries[0].depth, 1);
+        assert_eq!(entries[1].file_type, FileType::Symlink);
+        assert_eq!(entries[1].path, Path::new("link1"));
+        assert_eq!(entries[1].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::Symlink);
-                assert_eq!(entries[1].path, Path::new("link1"));
-                assert_eq!(entries[1].depth, 1);
-
-                assert_eq!(entries[2].file_type, FileType::Dir);
-                assert_eq!(entries[2].path, Path::new("sub1"));
-                assert_eq!(entries[2].depth, 1);
-            }
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        assert_eq!(entries[2].file_type, FileType::Dir);
+        assert_eq!(entries[2].path, Path::new("sub1"));
+        assert_eq!(entries[2].depth, 1);
     }
 
     #[tokio::test]
     async fn dir_read_should_support_unlimited_depth_using_zero() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirRead {
-                path: root_dir.path().to_path_buf(),
-                depth: 0,
-                absolute: false,
-                canonicalize: false,
-                include_root: false,
-            }],
-        );
+        let (entries, _) = api
+            .read_dir(
+                ctx,
+                root_dir.path().to_path_buf(),
+                /* depth */ 0,
+                /* absolute */ false,
+                /* canonicalize */ false,
+                /* include_root */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
+        assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 4, "Wrong number of entries found");
+        assert_eq!(entries[0].file_type, FileType::File);
+        assert_eq!(entries[0].path, Path::new("file1"));
+        assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[0].file_type, FileType::File);
-                assert_eq!(entries[0].path, Path::new("file1"));
-                assert_eq!(entries[0].depth, 1);
+        assert_eq!(entries[1].file_type, FileType::Symlink);
+        assert_eq!(entries[1].path, Path::new("link1"));
+        assert_eq!(entries[1].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::Symlink);
-                assert_eq!(entries[1].path, Path::new("link1"));
-                assert_eq!(entries[1].depth, 1);
+        assert_eq!(entries[2].file_type, FileType::Dir);
+        assert_eq!(entries[2].path, Path::new("sub1"));
+        assert_eq!(entries[2].depth, 1);
 
-                assert_eq!(entries[2].file_type, FileType::Dir);
-                assert_eq!(entries[2].path, Path::new("sub1"));
-                assert_eq!(entries[2].depth, 1);
-
-                assert_eq!(entries[3].file_type, FileType::File);
-                assert_eq!(entries[3].path, Path::new("sub1").join("file2"));
-                assert_eq!(entries[3].depth, 2);
-            }
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        assert_eq!(entries[3].file_type, FileType::File);
+        assert_eq!(entries[3].path, Path::new("sub1").join("file2"));
+        assert_eq!(entries[3].depth, 2);
     }
 
     #[tokio::test]
     async fn dir_read_should_support_including_directory_in_returned_entries() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirRead {
-                path: root_dir.path().to_path_buf(),
-                depth: 1,
-                absolute: false,
-                canonicalize: false,
-                include_root: true,
-            }],
-        );
+        let (entries, _) = api
+            .read_dir(
+                ctx,
+                root_dir.path().to_path_buf(),
+                /* depth */ 1,
+                /* absolute */ false,
+                /* canonicalize */ false,
+                /* include_root */ true,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
+        assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 4, "Wrong number of entries found");
+        // NOTE: Root entry is always absolute, resolved path
+        assert_eq!(entries[0].file_type, FileType::Dir);
+        assert_eq!(entries[0].path, root_dir.path().canonicalize().unwrap());
+        assert_eq!(entries[0].depth, 0);
 
-                // NOTE: Root entry is always absolute, resolved path
-                assert_eq!(entries[0].file_type, FileType::Dir);
-                assert_eq!(entries[0].path, root_dir.path().canonicalize().unwrap());
-                assert_eq!(entries[0].depth, 0);
+        assert_eq!(entries[1].file_type, FileType::File);
+        assert_eq!(entries[1].path, Path::new("file1"));
+        assert_eq!(entries[1].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::File);
-                assert_eq!(entries[1].path, Path::new("file1"));
-                assert_eq!(entries[1].depth, 1);
+        assert_eq!(entries[2].file_type, FileType::Symlink);
+        assert_eq!(entries[2].path, Path::new("link1"));
+        assert_eq!(entries[2].depth, 1);
 
-                assert_eq!(entries[2].file_type, FileType::Symlink);
-                assert_eq!(entries[2].path, Path::new("link1"));
-                assert_eq!(entries[2].depth, 1);
-
-                assert_eq!(entries[3].file_type, FileType::Dir);
-                assert_eq!(entries[3].path, Path::new("sub1"));
-                assert_eq!(entries[3].depth, 1);
-            }
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        assert_eq!(entries[3].file_type, FileType::Dir);
+        assert_eq!(entries[3].path, Path::new("sub1"));
+        assert_eq!(entries[3].depth, 1);
     }
 
     #[tokio::test]
     async fn dir_read_should_support_returning_absolute_paths() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirRead {
-                path: root_dir.path().to_path_buf(),
-                depth: 1,
-                absolute: true,
-                canonicalize: false,
-                include_root: false,
-            }],
-        );
+        let (entries, _) = api
+            .read_dir(
+                ctx,
+                root_dir.path().to_path_buf(),
+                /* depth */ 1,
+                /* absolute */ true,
+                /* canonicalize */ false,
+                /* include_root */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
+        assert_eq!(entries.len(), 3, "Wrong number of entries found");
+        let root_path = root_dir.path().canonicalize().unwrap();
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 3, "Wrong number of entries found");
-                let root_path = root_dir.path().canonicalize().unwrap();
+        assert_eq!(entries[0].file_type, FileType::File);
+        assert_eq!(entries[0].path, root_path.join("file1"));
+        assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[0].file_type, FileType::File);
-                assert_eq!(entries[0].path, root_path.join("file1"));
-                assert_eq!(entries[0].depth, 1);
+        assert_eq!(entries[1].file_type, FileType::Symlink);
+        assert_eq!(entries[1].path, root_path.join("link1"));
+        assert_eq!(entries[1].depth, 1);
 
-                assert_eq!(entries[1].file_type, FileType::Symlink);
-                assert_eq!(entries[1].path, root_path.join("link1"));
-                assert_eq!(entries[1].depth, 1);
-
-                assert_eq!(entries[2].file_type, FileType::Dir);
-                assert_eq!(entries[2].path, root_path.join("sub1"));
-                assert_eq!(entries[2].depth, 1);
-            }
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        assert_eq!(entries[2].file_type, FileType::Dir);
+        assert_eq!(entries[2].path, root_path.join("sub1"));
+        assert_eq!(entries[2].depth, 1);
     }
 
     #[tokio::test]
     async fn dir_read_should_support_returning_canonicalized_paths() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirRead {
-                path: root_dir.path().to_path_buf(),
-                depth: 1,
-                absolute: false,
-                canonicalize: true,
-                include_root: false,
-            }],
-        );
+        let (entries, _) = api
+            .read_dir(
+                ctx,
+                root_dir.path().to_path_buf(),
+                /* depth */ 1,
+                /* absolute */ false,
+                /* canonicalize */ true,
+                /* include_root */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
+        assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::DirEntries { entries, .. } => {
-                assert_eq!(entries.len(), 3, "Wrong number of entries found");
+        assert_eq!(entries[0].file_type, FileType::File);
+        assert_eq!(entries[0].path, Path::new("file1"));
+        assert_eq!(entries[0].depth, 1);
 
-                assert_eq!(entries[0].file_type, FileType::File);
-                assert_eq!(entries[0].path, Path::new("file1"));
-                assert_eq!(entries[0].depth, 1);
+        // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
+        assert_eq!(entries[1].file_type, FileType::Symlink);
+        assert_eq!(entries[1].path, Path::new("sub1").join("file2"));
+        assert_eq!(entries[1].depth, 1);
 
-                // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
-                assert_eq!(entries[1].file_type, FileType::Symlink);
-                assert_eq!(entries[1].path, Path::new("sub1").join("file2"));
-                assert_eq!(entries[1].depth, 1);
-
-                assert_eq!(entries[2].file_type, FileType::Dir);
-                assert_eq!(entries[2].path, Path::new("sub1"));
-                assert_eq!(entries[2].depth, 1);
-            }
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        assert_eq!(entries[2].file_type, FileType::Dir);
+        assert_eq!(entries[2].path, Path::new("sub1"));
+        assert_eq!(entries[2].depth, 1);
     }
 
     #[tokio::test]
-    async fn dir_create_should_send_error_if_fails() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn create_dir_should_send_error_if_fails() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Make a path that has multiple non-existent components
         // so the creation will fail
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("nested").join("new-dir");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirCreate {
-                path: path.to_path_buf(),
-                all: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .create_dir(ctx, path.to_path_buf(), /* all */ false)
+            .await
+            .unwrap_err();
 
         // Also verify that the directory was not actually created
         assert!(!path.exists(), "Path unexpectedly exists");
     }
 
     #[tokio::test]
-    async fn dir_create_should_send_ok_when_successful() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn create_dir_should_send_ok_when_successful() {
+        let (api, ctx, _rx) = setup(1).await;
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("new-dir");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirCreate {
-                path: path.to_path_buf(),
-                all: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .create_dir(ctx, path.to_path_buf(), /* all */ false)
+            .await
+            .unwrap();
 
         // Also verify that the directory was actually created
         assert!(path.exists(), "Directory not created");
     }
 
     #[tokio::test]
-    async fn dir_create_should_support_creating_multiple_dir_components() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn create_dir_should_support_creating_multiple_dir_components() {
+        let (api, ctx, _rx) = setup(1).await;
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("nested").join("new-dir");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::DirCreate {
-                path: path.to_path_buf(),
-                all: true,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .create_dir(ctx, path.to_path_buf(), /* all */ true)
+            .await
+            .unwrap();
 
         // Also verify that the directory was actually created
         assert!(path.exists(), "Directory not created");
@@ -1305,27 +1095,14 @@ mod tests {
 
     #[tokio::test]
     async fn remove_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("missing-file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Remove {
-                path: file.path().to_path_buf(),
-                force: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .remove(ctx, file.path().to_path_buf(), /* false */ false)
+            .await
+            .unwrap_err();
 
         // Also, verify that path does not exist
         file.assert(predicate::path::missing());
@@ -1333,28 +1110,15 @@ mod tests {
 
     #[tokio::test]
     async fn remove_should_support_deleting_a_directory() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Remove {
-                path: dir.path().to_path_buf(),
-                force: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .remove(ctx, dir.path().to_path_buf(), /* false */ false)
+            .await
+            .unwrap();
 
         // Also, verify that path does not exist
         dir.assert(predicate::path::missing());
@@ -1362,29 +1126,16 @@ mod tests {
 
     #[tokio::test]
     async fn remove_should_delete_nonempty_directory_if_force_is_true() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
         dir.child("file").touch().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Remove {
-                path: dir.path().to_path_buf(),
-                force: true,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .remove(ctx, dir.path().to_path_buf(), /* false */ true)
+            .await
+            .unwrap();
 
         // Also, verify that path does not exist
         dir.assert(predicate::path::missing());
@@ -1392,28 +1143,15 @@ mod tests {
 
     #[tokio::test]
     async fn remove_should_support_deleting_a_single_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("some-file");
         file.touch().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Remove {
-                path: file.path().to_path_buf(),
-                force: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .remove(ctx, file.path().to_path_buf(), /* false */ false)
+            .await
+            .unwrap();
 
         // Also, verify that path does not exist
         file.assert(predicate::path::missing());
@@ -1421,28 +1159,15 @@ mod tests {
 
     #[tokio::test]
     async fn copy_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         let dst = temp.child("dst");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Copy {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap_err();
 
         // Also, verify that destination does not exist
         dst.assert(predicate::path::missing());
@@ -1450,7 +1175,7 @@ mod tests {
 
     #[tokio::test]
     async fn copy_should_support_copying_an_entire_directory() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let src = temp.child("src");
@@ -1461,23 +1186,10 @@ mod tests {
         let dst = temp.child("dst");
         let dst_file = dst.child("file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Copy {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Verify that we have source and destination directories and associated contents
         src.assert(predicate::path::is_dir());
@@ -1488,29 +1200,16 @@ mod tests {
 
     #[tokio::test]
     async fn copy_should_support_copying_an_empty_directory() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         src.create_dir_all().unwrap();
         let dst = temp.child("dst");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Copy {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Verify that we still have source and destination directories
         src.assert(predicate::path::is_dir());
@@ -1519,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn copy_should_support_copying_a_directory_that_only_contains_directories() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let src = temp.child("src");
@@ -1530,23 +1229,10 @@ mod tests {
         let dst = temp.child("dst");
         let dst_dir = dst.child("dir");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Copy {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Verify that we have source and destination directories and associated contents
         src.assert(predicate::path::is_dir().name("src"));
@@ -1557,29 +1243,16 @@ mod tests {
 
     #[tokio::test]
     async fn copy_should_support_copying_a_single_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         src.write_str("some text").unwrap();
         let dst = temp.child("dst");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Copy {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Verify that we still have source and that destination has source's contents
         src.assert(predicate::path::is_file());
@@ -1588,28 +1261,15 @@ mod tests {
 
     #[tokio::test]
     async fn rename_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         let dst = temp.child("dst");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Rename {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Also, verify that destination does not exist
         dst.assert(predicate::path::missing());
@@ -1617,7 +1277,7 @@ mod tests {
 
     #[tokio::test]
     async fn rename_should_support_renaming_an_entire_directory() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let src = temp.child("src");
@@ -1628,23 +1288,10 @@ mod tests {
         let dst = temp.child("dst");
         let dst_file = dst.child("file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Rename {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Verify that we moved the contents
         src.assert(predicate::path::missing());
@@ -1655,29 +1302,16 @@ mod tests {
 
     #[tokio::test]
     async fn rename_should_support_renaming_a_single_file() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         src.write_str("some text").unwrap();
         let dst = temp.child("dst");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Rename {
-                src: src.path().to_path_buf(),
-                dst: dst.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
 
         // Verify that we moved the file
         src.assert(predicate::path::missing());
@@ -1686,11 +1320,11 @@ mod tests {
 
     /// Validates a response as being a series of changes that include the provided paths
     fn validate_changed_paths(
-        res: &Response,
+        data: &DistantResponseData,
         expected_paths: &[PathBuf],
         should_panic: bool,
     ) -> bool {
-        match &res.payload[0] {
+        match data {
             DistantResponseData::Changed(change) if should_panic => {
                 let paths: Vec<PathBuf> = change
                     .paths
@@ -1717,44 +1351,32 @@ mod tests {
     #[tokio::test]
     async fn watch_should_support_watching_a_single_file() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
-        let (conn_id, state, tx, mut rx) = setup(100);
+        let (api, ctx, mut rx) = setup(100).await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let file = temp.child("file");
         file.touch().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Watch {
-                path: file.path().to_path_buf(),
-                recursive: false,
-                only: Default::default(),
-                except: Default::default(),
-            }],
-        );
-
-        // NOTE: We need to clone state so we don't drop the watcher
-        //       as part of dropping the state
-        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .watch(
+                ctx,
+                file.path().to_path_buf(),
+                /* recursive */ false,
+                /* only */ Default::default(),
+                /* except */ Default::default(),
+            )
+            .await
+            .unwrap();
 
         // Update the file and verify we get a notification
         file.write_str("some text").unwrap();
 
-        let res = rx
+        let data = rx
             .recv()
             .await
             .expect("Channel closed before we got change");
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
         validate_changed_paths(
-            &res,
+            &data,
             &[file.path().to_path_buf().canonicalize().unwrap()],
             /* should_panic */ true,
         );
@@ -1763,7 +1385,7 @@ mod tests {
     #[tokio::test]
     async fn watch_should_support_watching_a_directory_recursively() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
-        let (conn_id, state, tx, mut rx) = setup(100);
+        let (api, ctx, mut rx) = setup(100).await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let file = temp.child("file");
@@ -1772,27 +1394,16 @@ mod tests {
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Watch {
-                path: temp.path().to_path_buf(),
-                recursive: true,
-                only: Default::default(),
-                except: Default::default(),
-            }],
-        );
-
-        // NOTE: We need to clone state so we don't drop the watcher
-        //       as part of dropping the state
-        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Ok),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .watch(
+                ctx,
+                file.path().to_path_buf(),
+                /* recursive */ true,
+                /* only */ Default::default(),
+                /* except */ Default::default(),
+            )
+            .await
+            .unwrap();
 
         // Update the file and verify we get a notification
         file.write_str("some text").unwrap();
@@ -1850,9 +1461,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn watch_should_report_changes_using_the_request_id() {
+    async fn watch_should_report_changes_using_the_ctx_replies() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
-        let (conn_id, state, tx, mut rx) = setup(100);
+        let (api, ctx_1, mut rx_1) = setup(100).await;
+        let (ctx_2, mut rx_2) = {
+            let (reply, rx) = make_reply(100);
+            let ctx = DistantCtx {
+                connection_id: ctx_1.connection_id,
+                reply,
+                local_data: Arc::clone(&ctx_1.local_data),
+            };
+            (ctx, rx)
+        };
+
         let temp = assert_fs::TempDir::new().unwrap();
 
         let file_1 = temp.child("file_1");
@@ -1866,316 +1487,218 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Initialize watch on file 1
-        let file_1_origin_id = {
-            let req = Request::new(
-                "test-tenant",
-                vec![DistantRequestData::Watch {
-                    path: file_1.path().to_path_buf(),
-                    recursive: false,
-                    only: Default::default(),
-                    except: Default::default(),
-                }],
-            );
-            let origin_id = req.id;
-
-            // NOTE: We need to clone state so we don't drop the watcher
-            //       as part of dropping the state
-            process(conn_id, Arc::clone(&state), req, tx.clone())
-                .await
-                .unwrap();
-
-            let res = rx.recv().await.unwrap();
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            assert!(
-                matches!(res.payload[0], DistantResponseData::Ok),
-                "Unexpected response: {:?}",
-                res.payload[0]
-            );
-
-            origin_id
-        };
+        let _ = api
+            .watch(
+                ctx_1,
+                file_1.path().to_path_buf(),
+                /* recursive */ false,
+                /* only */ Default::default(),
+                /* except */ Default::default(),
+            )
+            .await
+            .unwrap();
 
         // Initialize watch on file 2
-        let file_2_origin_id = {
-            let req = Request::new(
-                "test-tenant",
-                vec![DistantRequestData::Watch {
-                    path: file_2.path().to_path_buf(),
-                    recursive: false,
-                    only: Default::default(),
-                    except: Default::default(),
-                }],
-            );
-            let origin_id = req.id;
-
-            // NOTE: We need to clone state so we don't drop the watcher
-            //       as part of dropping the state
-            process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
-
-            let res = rx.recv().await.unwrap();
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            assert!(
-                matches!(res.payload[0], DistantResponseData::Ok),
-                "Unexpected response: {:?}",
-                res.payload[0]
-            );
-
-            origin_id
-        };
+        let _ = api
+            .watch(
+                ctx_2,
+                file_2.path().to_path_buf(),
+                /* recursive */ false,
+                /* only */ Default::default(),
+                /* except */ Default::default(),
+            )
+            .await
+            .unwrap();
 
         // Update the files and verify we get notifications from different origins
-        {
-            file_1.write_str("some text").unwrap();
-            let res = rx
-                .recv()
-                .await
-                .expect("Channel closed before we got change");
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            validate_changed_paths(
-                &res,
-                &[file_1.path().to_path_buf().canonicalize().unwrap()],
-                /* should_panic */ true,
-            );
-            assert_eq!(res.origin_id, file_1_origin_id, "Wrong origin id (file 1)");
-
-            // Process any extra messages (we might get create, content, and more)
-            loop {
-                // Sleep a bit to give time to get all changes happening
-                // TODO: Can we slim down this sleep? Or redesign test in some other way?
-                tokio::time::sleep(Duration::from_millis(100)).await;
-
-                if rx.try_recv().is_err() {
-                    break;
-                }
-            }
-        }
+        file_1.write_str("some text").unwrap();
+        let data = rx_1
+            .recv()
+            .await
+            .expect("Channel closed before we got change");
+        validate_changed_paths(
+            &data,
+            &[file_1.path().to_path_buf().canonicalize().unwrap()],
+            /* should_panic */ true,
+        );
 
         // Update the files and verify we get notifications from different origins
-        {
-            file_2.write_str("some text").unwrap();
-            let res = rx
-                .recv()
-                .await
-                .expect("Channel closed before we got change");
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            validate_changed_paths(
-                &res,
-                &[file_2.path().to_path_buf().canonicalize().unwrap()],
-                /* should_panic */ true,
-            );
-            assert_eq!(res.origin_id, file_2_origin_id, "Wrong origin id (file 2)");
-        }
+        file_2.write_str("some text").unwrap();
+        let data = rx_2
+            .recv()
+            .await
+            .expect("Channel closed before we got change");
+        validate_changed_paths(
+            &data,
+            &[file_2.path().to_path_buf().canonicalize().unwrap()],
+            /* should_panic */ true,
+        );
     }
 
     #[tokio::test]
     async fn exists_should_send_true_if_path_exists() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.touch().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Exists {
-                path: file.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert_eq!(res.payload[0], DistantResponseData::Exists { value: true });
+        let exists = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
+        assert!(exists, "Expected exists to be true, but was false");
     }
 
     #[tokio::test]
     async fn exists_should_send_false_if_path_does_not_exist() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Exists {
-                path: file.path().to_path_buf(),
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert_eq!(res.payload[0], DistantResponseData::Exists { value: false });
+        let exists = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
+        assert!(exists, "Expected exists to be false, but was true");
     }
 
     #[tokio::test]
     async fn metadata_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: file.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: false,
-            }],
-        );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api
+            .metadata(
+                ctx,
+                file.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap_err();
     }
 
     #[tokio::test]
     async fn metadata_should_send_back_metadata_on_file_if_exists() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: file.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: false,
-            }],
-        );
+        let metadata = api
+            .metadata(
+                ctx,
+                file.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
             matches!(
-                res.payload[0],
-                DistantResponseData::Metadata(Metadata {
+                metadata,
+                Metadata {
                     canonicalized_path: None,
                     file_type: FileType::File,
                     len: 9,
                     readonly: false,
                     ..
-                })
+                }
             ),
-            "Unexpected response: {:?}",
-            res.payload[0]
+            "{:?}",
+            metadata
         );
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn metadata_should_include_unix_specific_metadata_on_unix_platform() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: file.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: false,
-            }],
-        );
+        let metadata = api
+            .metadata(
+                ctx,
+                file.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-
-        match &res.payload[0] {
-            DistantResponseData::Metadata(Metadata { unix, windows, .. }) => {
+        match metadata {
+            Metadata { unix, windows, .. } => {
                 assert!(unix.is_some(), "Unexpectedly missing unix metadata on unix");
                 assert!(
                     windows.is_none(),
                     "Unexpectedly got windows metadata on unix"
                 );
             }
-            x => panic!("Unexpected response: {:?}", x),
         }
     }
 
     #[cfg(windows)]
     #[tokio::test]
     async fn metadata_should_include_windows_specific_metadata_on_windows_platform() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: file.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: false,
-            }],
-        );
+        let metadata = api
+            .metadata(
+                ctx,
+                file.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-
-        match &res.payload[0] {
-            DistantResponseData::Metadata(Metadata { unix, windows, .. }) => {
+        match metadata {
+            Metadata { unix, windows, .. } => {
                 assert!(
                     windows.is_some(),
                     "Unexpectedly missing windows metadata on windows"
                 );
                 assert!(unix.is_none(), "Unexpectedly got unix metadata on windows");
             }
-            x => panic!("Unexpected response: {:?}", x),
         }
     }
 
     #[tokio::test]
     async fn metadata_should_send_back_metadata_on_dir_if_exists() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: dir.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: false,
-            }],
-        );
+        let metadata = api
+            .metadata(
+                ctx,
+                dir.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
             matches!(
-                res.payload[0],
-                DistantResponseData::Metadata(Metadata {
+                metadata,
+                Metadata {
                     canonicalized_path: None,
                     file_type: FileType::Dir,
                     readonly: false,
                     ..
-                })
+                }
             ),
-            "Unexpected response: {:?}",
-            res.payload[0]
+            "{:?}",
+            metadata
         );
     }
 
     #[tokio::test]
     async fn metadata_should_send_back_metadata_on_symlink_if_exists() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2183,37 +1706,34 @@ mod tests {
         let symlink = temp.child("link");
         symlink.symlink_to_file(file.path()).unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: symlink.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: false,
-            }],
-        );
+        let metadata = api
+            .metadata(
+                ctx,
+                symlink.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
         assert!(
             matches!(
-                res.payload[0],
-                DistantResponseData::Metadata(Metadata {
+                metadata,
+                Metadata {
                     canonicalized_path: None,
                     file_type: FileType::Symlink,
                     readonly: false,
                     ..
-                })
+                }
             ),
-            "Unexpected response: {:?}",
-            res.payload[0]
+            "{:?}",
+            metadata
         );
     }
 
     #[tokio::test]
     async fn metadata_should_include_canonicalized_path_if_flag_specified() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2221,28 +1741,25 @@ mod tests {
         let symlink = temp.child("link");
         symlink.symlink_to_file(file.path()).unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: symlink.path().to_path_buf(),
-                canonicalize: true,
-                resolve_file_type: false,
-            }],
-        );
+        let metadata = api
+            .metadata(
+                ctx,
+                symlink.path().to_path_buf(),
+                /* canonicalize */ true,
+                /* resolve_file_type */ false,
+            )
+            .await
+            .unwrap();
 
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::Metadata(Metadata {
+        match metadata {
+            Metadata {
                 canonicalized_path: Some(path),
                 file_type: FileType::Symlink,
                 readonly: false,
                 ..
-            }) => assert_eq!(
+            } => assert_eq!(
                 path,
-                &file.path().canonicalize().unwrap(),
+                file.path().canonicalize().unwrap(),
                 "Symlink canonicalized path does not match referenced file"
             ),
             x => panic!("Unexpected response: {:?}", x),
@@ -2251,7 +1768,7 @@ mod tests {
 
     #[tokio::test]
     async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2259,78 +1776,63 @@ mod tests {
         let symlink = temp.child("link");
         symlink.symlink_to_file(file.path()).unwrap();
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::Metadata {
-                path: symlink.path().to_path_buf(),
-                canonicalize: false,
-                resolve_file_type: true,
-            }],
+        let metadata = api
+            .metadata(
+                ctx,
+                symlink.path().to_path_buf(),
+                /* canonicalize */ false,
+                /* resolve_file_type */ true,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(
+                metadata,
+                Metadata {
+                    file_type: FileType::File,
+                    ..
+                }
+            ),
+            "{:?}",
+            metadata
         );
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        match &res.payload[0] {
-            DistantResponseData::Metadata(Metadata {
-                file_type: FileType::File,
-                ..
-            }) => {}
-            x => panic!("Unexpected response: {:?}", x),
-        }
     }
 
     #[tokio::test]
     async fn proc_spawn_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, _rx) = setup(1).await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let _ = api
+            .proc_spawn(
+                ctx,
+                /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
+                /* persist */ false,
+                /* pty */ None,
+            )
             .await
-            .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(&res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+            .unwrap_err();
     }
 
     #[tokio::test]
-    async fn proc_spawn_should_send_back_proc_start_on_success() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn proc_spawn_should_return_id_of_spawned_process() {
+        let (api, ctx, _rx) = setup(1).await;
 
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {}", SCRIPT_RUNNER, ECHO_ARGS_TO_STDOUT_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let id = api
+            .proc_spawn(
+                ctx,
+                /* cmd */
+                format!(
+                    "{} {}",
+                    SCRIPT_RUNNER.to_string(),
+                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()
+                ),
+                /* persist */ false,
+                /* pty */ None,
+            )
             .await
             .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(&res.payload[0], DistantResponseData::ProcSpawned { .. }),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        assert!(id > 0);
     }
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
@@ -2338,29 +1840,22 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stdout_periodically_when_available() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, mut rx) = setup(1).await;
 
-        // Run a program that echoes to stdout
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {} some stdout", SCRIPT_RUNNER, ECHO_ARGS_TO_STDOUT_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let proc_id = api
+            .proc_spawn(
+                ctx,
+                /* cmd */
+                format!(
+                    "{} {} some stdout",
+                    SCRIPT_RUNNER.to_string(),
+                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()
+                ),
+                /* persist */ false,
+                /* pty */ None,
+            )
             .await
             .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(&res.payload[0], DistantResponseData::ProcSpawned { .. }),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
 
         // Gather two additional responses:
         //
@@ -2369,29 +1864,36 @@ mod tests {
         //
         // Note that order is not a guarantee, so we have to check that
         // we get one of each type of response
-        let res1 = rx.recv().await.expect("Missing first response");
-        let res2 = rx.recv().await.expect("Missing second response");
+        let data_1 = rx.recv().await.expect("Missing first response");
+        let data_2 = rx.recv().await.expect("Missing second response");
 
         let mut got_stdout = false;
         let mut got_done = false;
 
-        let mut check_res = |res: &Response| {
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            match &res.payload[0] {
-                DistantResponseData::ProcStdout { data, .. } => {
-                    assert_eq!(data, b"some stdout", "Got wrong stdout");
-                    got_stdout = true;
-                }
-                DistantResponseData::ProcDone { success, .. } => {
-                    assert!(success, "Process should have completed successfully");
-                    got_done = true;
-                }
-                x => panic!("Unexpected response: {:?}", x),
+        let mut check_data = |data: &DistantResponseData| match data {
+            DistantResponseData::ProcStdout { id, data } => {
+                assert_eq!(
+                    *id, proc_id,
+                    "Got {}, but expected {} as process id",
+                    id, proc_id
+                );
+                assert_eq!(data, b"some stdout", "Got wrong stdout");
+                got_stdout = true;
             }
+            DistantResponseData::ProcDone { id, success, .. } => {
+                assert_eq!(
+                    *id, proc_id,
+                    "Got {}, but expected {} as process id",
+                    id, proc_id
+                );
+                assert!(success, "Process should have completed successfully");
+                got_done = true;
+            }
+            x => panic!("Unexpected response: {:?}", x),
         };
 
-        check_res(&res1);
-        check_res(&res2);
+        check_data(&data_1);
+        check_data(&data_2);
         assert!(got_stdout, "Missing stdout response");
         assert!(got_done, "Missing done response");
     }
@@ -2401,29 +1903,22 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stderr_periodically_when_available() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+        let (api, ctx, mut rx) = setup(1).await;
 
-        // Run a program that echoes to stderr
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {} some stderr", SCRIPT_RUNNER, ECHO_ARGS_TO_STDERR_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let proc_id = api
+            .proc_spawn(
+                ctx,
+                /* cmd */
+                format!(
+                    "{} {} some stderr",
+                    SCRIPT_RUNNER.to_string(),
+                    ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string()
+                ),
+                /* persist */ false,
+                /* pty */ None,
+            )
             .await
             .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        assert!(
-            matches!(&res.payload[0], DistantResponseData::ProcSpawned { .. }),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
 
         // Gather two additional responses:
         //
@@ -2432,29 +1927,36 @@ mod tests {
         //
         // Note that order is not a guarantee, so we have to check that
         // we get one of each type of response
-        let res1 = rx.recv().await.expect("Missing first response");
-        let res2 = rx.recv().await.expect("Missing second response");
+        let data_1 = rx.recv().await.expect("Missing first response");
+        let data_2 = rx.recv().await.expect("Missing second response");
 
         let mut got_stderr = false;
         let mut got_done = false;
 
-        let mut check_res = |res: &Response| {
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            match &res.payload[0] {
-                DistantResponseData::ProcStderr { data, .. } => {
-                    assert_eq!(data, b"some stderr", "Got wrong stderr");
-                    got_stderr = true;
-                }
-                DistantResponseData::ProcDone { success, .. } => {
-                    assert!(success, "Process should have completed successfully");
-                    got_done = true;
-                }
-                x => panic!("Unexpected response: {:?}", x),
+        let mut check_data = |data: &DistantResponseData| match data {
+            DistantResponseData::ProcStderr { id, data } => {
+                assert_eq!(
+                    *id, proc_id,
+                    "Got {}, but expected {} as process id",
+                    id, proc_id
+                );
+                assert_eq!(data, b"some stderr", "Got wrong stderr");
+                got_stderr = true;
             }
+            DistantResponseData::ProcDone { id, success, .. } => {
+                assert_eq!(
+                    *id, proc_id,
+                    "Got {}, but expected {} as process id",
+                    id, proc_id
+                );
+                assert!(success, "Process should have completed successfully");
+                got_done = true;
+            }
+            x => panic!("Unexpected response: {:?}", x),
         };
 
-        check_res(&res1);
-        check_res(&res2);
+        check_data(&data_1);
+        check_data(&data_2);
         assert!(got_stderr, "Missing stderr response");
         assert!(got_done, "Missing done response");
     }
@@ -2463,311 +1965,157 @@ mod tests {
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_spawn_should_clear_process_from_state_when_done() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn proc_spawn_should_send_done_signal_when_completed() {
+        let (api, ctx, mut rx) = setup(1).await;
 
-        // Run a program that ends after a little bit
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {} 0.1", SCRIPT_RUNNER, SLEEP_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let proc_id = api
+            .proc_spawn(
+                ctx,
+                /* cmd */
+                format!(
+                    "{} {} 0.1",
+                    SCRIPT_RUNNER.to_string(),
+                    SLEEP_SH.to_str().unwrap().to_string()
+                ),
+                /* persist */ false,
+                /* pty */ None,
+            )
             .await
             .unwrap();
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        let id = match &res.payload[0] {
-            DistantResponseData::ProcSpawned { id } => *id,
-            x => panic!("Unexpected response: {:?}", x),
-        };
-
-        // Verify that the state has the process
-        assert!(
-            state.lock().await.processes.contains_key(&id),
-            "Process {} not in state",
-            id
-        );
-
         // Wait for process to finish
-        let _ = rx.recv().await.unwrap();
-
-        // Verify that the state was cleared
-        assert!(
-            !state.lock().await.processes.contains_key(&id),
-            "Process {} still in state",
-            id
-        );
+        match rx.recv().await.unwrap() {
+            DistantResponseData::ProcDone { id, .. } => assert_eq!(
+                id, proc_id,
+                "Got {}, but expected {} as process id",
+                id, proc_id
+            ),
+            x => panic!("Unexpected response: {:?}", x),
+        }
     }
 
     #[tokio::test]
     async fn proc_spawn_should_clear_process_from_state_when_killed() {
-        let (conn_id, state, tx, mut rx) = setup(1);
-
-        // Run a program that ends slowly
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {} 1", SCRIPT_RUNNER, SLEEP_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
-            .await
-            .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-        let id = match &res.payload[0] {
-            DistantResponseData::ProcSpawned { id } => *id,
-            x => panic!("Unexpected response: {:?}", x),
+        let (api, ctx_1, mut rx) = setup(1).await;
+        let (ctx_2, _rx) = {
+            let (reply, rx) = make_reply(1);
+            let ctx = DistantCtx {
+                connection_id: ctx_1.connection_id,
+                reply,
+                local_data: Arc::clone(&ctx_1.local_data),
+            };
+            (ctx, rx)
         };
 
-        // Verify that the state has the process
-        assert!(
-            state.lock().await.processes.contains_key(&id),
-            "Process {} not in state",
-            id
-        );
+        let proc_id = api
+            .proc_spawn(
+                ctx_1,
+                /* cmd */
+                format!(
+                    "{} {} 1",
+                    SCRIPT_RUNNER.to_string(),
+                    SLEEP_SH.to_str().unwrap().to_string()
+                ),
+                /* persist */ false,
+                /* pty */ None,
+            )
+            .await
+            .unwrap();
 
         // Send kill signal
-        let req = Request::new("test-tenant", vec![DistantRequestData::ProcKill { id }]);
-        process(conn_id, Arc::clone(&state), req, tx.clone())
-            .await
-            .unwrap();
+        let _ = api.proc_kill(ctx_2, proc_id).await.unwrap();
 
-        // Wait for two responses, a kill confirmation and the done
-        let _ = rx.recv().await.unwrap();
-        let _ = rx.recv().await.unwrap();
-
-        // Verify that the state was cleared
-        assert!(
-            !state.lock().await.processes.contains_key(&id),
-            "Process {} still in state",
-            id
-        );
+        // Wait for the completion response to come in
+        match rx.recv().await.unwrap() {
+            DistantResponseData::ProcDone { id, .. } => assert_eq!(
+                id, proc_id,
+                "Got {}, but expected {} as process id",
+                id, proc_id
+            ),
+            x => panic!("Unexpected response: {:?}", x),
+        }
     }
 
     #[tokio::test]
-    async fn proc_kill_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn proc_kill_should_fail_if_given_non_existent_process() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Send kill to a non-existent process
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcKill { id: 0xDEADBEEF }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
-            .await
-            .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-
-        // Verify that we get an error
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+        let _ = api.proc_kill(ctx, 0xDEADBEEF).await.unwrap_err();
     }
 
     #[tokio::test]
-    async fn proc_kill_should_send_ok_and_done_responses_on_success() {
-        let (conn_id, state, tx, mut rx) = setup(1);
-
-        // First, run a program that sits around (sleep for 1 second)
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {} 1", SCRIPT_RUNNER, SLEEP_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
-            .await
-            .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-
-        // Second, grab the id of the started process
-        let id = match &res.payload[0] {
-            DistantResponseData::ProcSpawned { id } => *id,
-            x => panic!("Unexpected response: {:?}", x),
-        };
-
-        // Third, send kill for process
-        let req = Request::new("test-tenant", vec![DistantRequestData::ProcKill { id }]);
-
-        // NOTE: We cannot let the state get dropped as it results in killing
-        //       the child process automatically; so, we clone another reference here
-        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
-
-        // Fourth, gather two responses:
-        //
-        // 1. A direct response saying that received (ok)
-        // 2. An indirect response that is proc completing
-        //
-        // Note that order is not a guarantee, so we have to check that
-        // we get one of each type of response
-        let res1 = rx.recv().await.expect("Missing first response");
-        let res2 = rx.recv().await.expect("Missing second response");
-
-        let mut got_ok = false;
-        let mut got_done = false;
-
-        let mut check_res = |res: &Response| {
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            match &res.payload[0] {
-                DistantResponseData::Ok => got_ok = true,
-                DistantResponseData::ProcDone { success, .. } => {
-                    assert!(!success, "Process should not have completed successfully");
-                    got_done = true;
-                }
-                x => panic!("Unexpected response: {:?}", x),
-            }
-        };
-
-        check_res(&res1);
-        check_res(&res2);
-        assert!(got_ok, "Missing ok response");
-        assert!(got_done, "Missing done response");
-    }
-
-    #[tokio::test]
-    async fn proc_stdin_should_send_error_on_failure() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn proc_stdin_should_fail_if_given_non_existent_process() {
+        let (api, ctx, _rx) = setup(1).await;
 
         // Send stdin to a non-existent process
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcStdin {
-                id: 0xDEADBEEF,
-                data: b"some input".to_vec(),
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let _ = api
+            .proc_stdin(ctx, 0xDEADBEEF, b"some input".to_vec())
             .await
-            .unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
-
-        // Verify that we get an error
-        assert!(
-            matches!(res.payload[0], DistantResponseData::Error(_)),
-            "Unexpected response: {:?}",
-            res.payload[0]
-        );
+            .unwrap_err();
     }
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
     #[tokio::test]
     #[cfg_attr(windows, ignore)]
-    async fn proc_stdin_should_send_ok_on_success_and_properly_send_stdin_to_process() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn proc_stdin_should_send_stdin_to_process() {
+        let (api, ctx_1, mut rx) = setup(1).await;
+        let (ctx_2, _rx) = {
+            let (reply, rx) = make_reply(1);
+            let ctx = DistantCtx {
+                connection_id: ctx_1.connection_id,
+                reply,
+                local_data: Arc::clone(&ctx_1.local_data),
+            };
+            (ctx, rx)
+        };
 
         // First, run a program that listens for stdin
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcSpawn {
-                cmd: format!("{} {}", SCRIPT_RUNNER, ECHO_STDIN_TO_STDOUT_SH),
-                persist: false,
-                pty: None,
-            }],
-        );
-
-        process(conn_id, Arc::clone(&state), req, tx.clone())
+        let id = api
+            .proc_spawn(
+                ctx_1,
+                /* cmd */
+                format!(
+                    "{} {}",
+                    SCRIPT_RUNNER.to_string(),
+                    ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()
+                ),
+                /* persist */ false,
+                /* pty */ None,
+            )
             .await
             .unwrap();
 
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        // Second, send stdin to the remote process
+        let _ = api
+            .proc_stdin(ctx_2, id, b"hello world\n".to_vec())
+            .await
+            .unwrap();
 
-        // Second, grab the id of the started process
-        let id = match &res.payload[0] {
-            DistantResponseData::ProcSpawned { id } => *id,
-            x => panic!("Unexpected response: {:?}", x),
-        };
-
-        // Third, send stdin to the remote process
-        let req = Request::new(
-            "test-tenant",
-            vec![DistantRequestData::ProcStdin {
-                id,
-                data: b"hello world\n".to_vec(),
-            }],
-        );
-
-        // NOTE: We cannot let the state get dropped as it results in killing
-        //       the child process; so, we clone another reference here
-        process(conn_id, Arc::clone(&state), req, tx).await.unwrap();
-
-        // Fourth, gather two responses:
-        //
-        // 1. A direct response to processing the stdin
-        // 2. An indirect response that is stdout from echoing our stdin
-        //
-        // Note that order is not a guarantee, so we have to check that
-        // we get one of each type of response
-        let res1 = rx.recv().await.expect("Missing first response");
-        let res2 = rx.recv().await.expect("Missing second response");
-
-        let mut got_ok = false;
-        let mut got_stdout = false;
-
-        let mut check_res = |res: &Response| {
-            assert_eq!(res.payload.len(), 1, "Wrong payload size");
-            match &res.payload[0] {
-                DistantResponseData::Ok => got_ok = true,
-                DistantResponseData::ProcStdout { data, .. } => {
-                    assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
-                    got_stdout = true;
-                }
-                x => panic!("Unexpected response: {:?}", x),
+        // Third, check the async response of stdout to verify we got stdin
+        match rx.recv().await.unwrap() {
+            DistantResponseData::ProcStdout { data, .. } => {
+                assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
             }
-        };
-
-        check_res(&res1);
-        check_res(&res2);
-        assert!(got_ok, "Missing ok response");
-        assert!(got_stdout, "Missing mirrored stdin response");
+            x => panic!("Unexpected response: {:?}", x),
+        }
     }
 
     #[tokio::test]
-    async fn system_info_should_send_system_info_based_on_binary() {
-        let (conn_id, state, tx, mut rx) = setup(1);
+    async fn system_info_should_return_system_info_based_on_binary() {
+        let (api, ctx, _rx) = setup(1).await;
 
-        let req = Request::new("test-tenant", vec![DistantRequestData::SystemInfo {}]);
-
-        process(conn_id, state, req, tx).await.unwrap();
-
-        let res = rx.recv().await.unwrap();
-        assert_eq!(res.payload.len(), 1, "Wrong payload size");
+        let system_info = api.system_info(ctx).await.unwrap();
         assert_eq!(
-            res.payload[0],
-            DistantResponseData::SystemInfo(SystemInfo {
-                family: env::consts::FAMILY.to_string(),
-                os: env::consts::OS.to_string(),
-                arch: env::consts::ARCH.to_string(),
-                current_dir: env::current_dir().unwrap_or_default(),
+            system_info,
+            SystemInfo {
+                family: std::env::consts::FAMILY.to_string(),
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+                current_dir: std::env::current_dir().unwrap_or_default(),
                 main_separator: std::path::MAIN_SEPARATOR,
-            }),
-            "Unexpected response: {:?}",
-            res.payload[0]
+            }
         );
     }
 }
