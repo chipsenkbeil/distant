@@ -1,5 +1,4 @@
 use crate::{
-    api::local::ConnectionState,
     data::{ChangeKind, DirEntry, Error, Metadata, PtySize, SystemInfo},
     DistantRequestData, DistantResponseData,
 };
@@ -32,12 +31,6 @@ where
 {
     pub fn new(api: T) -> Self {
         Self { api }
-    }
-}
-
-impl Default for DistantApiServer<LocalDistantApi, ConnectionState> {
-    fn default() -> Self {
-        Self::new(LocalDistantApi::new())
     }
 }
 

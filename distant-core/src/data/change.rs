@@ -1,7 +1,15 @@
-use derive_more::{Deref, DerefMut, Display, IntoIterator};
+use derive_more::{Deref, DerefMut, IntoIterator};
 use notify::{event::Event as NotifyEvent, EventKind as NotifyEventKind};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, iter::FromIterator, ops::BitOr, path::PathBuf, str::FromStr};
+use std::{
+    collections::HashSet,
+    fmt,
+    hash::{Hash, Hasher},
+    iter::FromIterator,
+    ops::{BitOr, Sub},
+    path::PathBuf,
+    str::FromStr,
+};
 use strum::{EnumString, EnumVariantNames};
 
 /// Change to one or more paths on the filesystem
@@ -265,13 +273,7 @@ impl From<NotifyEventKind> for ChangeKind {
 }
 
 /// Represents a distinct set of different change kinds
-#[derive(
-    Clone, Debug, Deref, DerefMut, Display, IntoIterator, PartialEq, Eq, Serialize, Deserialize,
-)]
-#[display(
-    fmt = "{}",
-    "_0.iter().map(ToString::to_string).collect::<Vec<String>>().join(\",\")"
-)]
+#[derive(Clone, Debug, Deref, DerefMut, IntoIterator, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeKindSet(HashSet<ChangeKind>);
 
 impl ChangeKindSet {
@@ -360,6 +362,27 @@ impl ChangeKindSet {
     }
 }
 
+impl fmt::Display for ChangeKindSet {
+    /// Outputs a comma-separated series of [`ChangeKind`] as string that are sorted
+    /// such that this will always be consistent output
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut kinds = self
+            .0
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<String>>();
+        kinds.sort_unstable();
+        write!(f, "{}", kinds.join(","))
+    }
+}
+
+impl Hash for ChangeKindSet {
+    /// Hashes based on the output of [`fmt::Display`]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.to_string().hash(state);
+    }
+}
+
 impl BitOr<ChangeKindSet> for ChangeKindSet {
     type Output = Self;
 
@@ -383,6 +406,22 @@ impl BitOr<ChangeKindSet> for ChangeKind {
 
     fn bitor(self, rhs: ChangeKindSet) -> Self::Output {
         rhs | self
+    }
+}
+
+impl Sub<ChangeKindSet> for ChangeKindSet {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
+        ChangeKindSet(&self.0 - &other.0)
+    }
+}
+
+impl Sub<&'_ ChangeKindSet> for &ChangeKindSet {
+    type Output = ChangeKindSet;
+
+    fn sub(self, other: &ChangeKindSet) -> Self::Output {
+        ChangeKindSet(&self.0 - &other.0)
     }
 }
 

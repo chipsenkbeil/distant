@@ -25,11 +25,9 @@ pub struct RegisteredPath {
     /// Whether or not the path was set to be recursive
     recursive: bool,
 
-    /// Specific filter for path
-    only: ChangeKindSet,
-
-    /// Specific filter for path
-    except: ChangeKindSet,
+    /// Specific filter for path (only the allowed change kinds are tracked)
+    /// NOTE: This is a combination of only and except filters
+    allowed: ChangeKindSet,
 
     /// Used to send a reply through the connection watching this path
     reply: QueuedServerReply<DistantResponseData>,
@@ -41,25 +39,26 @@ impl fmt::Debug for RegisteredPath {
             .field("raw_path", &self.raw_path)
             .field("path", &self.path)
             .field("recursive", &self.recursive)
-            .field("only", &self.only)
-            .field("except", &self.except)
+            .field("allowed", &self.allowed)
             .finish()
     }
 }
 
 impl PartialEq for RegisteredPath {
-    /// Checks for equality using the canonicalized path
+    /// Checks for equality using the id, canonicalized path, and allowed change kinds
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
+        self.id == other.id && self.path == other.path && self.allowed == other.allowed
     }
 }
 
 impl Eq for RegisteredPath {}
 
 impl Hash for RegisteredPath {
-    /// Hashes using the canonicalized path
+    /// Hashes using the id, canonicalized path, and allowed change kinds
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
         self.path.hash(state);
+        self.allowed.hash(state);
     }
 }
 
@@ -77,13 +76,20 @@ impl RegisteredPath {
         let path = tokio::fs::canonicalize(raw_path.as_path()).await?;
         let only = only.into();
         let except = except.into();
+
+        // Calculate the true list of kinds based on only and except filters
+        let allowed = if only.is_empty() {
+            ChangeKindSet::all() - except
+        } else {
+            only - except
+        };
+
         Ok(Self {
             id,
             raw_path,
             path,
             recursive,
-            only,
-            except,
+            allowed,
             reply,
         })
     }
@@ -109,6 +115,11 @@ impl RegisteredPath {
         self.recursive
     }
 
+    /// Returns reference to set of [`ChangeKind`] that this path watches
+    pub fn allowed(&self) -> &ChangeKindSet {
+        &self.allowed
+    }
+
     /// Sends a reply for a change tied to this registered path, filtering
     /// out any paths that are not applicable
     ///
@@ -118,10 +129,7 @@ impl RegisteredPath {
         T: IntoIterator,
         T::Item: AsRef<Path>,
     {
-        let skip = (!self.only.is_empty() && !self.only.contains(&kind))
-            || (!self.except.is_empty() && self.except.contains(&kind));
-
-        if skip {
+        if !self.allowed.contains(&kind) {
             return Ok(false);
         }
 
@@ -142,7 +150,7 @@ impl RegisteredPath {
     }
 
     /// Sends an error message and includes paths if provided, skipping sending the message if
-    /// no paths provided and `skip_if_no_paths` is true
+    /// no paths match and `skip_if_no_paths` is true
     ///
     /// Returns true if message was sent, and false if not
     pub async fn filter_and_send_error<T>(

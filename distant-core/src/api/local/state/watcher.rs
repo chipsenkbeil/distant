@@ -1,40 +1,33 @@
-use crate::{
-    api::local::state::RegisteredPath,
-    constants::SERVER_WATCHER_CAPACITY,
-    data::{Change, ChangeKind, ChangeKindSet, DistantResponseData},
-};
-use distant_net::QueuedServerReply;
+use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind};
 use log::*;
 use notify::{
     Config as WatcherConfig, Error as WatcherError, Event as WatcherEvent, RecommendedWatcher,
     RecursiveMode, Watcher,
 };
 use std::{
-    collections::{hash_map::Entry, HashMap},
-    hash::{Hash, Hasher},
+    collections::HashMap,
     io,
-    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{Arc, Weak},
 };
-use tokio::sync::{
-    mpsc::{self, error::TrySendError},
-    Mutex,
+use tokio::{
+    sync::{
+        mpsc::{self, error::TrySendError},
+        oneshot, RwLock,
+    },
+    task::JoinHandle,
 };
 
-type PathCntMap = Mutex<HashMap<PathBuf, usize>>;
-type StrongPathCntMap = Arc<PathCntMap>;
-type WeakPathCntMap = Weak<PathCntMap>;
+mod path;
+pub use path::*;
+
+type PathMap = RwLock<HashMap<PathBuf, Vec<RegisteredPath>>>;
+type StrongPathMap = Arc<PathMap>;
+type WeakPathMap = Weak<PathMap>;
 
 pub struct WatcherState {
-    // NOTE: I think the design of the watcher will only spawn a thread once
-    //       watching a path starts, and each new watch will restart the
-    //       thread; so, we can create the watcher when the state is
-    //       created and not worry about causing unexpected threads
-    watcher: RecommendedWatcher,
-
-    /// Mapping of path -> total registered paths
-    path_cnt: StrongPathCntMap,
+    tx: mpsc::Sender<InnerWatcherMsg>,
+    task: JoinHandle<()>,
 }
 
 impl WatcherState {
@@ -44,19 +37,27 @@ impl WatcherState {
         //       with a large volume of watch requests
         let (tx, mut rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
 
-        let mut watcher = notify::recommended_watcher(move |res| match tx.try_send(res) {
-            Ok(_) => (),
-            Err(TrySendError::Full(_)) => {
-                warn!(
-                    "Reached watcher capacity of {}! Dropping watcher event!",
-                    SERVER_WATCHER_CAPACITY,
-                );
-            }
-            Err(TrySendError::Closed(_)) => {
-                warn!("Skipping watch event because watcher channel closed");
-            }
-        })
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        let mut watcher = {
+            let tx = tx.clone();
+            notify::recommended_watcher(move |res| {
+                match tx.try_send(match res {
+                    Ok(x) => InnerWatcherMsg::Event { ev: x },
+                    Err(x) => InnerWatcherMsg::Error { err: x },
+                }) {
+                    Ok(_) => (),
+                    Err(TrySendError::Full(_)) => {
+                        warn!(
+                            "Reached watcher capacity of {}! Dropping watcher event!",
+                            SERVER_WATCHER_CAPACITY,
+                        );
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        warn!("Skipping watch event because watcher channel closed");
+                    }
+                }
+            })
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+        };
 
         // Attempt to configure watcher, but don't fail if these configurations fail
         match watcher.configure(WatcherConfig::PreciseEvents(true)) {
@@ -72,108 +73,185 @@ impl WatcherState {
             Err(x) => error!("Watcher configuration for notice events failed: {}", x),
         }
 
-        let path_cnt = Arc::new(Mutex::new(HashMap::new()));
-        let weak_path_cnt = Arc::downgrade(&path_cnt);
-        tokio::spawn(watcher_event_task(rx, weak_path_cnt));
-
-        Ok(Self { watcher, path_cnt })
+        Ok(Self {
+            tx,
+            task: tokio::spawn(watcher_task(watcher, rx)),
+        })
     }
 
-    pub async fn watch(&self, path: RegisteredPath) -> io::Result<()> {
-        self.watcher.watch()
+    /// Watch a path for a specific connection denoted by the id within the registered path
+    pub async fn watch(&self, registered_path: RegisteredPath) -> io::Result<()> {
+        let (cb, rx) = oneshot::channel();
+        let _ = self
+            .tx
+            .send(InnerWatcherMsg::Watch {
+                registered_path,
+                cb,
+            })
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal watcher task closed"))?;
+        rx.await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to watch dropped"))?
     }
 
-    pub async fn unwatch(&self, path: impl AsRef<Path>) -> io::Result<()> {
+    /// Unwatch a path for a specific connection denoted by the id
+    pub async fn unwatch(&self, id: usize, path: impl AsRef<Path>) -> io::Result<()> {
+        let (cb, rx) = oneshot::channel();
         let path = tokio::fs::canonicalize(path.as_ref())
             .await
             .unwrap_or_else(|_| path.as_ref().to_path_buf());
+        let _ = self
+            .tx
+            .send(InnerWatcherMsg::Unwatch { id, path, cb })
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal watcher task closed"))?;
+        rx.await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to unwatch dropped"))?
+    }
 
-        if let Some(cnt) = self.path_cnt.lock().await.get_mut(&path) {
-            // No more paths, so we want to remove entirely
-            if cnt == 0 || cnt - 1 == 0 {}
-        }
+    /// Aborts the watcher task
+    pub fn abort(&self) {
+        self.task.abort();
     }
 }
 
-async fn watcher_event_task(
-    mut rx: mpsc::Receiver<Result<WatcherEvent, WatcherError>>,
-    path_cnt: WeakPathCntMap,
-) {
-    while let Some(res) = rx.recv().await {
-        let is_ok = match res {
-            Ok(mut x) => {
-                let ev_paths: Vec<_> = x.paths.drain(..).collect();
-                let kind = ChangeKind::from(x.kind);
+/// Internal message to pass to our task below to perform some action
+enum InnerWatcherMsg {
+    Watch {
+        registered_path: RegisteredPath,
+        cb: oneshot::Sender<io::Result<()>>,
+    },
+    Unwatch {
+        id: usize,
+        path: PathBuf,
+        cb: oneshot::Sender<io::Result<()>>,
+    },
+    Event {
+        ev: WatcherEvent,
+    },
+    Error {
+        err: WatcherError,
+    },
+}
 
-                let results = find_matches(&paths, &ev_paths).await;
-                let mut is_ok = true;
-                if let Some(path_cnt) = Weak::upgrade(&path_cnt) {
-                    for path in paths {
-                        path
-                    }
-                }
+async fn watcher_task(mut watcher: RecommendedWatcher, mut rx: mpsc::Receiver<InnerWatcherMsg>) {
+    // TODO: Optimize this in some way to be more performant than
+    //       checking every path whenever an event comes in
+    let mut registered_paths: Vec<RegisteredPath> = Vec::new();
+    let mut path_cnt: HashMap<PathBuf, usize> = HashMap::new();
 
-                for (paths, wp) in results {
-                    // Skip sending this change if we are not watching it
-                    if (!wp.only.is_empty() && !wp.only.contains(&kind))
-                        || (!wp.except.is_empty() && wp.except.contains(&kind))
-                    {
-                        trace!("Skipping change '{}' for {:?}", kind, paths);
-                        continue;
-                    }
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            InnerWatcherMsg::Watch {
+                registered_path,
+                cb,
+            } => {
+                // Check if we are tracking the path across any connection
+                if let Some(cnt) = path_cnt.get_mut(registered_path.path()) {
+                    // Increment the count of times we are watching that path
+                    *cnt += 1;
 
-                    if let Err(x) = wp.reply.send(make_res_data(kind, &paths)).await {
-                        error!("Failed to report on changes to paths: {:?}", paths);
-                        is_ok = false;
-                        break;
-                    }
-                }
-                is_ok
-            }
-            Err(mut x) => {
-                let ev_paths: Vec<_> = x.paths.drain(..).collect();
-                let msg = x.to_string();
+                    // Store the registered path in our collection without worry
+                    // since we are already watching a path that impacts this one
+                    registered_paths.push(registered_path);
 
-                error!("Watcher encountered an error {} for {:?}", msg, ev_paths);
-
-                let mut is_ok = true;
-
-                // If we have no paths for the errors, then we send the error to everyone
-                if ev_paths.is_empty() {
-                    if let Some(paths) = Weak::upgrade(&paths) {
-                        trace!("Relaying error to all watching connections");
-                        for reg_paths in paths.lock().await.values_mut() {
-                            for path in reg_paths {
-                                if let Err(x) = path.reply().send(make_res_data(&msg, &[])).await {
-                                    error!("Failed to report on changes to paths: {:?}", paths);
-                                    is_ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                // Otherwise, figure out the relevant watchers from our paths and
-                // send the error to them
+                    // Send an okay because we always succeed in this case
+                    let _ = cb.send(Ok(()));
                 } else {
-                    let results = find_matches(&paths, &ev_paths).await;
+                    let res = watcher
+                        .watch(
+                            registered_path.path(),
+                            if registered_path.is_recursive() {
+                                RecursiveMode::Recursive
+                            } else {
+                                RecursiveMode::NonRecursive
+                            },
+                        )
+                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x));
 
-                    trace!("Relaying error to {} connections", results.len());
-                    for (paths, wp) in results {
-                        if let Err(x) = wp.reply.send(make_res_data(&msg, &paths)).await {
-                            error!("Failed to report on changes to paths: {:?}", paths);
-                            is_ok = false;
-                            break;
-                        }
+                    // If we succeeded, store our registered path and set the tracking cnt to 1
+                    if res.is_ok() {
+                        path_cnt.insert(registered_path.path().to_path_buf(), 1);
+                        registered_paths.push(registered_path);
+                    }
+
+                    // Send the result of the watch, but don't worry if the channel was closed
+                    let _ = cb.send(res);
+                }
+            }
+            InnerWatcherMsg::Unwatch { id, path, cb } => {
+                // Check if we are tracking the path across any connection
+                if let Some(cnt) = path_cnt.get(path.as_path()) {
+                    // Cycle through and remove all paths that match the given id and path,
+                    // capturing how many paths we removed
+                    let removed_cnt = {
+                        let old_len = registered_paths.len();
+                        registered_paths
+                            .retain(|p| p.id() != id || (p.path() != path && p.raw_path() != path));
+                        let new_len = registered_paths.len();
+                        old_len - new_len
+                    };
+
+                    // 1. If we are now at zero cnt for our path, we want to actually unwatch the
+                    //    path with our watcher
+                    // 2. If we removed nothing from our path list, we want to return an error
+                    // 3. Otherwise, we return okay because we succeeded
+                    if *cnt <= removed_cnt {
+                        let _ = cb.send(
+                            watcher
+                                .unwatch(&path)
+                                .map_err(|x| io::Error::new(io::ErrorKind::Other, x)),
+                        );
+                    } else if removed_cnt == 0 {
+                        // Send a failure as there was nothing to unwatch for this connection
+                        let _ = cb.send(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("{:?} is not being watched", path),
+                        )));
+                    } else {
+                        // Send a success as we removed some paths
+                        let _ = cb.send(Ok(()));
+                    }
+                } else {
+                    // Send a failure as there was nothing to unwatch
+                    let _ = cb.send(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("{:?} is not being watched", path),
+                    )));
+                }
+            }
+            InnerWatcherMsg::Event { ev } => {
+                let kind = ChangeKind::from(ev.kind);
+
+                for registered_path in registered_paths.iter() {
+                    match registered_path.filter_and_send(kind, &ev.paths).await {
+                        Ok(_) => (),
+                        Err(x) => error!(
+                            "[Conn {}] Failed to forward changes to paths: {}",
+                            registered_path.id(),
+                            x
+                        ),
                     }
                 }
-
-                is_ok
             }
-        };
+            InnerWatcherMsg::Error { err } => {
+                let msg = err.to_string();
+                error!("Watcher encountered an error {} for {:?}", msg, err.paths);
 
-        if !is_ok {
-            error!("Watcher channel closed");
-            break;
+                for registered_path in registered_paths.iter() {
+                    match registered_path
+                        .filter_and_send_error(&msg, &err.paths, !err.paths.is_empty())
+                        .await
+                    {
+                        Ok(_) => (),
+                        Err(x) => error!(
+                            "[Conn {}] Failed to forward changes to paths: {}",
+                            registered_path.id(),
+                            x
+                        ),
+                    }
+                }
+            }
         }
     }
 }

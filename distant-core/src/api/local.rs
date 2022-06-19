@@ -31,16 +31,11 @@ pub struct LocalDistantApi {
 }
 
 impl LocalDistantApi {
-    pub fn new() -> Self {
-        Self {
-            state: GlobalState::default(),
-        }
-    }
-}
-
-impl Default for LocalDistantApi {
-    fn default() -> Self {
-        Self::new()
+    /// Initialize the api instance
+    pub fn initialize() -> io::Result<Self> {
+        Ok(Self {
+            state: GlobalState::initialize()?,
+        })
     }
 }
 
@@ -318,7 +313,7 @@ impl DistantApi for LocalDistantApi {
         )
         .await?;
 
-        self.state.watcher.lock().await.watch(path).await?;
+        self.state.watcher.watch(path).await?;
 
         debug!("[Conn {}] Now watching {:?}", ctx.connection_id, path);
         Ok(())
@@ -327,9 +322,7 @@ impl DistantApi for LocalDistantApi {
     async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
         self.state
             .watcher
-            .lock()
-            .await
-            .unwrap(ctx.connection_id, path.as_path())
+            .unwatch(ctx.connection_id, path.as_path())
             .await?;
         debug!("[Conn {}] No longer watching {:?}", ctx.connection_id, path);
         Ok(())
@@ -362,7 +355,7 @@ impl DistantApi for LocalDistantApi {
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<usize> {
-        debug!("[Conn {}] Spawning {}", conn_id, cmd);
+        debug!("[Conn {}] Spawning {}", ctx.connection_id, cmd);
 
         // Build out the command and args from our string
         let (cmd, args) = match cmd.split_once(" ") {
