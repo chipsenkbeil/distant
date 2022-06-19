@@ -19,6 +19,10 @@ impl Reply for DistantSingleReply {
         self.0.send(DistantMsg::Single(data))
     }
 
+    fn blocking_send(&self, data: Self::Data) -> io::Result<()> {
+        self.0.blocking_send(DistantMsg::Single(data))
+    }
+
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {
         Box::new(Self(self.0.clone_reply()))
     }

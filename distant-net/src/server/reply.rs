@@ -9,6 +9,9 @@ pub trait Reply: Send + Sync {
     /// Sends a reply out from the server
     fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>>;
 
+    /// Blocking version of sending a reply out from the server
+    fn blocking_send(&self, data: Self::Data) -> io::Result<()>;
+
     /// Clones this reply
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>>;
 }
@@ -18,10 +21,15 @@ impl<T: Send + 'static> Reply for mpsc::Sender<T> {
 
     fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         Box::pin(async move {
-            self.send(data)
+            mpsc::Sender::send(self, data)
                 .await
                 .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))
         })
+    }
+
+    fn blocking_send(&self, data: Self::Data) -> io::Result<()> {
+        mpsc::Sender::blocking_send(self, data)
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))
     }
 
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {
@@ -52,6 +60,12 @@ impl<T> ServerReply<T> {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Connection reply closed"))
     }
 
+    pub fn blocking_send(&self, data: T) -> io::Result<()> {
+        self.tx
+            .blocking_send(Response::new(self.origin_id, data))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Connection reply closed"))
+    }
+
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
@@ -70,6 +84,10 @@ impl<T: Send + 'static> Reply for ServerReply<T> {
 
     fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         Box::pin(ServerReply::send(self, data))
+    }
+
+    fn blocking_send(&self, data: Self::Data) -> io::Result<()> {
+        ServerReply::blocking_send(self, data)
     }
 
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {
@@ -116,6 +134,17 @@ impl<T> QueuedServerReply<T> {
         }
     }
 
+    /// Send this message, adding it to a queue if holding messages, blocking
+    /// for access to locks and other internals
+    pub fn blocking_send(&self, data: T) -> io::Result<()> {
+        if *self.hold.blocking_lock() {
+            self.queue.blocking_lock().push(data);
+            Ok(())
+        } else {
+            self.inner.blocking_send(data)
+        }
+    }
+
     /// Send this message before anything else in the queue
     pub async fn send_before(&self, data: T) -> io::Result<()> {
         if *self.hold.lock().await {
@@ -157,6 +186,10 @@ impl<T: Send + 'static> Reply for QueuedServerReply<T> {
 
     fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         Box::pin(QueuedServerReply::send(self, data))
+    }
+
+    fn blocking_send(&self, data: Self::Data) -> io::Result<()> {
+        QueuedServerReply::blocking_send(self, data)
     }
 
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {

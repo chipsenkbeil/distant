@@ -1,5 +1,6 @@
 use async_compat::CompatExt;
-use distant_core::{PtySize, ResponseData};
+use distant_core::data::{DistantResponseData, PtySize};
+use distant_net::Reply;
 use log::*;
 use std::{
     future::Future,
@@ -21,12 +22,16 @@ pub struct SpawnResult {
     pub stdin: mpsc::Sender<Vec<u8>>,
     pub killer: mpsc::Sender<()>,
     pub resizer: mpsc::Sender<PtySize>,
-    pub initialize: Box<dyn FnOnce(mpsc::Sender<Vec<ResponseData>>) + Send>,
 }
 
 /// Spawns a non-pty process, returning a function that initializes processing
 /// stdin, stdout, and stderr once called (for lazy processing)
-pub async fn spawn_simple<F, R>(session: &Session, cmd: &str, cleanup: F) -> io::Result<SpawnResult>
+pub async fn spawn_simple<F, R>(
+    session: &Session,
+    cmd: &str,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    cleanup: F,
+) -> io::Result<SpawnResult>
 where
     F: FnOnce(usize) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
@@ -61,9 +66,9 @@ where
 
     let id = rand::random();
     let session = session.clone();
-    let initialize = Box::new(move |reply: mpsc::Sender<Vec<ResponseData>>| {
-        let stdout_task = spawn_nonblocking_stdout_task(id, stdout, reply.clone());
-        let stderr_task = spawn_nonblocking_stderr_task(id, stderr, reply.clone());
+    let initialize = Box::new(move |reply: mpsc::Sender<DistantResponseData>| {
+        let stdout_task = spawn_nonblocking_stdout_task(id, stdout, reply.clone_reply());
+        let stderr_task = spawn_nonblocking_stderr_task(id, stderr, reply.clone_reply());
         let stdin_task = spawn_nonblocking_stdin_task(id, stdin, stdin_rx);
         let _ = spawn_cleanup_task(
             session,
@@ -73,7 +78,7 @@ where
             stdin_task,
             stdout_task,
             Some(stderr_task),
-            reply,
+            Box::new(reply),
             cleanup,
         );
     });
@@ -86,7 +91,6 @@ where
         stdin: stdin_tx,
         killer: kill_tx,
         resizer,
-        initialize,
     })
 }
 
@@ -96,6 +100,7 @@ pub async fn spawn_pty<F, R>(
     session: &Session,
     cmd: &str,
     size: PtySize,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
 where
@@ -130,21 +135,19 @@ where
 
     let id = rand::random();
     let session = session.clone();
-    let initialize = Box::new(move |reply: mpsc::Sender<Vec<ResponseData>>| {
-        let stdout_task = spawn_blocking_stdout_task(id, reader, reply.clone());
-        let stdin_task = spawn_blocking_stdin_task(id, writer, stdin_rx);
-        let _ = spawn_cleanup_task(
-            session,
-            id,
-            child,
-            kill_rx,
-            stdin_task,
-            stdout_task,
-            None,
-            reply,
-            cleanup,
-        );
-    });
+    let stdout_task = spawn_blocking_stdout_task(id, reader, reply.clone_reply());
+    let stdin_task = spawn_blocking_stdin_task(id, writer, stdin_rx);
+    let _ = spawn_cleanup_task(
+        session,
+        id,
+        child,
+        kill_rx,
+        stdin_task,
+        stdout_task,
+        None,
+        reply,
+        cleanup,
+    );
 
     let (resize_tx, mut resize_rx) = mpsc::channel::<PtySize>(1);
     tokio::spawn(async move {
@@ -160,26 +163,25 @@ where
         stdin: stdin_tx,
         killer: kill_tx,
         resizer: resize_tx,
-        initialize,
     })
 }
 
 fn spawn_blocking_stdout_task(
     id: usize,
     mut reader: impl Read + Send + 'static,
-    tx: mpsc::Sender<Vec<ResponseData>>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    let payload = vec![ResponseData::ProcStdout {
+                    let payload = DistantResponseData::ProcStdout {
                         id,
                         data: buf[..n].to_vec(),
-                    }];
-                    if tx.blocking_send(payload).is_err() {
-                        error!("<Ssh | Proc {}> Stdout channel closed", id);
+                    };
+                    if reply.blocking_send(payload).is_err() {
+                        error!("[Ssh | Proc {}] Stdout channel closed", id);
                         break;
                     }
 
@@ -187,7 +189,7 @@ fn spawn_blocking_stdout_task(
                 }
                 Ok(_) => break,
                 Err(x) => {
-                    error!("<Ssh | Proc {}> Stdout unexpectedly closed: {}", id, x);
+                    error!("[Ssh | Proc {}] Stdout unexpectedly closed: {}", id, x);
                     break;
                 }
             }
@@ -198,19 +200,19 @@ fn spawn_blocking_stdout_task(
 fn spawn_nonblocking_stdout_task(
     id: usize,
     mut reader: impl Read + Send + 'static,
-    tx: mpsc::Sender<Vec<ResponseData>>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    let payload = vec![ResponseData::ProcStdout {
+                    let payload = DistantResponseData::ProcStdout {
                         id,
                         data: buf[..n].to_vec(),
-                    }];
-                    if tx.send(payload).await.is_err() {
-                        error!("<Ssh | Proc {}> Stdout channel closed", id);
+                    };
+                    if reply.send(payload).await.is_err() {
+                        error!("[Ssh | Proc {}] Stdout channel closed", id);
                         break;
                     }
 
@@ -221,7 +223,7 @@ fn spawn_nonblocking_stdout_task(
                     tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
                 }
                 Err(x) => {
-                    error!("<Ssh | Proc {}> Stdout unexpectedly closed: {}", id, x);
+                    error!("[Ssh | Proc {}] Stdout unexpectedly closed: {}", id, x);
                     break;
                 }
             }
@@ -232,19 +234,19 @@ fn spawn_nonblocking_stdout_task(
 fn spawn_nonblocking_stderr_task(
     id: usize,
     mut reader: impl Read + Send + 'static,
-    tx: mpsc::Sender<Vec<ResponseData>>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    let payload = vec![ResponseData::ProcStderr {
+                    let payload = DistantResponseData::ProcStderr {
                         id,
                         data: buf[..n].to_vec(),
-                    }];
-                    if tx.send(payload).await.is_err() {
-                        error!("<Ssh | Proc {}> Stderr channel closed", id);
+                    };
+                    if reply.send(payload).await.is_err() {
+                        error!("[Ssh | Proc {}] Stderr channel closed", id);
                         break;
                     }
 
@@ -255,7 +257,7 @@ fn spawn_nonblocking_stderr_task(
                     tokio::time::sleep(Duration::from_millis(THREAD_PAUSE_MILLIS)).await;
                 }
                 Err(x) => {
-                    error!("<Ssh | Proc {}> Stderr unexpectedly closed: {}", id, x);
+                    error!("[Ssh | Proc {}] Stderr unexpectedly closed: {}", id, x);
                     break;
                 }
             }
@@ -271,7 +273,7 @@ fn spawn_blocking_stdin_task(
     tokio::task::spawn_blocking(move || {
         while let Some(data) = rx.blocking_recv() {
             if let Err(x) = writer.write_all(&data) {
-                error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
+                error!("[Ssh | Proc {}] Failed to send stdin: {}", id, x);
                 break;
             }
 
@@ -291,7 +293,7 @@ fn spawn_nonblocking_stdin_task(
                 // In non-blocking mode, we'll just pause and try again if
                 // the IO would block here; otherwise, stop the task
                 if x.kind() != io::ErrorKind::WouldBlock {
-                    error!("<Ssh | Proc {}> Failed to send stdin: {}", id, x);
+                    error!("[Ssh | Proc {}] Failed to send stdin: {}", id, x);
                     break;
                 }
             }
@@ -310,7 +312,7 @@ fn spawn_cleanup_task<F, R>(
     stdin_task: JoinHandle<()>,
     stdout_task: JoinHandle<()>,
     stderr_task: Option<JoinHandle<()>>,
-    tx: mpsc::Sender<Vec<ResponseData>>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
     cleanup: F,
 ) -> JoinHandle<()>
 where
@@ -330,7 +332,7 @@ where
                         success = status.success();
                     }
                     Err(x) => {
-                        error!("<Ssh | Proc {}> Waiting on process failed: {}", id, x);
+                        error!("[Ssh | Proc {}] Waiting on process failed: {}", id, x);
                     }
                 }
             }
@@ -341,10 +343,10 @@ where
         stdin_task.abort();
 
         if should_kill {
-            debug!("<Ssh | Proc {}> Killing", id);
+            debug!("[Ssh | Proc {}] Killing", id);
 
             if let Err(x) = child.kill() {
-                error!("<Ssh | Proc {}> Unable to kill process: {}", id, x);
+                error!("[Ssh | Proc {}] Unable to kill process: {}", id, x);
             }
 
             // NOTE: At the moment, child.kill does nothing for wezterm_ssh::SshChildProcess;
@@ -362,7 +364,7 @@ where
             }
         } else {
             debug!(
-                "<Ssh | Proc {}> Completed and waiting on stdout & stderr tasks",
+                "[Ssh | Proc {}] Completed and waiting on stdout & stderr tasks",
                 id
             );
         }
@@ -372,24 +374,24 @@ where
 
         if let Some(task) = stderr_task {
             if let Err(x) = task.await {
-                error!("<Ssh | Proc {}> Join on stderr task failed: {}", id, x);
+                error!("[Ssh | Proc {}] Join on stderr task failed: {}", id, x);
             }
         }
 
         if let Err(x) = stdout_task.await {
-            error!("<Ssh | Proc {}> Join on stdout task failed: {}", id, x);
+            error!("[Ssh | Proc {}] Join on stdout task failed: {}", id, x);
         }
 
         cleanup(id).await;
 
-        let payload = vec![ResponseData::ProcDone {
+        let payload = DistantResponseData::ProcDone {
             id,
             success: !should_kill && success,
             code: if success { Some(0) } else { None },
-        }];
+        };
 
-        if tx.send(payload).await.is_err() {
-            error!("<Ssh | Proc {}> Failed to send done", id,);
+        if reply.send(payload).await.is_err() {
+            error!("[Ssh | Proc {}] Failed to send done", id,);
         }
     })
 }
