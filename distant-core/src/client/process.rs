@@ -143,7 +143,7 @@ impl RemoteCommand {
         let wait_task = tokio::spawn(async move {
             let res = match tokio::try_join!(req_task, res_task) {
                 Ok((_, res)) => res,
-                Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
+                Err(x) => Err(io::Error::new(io::ErrorKind::Interrupted, x)),
             };
             status_2.write().await.replace(res);
         });
@@ -987,7 +987,7 @@ mod tests {
         proc.abort();
 
         match proc.wait().await {
-            Err(x) if x.kind() == io::ErrorKind::UnexpectedEof => {}
+            Err(x) if x.kind() == io::ErrorKind::Interrupted => {}
             x => panic!("Unexpected result: {:?}", x),
         }
     }
