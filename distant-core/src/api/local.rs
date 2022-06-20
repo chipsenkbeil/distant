@@ -39,10 +39,9 @@ impl DistantApi for LocalDistantApi {
     type LocalData = ConnectionState;
 
     /// Injects the global channels into the local connection
-    async fn on_connection(&self, mut local_data: Self::LocalData) -> Self::LocalData {
+    async fn on_connection(&self, local_data: &mut Self::LocalData) {
         local_data.process_channel = self.state.process.clone_channel();
         local_data.watcher_channel = self.state.watcher.clone_channel();
-        local_data
     }
 
     async fn read_file(
@@ -542,10 +541,12 @@ mod tests {
     ) {
         let api = LocalDistantApi::initialize().unwrap();
         let (reply, rx) = make_reply(buffer);
+        let mut local_data = ConnectionState::default();
+        DistantApi::on_connection(&api, &mut local_data).await;
         let ctx = DistantCtx {
             connection_id: rand::random(),
             reply,
-            local_data: Arc::new(DistantApi::on_connection(&api, ConnectionState::default()).await),
+            local_data: Arc::new(local_data),
         };
         (api, ctx, rx)
     }

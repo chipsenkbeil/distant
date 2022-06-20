@@ -71,14 +71,10 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 pub trait DistantApi {
     type LocalData: Send + Sync;
 
-    /// Invoked whenever a new connection is established, providing the newly-created
-    /// local data, and returning the local data to be used for all requests. This
-    /// is a way to support modifying local data before it is used.
-    ///
-    /// By default, this returns the local data unmodified.
-    async fn on_connection(&self, local_data: Self::LocalData) -> Self::LocalData {
-        local_data
-    }
+    /// Invoked whenever a new connection is established, providing a mutable reference to the
+    /// newly-created local data. This is a way to support modifying local data before it is used.
+    #[allow(unused_variables)]
+    async fn on_connection(&self, local_data: &mut Self::LocalData) {}
 
     /// Reads bytes from a file.
     ///
@@ -397,7 +393,7 @@ where
     type LocalData = D;
 
     /// Overridden to leverage [`DistantApi`] implementation of `on_connection`
-    async fn on_connection(&self, local_data: Self::LocalData) -> Self::LocalData {
+    async fn on_connection(&self, local_data: &mut Self::LocalData) {
         T::on_connection(&self.api, local_data).await
     }
 

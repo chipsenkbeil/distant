@@ -99,7 +99,11 @@ where
                 connection.reader_task = Some(tokio::spawn(async move {
                     // Create some default data for the new connection and pass it
                     // to the callback prior to processing new requests
-                    let local_data = Arc::new(server.on_connection(Data::default()).await);
+                    let local_data = {
+                        let mut data = Data::default();
+                        server.on_connection(&mut data).await;
+                        Arc::new(data)
+                    };
 
                     loop {
                         match reader.read().await {

@@ -31,13 +31,11 @@ pub trait Server: Send {
     /// Type of data to store locally tied to the specific connection
     type LocalData: Send + Sync;
 
-    /// Invoked upon a new connection becoming established, which provides the
-    /// data created for the connection and returns the modified data. This can
-    /// be useful in performing some additional initialization on the data prior
-    /// to it being used anywhere else. By default, this returns the data unmodified
-    async fn on_connection(&self, local_data: Self::LocalData) -> Self::LocalData {
-        local_data
-    }
+    /// Invoked upon a new connection becoming established, which provides a mutable reference to
+    /// the data created for the connection. This can be useful in performing some additional
+    /// initialization on the data prior to it being used anywhere else.
+    #[allow(unused_variables)]
+    async fn on_connection(&self, local_data: &mut Self::LocalData) {}
 
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.

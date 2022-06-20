@@ -60,9 +60,8 @@ impl SshDistantApi {
 impl DistantApi for SshDistantApi {
     type LocalData = ConnectionState;
 
-    async fn on_connection(&self, mut local_data: Self::LocalData) -> Self::LocalData {
+    async fn on_connection(&self, local_data: &mut Self::LocalData) {
         local_data.global_processes = Arc::downgrade(&self.processes);
-        local_data
     }
 
     async fn read_file(
