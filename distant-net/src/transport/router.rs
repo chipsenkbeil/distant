@@ -12,10 +12,14 @@
 /// # #[derive(serde::Serialize, serde::Deserialize)]
 /// # struct CustomData(u8, u8);
 ///
+/// // Create a router that produces three transports from one:
+/// // 1. `Transport<u8, String>` - receives `String` and sends `u8`
+/// // 1. `Transport<bool, CustomData>` - receives `CustomData` and sends `bool`
+/// // 1. `Transport<Option<String>, u8>` - receives `u8` and sends `Option<String>`
 /// router!(TestRouter {
-///     one: u8 => String,
-///     two: bool => CustomData,
-///     three: Option<String> => u8,
+///     one: String => u8,
+///     two: CustomData => bool,
+///     three: u8 => Option<String>,
 /// });
 ///
 /// # let (transport, _) = distant_net::FramedTransport::pair(1);
@@ -34,7 +38,7 @@
 macro_rules! router {
     (
         $vis:vis $name:ident {
-            $($transport:ident : $req_ty:ty => $res_ty:ty),+ $(,)?
+            $($transport:ident : $res_ty:ty => $req_ty:ty),+ $(,)?
         }
     ) => {
         $crate::paste::paste! {
@@ -149,24 +153,24 @@ mod tests {
 
     // Creates a private `TestRouter` implementation
     //
-    // 1. Transport sending `String` and receiving `CustomData`
-    // 2. Transport sending `u8` and receiving `String`
-    // 3. Transport sending `bool` and receiving `bool`
-    // 4. Transport sending `Option<String>` and receiving `Result<String, bool>`
+    // 1. Transport receiving `CustomData` and sending `String`
+    // 2. Transport receiving `String` and sending `u8`
+    // 3. Transport receiving `bool` and sending `bool`
+    // 4. Transport receiving `Result<String, bool>` and sending `Option<String>`
     router!(TestRouter {
-        string_custom_data_transport: String => CustomData,
-        u8_string_transport: u8 => String,
-        bool_bool_transport: bool => bool,
-        should_compile: Option<String> => Result<String, bool>,
+        one: CustomData => String,
+        two: String => u8,
+        three: bool => bool,
+        should_compile: Result<String, bool> => Option<String>,
     });
 
     #[tokio::test]
     async fn router_should_wire_transports_to_distinguish_incoming_data() {
         let (t1, mut t2) = FramedTransport::make_test_pair();
         let TestRouter {
-            mut string_custom_data_transport,
-            mut u8_string_transport,
-            mut bool_bool_transport,
+            mut one,
+            mut two,
+            mut three,
             ..
         } = TestRouter::new(t1, 100, 100);
 
@@ -178,20 +182,20 @@ mod tests {
             .unwrap();
 
         // Get that data through the appropriate transport
-        let data = string_custom_data_transport.read().await.unwrap().unwrap();
+        let data = one.read().await.unwrap().unwrap();
         assert_eq!(
             data,
             CustomData(123, "goodbye world".to_string()),
             "string_custom_data_transport got unexpected result"
         );
 
-        let data = u8_string_transport.read().await.unwrap().unwrap();
+        let data = two.read().await.unwrap().unwrap();
         assert_eq!(
             data, "hello world",
             "u8_string_transport got unexpected result"
         );
 
-        let data = bool_bool_transport.read().await.unwrap().unwrap();
+        let data = three.read().await.unwrap().unwrap();
         assert!(!data, "bool_bool_transport got unexpected result");
     }
 
@@ -199,9 +203,7 @@ mod tests {
     async fn router_should_wire_transports_to_ignore_unknown_incoming_data() {
         let (t1, mut t2) = FramedTransport::make_test_pair();
         let TestRouter {
-            mut string_custom_data_transport,
-            mut u8_string_transport,
-            ..
+            mut one, mut two, ..
         } = TestRouter::new(t1, 100, 100);
 
         #[derive(Serialize, Deserialize)]
@@ -215,14 +217,14 @@ mod tests {
             .unwrap();
 
         // Get that data through the appropriate transport
-        let data = string_custom_data_transport.read().await.unwrap().unwrap();
+        let data = one.read().await.unwrap().unwrap();
         assert_eq!(
             data,
             CustomData(123, "goodbye world".to_string()),
             "string_custom_data_transport got unexpected result"
         );
 
-        let data = u8_string_transport.read().await.unwrap().unwrap();
+        let data = two.read().await.unwrap().unwrap();
         assert_eq!(
             data, "hello world",
             "u8_string_transport got unexpected result"
@@ -233,9 +235,9 @@ mod tests {
     async fn router_should_wire_transports_to_relay_outgoing_data() {
         let (t1, mut t2) = FramedTransport::make_test_pair();
         let TestRouter {
-            mut string_custom_data_transport,
-            mut u8_string_transport,
-            mut bool_bool_transport,
+            mut one,
+            mut two,
+            mut three,
             ..
         } = TestRouter::new(t1, 100, 100);
 
@@ -247,14 +249,11 @@ mod tests {
         }
 
         // Send some data of different types that these transports expect
-        bool_bool_transport.write(true).await.unwrap();
+        three.write(true).await.unwrap();
         wait().await;
-        u8_string_transport.write(123).await.unwrap();
+        two.write(123).await.unwrap();
         wait().await;
-        string_custom_data_transport
-            .write("hello world".to_string())
-            .await
-            .unwrap();
+        one.write("hello world".to_string()).await.unwrap();
 
         // All of that data should funnel through our primary transport,
         // but the order is NOT guaranteed! So we need to store

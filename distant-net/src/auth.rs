@@ -1,3 +1,4 @@
+use derive_more::Display;
 use p256::EncodedPoint;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,8 +12,11 @@ pub use handshake::*;
 mod server;
 pub use server::*;
 
+// TODO: tag = "type" does not work for Auth enum with our serialization
+
 /// Represents authentication messages that can be sent over the wire
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum Auth {
     /// Represents a request to perform an authentication handshake,
     /// providing the public key and salt from one side in order to
@@ -34,10 +38,11 @@ pub enum Auth {
 /// Represents authentication messages that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthRequest {
     /// Represents a challenge comprising a series of questions to be presented
     Challenge {
-        questions: Vec<Question>,
+        questions: Vec<AuthQuestion>,
         extra: HashMap<String, String>,
     },
 
@@ -54,6 +59,7 @@ pub enum AuthRequest {
 /// Represents authentication messages that are responses to auth requests such
 /// as answers to challenges or verifying information
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthResponse {
     /// Represents the answers to a previously-asked challenge
     Challenge { answers: Vec<String> },
@@ -64,6 +70,8 @@ pub enum AuthResponse {
 
 /// Represents the type of verification being requested
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AuthVerifyKind {
     /// An ask to verify the host such as with SSH
     Host,
@@ -71,7 +79,7 @@ pub enum AuthVerifyKind {
 
 /// Represents a single question in a challenge
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Question {
+pub struct AuthQuestion {
     /// The text of the question
     pub text: String,
 
@@ -80,7 +88,7 @@ pub struct Question {
     pub extra: HashMap<String, String>,
 }
 
-impl Question {
+impl AuthQuestion {
     /// Creates a new question without any extra data
     pub fn new(text: impl Into<String>) -> Self {
         Self {
@@ -91,7 +99,8 @@ impl Question {
 }
 
 /// Represents the type of error encountered during authentication
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AuthErrorKind {
     /// When the answer(s) to a challenge do not pass authentication
     FailedChallenge,

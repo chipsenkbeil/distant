@@ -1,6 +1,6 @@
 use crate::{
-    utils, Auth, AuthErrorKind, AuthRequest, AuthResponse, AuthVerifyKind, Codec, Handshake,
-    Question, Server, ServerCtx, XChaCha20Poly1305Codec,
+    utils, Auth, AuthErrorKind, AuthQuestion, AuthRequest, AuthResponse, AuthVerifyKind, Codec,
+    Handshake, Server, ServerCtx, XChaCha20Poly1305Codec,
 };
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -8,18 +8,27 @@ use log::*;
 use std::{collections::HashMap, io};
 use tokio::sync::RwLock;
 
-/// Represents an [`AuthServer`] where all handlers are stored in the heap
-pub type HeapAuthServer = AuthServer<
-    Box<dyn Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync>,
-    Box<dyn Fn(AuthVerifyKind, String) -> bool + Send + Sync>,
-    Box<dyn Fn(String) + Send + Sync>,
-    Box<dyn Fn(AuthErrorKind, String) + Send + Sync>,
->;
+/// Type signature for a dynamic on_challenge function
+pub type AuthChallengeFn =
+    dyn Fn(Vec<AuthQuestion>, HashMap<String, String>) -> Vec<String> + Send + Sync;
+
+/// Type signature for a dynamic on_verify function
+pub type AuthVerifyFn = dyn Fn(AuthVerifyKind, String) -> bool + Send + Sync;
+
+/// Type signature for a dynamic on_info function
+pub type AuthInfoFn = dyn Fn(String) + Send + Sync;
+
+/// Type signature for a dynamic on_error function
+pub type AuthErrorFn = dyn Fn(AuthErrorKind, String) + Send + Sync;
+
+/// Represents an [`AuthServer`] where all handlers are stored on the heap
+pub type HeapAuthServer =
+    AuthServer<Box<AuthChallengeFn>, Box<AuthVerifyFn>, Box<AuthInfoFn>, Box<AuthErrorFn>>;
 
 /// Server that handles authentication
 pub struct AuthServer<ChallengeFn, VerifyFn, InfoFn, ErrorFn>
 where
-    ChallengeFn: Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync,
+    ChallengeFn: Fn(Vec<AuthQuestion>, HashMap<String, String>) -> Vec<String> + Send + Sync,
     VerifyFn: Fn(AuthVerifyKind, String) -> bool + Send + Sync,
     InfoFn: Fn(String) + Send + Sync,
     ErrorFn: Fn(AuthErrorKind, String) + Send + Sync,
@@ -34,7 +43,7 @@ where
 impl<ChallengeFn, VerifyFn, InfoFn, ErrorFn> Server
     for AuthServer<ChallengeFn, VerifyFn, InfoFn, ErrorFn>
 where
-    ChallengeFn: Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync,
+    ChallengeFn: Fn(Vec<AuthQuestion>, HashMap<String, String>) -> Vec<String> + Send + Sync,
     VerifyFn: Fn(AuthVerifyKind, String) -> bool + Send + Sync,
     InfoFn: Fn(String) + Send + Sync,
     ErrorFn: Fn(AuthErrorKind, String) + Send + Sync,
@@ -306,8 +315,8 @@ mod tests {
                 &mut codec,
                 &AuthRequest::Challenge {
                     questions: vec![
-                        Question::new("question1".to_string()),
-                        Question {
+                        AuthQuestion::new("question1".to_string()),
+                        AuthQuestion {
                             text: "question2".to_string(),
                             extra: vec![("key".to_string(), "value".to_string())]
                                 .into_iter()
@@ -329,8 +338,8 @@ mod tests {
         assert_eq!(
             questions,
             vec![
-                Question::new("question1".to_string()),
-                Question {
+                AuthQuestion::new("question1".to_string()),
+                AuthQuestion {
                     text: "question2".to_string(),
                     extra: vec![("key".to_string(), "value".to_string())]
                         .into_iter()
@@ -589,7 +598,7 @@ mod tests {
     )>
     where
         ChallengeFn:
-            Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync + 'static,
+            Fn(Vec<AuthQuestion>, HashMap<String, String>) -> Vec<String> + Send + Sync + 'static,
         VerifyFn: Fn(AuthVerifyKind, String) -> bool + Send + Sync + 'static,
         InfoFn: Fn(String) + Send + Sync + 'static,
         ErrorFn: Fn(AuthErrorKind, String) + Send + Sync + 'static,

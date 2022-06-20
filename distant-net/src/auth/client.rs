@@ -1,6 +1,6 @@
 use crate::{
-    utils, Auth, AuthErrorKind, AuthRequest, AuthResponse, AuthVerifyKind, Client, Codec,
-    Handshake, Question, XChaCha20Poly1305Codec,
+    utils, Auth, AuthErrorKind, AuthQuestion, AuthRequest, AuthResponse, AuthVerifyKind, Client,
+    Codec, Handshake, XChaCha20Poly1305Codec,
 };
 use bytes::BytesMut;
 use std::{collections::HashMap, io};
@@ -55,7 +55,7 @@ impl AuthClient {
     /// asked by the client
     pub async fn challenge(
         &mut self,
-        questions: Vec<Question>,
+        questions: Vec<AuthQuestion>,
         extra: HashMap<String, String>,
     ) -> io::Result<Vec<String>> {
         let payload = AuthRequest::Challenge { questions, extra };
@@ -221,8 +221,8 @@ mod tests {
             client
                 .challenge(
                     vec![
-                        Question::new("question1".to_string()),
-                        Question {
+                        AuthQuestion::new("question1".to_string()),
+                        AuthQuestion {
                             text: "question2".to_string(),
                             extra: vec![("key2".to_string(), "value2".to_string())]
                                 .into_iter()
@@ -300,8 +300,8 @@ mod tests {
             client
                 .challenge(
                     vec![
-                        Question::new("question1".to_string()),
-                        Question {
+                        AuthQuestion::new("question1".to_string()),
+                        AuthQuestion {
                             text: "question2".to_string(),
                             extra: vec![("key2".to_string(), "value2".to_string())]
                                 .into_iter()
@@ -345,8 +345,8 @@ mod tests {
                         assert_eq!(
                             questions,
                             vec![
-                                Question::new("question1".to_string()),
-                                Question {
+                                AuthQuestion::new("question1".to_string()),
+                                AuthQuestion {
                                     text: "question2".to_string(),
                                     extra: vec![("key2".to_string(), "value2".to_string())]
                                         .into_iter()

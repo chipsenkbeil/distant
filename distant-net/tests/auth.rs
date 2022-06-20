@@ -1,6 +1,6 @@
 use distant_net::{
-    AuthClient, AuthServer, AuthVerifyKind, Client, IntoSplit, MpscTransport, Question, ServerExt,
-    TestListener,
+    AuthClient, AuthQuestion, AuthServer, AuthVerifyKind, Client, IntoSplit, MpscTransport,
+    ServerExt, TestListener,
 };
 
 /// Spawns a server and client connected together, returning the client
@@ -41,7 +41,10 @@ async fn client_should_be_able_to_challenge_against_server() {
     // Now do the challenge
     assert_eq!(
         client
-            .challenge(vec![Question::new("hello".to_string())], Default::default())
+            .challenge(
+                vec![AuthQuestion::new("hello".to_string())],
+                Default::default()
+            )
             .await
             .unwrap(),
         vec!["hello".to_string()]

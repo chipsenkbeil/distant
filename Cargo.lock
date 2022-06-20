@@ -691,6 +691,7 @@ dependencies = [
  "once_cell",
  "predicates",
  "rand 0.8.5",
+ "rpassword",
  "rstest 0.11.0",
  "serde",
  "serde_json",
