@@ -31,6 +31,16 @@ pub enum DistantMsg<T> {
 }
 
 impl<T> DistantMsg<T> {
+    /// Returns true if msg has a single payload
+    pub fn is_single(&self) -> bool {
+        matches!(self, Self::Single(_))
+    }
+
+    /// Returns true if msg has a batch of payloads
+    pub fn is_batch(&self) -> bool {
+        matches!(self, Self::Batch(_))
+    }
+
     /// Convert into a collection of payload data
     pub fn into_vec(self) -> Vec<T> {
         match self {

@@ -2,7 +2,27 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// All possible kinds of errors that can be returned
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub description: String,
+}
+
+impl From<io::Error> for Error {
+    fn from(x: io::Error) -> Self {
+        Self {
+            kind: ErrorKind::from(x.kind()),
+            description: x.to_string(),
+        }
+    }
+}
+
+impl From<Error> for io::Error {
+    fn from(x: Error) -> Self {
+        io::Error::new(x.kind.into(), x.description)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ErrorKind {

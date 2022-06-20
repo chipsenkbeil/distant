@@ -1,38 +1,28 @@
-use super::{Destination, ErrorKind, Stats};
+use super::{ConnectionInfo, ConnectionList, Error};
 use distant_core::{data::DistantResponseData, DistantMsg};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum ManagerResponse {
-    /// Acknowledgement that a request was completed
-    Ok,
+    /// Acknowledgement that a connection was killed
+    Killed,
+
+    /// Broadcast that the manager is shutting down (not guaranteed to be sent)
+    Shutdown,
 
     /// Indicates that some error occurred during a request
-    Error {
-        kind: ErrorKind,
-        description: String,
-    },
+    Error(Error),
 
     /// Confirmation of a connection being established
-    Connected { id: usize },
+    Connected(usize),
 
     /// Information about a specific connection
-    Info {
-        id: usize,
-        destination: Destination,
-        extra: HashMap<String, String>,
-        stats: Stats,
-    },
+    Info(ConnectionInfo),
 
     /// List of connections in the form of id -> destination
-    List {
-        connections: HashMap<usize, Destination>,
-    },
+    List(ConnectionList),
 
     /// Forward a response back to a specific connection that made a request
-    Response {
-        payload: DistantMsg<DistantResponseData>,
-    },
+    Response(DistantMsg<DistantResponseData>),
 }

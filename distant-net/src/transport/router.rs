@@ -48,8 +48,7 @@ macro_rules! router {
         }
     ) => {
         $crate::paste::paste! {
-            #[doc = "Implements a message router "]
-            #[doc = "Implements a message router "]
+            #[doc = "Implements a message router for splitting out transport messages"]
             #[allow(dead_code)]
             $vis struct $name {
                 reader_task: tokio::task::JoinHandle<()>,
