@@ -1801,7 +1801,10 @@ mod tests {
         );
     }
 
+    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
+    //       with / but thinks it's on windows and is providing \
     #[tokio::test]
+    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_error_on_failure() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -1816,7 +1819,10 @@ mod tests {
             .unwrap_err();
     }
 
+    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
+    //       with / but thinks it's on windows and is providing \
     #[tokio::test]
+    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_return_id_of_spawned_process() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -1992,7 +1998,10 @@ mod tests {
         }
     }
 
+    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
+    //       with / but thinks it's on windows and is providing \
     #[tokio::test]
+    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_clear_process_from_state_when_killed() {
         let (api, ctx_1, mut rx) = setup(1).await;
         let (ctx_2, _rx) = {

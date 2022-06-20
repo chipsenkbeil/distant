@@ -400,6 +400,7 @@ pub fn sshd() -> &'static Sshd {
     SSHD.get_or_init(|| Sshd::spawn(Default::default()).unwrap())
 }
 
+/// Fixture to establish a client to an SSH server
 #[fixture]
 pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> DistantClient {
     let port = sshd.port;
@@ -433,4 +434,43 @@ pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> 
         .unwrap();
 
     ssh_client.into_distant_client().await.unwrap()
+}
+
+/// Fixture to establish a client to a launched server
+#[fixture]
+pub async fn launched_client(
+    sshd: &'_ Sshd,
+    _logger: &'_ flexi_logger::LoggerHandle,
+) -> DistantClient {
+    let port = sshd.port;
+
+    let mut ssh_client = Ssh::connect(
+        "127.0.0.1",
+        SshOpts {
+            port: Some(port),
+            identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
+            identities_only: Some(true),
+            user: Some(USERNAME.to_string()),
+            user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    ssh_client
+        .authenticate(SshAuthHandler {
+            on_authenticate: Box::new(|ev| {
+                println!("on_authenticate: {:?}", ev);
+                Ok(vec![String::new(); ev.prompts.len()])
+            }),
+            on_host_verify: Box::new(|host| {
+                println!("on_host_verify: {}", host);
+                Ok(true)
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    ssh_client.launch(Default::default()).await.unwrap()
 }
