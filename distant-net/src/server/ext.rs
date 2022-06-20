@@ -151,7 +151,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IntoSplit, MpscTransport, TestListener};
+    use crate::{IntoSplit, MpscListener, MpscTransport};
     use async_trait::async_trait;
 
     pub struct TestServer;
@@ -171,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
         // Create a test listener where we will forward a connection
-        let (tx, listener) = TestListener::channel(100);
+        let (tx, listener) = MpscListener::channel(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
         let (mut transport, connection) =

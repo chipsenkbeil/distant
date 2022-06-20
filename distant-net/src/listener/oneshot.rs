@@ -4,7 +4,7 @@ use derive_more::From;
 use std::io;
 use tokio::sync::oneshot;
 
-/// Represents a listener that only has a single connection
+/// Represents a [`Listener`] that only has a single connection
 #[derive(From)]
 pub struct OneshotListener<T: Send> {
     inner: Option<oneshot::Receiver<T>>,

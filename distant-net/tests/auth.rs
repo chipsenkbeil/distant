@@ -1,6 +1,6 @@
 use distant_net::{
-    AuthClient, AuthQuestion, AuthServer, AuthVerifyKind, Client, IntoSplit, MpscTransport,
-    ServerExt, TestListener,
+    AuthClient, AuthQuestion, AuthServer, AuthVerifyKind, Client, IntoSplit, MpscListener,
+    MpscTransport, ServerExt,
 };
 
 /// Spawns a server and client connected together, returning the client
@@ -23,7 +23,7 @@ fn setup() -> AuthClient {
     // Spawn the server to listen for our client to connect
     tokio::spawn(async move {
         let (writer, reader) = t2.into_split();
-        let (tx, listener) = TestListener::channel(1);
+        let (tx, listener) = MpscListener::channel(1);
         tx.send((writer, reader)).await.unwrap();
         let _server = server.start(listener).unwrap();
     });

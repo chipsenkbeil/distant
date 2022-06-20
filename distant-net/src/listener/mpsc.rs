@@ -4,13 +4,14 @@ use derive_more::From;
 use std::io;
 use tokio::sync::mpsc;
 
-/// Represents a listener used for testing purposes
+/// Represents a [`Listener`] that uses an [`mpsc::Receiver`] to
+/// accept new connections
 #[derive(From)]
-pub struct TestListener<T: Send> {
+pub struct MpscListener<T: Send> {
     inner: mpsc::Receiver<T>,
 }
 
-impl<T: Send> TestListener<T> {
+impl<T: Send> MpscListener<T> {
     pub fn channel(buffer: usize) -> (mpsc::Sender<T>, Self) {
         let (tx, rx) = mpsc::channel(buffer);
         (tx, Self { inner: rx })
@@ -18,7 +19,7 @@ impl<T: Send> TestListener<T> {
 }
 
 #[async_trait]
-impl<T: Send> Listener for TestListener<T> {
+impl<T: Send> Listener for MpscListener<T> {
     type Output = T;
 
     async fn accept(&mut self) -> io::Result<Self::Output> {

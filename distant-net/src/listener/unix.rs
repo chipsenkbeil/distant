@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Represents a listener for incoming connections over a Unix socket
+/// Represents a [`Listener`] for incoming connections over a Unix socket
 pub struct UnixSocketListener {
     path: PathBuf,
     inner: tokio::net::UnixListener,

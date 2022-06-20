@@ -171,7 +171,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        IntoSplit, MpscTransport, Request, Response, ServerExt, ServerRef, TestListener,
+        IntoSplit, MpscListener, MpscTransport, Request, Response, ServerExt, ServerRef,
         TypedAsyncRead, TypedAsyncWrite,
     };
     use tokio::sync::mpsc;
@@ -611,7 +611,7 @@ mod tests {
         };
 
         // Create a test listener where we will forward a connection
-        let (tx, listener) = TestListener::channel(100);
+        let (tx, listener) = MpscListener::channel(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
         let (transport, connection) = MpscTransport::<Request<Auth>, Response<Auth>>::pair(100);

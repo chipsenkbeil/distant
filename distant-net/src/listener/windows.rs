@@ -6,7 +6,7 @@ use std::{
 };
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
-/// Represents a listener for incoming connections over a named windows pipe
+/// Represents a [`Listener`] for incoming connections over a named windows pipe
 pub struct WindowsPipeListener {
     addr: OsString,
     inner: NamedPipeServer,

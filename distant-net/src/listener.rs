@@ -4,15 +4,14 @@ use std::io;
 mod mapped;
 pub use mapped::*;
 
+mod mpsc;
+pub use mpsc::*;
+
 mod oneshot;
 pub use oneshot::*;
 
 mod tcp;
 pub use tcp::*;
-
-mod test;
-
-pub use test::*;
 
 #[cfg(unix)]
 mod unix;

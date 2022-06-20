@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use std::{fmt, io, net::IpAddr};
 use tokio::net::TcpListener as TokioTcpListener;
 
-/// Represents a listener for incoming connections over TCP
+/// Represents a [`Listener`] for incoming connections over TCP
 pub struct TcpListener {
     addr: IpAddr,
     port: u16,
