@@ -1,4 +1,4 @@
-use crate::{transport::framed::utils, Codec, TypedAsyncWrite};
+use crate::{transport::framed::utils, Codec, SerdeTransportWrite};
 use async_trait::async_trait;
 use futures::SinkExt;
 use serde::Serialize;
@@ -17,13 +17,15 @@ where
     C: Codec;
 
 #[async_trait]
-impl<T, W, C> TypedAsyncWrite<T> for FramedTransportWriteHalf<W, C>
+impl<W, C> SerdeTransportWrite for FramedTransportWriteHalf<W, C>
 where
-    T: Serialize + Send + 'static,
     W: AsyncWrite + Send + Unpin,
     C: Codec + Send,
 {
-    async fn write(&mut self, data: T) -> io::Result<()> {
+    async fn write<D>(&mut self, data: D) -> io::Result<()>
+    where
+        D: Serialize + Send + 'static,
+    {
         // Serialize data into a byte stream
         // NOTE: Cannot used packed implementation for now due to issues with deserialization
         let data = utils::serialize_to_vec(&data)?;

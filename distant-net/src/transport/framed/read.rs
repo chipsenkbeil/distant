@@ -1,4 +1,4 @@
-use crate::{transport::framed::utils, Codec, TypedAsyncRead};
+use crate::{transport::framed::utils, Codec, SerdeTransportRead};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
@@ -17,13 +17,15 @@ where
     C: Codec;
 
 #[async_trait]
-impl<T, R, C> TypedAsyncRead<T> for FramedTransportReadHalf<R, C>
+impl<R, C> SerdeTransportRead for FramedTransportReadHalf<R, C>
 where
-    T: DeserializeOwned,
     R: AsyncRead + Send + Unpin,
     C: Codec + Send,
 {
-    async fn read(&mut self) -> io::Result<Option<T>> {
+    async fn read<D>(&mut self) -> io::Result<Option<D>>
+    where
+        D: DeserializeOwned,
+    {
         // Use underlying codec to receive data (may decrypt, validate, etc.)
         if let Some(data) = self.0.next().await {
             let data = data?;
@@ -55,7 +57,7 @@ mod tests {
         let transport = FramedTransport::new(stream, PlainCodec::new());
         let (_, mut reader) = transport.into_split();
 
-        let result = TypedAsyncRead::<TestData>::read(&mut reader).await;
+        let result = reader.read::<TestData>().await;
         match result {
             Ok(None) => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -79,7 +81,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let result = TypedAsyncRead::<TestData>::read(&mut reader).await;
+        let result = reader.read::<TestData>().await;
         assert!(result.is_err(), "Unexpectedly succeeded");
     }
 
@@ -101,10 +103,7 @@ mod tests {
         frame.extend(bytes);
 
         tx.send(frame).await.unwrap();
-        let received_data = TypedAsyncRead::<TestData>::read(&mut reader)
-            .await
-            .unwrap()
-            .unwrap();
+        let received_data = reader.read::<TestData>().await.unwrap().unwrap();
         assert_eq!(received_data, data);
     }
 }

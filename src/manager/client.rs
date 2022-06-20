@@ -23,7 +23,7 @@ pub struct DistantManagerClient {
 }
 
 impl DistantManagerClient {
-    /// Initializes a client using the provided framed transport
+    /// Initializes a client using the provided [`FramedTransport`]
     pub fn new<T, C>(
         transport: FramedTransport<T, C>,
         config: DistantManagerClientConfig,

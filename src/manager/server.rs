@@ -23,7 +23,7 @@ pub struct DistantManagerServer {
 }
 
 impl DistantManagerServer {
-    /// Initializes a server using the provided framed transport
+    /// Initializes a server using the provided [`FramedTransport`]
     pub fn new<T, C>(
         transport: FramedTransport<T, C>,
         config: DistantManagerServerConfig,

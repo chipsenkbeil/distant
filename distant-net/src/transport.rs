@@ -89,6 +89,9 @@ pub use inmemory::*;
 mod mpsc;
 pub use mpsc::*;
 
+mod serde;
+pub use self::serde::*;
+
 mod tcp;
 pub use tcp::*;
 
