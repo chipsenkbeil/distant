@@ -1,7 +1,7 @@
 use super::{ManagerRequest, ManagerResponse};
 use distant_core::net::{
-    router, Auth, AuthServer, Client, Codec, FramedTransport, IntoSplit, OneshotListener,
-    RawTransport, Request, Response, ServerExt, ServerRef,
+    router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response,
+    SerdeTransport, ServerExt, ServerRef,
 };
 use std::io;
 
@@ -20,14 +20,10 @@ pub struct DistantManagerClient {
 }
 
 impl DistantManagerClient {
-    /// Initializes a client using the provided [`FramedTransport`]
-    pub fn new<T, C>(
-        transport: FramedTransport<T, C>,
-        config: DistantManagerClientConfig,
-    ) -> io::Result<Self>
+    /// Initializes a client using the provided [`SerdeTransport`]
+    pub fn new<T>(transport: T, config: DistantManagerClientConfig) -> io::Result<Self>
     where
-        T: RawTransport + 'static,
-        C: Codec + Send + 'static,
+        T: SerdeTransport + 'static,
     {
         let DistantManagerClientRouter {
             auth_transport,
