@@ -1,8 +1,8 @@
-/// Creates a new struct around a [`FramedTransport`](crate::FramedTransport) that routes incoming
-/// and outgoing messages to different transports, enabling the ability to transform a singular,
-/// framed transport into multiple typed transports that can be combined with
-/// [`Client`](crate::Client) and [`Server`](crate::Server) to mix having a variety of clients and
-/// servers available on the same underlying [`FramedTransport`](crate::FramedTransport).
+/// Creates a new struct around a [`SerdeTransport`](crate::SerdeTransport) that routes incoming
+/// and outgoing messages to different transports, enabling the ability to transform a singular
+/// transport into multiple typed transports that can be combined with [`Client`](crate::Client)
+/// and [`Server`](crate::Server) to mix having a variety of clients and servers available on the
+/// same underlying [`SerdeTransport`](crate::SerdeTransport).
 ///
 /// ```no_run
 /// use distant_net::router;
@@ -14,21 +14,26 @@
 ///
 /// // Create a router that produces three transports from one:
 /// // 1. `Transport<u8, String>` - receives `String` and sends `u8`
-/// // 1. `Transport<bool, CustomData>` - receives `CustomData` and sends `bool`
-/// // 1. `Transport<Option<String>, u8>` - receives `u8` and sends `Option<String>`
+/// // 2. `Transport<bool, CustomData>` - receives `CustomData` and sends `bool`
+/// // 3. `Transport<Option<String>, u8>` - receives `u8` and sends `Option<String>`
 /// router!(TestRouter {
 ///     one: String => u8,
 ///     two: CustomData => bool,
 ///     three: u8 => Option<String>,
 /// });
 ///
+/// router!(
+///     #[router(inbound = 10, outbound = 20)]
+///     TestRouterWithCustomBounds {
+///         one: String => u8,
+///         two: CustomData => bool,
+///         three: u8 => Option<String>,
+///     }
+/// );
+///
 /// # let (transport, _) = distant_net::FramedTransport::pair(1);
 ///
-/// let router = TestRouter::new(
-///     /* FramedTransport */ transport,
-///     /* inbound_buffer  */ 100,
-///     /* outbound_buffer */ 100,
-/// );
+/// let router = TestRouter::new(transport);
 ///
 /// let one   = router.one;   // MpscTransport<u8, String>
 /// let two   = router.two;   // MpscTransport<bool, CustomData>
@@ -37,11 +42,14 @@
 #[macro_export]
 macro_rules! router {
     (
+        $(#[router($($mname:ident = $mvalue:literal),*)])?
         $vis:vis $name:ident {
             $($transport:ident : $res_ty:ty => $req_ty:ty),+ $(,)?
         }
     ) => {
         $crate::paste::paste! {
+            #[doc = "Implements a message router "]
+            #[doc = "Implements a message router "]
             #[allow(dead_code)]
             $vis struct $name {
                 reader_task: tokio::task::JoinHandle<()>,
@@ -53,24 +61,57 @@ macro_rules! router {
 
             #[allow(dead_code)]
             impl $name {
-                pub fn new<T, C>(
-                    transport: $crate::FramedTransport<T, C>,
-                    inbound_buffer: usize,
-                    outbound_buffer: usize,
-                ) -> Self
+                /// Returns the size of the inbound buffer used by this router
+                pub const fn inbound_buffer_size() -> usize {
+                    Self::buffer_sizes().0
+                }
+
+                /// Returns the size of the outbound buffer used by this router
+                pub const fn outbound_buffer_size() -> usize {
+                    Self::buffer_sizes().1
+                }
+
+                /// Returns the size of the inbound and outbound buffers used by this router
+                /// in the form of `(inbound, outbound)`
+                pub const fn buffer_sizes() -> (usize, usize) {
+                    // Set defaults for inbound and outbound buffer sizes
+                    let _inbound = 10000;
+                    let _outbound = 10000;
+
+                    $($(
+                        let [<_ $mname:snake>] = $mvalue;
+                    )*)?
+
+                    (_inbound, _outbound)
+                }
+
+                #[doc = "Creates a new instance of [`" $name "`]"]
+                pub fn new<T, W, R>(split: T) -> Self
                 where
-                    T: $crate::RawTransport + 'static,
-                    C: $crate::Codec + Send + 'static,
+                    T: $crate::IntoSplit<Write = W, Read = R>,
+                    W: $crate::SerdeTransportWrite + 'static,
+                    R: $crate::SerdeTransportRead + 'static,
                 {
+                    let (writer, reader) = split.into_split();
+                    Self::from_writer_and_reader(writer, reader)
+                }
+
+                #[doc = "Creates a new instance of [`" $name "`] from the given writer and reader"]
+                pub fn from_writer_and_reader<W, R>(mut writer: W, mut reader: R) -> Self
+                where
+                    W: $crate::SerdeTransportWrite + 'static,
+                    R: $crate::SerdeTransportRead + 'static,
+                {
+
                     $(
                         let (
                             [<$transport:snake _inbound_tx>],
                             [<$transport:snake _inbound_rx>]
-                        ) = tokio::sync::mpsc::channel(inbound_buffer);
+                        ) = tokio::sync::mpsc::channel(Self::inbound_buffer_size());
                         let (
                             [<$transport:snake _outbound_tx>],
                             mut [<$transport:snake _outbound_rx>]
-                        ) = tokio::sync::mpsc::channel(outbound_buffer);
+                        ) = tokio::sync::mpsc::channel(Self::outbound_buffer_size());
                         let [<$transport:snake>]: $crate::MpscTransport<$req_ty, $res_ty> =
                             $crate::MpscTransport::new(
                                 [<$transport:snake _outbound_tx>],
@@ -84,11 +125,9 @@ macro_rules! router {
                         $([<$transport:camel>]($res_ty)),+
                     }
 
-                    use $crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite};
-                    let (mut writer, mut reader) = transport.into_split();
                     let reader_task = tokio::spawn(async move {
                         loop {
-                            match reader.read().await {$(
+                            match $crate::SerdeTransportRead::read(&mut reader).await {$(
                                 Ok(Some([<$name:camel In>]::[<$transport:camel>](x))) => {
                                     // TODO: Handle closed channel in some way?
                                     let _ = [<$transport:snake _inbound_tx>].send(x).await;
@@ -113,7 +152,10 @@ macro_rules! router {
                                 $(
                                     Some(x) = [<$transport:snake _outbound_rx>].recv() => {
                                         // TODO: Handle error with send in some way?
-                                        let _ = writer.write(x).await;
+                                        let _ = $crate::SerdeTransportWrite::write(
+                                            &mut writer,
+                                            x,
+                                        ).await;
                                     }
                                 )+
                                 else => break,
@@ -164,6 +206,30 @@ mod tests {
         should_compile: Result<String, bool> => Option<String>,
     });
 
+    #[test]
+    fn router_buffer_sizes_should_support_being_overridden() {
+        router!(DefaultSizes { data: u8 => u8 });
+        router!(#[router(inbound = 5)] CustomInboundSize { data: u8 => u8 });
+        router!(#[router(outbound = 5)] CustomOutboundSize { data: u8 => u8 });
+        router!(#[router(inbound = 5, outbound = 6)] CustomSizes { data: u8 => u8 });
+
+        assert_eq!(DefaultSizes::buffer_sizes(), (10000, 10000));
+        assert_eq!(DefaultSizes::inbound_buffer_size(), 10000);
+        assert_eq!(DefaultSizes::outbound_buffer_size(), 10000);
+
+        assert_eq!(CustomInboundSize::buffer_sizes(), (5, 10000));
+        assert_eq!(CustomInboundSize::inbound_buffer_size(), 5);
+        assert_eq!(CustomInboundSize::outbound_buffer_size(), 10000);
+
+        assert_eq!(CustomOutboundSize::buffer_sizes(), (10000, 5));
+        assert_eq!(CustomOutboundSize::inbound_buffer_size(), 10000);
+        assert_eq!(CustomOutboundSize::outbound_buffer_size(), 5);
+
+        assert_eq!(CustomSizes::buffer_sizes(), (5, 6));
+        assert_eq!(CustomSizes::inbound_buffer_size(), 5);
+        assert_eq!(CustomSizes::outbound_buffer_size(), 6);
+    }
+
     #[tokio::test]
     async fn router_should_wire_transports_to_distinguish_incoming_data() {
         let (t1, mut t2) = FramedTransport::make_test_pair();
@@ -172,7 +238,7 @@ mod tests {
             mut two,
             mut three,
             ..
-        } = TestRouter::new(t1, 100, 100);
+        } = TestRouter::new(t1);
 
         // Send some data of different types that these transports expect
         t2.write(false).await.unwrap();
@@ -204,7 +270,7 @@ mod tests {
         let (t1, mut t2) = FramedTransport::make_test_pair();
         let TestRouter {
             mut one, mut two, ..
-        } = TestRouter::new(t1, 100, 100);
+        } = TestRouter::new(t1);
 
         #[derive(Serialize, Deserialize)]
         struct UnknownData(char, u8);
@@ -239,7 +305,7 @@ mod tests {
             mut two,
             mut three,
             ..
-        } = TestRouter::new(t1, 100, 100);
+        } = TestRouter::new(t1);
 
         // NOTE: Introduce a sleep between each send, otherwise we are
         //       resolving futures in a way where the ordering may

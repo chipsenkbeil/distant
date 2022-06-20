@@ -5,9 +5,6 @@ use distant_core::net::{
 };
 use std::io;
 
-const INBOUND_CAPACITY: usize = 10000;
-const OUTBOUND_CAPACITY: usize = 10000;
-
 mod config;
 pub use config::*;
 
@@ -36,7 +33,7 @@ impl DistantManagerClient {
             auth_transport,
             manager_transport,
             ..
-        } = DistantManagerClientRouter::new(transport, INBOUND_CAPACITY, OUTBOUND_CAPACITY);
+        } = DistantManagerClientRouter::new(transport);
 
         // Initialize our client with manager request/response transport
         let (writer, reader) = manager_transport.into_split();

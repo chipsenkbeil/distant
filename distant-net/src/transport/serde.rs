@@ -13,7 +13,7 @@ pub trait SerdeTransport:
 
 /// Interface representing a transport's read half that uses [`serde`] to deserialize data
 #[async_trait]
-pub trait SerdeTransportRead {
+pub trait SerdeTransportRead: Send + Unpin {
     /// Attempts to read some data as `T`, returning [`io::Error`] if unable to deserialize
     /// or some other error occurs. `Some(T)` is returned if successful. `None` is
     /// returned if no more data is available.
@@ -24,7 +24,7 @@ pub trait SerdeTransportRead {
 
 /// Interface representing a transport's write half that uses [`serde`] to serialize data
 #[async_trait]
-pub trait SerdeTransportWrite {
+pub trait SerdeTransportWrite: Send + Unpin {
     /// Attempts to write some data of type `T`, returning [`io::Error`] if unable to serialize
     /// or some other error occurs.
     async fn write<T>(&mut self, data: T) -> io::Result<()>
