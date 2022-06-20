@@ -17,7 +17,7 @@ pub use read::*;
 mod write;
 pub use write::*;
 
-/// Represents a data transport comprised of two inmemory channels
+/// Represents a [`RawTransport`] comprised of two inmemory channels
 #[derive(Debug)]
 pub struct InmemoryTransport {
     incoming: InmemoryTransportReadHalf,

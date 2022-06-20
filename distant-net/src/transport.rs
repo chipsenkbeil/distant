@@ -2,20 +2,6 @@ use async_trait::async_trait;
 use std::{io, marker::Unpin};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-/// Interface representing a transport of raw bytes into and out of the system
-pub trait RawTransport:
-    RawTransportRead + RawTransportWrite + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
-{
-    type ReadHalf: RawTransportRead;
-    type WriteHalf: RawTransportWrite;
-}
-
-/// Interface representing a transport of raw bytes into the system
-pub trait RawTransportRead: AsyncRead + Send + Unpin {}
-
-/// Interface representing a transport of raw bytes out of the system
-pub trait RawTransportWrite: AsyncWrite + Send + Unpin {}
-
 /// Interface to split something into writing and reading halves
 pub trait IntoSplit {
     type Write;
@@ -31,6 +17,28 @@ impl<W, R> IntoSplit for (W, R) {
     fn into_split(self) -> (Self::Write, Self::Read) {
         (self.0, self.1)
     }
+}
+
+/// Interface representing a transport of raw bytes into and out of the system
+pub trait RawTransport:
+    RawTransportRead + RawTransportWrite + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
+{
+    type ReadHalf: RawTransportRead;
+    type WriteHalf: RawTransportWrite;
+}
+
+/// Interface representing a transport of raw bytes into the system
+pub trait RawTransportRead: AsyncRead + Send + Unpin {}
+
+/// Interface representing a transport of raw bytes out of the system
+pub trait RawTransportWrite: AsyncWrite + Send + Unpin {}
+
+/// Interface representing a transport of typed data into and out of the system
+pub trait TypedTransport<W, R>:
+    TypedAsyncRead<R> + TypedAsyncWrite<W> + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
+{
+    type ReadHalf: TypedAsyncRead<R>;
+    type WriteHalf: TypedAsyncWrite<W>;
 }
 
 /// Interface to read some structured data asynchronously

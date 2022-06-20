@@ -13,7 +13,7 @@ use tokio::{
     },
 };
 
-/// Represents a data stream for a Unix socket
+/// Represents a [`RawTransport`] that leverages a Unix socket
 pub struct UnixSocketTransport {
     pub(crate) path: PathBuf,
     pub(crate) inner: UnixStream,

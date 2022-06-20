@@ -21,7 +21,7 @@ const BUSY_PIPE_SLEEP_MILLIS: u64 = 50;
 mod pipe;
 pub use pipe::NamedPipe;
 
-/// Represents a data stream for a Windows pipe (client or server)
+/// Represents a [`RawTransport`] that leverages a named Windows pipe (client or server)
 pub struct WindowsPipeTransport {
     pub(crate) addr: OsString,
     pub(crate) inner: NamedPipe,

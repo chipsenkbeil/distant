@@ -1,4 +1,4 @@
-use crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite};
+use crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite, TypedTransport};
 use async_trait::async_trait;
 use std::io;
 use tokio::sync::mpsc;
@@ -9,7 +9,7 @@ pub use read::*;
 mod write;
 pub use write::*;
 
-/// Represents a transport of data across the network that uses [`mpsc::Sender`] and
+/// Represents a [`TypedTransport`] of data across the network that uses [`mpsc::Sender`] and
 /// [`mpsc::Receiver`] underneath.
 #[derive(Debug)]
 pub struct MpscTransport<T, U> {
@@ -35,6 +35,15 @@ impl<T, U> MpscTransport<T, U> {
             MpscTransport::new(u_tx, t_rx),
         )
     }
+}
+
+impl<T, U> TypedTransport<T, U> for MpscTransport<T, U>
+where
+    T: Send,
+    U: Send,
+{
+    type ReadHalf = MpscTransportReadHalf<U>;
+    type WriteHalf = MpscTransportWriteHalf<T>;
 }
 
 #[async_trait]

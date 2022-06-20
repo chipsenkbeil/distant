@@ -1,4 +1,6 @@
-use crate::{utils, Codec, IntoSplit, RawTransport, TypedAsyncRead, TypedAsyncWrite};
+use crate::{
+    utils, Codec, IntoSplit, RawTransport, TypedAsyncRead, TypedAsyncWrite, TypedTransport,
+};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
@@ -17,7 +19,7 @@ pub use read::*;
 mod write;
 pub use write::*;
 
-/// Represents a transport of data across the network using frames in order to support
+/// Represents [`TypedTransport`] of data across the network using frames in order to support
 /// typed messages instead of arbitrary bytes being sent across the wire.
 ///
 /// Note that this type does **not** implement [`RawTransport`] and instead acts as a wrapper
@@ -37,6 +39,17 @@ where
     pub fn new(transport: T, codec: C) -> Self {
         Self(Framed::new(transport, codec))
     }
+}
+
+impl<T, C, W, R> TypedTransport<W, R> for FramedTransport<T, C>
+where
+    T: RawTransport,
+    C: Codec + Send,
+    W: Serialize + Send + 'static,
+    R: DeserializeOwned,
+{
+    type ReadHalf = FramedTransportReadHalf<T::ReadHalf, C>;
+    type WriteHalf = FramedTransportWriteHalf<T::WriteHalf, C>;
 }
 
 impl<T, C> IntoSplit for FramedTransport<T, C>

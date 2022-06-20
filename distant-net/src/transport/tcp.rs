@@ -13,7 +13,7 @@ use tokio::{
     },
 };
 
-/// Represents a data stream for a TCP stream
+/// Represents a [`RawTransport`] that leverages a TCP stream
 pub struct TcpTransport {
     pub(crate) addr: IpAddr,
     pub(crate) port: u16,
