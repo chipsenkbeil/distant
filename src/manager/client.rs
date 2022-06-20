@@ -8,11 +8,10 @@ use std::io;
 const INBOUND_CAPACITY: usize = 10000;
 const OUTBOUND_CAPACITY: usize = 10000;
 
-router! {
-    DistantManagerClientRouter:
-        Auth => Auth,
-        Request<ManagerRequest> => Response<ManagerResponse>,
-}
+router!(DistantManagerClientRouter {
+    auth_transport: Auth => Auth,
+    manager_transport: Request<ManagerRequest> => Response<ManagerResponse>,
+});
 
 /// Represents a client that can connect to a remote distant manager
 pub struct DistantManagerClient {
@@ -28,13 +27,13 @@ impl DistantManagerClient {
         C: Codec + Send + 'static,
     {
         let DistantManagerClientRouter {
-            auth_auth_transport,
-            manager_request_manager_response_transport,
+            auth_transport,
+            manager_transport,
             ..
         } = DistantManagerClientRouter::new(transport, INBOUND_CAPACITY, OUTBOUND_CAPACITY);
 
         // Initialize our client with manager request/response transport
-        let (writer, reader) = manager_request_manager_response_transport.into_split();
+        let (writer, reader) = manager_transport.into_split();
         let client = Client::new(writer, reader)?;
 
         // Initialize our auth handler with auth/auth transport

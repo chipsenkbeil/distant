@@ -12,11 +12,11 @@
 /// # #[derive(serde::Serialize, serde::Deserialize)]
 /// # struct CustomData(u8, u8);
 ///
-/// router! {
-///     TestRouter:
-///         u8 => String,
-///         bool => CustomData,
-/// }
+/// router!(TestRouter {
+///     one: u8 => String,
+///     two: bool => CustomData,
+///     three: Option<String> => u8,
+/// });
 ///
 /// # let (transport, _) = distant_net::FramedTransport::pair(1);
 ///
@@ -25,27 +25,25 @@
 ///     /* inbound_buffer  */ 100,
 ///     /* outbound_buffer */ 100,
 /// );
+///
+/// let one   = router.one;   // MpscTransport<u8, String>
+/// let two   = router.two;   // MpscTransport<bool, CustomData>
+/// let three = router.three; // MpscTransport<Option<String>, u8>
 /// ```
 #[macro_export]
 macro_rules! router {
-    ($vis:vis $name:ident : $($req:ident => $res:ident),+ $(,)?) => {
-        router!($vis $name : $($req: $req => $res: $res),+);
-    };
-    ($vis:vis $name:ident : $($req:ident => $res:ident : $res_ty:ty),+ $(,)?) => {
-        router!($vis $name : $($req: $req => $res: $res_ty),+);
-    };
-    ($vis:vis $name:ident : $($req:ident : $req_ty:ty => $res:ident),+ $(,)?) => {
-        router!($vis $name : $($req: $req_ty => $res: $res),+);
-    };
-    ($vis:vis $name:ident : $($req:ident : $req_ty:ty => $res:ident : $res_ty:ty),+ $(,)?) => {
+    (
+        $vis:vis $name:ident {
+            $($transport:ident : $req_ty:ty => $res_ty:ty),+ $(,)?
+        }
+    ) => {
         $crate::paste::paste! {
             #[allow(dead_code)]
             $vis struct $name {
                 reader_task: tokio::task::JoinHandle<()>,
                 writer_task: tokio::task::JoinHandle<()>,
                 $(
-                    pub [<$req:snake _ $res:snake _ transport>]:
-                        $crate::MpscTransport<$req_ty, $res_ty>,
+                    pub $transport: $crate::MpscTransport<$req_ty, $res_ty>,
                 )+
             }
 
@@ -62,24 +60,24 @@ macro_rules! router {
                 {
                     $(
                         let (
-                            [<$req:snake _ $res:snake _ transport_inbound_tx>],
-                            [<$req:snake _ $res:snake _ transport_inbound_rx>]
+                            [<$transport:snake _inbound_tx>],
+                            [<$transport:snake _inbound_rx>]
                         ) = tokio::sync::mpsc::channel(inbound_buffer);
                         let (
-                            [<$req:snake _ $res:snake _ transport_outbound_tx>],
-                            mut [<$req:snake _ $res:snake _ transport_outbound_rx>]
+                            [<$transport:snake _outbound_tx>],
+                            mut [<$transport:snake _outbound_rx>]
                         ) = tokio::sync::mpsc::channel(outbound_buffer);
-                        let [<$req:snake _ $res:snake _ transport>]:
-                            $crate::MpscTransport<$req_ty, $res_ty> = $crate::MpscTransport::new(
-                            [<$req:snake _ $res:snake _ transport_outbound_tx>],
-                            [<$req:snake _ $res:snake _ transport_inbound_rx>]
-                        );
+                        let [<$transport:snake>]: $crate::MpscTransport<$req_ty, $res_ty> =
+                            $crate::MpscTransport::new(
+                                [<$transport:snake _outbound_tx>],
+                                [<$transport:snake _inbound_rx>]
+                            );
                     )+
 
                     #[derive(serde::Deserialize)]
                     #[serde(untagged)]
                     enum [<$name:camel In>] {
-                        $([<$res:camel>]($res_ty)),+
+                        $([<$transport:camel>]($res_ty)),+
                     }
 
                     use $crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite};
@@ -87,9 +85,9 @@ macro_rules! router {
                     let reader_task = tokio::spawn(async move {
                         loop {
                             match reader.read().await {$(
-                                Ok(Some([<$name:camel In>]::[<$res:camel>](x))) => {
+                                Ok(Some([<$name:camel In>]::[<$transport:camel>](x))) => {
                                     // TODO: Handle closed channel in some way?
-                                    let _ = [<$req:snake _ $res:snake _ transport_inbound_tx>].send(x).await;
+                                    let _ = [<$transport:snake _inbound_tx>].send(x).await;
                                 }
 
                                 // Quit if the reader no longer has data
@@ -109,7 +107,7 @@ macro_rules! router {
                         loop {
                             tokio::select! {
                                 $(
-                                    Some(x) = [<$req:snake _ $res:snake _ transport_outbound_rx>].recv() => {
+                                    Some(x) = [<$transport:snake _outbound_rx>].recv() => {
                                         // TODO: Handle error with send in some way?
                                         let _ = writer.write(x).await;
                                     }
@@ -122,7 +120,7 @@ macro_rules! router {
                     Self {
                         reader_task,
                         writer_task,
-                        $([<$req:snake _ $res:snake _ transport>],)+
+                        $([<$transport:snake>]),+
                     }
                 }
 
@@ -154,13 +152,13 @@ mod tests {
     // 1. Transport sending `String` and receiving `CustomData`
     // 2. Transport sending `u8` and receiving `String`
     // 3. Transport sending `bool` and receiving `bool`
-    router! {
-        TestRouter:
-            String => CustomData,
-            u8 => String,
-            bool => bool,
-            a: Option<String> => b: Result<String, bool>,
-    }
+    // 4. Transport sending `Option<String>` and receiving `Result<String, bool>`
+    router!(TestRouter {
+        string_custom_data_transport: String => CustomData,
+        u8_string_transport: u8 => String,
+        bool_bool_transport: bool => bool,
+        should_compile: Option<String> => Result<String, bool>,
+    });
 
     #[tokio::test]
     async fn router_should_wire_transports_to_distinguish_incoming_data() {
