@@ -294,11 +294,7 @@ impl DistantChannelExt
         let path = path.into();
         let only = only.into();
         let except = except.into();
-        Box::pin(async move {
-            Watcher::watch(self.clone(), path, recursive, only, except)
-                .await
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
-        })
+        Box::pin(async move { Watcher::watch(self.clone(), path, recursive, only, except).await })
     }
 
     fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
@@ -315,11 +311,7 @@ impl DistantChannelExt
 
         let path = path.into();
 
-        Box::pin(async move {
-            inner_unwatch(self, path)
-                .await
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
-        })
+        Box::pin(async move { inner_unwatch(self, path).await })
     }
 
     fn spawn(

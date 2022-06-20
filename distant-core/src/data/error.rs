@@ -36,7 +36,7 @@ impl From<io::Error> for Error {
     fn from(x: io::Error) -> Self {
         Self {
             kind: ErrorKind::from(x.kind()),
-            description: format!("{}", x),
+            description: x.to_string(),
         }
     }
 }
@@ -244,7 +244,9 @@ impl From<ErrorKind> for io::ErrorKind {
             ErrorKind::WriteZero => Self::WriteZero,
             ErrorKind::Interrupted => Self::Interrupted,
             ErrorKind::Other => Self::Other,
+            ErrorKind::OutOfMemory => Self::OutOfMemory,
             ErrorKind::UnexpectedEof => Self::UnexpectedEof,
+            ErrorKind::Unsupported => Self::Unsupported,
             _ => Self::Other,
         }
     }

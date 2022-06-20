@@ -376,24 +376,6 @@ impl From<io::Error> for DistantResponseData {
     }
 }
 
-impl From<walkdir::Error> for DistantResponseData {
-    fn from(x: walkdir::Error) -> Self {
-        Self::Error(Error::from(x))
-    }
-}
-
-impl From<notify::Error> for DistantResponseData {
-    fn from(x: notify::Error) -> Self {
-        Self::Error(Error::from(x))
-    }
-}
-
-impl From<tokio::task::JoinError> for DistantResponseData {
-    fn from(x: tokio::task::JoinError) -> Self {
-        Self::Error(Error::from(x))
-    }
-}
-
 /// Used to provide a default serde value of 1
 const fn one() -> usize {
     1
