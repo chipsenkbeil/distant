@@ -16,7 +16,7 @@ binary.
 
 ## Details
 
-The `distant` library supplies a mixture of functionality and data to run
+The `distant-core` library supplies a mixture of functionality and data to run
 servers that operate on remote machines and clients that talk to them.
 
 - Asynchronous in nature, powered by [`tokio`](https://tokio.rs/)
@@ -32,15 +32,15 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-core = "0.16"
+distant-core = "0.17"
 ```
 
 ## Features
 
 Currently, the library supports the following features:
 
-- `structopt`: generates [`StructOpt`](https://github.com/TeXitoi/structopt)
-  bindings for `RequestData` (used by cli to expose request actions)
+- `clap`: generates [`Clap`](https://github.com/clap-rs) bindings for
+  `DistantRequestData` (used by cli to expose request actions)
 
 By default, no features are enabled on the library.
 

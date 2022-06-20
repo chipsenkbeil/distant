@@ -25,8 +25,9 @@ libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
+clap = { version = "3.2.5", features = ["derive"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
-distant-core = { version = "=0.17.0", path = "distant-core", features = ["structopt"] }
+distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap"] }
 flexi_logger = "0.18.1"
 indoc = "1.0.6"
 log = "0.4.17"
@@ -35,8 +36,6 @@ rand = { version = "0.8.5", features = ["getrandom"] }
 rpassword = "6.0.1"
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
-structopt = "0.3.26"
-strum = { version = "0.21.0", features = ["derive"] }
 sysinfo = "0.23.13"
 tokio = { version = "1.19.0", features = ["full"] }
 terminal_size = "0.1.17"

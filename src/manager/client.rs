@@ -1,9 +1,9 @@
-use super::{ManagerRequest, ManagerResponse};
+use super::{data::Destination, ManagerRequest, ManagerResponse};
 use distant_core::net::{
     router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response,
     SerdeTransport, ServerExt, ServerRef,
 };
-use std::io;
+use std::{collections::HashMap, io};
 
 mod config;
 pub use config::*;
@@ -45,5 +45,20 @@ impl DistantManagerClient {
         .start(OneshotListener::from_value(auth_transport.into_split()))?;
 
         Ok(Self { auth, client })
+    }
+
+    /// Request that the manager establishes a new connection at the given `destination`
+    /// with `extra` being passed for destination-specific details
+    pub async fn connect(
+        &self,
+        destination: impl Into<Destination>,
+        extra: HashMap<String, String>,
+    ) -> io::Result<usize> {
+        let destination = destination.into();
+        let res = self
+            .client
+            .send(ManagerRequest::Connect { destination, extra })
+            .await?;
+        match res {}
     }
 }

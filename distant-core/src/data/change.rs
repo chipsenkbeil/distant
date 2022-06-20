@@ -49,6 +49,8 @@ impl From<NotifyEvent> for Change {
 )]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "clap", clap(rename_all = "snake_case"))]
 pub enum ChangeKind {
     /// Something about a file or directory was accessed, but
     /// no specific details were known

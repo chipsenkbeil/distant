@@ -34,7 +34,7 @@ tokio-util = { version = "0.6.7", features = ["codec"] }
 walkdir = "2.3.2"
 
 # Optional dependencies based on features
-structopt = { version = "0.3.22", optional = true }
+clap = { version = "3.2.5", features = ["derive"], optional = true }
 
 [dev-dependencies]
 assert_fs = "1.0.4"

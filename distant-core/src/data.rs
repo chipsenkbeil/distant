@@ -1,11 +1,7 @@
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
-use strum::AsRefStr;
-
-// NOTE: For some reason, we get a warning about this even though it's used below
-#[allow(unused_imports)]
-use strum::VariantNames;
+use strum::{AsRefStr, VariantNames};
 
 mod change;
 pub use change::*;
@@ -31,22 +27,22 @@ pub(crate) use utils::*;
 /// Type alias for a vec of bytes
 ///
 /// NOTE: This only exists to support properly parsing a Vec<u8> from an entire string
-///       with structopt rather than trying to parse a string as a singular u8
+///       with clap rather than trying to parse a string as a singular u8
 pub type ByteVec = Vec<u8>;
 
-#[cfg(feature = "structopt")]
+#[cfg(feature = "clap")]
 fn parse_byte_vec(src: &str) -> ByteVec {
     src.as_bytes().to_vec()
 }
 
 /// Represents the payload of a request to be performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
-#[cfg_attr(feature = "structopt", derive(structopt::StructOpt))]
+#[derive(Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
-#[strum(serialize_all = "snake_case")]
+#[cfg_attr(feature = "clap", clap(rename_all = "kebab-case"))]
 pub enum DistantRequestData {
     /// Reads a file from the specified path on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["cat"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["cat"]))]
     FileRead {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -66,7 +62,7 @@ pub enum DistantRequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        #[cfg_attr(feature = "structopt", structopt(parse(from_str = parse_byte_vec)))]
+        #[cfg_attr(feature = "clap", clap(parse(from_str = parse_byte_vec)))]
         data: ByteVec,
     },
 
@@ -86,7 +82,7 @@ pub enum DistantRequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        #[cfg_attr(feature = "structopt", structopt(parse(from_str = parse_byte_vec)))]
+        #[cfg_attr(feature = "clap", clap(parse(from_str = parse_byte_vec)))]
         data: ByteVec,
     },
 
@@ -100,7 +96,7 @@ pub enum DistantRequestData {
     },
 
     /// Reads a directory from the specified path on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["ls"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["ls"]))]
     DirRead {
         /// The path to the directory on the remote machine
         path: PathBuf,
@@ -109,12 +105,12 @@ pub enum DistantRequestData {
         /// depth and 1 indicating the most immediate children within the
         /// directory
         #[serde(default = "one")]
-        #[cfg_attr(feature = "structopt", structopt(short, long, default_value = "1"))]
+        #[cfg_attr(feature = "clap", clap(short, long, default_value = "1"))]
         depth: usize,
 
         /// Whether or not to return absolute or relative paths
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        #[cfg_attr(feature = "clap", clap(short, long))]
         absolute: bool,
 
         /// Whether or not to canonicalize the resulting paths, meaning
@@ -124,7 +120,7 @@ pub enum DistantRequestData {
         /// Note that the flag absolute must be true to have absolute paths
         /// returned, even if canonicalize is flagged as true
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        #[cfg_attr(feature = "clap", clap(short, long))]
         canonicalize: bool,
 
         /// Whether or not to include the root directory in the retrieved
@@ -133,24 +129,24 @@ pub enum DistantRequestData {
         /// If included, the root directory will also be a canonicalized,
         /// absolute path and will not follow any of the other flags
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         include_root: bool,
     },
 
     /// Creates a directory on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["mkdir"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["mkdir"]))]
     DirCreate {
         /// The path to the directory on the remote machine
         path: PathBuf,
 
         /// Whether or not to create all parent directories
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        #[cfg_attr(feature = "clap", clap(short, long))]
         all: bool,
     },
 
     /// Removes a file or directory on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["rm"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["rm"]))]
     Remove {
         /// The path to the file or directory on the remote machine
         path: PathBuf,
@@ -158,12 +154,12 @@ pub enum DistantRequestData {
         /// Whether or not to remove all contents within directory if is a directory.
         /// Does nothing different for files
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        #[cfg_attr(feature = "clap", clap(short, long))]
         force: bool,
     },
 
     /// Copies a file or directory on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["cp"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["cp"]))]
     Copy {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -173,7 +169,7 @@ pub enum DistantRequestData {
     },
 
     /// Moves/renames a file or directory on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["mv"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["mv"]))]
     Rename {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -190,22 +186,22 @@ pub enum DistantRequestData {
         /// If true, will recursively watch for changes within directories, othewise
         /// will only watch for changes immediately within directories
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        #[cfg_attr(feature = "clap", clap(short, long))]
         recursive: bool,
 
         /// Filter to only report back specified changes
         #[serde(default)]
         #[cfg_attr(
-            feature = "structopt",
-            structopt(short, long, possible_values = &ChangeKind::VARIANTS)
+            feature = "clap",
+            clap(short, long, possible_values = ChangeKind::VARIANTS)
         )]
         only: Vec<ChangeKind>,
 
         /// Filter to report back changes except these specified changes
         #[serde(default)]
         #[cfg_attr(
-            feature = "structopt", 
-            structopt(short, long, possible_values = &ChangeKind::VARIANTS)
+            feature = "clap", 
+            clap(short, long, possible_values = ChangeKind::VARIANTS)
         )]
         except: Vec<ChangeKind>,
     },
@@ -231,17 +227,17 @@ pub enum DistantRequestData {
         /// returning the canonical, absolute form of a path with all
         /// intermediate components normalized and symbolic links resolved
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(short, long))]
+        #[cfg_attr(feature = "clap", clap(short, long))]
         canonicalize: bool,
 
         /// Whether or not to follow symlinks to determine absolute file type (dir/file)
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         resolve_file_type: bool,
     },
 
     /// Spawns a new process on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["spawn", "run"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
     ProcSpawn {
         /// The full command to run including arguments
         cmd: String,
@@ -249,17 +245,17 @@ pub enum DistantRequestData {
         /// Whether or not the process should be persistent, meaning that the process will not be
         /// killed when the associated client disconnects
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         persist: bool,
 
         /// If provided, will spawn process in a pty, otherwise spawns directly
         #[serde(default)]
-        #[cfg_attr(feature = "structopt", structopt(long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         pty: Option<PtySize>,
     },
 
     /// Kills a process running on the remote machine
-    #[cfg_attr(feature = "structopt", structopt(visible_aliases = &["kill"]))]
+    #[cfg_attr(feature = "clap", clap(visible_aliases = &["kill"]))]
     ProcKill {
         /// Id of the actively-running process
         id: usize,

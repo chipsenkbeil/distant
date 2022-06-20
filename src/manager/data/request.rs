@@ -1,9 +1,10 @@
 use super::Destination;
+use clap::Parser;
 use distant_core::{data::DistantRequestData, DistantMsg};
 use serde::{Deserialize, Serialize};
-use structopt::StructOpt;
+use std::collections::HashMap;
 
-#[derive(Clone, Debug, Serialize, Deserialize, StructOpt)]
+#[derive(Clone, Debug, Serialize, Deserialize, Parser)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum ManagerRequest {
     /// Initiate a connection through the manager
@@ -11,12 +12,12 @@ pub enum ManagerRequest {
         destination: Destination,
 
         /// Extra details specific to the connection
-        #[structopt(short, long, parse(try_from_str = parse_key_val))]
-        extra: Vec<(String, String)>,
+        #[clap(short, long)]
+        extra: HashMap<String, String>,
     },
 
     /// Forward a request to a specific connection
-    #[structopt(skip)]
+    #[clap(skip)]
     Request {
         id: usize,
         payload: DistantMsg<DistantRequestData>,
