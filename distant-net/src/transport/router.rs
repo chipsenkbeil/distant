@@ -14,8 +14,8 @@
 ///
 /// router! {
 ///     TestRouter:
-///         u8 -> String,
-///         bool -> CustomData,
+///         u8 => String,
+///         bool => CustomData,
 /// }
 ///
 /// # let (transport, _) = distant_net::FramedTransport::pair(1);
@@ -28,7 +28,16 @@
 /// ```
 #[macro_export]
 macro_rules! router {
-    ($vis:vis $name:ident: $($req:ident -> $res:ident),+ $(,)?) => {
+    ($vis:vis $name:ident : $($req:ident => $res:ident),+ $(,)?) => {
+        router!($vis $name : $($req: $req => $res: $res),+);
+    };
+    ($vis:vis $name:ident : $($req:ident => $res:ident : $res_ty:ty),+ $(,)?) => {
+        router!($vis $name : $($req: $req => $res: $res_ty),+);
+    };
+    ($vis:vis $name:ident : $($req:ident : $req_ty:ty => $res:ident),+ $(,)?) => {
+        router!($vis $name : $($req: $req_ty => $res: $res),+);
+    };
+    ($vis:vis $name:ident : $($req:ident : $req_ty:ty => $res:ident : $res_ty:ty),+ $(,)?) => {
         $crate::paste::paste! {
             #[allow(dead_code)]
             $vis struct $name {
@@ -36,7 +45,7 @@ macro_rules! router {
                 writer_task: tokio::task::JoinHandle<()>,
                 $(
                     pub [<$req:snake _ $res:snake _ transport>]:
-                        $crate::MpscTransport<$req, $res>,
+                        $crate::MpscTransport<$req_ty, $res_ty>,
                 )+
             }
 
@@ -61,7 +70,7 @@ macro_rules! router {
                             mut [<$req:snake _ $res:snake _ transport_outbound_rx>]
                         ) = tokio::sync::mpsc::channel(outbound_buffer);
                         let [<$req:snake _ $res:snake _ transport>]:
-                            $crate::MpscTransport<$req, $res> = $crate::MpscTransport::new(
+                            $crate::MpscTransport<$req_ty, $res_ty> = $crate::MpscTransport::new(
                             [<$req:snake _ $res:snake _ transport_outbound_tx>],
                             [<$req:snake _ $res:snake _ transport_inbound_rx>]
                         );
@@ -70,7 +79,7 @@ macro_rules! router {
                     #[derive(serde::Deserialize)]
                     #[serde(untagged)]
                     enum [<$name:camel In>] {
-                        $([<$res:camel>]($res)),+
+                        $([<$res:camel>]($res_ty)),+
                     }
 
                     use $crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite};
@@ -147,9 +156,10 @@ mod tests {
     // 3. Transport sending `bool` and receiving `bool`
     router! {
         TestRouter:
-            String -> CustomData,
-            u8 -> String,
-            bool -> bool,
+            String => CustomData,
+            u8 => String,
+            bool => bool,
+            a: Option<String> => b: Result<String, bool>,
     }
 
     #[tokio::test]

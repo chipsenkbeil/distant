@@ -1,5 +1,3 @@
-use distant_core::{RemoteProcessError, SessionChannelExtError, TransportError, WatchError};
-
 /// Exit codes following https://www.freebsd.org/cgi/man.cgi?query=sysexits&sektion=3
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ExitCode {
@@ -84,59 +82,15 @@ impl ExitCodeError for std::io::Error {
     fn to_exit_code(&self) -> ExitCode {
         use std::io::ErrorKind;
         match self.kind() {
-            ErrorKind::ConnectionAborted
+            ErrorKind::AddrNotAvailable => ExitCode::NoHost,
+            ErrorKind::AddrInUse
+            | ErrorKind::ConnectionAborted
             | ErrorKind::ConnectionRefused
             | ErrorKind::ConnectionReset
             | ErrorKind::NotConnected => ExitCode::Unavailable,
             ErrorKind::InvalidData => ExitCode::DataErr,
             ErrorKind::TimedOut => ExitCode::TempFail,
             _ => ExitCode::IoError,
-        }
-    }
-}
-
-impl ExitCodeError for TransportError {
-    fn to_exit_code(&self) -> ExitCode {
-        match self {
-            TransportError::IoError(x) => x.to_exit_code(),
-            _ => ExitCode::Protocol,
-        }
-    }
-}
-
-impl ExitCodeError for RemoteProcessError {
-    fn is_silent(&self) -> bool {
-        true
-    }
-
-    fn to_exit_code(&self) -> ExitCode {
-        match self {
-            Self::ChannelDead => ExitCode::Unavailable,
-            Self::TransportError(x) => x.to_exit_code(),
-            Self::UnexpectedEof => ExitCode::IoError,
-            Self::WaitFailed(_) => ExitCode::Software,
-        }
-    }
-}
-
-impl ExitCodeError for SessionChannelExtError {
-    fn to_exit_code(&self) -> ExitCode {
-        match self {
-            Self::Failure(_) => ExitCode::Software,
-            Self::TransportError(x) => x.to_exit_code(),
-            Self::MismatchedResponse => ExitCode::Protocol,
-        }
-    }
-}
-
-impl ExitCodeError for WatchError {
-    fn to_exit_code(&self) -> ExitCode {
-        match self {
-            Self::MissingConfirmation => ExitCode::Protocol,
-            Self::ServerError(_) => ExitCode::Software,
-            Self::TransportError(x) => x.to_exit_code(),
-            Self::QueuedChangeDropped => ExitCode::Software,
-            Self::UnexpectedResponse(_) => ExitCode::Protocol,
         }
     }
 }

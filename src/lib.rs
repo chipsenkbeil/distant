@@ -1,19 +1,7 @@
-mod buf;
-mod constants;
-mod environment;
-mod exit;
-mod link;
-mod msg;
-mod opt;
-mod output;
-mod session;
-mod stdin;
-mod subcommand;
-mod utils;
-
 use log::error;
 
-pub use exit::{ExitCode, ExitCodeError};
+// pub mod cli;
+mod manager;
 
 /// Main entrypoint into the program
 pub fn run() {
@@ -32,7 +20,7 @@ pub fn run() {
 
 fn init_logging(opt: &opt::CommonOpt, is_remote_process: bool) -> flexi_logger::LoggerHandle {
     use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
-    let modules = &["distant", "distant_core"];
+    let modules = &["distant", "distant_core", "distant_net", "distant_ssh2"];
 
     // Disable logging for everything but our binary, which is based on verbosity
     let mut builder = LogSpecification::builder();

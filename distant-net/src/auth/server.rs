@@ -8,6 +8,14 @@ use log::*;
 use std::{collections::HashMap, io};
 use tokio::sync::RwLock;
 
+/// Represents an [`AuthServer`] where all handlers are stored in the heap
+pub type HeapAuthServer = AuthServer<
+    Box<dyn Fn(Vec<Question>, HashMap<String, String>) -> Vec<String> + Send + Sync>,
+    Box<dyn Fn(AuthVerifyKind, String) -> bool + Send + Sync>,
+    Box<dyn Fn(String) + Send + Sync>,
+    Box<dyn Fn(AuthErrorKind, String) + Send + Sync>,
+>;
+
 /// Server that handles authentication
 pub struct AuthServer<ChallengeFn, VerifyFn, InfoFn, ErrorFn>
 where

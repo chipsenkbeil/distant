@@ -254,7 +254,7 @@ impl Default for SshAuthHandler<'static> {
                         std::io::stdin().read_line(&mut answer)?;
                         answer
                     } else {
-                        rpassword::prompt_password_stderr(prompt_line)?
+                        rpassword::prompt_password(prompt_line)?
                     };
 
                     answers.push(answer);
@@ -264,7 +264,7 @@ impl Default for SshAuthHandler<'static> {
             on_banner: Box::new(|_| {}),
             on_host_verify: Box::new(|message| {
                 eprintln!("{}", message);
-                match rpassword::prompt_password_stderr("Enter [y/N]> ")?.as_str() {
+                match rpassword::prompt_password("Enter [y/N]> ")?.as_str() {
                     "y" | "Y" | "yes" | "YES" => Ok(true),
                     _ => Ok(false),
                 }
