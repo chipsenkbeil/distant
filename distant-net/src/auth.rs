@@ -12,11 +12,12 @@ pub use handshake::*;
 mod server;
 pub use server::*;
 
-// TODO: tag = "type" does not work for Auth enum with our serialization
-
 /// Represents authentication messages that can be sent over the wire
+///
+/// NOTE: Must use serde's content attribute with the tag attribute. Just the tag attribute will
+///       cause deserialization to fail
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type", content = "data")]
 pub enum Auth {
     /// Represents a request to perform an authentication handshake,
     /// providing the public key and salt from one side in order to
