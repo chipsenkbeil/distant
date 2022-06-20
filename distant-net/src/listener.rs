@@ -4,6 +4,9 @@ use std::io;
 mod mapped;
 pub use mapped::*;
 
+mod oneshot;
+pub use oneshot::*;
+
 mod tcp;
 pub use tcp::*;
 

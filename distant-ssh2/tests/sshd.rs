@@ -1,6 +1,6 @@
 use assert_fs::{prelude::*, TempDir};
-use distant_core::Session;
-use distant_ssh2::{Ssh2AuthHandler, Ssh2Session, Ssh2SessionOpts};
+use distant_core::DistantClient;
+use distant_ssh2::{Ssh, SshAuthHandler, SshOpts};
 use once_cell::sync::{Lazy, OnceCell};
 use rstest::*;
 use std::{
@@ -401,12 +401,12 @@ pub fn sshd() -> &'static Sshd {
 }
 
 #[fixture]
-pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> Session {
+pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> DistantClient {
     let port = sshd.port;
 
-    let mut ssh2_session = Ssh2Session::connect(
+    let mut ssh_client = Ssh::connect(
         "127.0.0.1",
-        Ssh2SessionOpts {
+        SshOpts {
             port: Some(port),
             identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
             identities_only: Some(true),
@@ -417,8 +417,8 @@ pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) ->
     )
     .unwrap();
 
-    ssh2_session
-        .authenticate(Ssh2AuthHandler {
+    ssh_client
+        .authenticate(SshAuthHandler {
             on_authenticate: Box::new(|ev| {
                 println!("on_authenticate: {:?}", ev);
                 Ok(vec![String::new(); ev.prompts.len()])
@@ -432,5 +432,5 @@ pub async fn session(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) ->
         .await
         .unwrap();
 
-    ssh2_session.into_ssh_client_session().await.unwrap()
+    ssh_client.into_distant_client().await.unwrap()
 }

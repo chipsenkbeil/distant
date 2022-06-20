@@ -58,8 +58,11 @@ where
 }
 
 #[inline]
-fn unsupported<T>() -> io::Result<T> {
-    Err(io::Error::from(io::ErrorKind::Unsupported))
+fn unsupported<T>(label: &str) -> io::Result<T> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("{} is unsupported", label),
+    ))
 }
 
 /// Interface to support the suite of functionality available with distant,
@@ -88,7 +91,7 @@ pub trait DistantApi {
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
     ) -> io::Result<Vec<u8>> {
-        unsupported()
+        unsupported("read_file")
     }
 
     /// Reads bytes from a file as text.
@@ -102,7 +105,7 @@ pub trait DistantApi {
         ctx: DistantCtx<Self::LocalData>,
         path: PathBuf,
     ) -> io::Result<String> {
-        unsupported()
+        unsupported("read_file_text")
     }
 
     /// Writes bytes to a file, overwriting the file if it exists.
@@ -118,7 +121,7 @@ pub trait DistantApi {
         path: PathBuf,
         data: Vec<u8>,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("write_file")
     }
 
     /// Writes text to a file, overwriting the file if it exists.
@@ -134,7 +137,7 @@ pub trait DistantApi {
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("write_file_text")
     }
 
     /// Writes bytes to the end of a file, creating it if it is missing.
@@ -150,7 +153,7 @@ pub trait DistantApi {
         path: PathBuf,
         data: Vec<u8>,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("append_file")
     }
 
     /// Writes bytes to the end of a file, creating it if it is missing.
@@ -166,7 +169,7 @@ pub trait DistantApi {
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("append_file_text")
     }
 
     /// Reads entries from a directory.
@@ -188,7 +191,7 @@ pub trait DistantApi {
         canonicalize: bool,
         include_root: bool,
     ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
-        unsupported()
+        unsupported("read_dir")
     }
 
     /// Creates a directory.
@@ -204,7 +207,7 @@ pub trait DistantApi {
         path: PathBuf,
         all: bool,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("create_dir")
     }
 
     /// Copies some file or directory.
@@ -220,7 +223,7 @@ pub trait DistantApi {
         src: PathBuf,
         dst: PathBuf,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("copy")
     }
 
     /// Removes some file or directory.
@@ -236,7 +239,7 @@ pub trait DistantApi {
         path: PathBuf,
         force: bool,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("remove")
     }
 
     /// Renames some file or directory.
@@ -252,7 +255,7 @@ pub trait DistantApi {
         src: PathBuf,
         dst: PathBuf,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("rename")
     }
 
     /// Watches a file or directory for changes.
@@ -272,7 +275,7 @@ pub trait DistantApi {
         only: Vec<ChangeKind>,
         except: Vec<ChangeKind>,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("watch")
     }
 
     /// Removes a file or directory from being watched.
@@ -282,7 +285,7 @@ pub trait DistantApi {
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
     async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
-        unsupported()
+        unsupported("unwatch")
     }
 
     /// Checks if the specified path exists.
@@ -292,7 +295,7 @@ pub trait DistantApi {
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
     async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
-        unsupported()
+        unsupported("exists")
     }
 
     /// Reads metadata for a file or directory.
@@ -310,7 +313,7 @@ pub trait DistantApi {
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> io::Result<Metadata> {
-        unsupported()
+        unsupported("metadata")
     }
 
     /// Spawns a new process, returning its id.
@@ -329,7 +332,7 @@ pub trait DistantApi {
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<usize> {
-        unsupported()
+        unsupported("proc_spawn")
     }
 
     /// Kills a running process by its id.
@@ -339,7 +342,7 @@ pub trait DistantApi {
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
     async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
-        unsupported()
+        unsupported("proc_kill")
     }
 
     /// Sends data to the stdin of the process with the specified id.
@@ -355,7 +358,7 @@ pub trait DistantApi {
         id: usize,
         data: Vec<u8>,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("proc_stdin")
     }
 
     /// Resizes the PTY of the process with the specified id.
@@ -371,7 +374,7 @@ pub trait DistantApi {
         id: usize,
         size: PtySize,
     ) -> io::Result<()> {
-        unsupported()
+        unsupported("proc_resize_pty")
     }
 
     /// Retrieves information about the system.
@@ -379,7 +382,7 @@ pub trait DistantApi {
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
-        unsupported()
+        unsupported("system_info")
     }
 }
 

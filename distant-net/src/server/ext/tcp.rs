@@ -24,7 +24,7 @@ pub trait TcpServerExt {
 impl<S, Req, Res, Data> TcpServerExt for S
 where
     S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
-    Req: DeserializeOwned + Send + Sync,
+    Req: DeserializeOwned + Send + Sync + 'static,
     Res: Serialize + Send + 'static,
     Data: Default + Send + Sync + 'static,
 {

@@ -1,7 +1,12 @@
+use crate::ServerState;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 /// Interface to engage with a server instance
 pub trait ServerRef {
+    /// Returns a reference to the state of the server
+    fn state(&self) -> &ServerState;
+
     /// Returns true if the server is no longer running
     fn is_finished(&self) -> bool;
 
@@ -9,14 +14,24 @@ pub trait ServerRef {
     fn abort(&self);
 }
 
+/// Represents a generic reference to a server
+pub struct GenericServerRef {
+    pub(crate) state: Arc<ServerState>,
+    pub(crate) task: JoinHandle<()>,
+}
+
 /// Runtime-specific implementation of [`ServerRef`] for a [`tokio::task::JoinHandle`]
-impl ServerRef for JoinHandle<()> {
+impl ServerRef for GenericServerRef {
+    fn state(&self) -> &ServerState {
+        &self.state
+    }
+
     fn is_finished(&self) -> bool {
-        self.is_finished()
+        self.task.is_finished()
     }
 
     fn abort(&self) {
-        self.abort();
+        self.task.abort();
     }
 }
 

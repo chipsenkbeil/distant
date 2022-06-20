@@ -1,6 +1,6 @@
 use crate::{
-    Listener, Request, Response, Server, ServerConnection, ServerCtx, ServerRef, ServerReply,
-    ServerState, TypedAsyncRead, TypedAsyncWrite,
+    GenericServerRef, Listener, Request, Response, Server, ServerConnection, ServerCtx, ServerRef,
+    ServerReply, ServerState, TypedAsyncRead, TypedAsyncWrite,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -40,14 +40,14 @@ pub trait ServerExt {
 impl<S, Req, Res, Data> ServerExt for S
 where
     S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
-    Req: DeserializeOwned + Send + Sync,
+    Req: DeserializeOwned + Send + Sync + 'static,
     Res: Serialize + Send + 'static,
     Data: Default + Send + Sync + 'static,
 {
     type Request = Req;
     type Response = Res;
 
-    fn start<L, R, W>(self, mut listener: L) -> io::Result<Box<dyn ServerRef>>
+    fn start<L, R, W>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener<Output = (W, R)> + 'static,
         R: TypedAsyncRead<Request<Self::Request>> + Send + 'static,
@@ -56,83 +56,91 @@ where
         let server = Arc::new(self);
         let state = Arc::new(ServerState::new());
 
-        let task = tokio::spawn(async move {
-            loop {
-                let server = Arc::clone(&server);
-                match listener.accept().await {
-                    Ok((mut writer, mut reader)) => {
-                        let mut connection = ServerConnection::new();
-                        let connection_id = connection.id;
+        let task = tokio::spawn(task(server, Arc::clone(&state), listener));
 
-                        let state = Arc::clone(&state);
+        Ok(Box::new(GenericServerRef { state, task }))
+    }
+}
 
-                        // Start a writer task that reads from a channel and forwards all
-                        // data through the writer
-                        let (tx, mut rx) = mpsc::channel::<Response<Res>>(1);
-                        connection.writer_task = Some(tokio::spawn(async move {
-                            while let Some(data) = rx.recv().await {
-                                // trace!("[Conn {}] Sending {:?}", connection_id, data.payload);
-                                if let Err(x) = writer.write(data).await {
-                                    error!("[Conn {}] Failed to send {:?}", connection_id, x);
-                                    break;
-                                }
-                            }
-                        }));
+async fn task<S, Req, Res, Data, L, R, W>(server: Arc<S>, state: Arc<ServerState>, mut listener: L)
+where
+    S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
+    Req: DeserializeOwned + Send + Sync + 'static,
+    Res: Serialize + Send + 'static,
+    Data: Default + Send + Sync + 'static,
+    L: Listener<Output = (W, R)> + 'static,
+    R: TypedAsyncRead<Request<Req>> + Send + 'static,
+    W: TypedAsyncWrite<Response<Res>> + Send + 'static,
+{
+    loop {
+        let server = Arc::clone(&server);
+        match listener.accept().await {
+            Ok((mut writer, mut reader)) => {
+                let mut connection = ServerConnection::new();
+                let connection_id = connection.id;
 
-                        // Start a reader task that reads requests and processes them
-                        // using the provided handler
-                        connection.reader_task = Some(tokio::spawn(async move {
-                            // Create some default data for the new connection and pass it
-                            // to the callback prior to processing new requests
-                            let local_data = Arc::new(server.on_connection(Data::default()).await);
+                let state = Arc::clone(&state);
 
-                            loop {
-                                match reader.read().await {
-                                    Ok(Some(request)) => {
-                                        let reply = ServerReply {
-                                            origin_id: request.id,
-                                            tx: tx.clone(),
-                                        };
-
-                                        let ctx = ServerCtx {
-                                            connection_id,
-                                            request,
-                                            reply: reply.clone(),
-                                            local_data: Arc::clone(&local_data),
-                                        };
-
-                                        server.on_request(ctx).await;
-                                    }
-                                    Ok(None) => {
-                                        debug!("[Conn {}] Connection closed", connection_id);
-                                        break;
-                                    }
-                                    Err(x) => {
-                                        error!(
-                                            "[Conn {}] Connection failed: {:?}",
-                                            connection_id, x
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                        }));
-
-                        state
-                            .connections
-                            .write()
-                            .await
-                            .insert(connection_id, connection);
+                // Start a writer task that reads from a channel and forwards all
+                // data through the writer
+                let (tx, mut rx) = mpsc::channel::<Response<Res>>(1);
+                connection.writer_task = Some(tokio::spawn(async move {
+                    while let Some(data) = rx.recv().await {
+                        // trace!("[Conn {}] Sending {:?}", connection_id, data.payload);
+                        if let Err(x) = writer.write(data).await {
+                            error!("[Conn {}] Failed to send {:?}", connection_id, x);
+                            break;
+                        }
                     }
-                    Err(x) => {
-                        error!("Server shutting down: {}", x);
-                        break;
+                }));
+
+                // Start a reader task that reads requests and processes them
+                // using the provided handler
+                connection.reader_task = Some(tokio::spawn(async move {
+                    // Create some default data for the new connection and pass it
+                    // to the callback prior to processing new requests
+                    let local_data = Arc::new(server.on_connection(Data::default()).await);
+
+                    loop {
+                        match reader.read().await {
+                            Ok(Some(request)) => {
+                                let reply = ServerReply {
+                                    origin_id: request.id,
+                                    tx: tx.clone(),
+                                };
+
+                                let ctx = ServerCtx {
+                                    connection_id,
+                                    request,
+                                    reply: reply.clone(),
+                                    local_data: Arc::clone(&local_data),
+                                };
+
+                                server.on_request(ctx).await;
+                            }
+                            Ok(None) => {
+                                debug!("[Conn {}] Connection closed", connection_id);
+                                break;
+                            }
+                            Err(x) => {
+                                error!("[Conn {}] Connection failed: {:?}", connection_id, x);
+                                break;
+                            }
+                        }
                     }
-                }
+                }));
+
+                state
+                    .connections
+                    .write()
+                    .await
+                    .insert(connection_id, connection);
             }
-        });
-
-        Ok(Box::new(task))
+            Err(x) => {
+                error!("Server shutting down: {}", x);
+                break;
+            }
+        }
     }
 }
 

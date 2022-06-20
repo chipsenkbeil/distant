@@ -1,4 +1,4 @@
-use crate::process::{self, SpawnResult};
+use crate::process::{spawn_pty, spawn_simple, SpawnResult};
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::{
@@ -7,12 +7,12 @@ use distant_core::{
 };
 use log::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Component, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
 
 fn to_other_error<E>(err: E) -> io::Error
@@ -23,38 +23,47 @@ where
 }
 
 #[derive(Default)]
-pub(crate) struct State {
-    processes: HashMap<usize, Process>,
+pub struct ConnectionState {
+    /// List of process ids that will be killed when the connection terminates
+    processes: Arc<RwLock<HashSet<usize>>>,
+
+    /// Internal reference to global process list for removals
+    /// NOTE: Initialized during `on_connection` of [`DistantApi`]
+    global_processes: Weak<RwLock<HashMap<usize, Process>>>,
 }
 
 struct Process {
-    id: usize,
-    cmd: String,
-    persist: bool,
     stdin_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
     resize_tx: mpsc::Sender<PtySize>,
-}
-
-fn unsupported() -> io::Error {
-    io::Error::new(io::ErrorKind::Unsupported, "Unsupported")
 }
 
 /// Represents implementation of [`DistantApi`] for SSH
 pub struct SshDistantApi {
     /// Internal ssh session
     session: WezSession,
+
+    /// Global tracking of running processes by id
+    processes: Arc<RwLock<HashMap<usize, Process>>>,
 }
 
 impl SshDistantApi {
     pub fn new(session: WezSession) -> Self {
-        Self { session }
+        Self {
+            session,
+            processes: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 
 #[async_trait]
 impl DistantApi for SshDistantApi {
-    type LocalData = ();
+    type LocalData = ConnectionState;
+
+    async fn on_connection(&self, mut local_data: Self::LocalData) -> Self::LocalData {
+        local_data.global_processes = Arc::downgrade(&self.processes);
+        local_data
+    }
 
     async fn read_file(
         &self,
@@ -668,9 +677,15 @@ impl DistantApi for SshDistantApi {
         );
         debug!("[Ssh] Spawning {} (pty: {:?})", cmd, pty);
 
-        let state_2 = Arc::clone(&state);
+        let global_processes = Arc::downgrade(&self.processes);
+        let local_processes = Arc::downgrade(&ctx.local_data.processes);
         let cleanup = |id: usize| async move {
-            state_2.lock().await.processes.remove(&id);
+            if let Some(processes) = Weak::upgrade(&global_processes) {
+                processes.write().await.remove(&id);
+            }
+            if let Some(processes) = Weak::upgrade(&local_processes) {
+                processes.write().await.remove(&id);
+            }
         };
 
         let SpawnResult {
@@ -678,23 +693,22 @@ impl DistantApi for SshDistantApi {
             stdin,
             killer,
             resizer,
-            initialize,
         } = match pty {
-            None => {
-                process::spawn_simple(&self.session, &cmd, ctx.reply.clone_reply(), cleanup).await?
-            }
+            None => spawn_simple(&self.session, &cmd, ctx.reply.clone_reply(), cleanup).await?,
             Some(size) => {
-                process::spawn_pty(&self.session, &cmd, size, ctx.reply.clone_reply(), cleanup)
-                    .await?
+                spawn_pty(&self.session, &cmd, size, ctx.reply.clone_reply(), cleanup).await?
             }
         };
 
-        state.lock().await.processes.insert(
+        // If the process will be killed when the connection ends, we want to add it
+        // to our local data
+        if !persist {
+            ctx.local_data.processes.write().await.insert(id);
+        }
+
+        self.processes.write().await.insert(
             id,
             Process {
-                id,
-                cmd,
-                persist,
                 stdin_tx: stdin,
                 kill_tx: killer,
                 resize_tx: resizer,
@@ -711,9 +725,9 @@ impl DistantApi for SshDistantApi {
     async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
 
-        if let Some(process) = state.lock().await.processes.remove(&id) {
+        if let Some(process) = self.processes.read().await.get(&id) {
             if process.kill_tx.send(()).await.is_ok() {
-                return Ok(Outgoing::from(ResponseData::Ok));
+                return Ok(());
             }
         }
 
@@ -734,7 +748,7 @@ impl DistantApi for SshDistantApi {
             ctx.connection_id, id
         );
 
-        if let Some(process) = state.lock().await.processes.get_mut(&id) {
+        if let Some(process) = self.processes.read().await.get(&id) {
             if process.stdin_tx.send(data).await.is_ok() {
                 return Ok(());
             }
@@ -757,7 +771,7 @@ impl DistantApi for SshDistantApi {
             ctx.connection_id, id, size
         );
 
-        if let Some(process) = state.lock().await.processes.get(&id) {
+        if let Some(process) = self.processes.read().await.get(&id) {
             if process.resize_tx.send(size).await.is_ok() {
                 return Ok(());
             }

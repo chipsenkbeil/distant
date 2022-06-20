@@ -1,6 +1,8 @@
 use async_compat::CompatExt;
-use distant_core::data::{DistantResponseData, PtySize};
-use distant_net::Reply;
+use distant_core::{
+    data::{DistantResponseData, PtySize},
+    net::Reply,
+};
 use log::*;
 use std::{
     future::Future,
@@ -66,22 +68,20 @@ where
 
     let id = rand::random();
     let session = session.clone();
-    let initialize = Box::new(move |reply: mpsc::Sender<DistantResponseData>| {
-        let stdout_task = spawn_nonblocking_stdout_task(id, stdout, reply.clone_reply());
-        let stderr_task = spawn_nonblocking_stderr_task(id, stderr, reply.clone_reply());
-        let stdin_task = spawn_nonblocking_stdin_task(id, stdin, stdin_rx);
-        let _ = spawn_cleanup_task(
-            session,
-            id,
-            child,
-            kill_rx,
-            stdin_task,
-            stdout_task,
-            Some(stderr_task),
-            Box::new(reply),
-            cleanup,
-        );
-    });
+    let stdout_task = spawn_nonblocking_stdout_task(id, stdout, reply.clone_reply());
+    let stderr_task = spawn_nonblocking_stderr_task(id, stderr, reply.clone_reply());
+    let stdin_task = spawn_nonblocking_stdin_task(id, stdin, stdin_rx);
+    let _ = spawn_cleanup_task(
+        session,
+        id,
+        child,
+        kill_rx,
+        stdin_task,
+        stdout_task,
+        Some(stderr_task),
+        reply,
+        cleanup,
+    );
 
     // Create a resizer that is already closed since a simple process does not resize
     let resizer = mpsc::channel(1).0;

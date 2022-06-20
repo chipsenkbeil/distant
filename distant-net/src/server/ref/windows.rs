@@ -1,4 +1,4 @@
-use crate::ServerRef;
+use crate::{ServerRef, ServerState};
 use std::ffi::{OsStr, OsString};
 
 /// Reference to a unix socket server instance
@@ -15,6 +15,10 @@ impl WindowsPipeServerRef {
 }
 
 impl ServerRef for WindowsPipeServerRef {
+    fn state(&self) -> &ServerState {
+        self.inner.state()
+    }
+
     fn is_finished(&self) -> bool {
         self.inner.is_finished()
     }

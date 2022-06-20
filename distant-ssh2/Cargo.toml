@@ -18,9 +18,10 @@ ssh2 = ["wezterm-ssh/ssh2", "wezterm-ssh/vendored-openssl-ssh2"]
 [dependencies]
 async-compat = "0.2.1"
 async-trait = "0.1.56"
+derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
 distant-core = { version = "=0.17.0", path = "../distant-core" }
-distant-net = { version = "=0.17.0", path = "../distant-net" }
 futures = "0.3.16"
+hex = "0.4.3"
 log = "0.4.14"
 rand = { version = "0.8.4", features = ["getrandom"] }
 rpassword = "5.0.1"
