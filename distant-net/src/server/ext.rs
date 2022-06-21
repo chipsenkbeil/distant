@@ -84,7 +84,7 @@ where
                 // to the callback prior to processing new requests
                 let local_data = {
                     let mut data = Data::default();
-                    server.on_connection(&mut data).await;
+                    server.on_accept(&mut data).await;
                     Arc::new(data)
                 };
 

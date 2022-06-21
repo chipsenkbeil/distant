@@ -54,7 +54,7 @@ pub trait DistantApi {
     /// Invoked whenever a new connection is established, providing a mutable reference to the
     /// newly-created local data. This is a way to support modifying local data before it is used.
     #[allow(unused_variables)]
-    async fn on_connection(&self, local_data: &mut Self::LocalData) {}
+    async fn on_accept(&self, local_data: &mut Self::LocalData) {}
 
     /// Reads bytes from a file.
     ///
@@ -372,9 +372,9 @@ where
     type Response = DistantMsg<DistantResponseData>;
     type LocalData = D;
 
-    /// Overridden to leverage [`DistantApi`] implementation of `on_connection`
-    async fn on_connection(&self, local_data: &mut Self::LocalData) {
-        T::on_connection(&self.api, local_data).await
+    /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
+    async fn on_accept(&self, local_data: &mut Self::LocalData) {
+        T::on_accept(&self.api, local_data).await
     }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {

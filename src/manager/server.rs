@@ -82,6 +82,8 @@ impl DistantManagerServer {
 
 #[derive(Default)]
 pub struct DistantManagerServerConnection {
+    /// Authentication client that manager can use when establishing a new connection
+    /// and needing to get authentication details from the client to move forward
     auth_client: Option<AuthClient>,
 }
 
@@ -100,7 +102,7 @@ impl Server for DistantManagerServer {
     type Response = ManagerResponse;
     type LocalData = DistantManagerServerConnection;
 
-    async fn on_connection(&self, local_data: &mut Self::LocalData) {
+    async fn on_accept(&self, local_data: &mut Self::LocalData) {
         local_data.auth_client = self.auth_client_rx.recv().await;
     }
 

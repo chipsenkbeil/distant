@@ -28,7 +28,7 @@ pub struct ConnectionState {
     processes: Arc<RwLock<HashSet<usize>>>,
 
     /// Internal reference to global process list for removals
-    /// NOTE: Initialized during `on_connection` of [`DistantApi`]
+    /// NOTE: Initialized during `on_accept` of [`DistantApi`]
     global_processes: Weak<RwLock<HashMap<usize, Process>>>,
 }
 
@@ -60,7 +60,7 @@ impl SshDistantApi {
 impl DistantApi for SshDistantApi {
     type LocalData = ConnectionState;
 
-    async fn on_connection(&self, local_data: &mut Self::LocalData) {
+    async fn on_accept(&self, local_data: &mut Self::LocalData) {
         local_data.global_processes = Arc::downgrade(&self.processes);
     }
 
