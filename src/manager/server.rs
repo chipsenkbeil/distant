@@ -2,16 +2,25 @@ use super::{ManagerRequest, ManagerResponse};
 use async_trait::async_trait;
 use distant_core::net::{
     router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response,
-    SerdeTransport, Server, ServerCtx, ServerExt, ServerRef,
+    SerdeTransport, Server, ServerCtx, ServerExt,
 };
 use log::*;
-use std::io;
-use tokio::{sync::mpsc, task::JoinHandle};
+use std::{collections::HashMap, io, sync::Arc};
+use tokio::{
+    sync::{mpsc, RwLock},
+    task::JoinHandle,
+};
 
 const CONNECTION_BUFFER_SIZE: usize = 100;
 
 mod config;
 pub use config::*;
+
+mod handler;
+pub use handler::*;
+
+mod r#ref;
+pub use r#ref::*;
 
 router!(DistantManagerServerRouter {
     auth_transport: Response<Auth> => Request<Auth>,
@@ -23,6 +32,9 @@ pub struct DistantManagerServer {
     /// Receives authentication clients to feed into local data of server
     auth_client_rx: mpsc::Receiver<AuthClient>,
 
+    /// Handlers for connect requests
+    connect_handlers: Arc<RwLock<HashMap<String, ConnectHandler>>>,
+
     /// Primary task of server
     task: JoinHandle<()>,
 }
@@ -32,7 +44,7 @@ impl DistantManagerServer {
     pub fn start<L, T>(
         mut listener: L,
         config: DistantManagerServerConfig,
-    ) -> io::Result<Box<dyn ServerRef>>
+    ) -> io::Result<DistantManagerServerRef>
     where
         L: Listener<Output = T> + 'static,
         T: SerdeTransport + 'static,
@@ -72,11 +84,19 @@ impl DistantManagerServer {
             }
         });
 
-        Self {
+        let connect_handlers = Arc::new(RwLock::new(HashMap::new()));
+        let weak_connect_handlers = Arc::downgrade(&connect_handlers);
+        let server_ref = Self {
             auth_client_rx,
+            connect_handlers,
             task,
         }
-        .start(mpsc_listener)
+        .start(mpsc_listener)?;
+
+        Ok(DistantManagerServerRef {
+            connect_handlers: weak_connect_handlers,
+            inner: server_ref,
+        })
     }
 }
 
@@ -116,7 +136,19 @@ impl Server for DistantManagerServer {
 
         match request.payload {
             ManagerRequest::Connect { destination, extra } => {
-                todo!();
+                let scheme = destination
+                    .scheme()
+                    .map(|scheme| scheme.as_str())
+                    .unwrap_or("distant");
+
+                if let Some(handler) = self.connect_handlers.read().await.get(scheme) {
+                    match handler.do_connect(&destination, &extra).await {
+                        Ok(client) => todo!("Store client and send back Connected(id)"),
+                        Err(x) => todo!("Send an error back"),
+                    }
+                } else {
+                    todo!("Send an error that the scheme is not supported");
+                }
             }
             ManagerRequest::Request { id, payload } => {
                 todo!();
