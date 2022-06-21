@@ -1,10 +1,13 @@
-use derive_more::IsVariant;
+use derive_more::{From, IsVariant};
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
 use strum::{AsRefStr, VariantNames};
 
 mod change;
 pub use change::*;
+
+#[cfg(feature = "clap")]
+mod clap_impl;
 
 mod error;
 pub use error::*;
@@ -35,9 +38,37 @@ fn parse_byte_vec(src: &str) -> ByteVec {
     src.as_bytes().to_vec()
 }
 
+/// Represents a wrapper around a distant message, supporting single and batch requests
+#[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DistantMsg<T> {
+    Single(T),
+    Batch(Vec<T>),
+}
+
+impl<T> DistantMsg<T> {
+    /// Returns true if msg has a single payload
+    pub fn is_single(&self) -> bool {
+        matches!(self, Self::Single(_))
+    }
+
+    /// Returns true if msg has a batch of payloads
+    pub fn is_batch(&self) -> bool {
+        matches!(self, Self::Batch(_))
+    }
+
+    /// Convert into a collection of payload data
+    pub fn into_vec(self) -> Vec<T> {
+        match self {
+            Self::Single(x) => vec![x],
+            Self::Batch(x) => x,
+        }
+    }
+}
+
 /// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[cfg_attr(feature = "clap", clap(rename_all = "kebab-case"))]
 pub enum DistantRequestData {

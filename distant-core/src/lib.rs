@@ -5,7 +5,7 @@ mod client;
 pub use client::*;
 
 pub mod data;
-pub use data::{DistantRequestData, DistantResponseData};
+pub use data::{DistantMsg, DistantRequestData, DistantResponseData};
 
 mod constants;
 

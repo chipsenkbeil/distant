@@ -1,12 +1,10 @@
 use crate::{
     data::{ChangeKind, DirEntry, Error, Metadata, PtySize, SystemInfo},
-    DistantRequestData, DistantResponseData,
+    DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use derive_more::From;
 use distant_net::{Reply, Server, ServerCtx};
 use log::*;
-use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf, sync::Arc};
 
 mod local;
@@ -20,34 +18,6 @@ pub struct DistantCtx<T> {
     pub connection_id: usize,
     pub reply: Box<dyn Reply<Data = DistantResponseData>>,
     pub local_data: Arc<T>,
-}
-
-/// Represents a wrapper around a distant message, supporting single and batch requests
-#[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum DistantMsg<T> {
-    Single(T),
-    Batch(Vec<T>),
-}
-
-impl<T> DistantMsg<T> {
-    /// Returns true if msg has a single payload
-    pub fn is_single(&self) -> bool {
-        matches!(self, Self::Single(_))
-    }
-
-    /// Returns true if msg has a batch of payloads
-    pub fn is_batch(&self) -> bool {
-        matches!(self, Self::Batch(_))
-    }
-
-    /// Convert into a collection of payload data
-    pub fn into_vec(self) -> Vec<T> {
-        match self {
-            Self::Single(x) => vec![x],
-            Self::Batch(x) => x,
-        }
-    }
 }
 
 /// Represents a server that leverages an API compliant with `distant`

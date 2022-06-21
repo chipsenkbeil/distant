@@ -16,9 +16,10 @@ pub enum ManagerRequest {
     },
 
     /// Forward a request to a specific connection
-    #[clap(skip)]
     Request {
         id: usize,
+
+        #[clap(subcommand)]
         payload: DistantMsg<DistantRequestData>,
     },
 
