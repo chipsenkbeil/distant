@@ -25,6 +25,7 @@ libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
+async-trait = "0.1.56"
 clap = { version = "3.2.5", features = ["derive"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap"] }

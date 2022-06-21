@@ -705,6 +705,7 @@ version = "0.17.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
+ "async-trait",
  "clap",
  "derive_more",
  "distant-core",

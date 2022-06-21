@@ -78,8 +78,15 @@ where
             Ok((mut writer, mut reader)) => {
                 let mut connection = ServerConnection::new();
                 let connection_id = connection.id;
-
                 let state = Arc::clone(&state);
+
+                // Create some default data for the new connection and pass it
+                // to the callback prior to processing new requests
+                let local_data = {
+                    let mut data = Data::default();
+                    server.on_connection(&mut data).await;
+                    Arc::new(data)
+                };
 
                 // Start a writer task that reads from a channel and forwards all
                 // data through the writer
@@ -97,14 +104,6 @@ where
                 // Start a reader task that reads requests and processes them
                 // using the provided handler
                 connection.reader_task = Some(tokio::spawn(async move {
-                    // Create some default data for the new connection and pass it
-                    // to the callback prior to processing new requests
-                    let local_data = {
-                        let mut data = Data::default();
-                        server.on_connection(&mut data).await;
-                        Arc::new(data)
-                    };
-
                     loop {
                         match reader.read().await {
                             Ok(Some(request)) => {

@@ -18,6 +18,26 @@ use uriparse::URIReference;
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Destination(URIReference<'static>);
 
+impl Destination {
+    /// Returns true if destination represents a distant server
+    pub fn is_distant(&self) -> bool {
+        match self.scheme() {
+            Some(scheme) => scheme.as_str().eq_ignore_ascii_case("distant"),
+
+            // Without scheme, distant is usd by default
+            None => true,
+        }
+    }
+
+    /// Returns true if destination represents an ssh server
+    pub fn is_ssh(&self) -> bool {
+        match self.scheme() {
+            Some(scheme) => scheme.as_str().eq_ignore_ascii_case("ssh"),
+            None => false,
+        }
+    }
+}
+
 impl Deref for Destination {
     type Target = URIReference<'static>;
 
