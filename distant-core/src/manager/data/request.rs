@@ -1,17 +1,18 @@
 use super::{Destination, Extra};
 use crate::{DistantMsg, DistantRequestData};
-use clap::{ArgAction, Subcommand};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, Subcommand)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum ManagerRequest {
     /// Initiate a connection through the manager
     Connect {
-        destination: Destination,
+        // NOTE: Boxed per clippy's large_enum_variant warning
+        destination: Box<Destination>,
 
         /// Extra details specific to the connection
-        #[clap(short, long, action = ArgAction::Append)]
+        #[cfg_attr(feature = "clap", clap(short, long, action = clap::ArgAction::Append))]
         extra: Extra,
     },
 
@@ -19,7 +20,7 @@ pub enum ManagerRequest {
     Request {
         id: usize,
 
-        #[clap(subcommand)]
+        #[cfg_attr(feature = "clap", clap(subcommand))]
         payload: DistantMsg<DistantRequestData>,
     },
 

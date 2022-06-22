@@ -4,9 +4,6 @@ pub use destination::*;
 mod extra;
 pub use extra::*;
 
-mod error;
-pub use error::*;
-
 mod info;
 pub use info::*;
 
@@ -20,6 +17,3 @@ mod response;
 pub use response::*;
 
 pub(crate) mod serde;
-
-mod stats;
-pub use stats::*;

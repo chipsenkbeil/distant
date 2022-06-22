@@ -1,6 +1,5 @@
-use super::{
-    data::{ConnectionInfo, ConnectionList, Destination, Extra},
-    ManagerRequest, ManagerResponse,
+use super::data::{
+    ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest, ManagerResponse,
 };
 use crate::{DistantMsg, DistantRequestData, DistantResponseData};
 use distant_net::{
@@ -21,6 +20,13 @@ router!(DistantManagerClientRouter {
 pub struct DistantManagerClient {
     auth: Box<dyn ServerRef>,
     client: Client<ManagerRequest, ManagerResponse>,
+}
+
+impl Drop for DistantManagerClient {
+    fn drop(&mut self) {
+        self.auth.abort();
+        self.client.abort();
+    }
 }
 
 impl DistantManagerClient {
@@ -58,7 +64,7 @@ impl DistantManagerClient {
         destination: impl Into<Destination>,
         extra: impl Into<Extra>,
     ) -> io::Result<usize> {
-        let destination = destination.into();
+        let destination = Box::new(destination.into());
         let extra = extra.into();
         let res = self
             .client

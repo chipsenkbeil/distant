@@ -68,6 +68,15 @@ impl FromStr for Destination {
     }
 }
 
+impl FromStr for Box<Destination> {
+    type Err = uriparse::URIReferenceError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let destination = s.parse::<Destination>()?;
+        Ok(Box::new(destination))
+    }
+}
+
 impl Serialize for Destination {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

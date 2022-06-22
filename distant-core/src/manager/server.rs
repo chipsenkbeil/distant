@@ -1,7 +1,4 @@
-use super::{
-    data::{ConnectionInfo, ConnectionList},
-    ManagerRequest, ManagerResponse,
-};
+use crate::{ConnectionInfo, ConnectionList, ManagerRequest, ManagerResponse};
 use async_trait::async_trait;
 use distant_net::{
     router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response,
@@ -14,12 +11,9 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    sync::{mpsc, RwLock},
+    sync::{mpsc, Mutex, RwLock},
     task::JoinHandle,
 };
-
-const DEFAULT_SCHEME: &str = "distant";
-const CONNECTION_BUFFER_SIZE: usize = 100;
 
 mod config;
 pub use config::*;
@@ -41,7 +35,10 @@ router!(DistantManagerServerRouter {
 /// Represents a server that can connect to a remote distant manager
 pub struct DistantManagerServer {
     /// Receives authentication clients to feed into local data of server
-    auth_client_rx: mpsc::Receiver<AuthClient>,
+    auth_client_rx: Mutex<mpsc::Receiver<AuthClient>>,
+
+    /// Configuration settings for the server
+    config: DistantManagerServerConfig,
 
     /// Mapping of connection id -> connection
     connections: RwLock<HashMap<usize, DistantManagerConnection>>,
@@ -63,7 +60,7 @@ impl DistantManagerServer {
         L: Listener<Output = T> + 'static,
         T: SerdeTransport + 'static,
     {
-        let (conn_tx, mpsc_listener) = MpscListener::channel(CONNECTION_BUFFER_SIZE);
+        let (conn_tx, mpsc_listener) = MpscListener::channel(config.connection_buffer_size);
         let (auth_client_tx, auth_client_rx) = mpsc::channel(1);
 
         // Spawn task that uses our input listener to get both auth and manager events,
@@ -101,7 +98,8 @@ impl DistantManagerServer {
         let connect_handlers = Arc::new(RwLock::new(HashMap::new()));
         let weak_connect_handlers = Arc::downgrade(&connect_handlers);
         let server_ref = Self {
-            auth_client_rx,
+            auth_client_rx: Mutex::new(auth_client_rx),
+            config,
             connect_handlers,
             connections: RwLock::new(HashMap::new()),
             task,
@@ -138,7 +136,7 @@ impl Server for DistantManagerServer {
     type LocalData = DistantManagerServerConnection;
 
     async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        local_data.auth_client = self.auth_client_rx.recv().await;
+        local_data.auth_client = self.auth_client_rx.lock().await.recv().await;
     }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
@@ -154,7 +152,7 @@ impl Server for DistantManagerServer {
                 let scheme = destination
                     .scheme()
                     .map(|scheme| scheme.as_str())
-                    .unwrap_or(DEFAULT_SCHEME)
+                    .unwrap_or(self.config.fallback_scheme.as_str())
                     .to_lowercase();
 
                 if let Some(handler) = self.connect_handlers.read().await.get(&scheme) {
@@ -166,7 +164,7 @@ impl Server for DistantManagerServer {
                             let id = rand::random();
                             let connection = DistantManagerConnection {
                                 id,
-                                destination,
+                                destination: *destination,
                                 extra,
                                 client,
                             };
@@ -288,6 +286,9 @@ impl Server for DistantManagerServer {
                 if let Err(x) = reply.send(ManagerResponse::Shutdown).await {
                     error!("[Conn {}] {}", connection_id, x);
                 }
+
+                // Shutdown the primary server task
+                self.task.abort();
 
                 // TODO: Perform a graceful shutdown instead of this?
                 std::process::exit(0);

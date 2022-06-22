@@ -1,4 +1,4 @@
-use super::{ConnectionInfo, ConnectionList, Error};
+use crate::{data::Error, ConnectionInfo, ConnectionList};
 use crate::{DistantMsg, DistantResponseData};
 use serde::{Deserialize, Serialize};
 

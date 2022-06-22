@@ -1,7 +1,6 @@
 use log::error;
 
 // pub mod cli;
-mod manager;
 
 /// Main entrypoint into the program
 pub fn run() {

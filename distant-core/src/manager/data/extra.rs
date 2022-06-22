@@ -34,16 +34,13 @@ impl fmt::Display for Extra {
     /// Outputs a `key=value` mapping in the form `key="value",key2="value2"`
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let len = self.0.len();
-        let mut i = 0;
-        for (key, value) in self.0.iter() {
+        for (i, (key, value)) in self.0.iter().enumerate() {
             write!(f, "{}=\"{}\"", key, value)?;
 
             // Include a comma after each but the last pair
             if i + 1 < len {
                 write!(f, ",")?;
             }
-
-            i += 1;
         }
         Ok(())
     }
@@ -66,24 +63,21 @@ impl FromStr for Extra {
             let tail = tail.trim_start();
 
             // Determine if we start with a quote " otherwise we will look for the next ,
-            let (value, tail) = if tail.starts_with('"') {
-                // Skip the quote so we can look for the trailing quote
-                let tail = &tail[1..];
-                let (value, tail) = tail.split_once('"').ok_or("Missing closing \" for value")?;
+            let (value, tail) = match tail.strip_prefix('"') {
+                Some(tail) => {
+                    // Skip the quote so we can look for the trailing quote
+                    let (value, tail) =
+                        tail.split_once('"').ok_or("Missing closing \" for value")?;
 
-                // Skip comma if we have one
-                let tail = if tail.starts_with(',') {
-                    &tail[1..]
-                } else {
-                    tail
-                };
+                    // Skip comma if we have one
+                    let tail = tail.strip_prefix(',').unwrap_or(tail);
 
-                (value, tail)
-            } else {
-                match tail.split_once(',') {
+                    (value, tail)
+                }
+                None => match tail.split_once(',') {
                     Some((value, tail)) => (value, tail),
                     None => (tail, ""),
-                }
+                },
             };
 
             // Insert our new pair and update the slice to be the tail (removing whitespace)
@@ -119,13 +113,13 @@ mod tests {
 
     macro_rules! extra {
         ($($key:literal -> $value:literal),*) => {{
-            let mut map = HashMap::new();
+            let mut _map = HashMap::new();
 
             $(
-                map.insert($key.to_string(), $value.to_string());
+                _map.insert($key.to_string(), $value.to_string());
             )*
 
-            Extra(map)
+            Extra(_map)
         }};
     }
 

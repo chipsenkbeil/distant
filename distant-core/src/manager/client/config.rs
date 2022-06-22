@@ -1,5 +1,5 @@
 use distant_net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
-use std::io;
+use std::{io, sync::Arc};
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
 pub struct DistantManagerClientConfig {
@@ -12,8 +12,10 @@ pub struct DistantManagerClientConfig {
 impl DistantManagerClientConfig {
     pub fn with_password_prompt<P>(prompt: P) -> Self
     where
-        P: Fn(&str) -> io::Result<String> + Clone + Send + Sync + 'static,
+        P: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
     {
+        let prompt = Arc::new(prompt);
+        let prompt_2 = Arc::clone(&prompt);
         Self {
             on_challenge: Box::new(move |questions, _extra| {
                 let mut answers = Vec::new();
@@ -40,10 +42,10 @@ impl DistantManagerClientConfig {
             on_verify: Box::new(move |kind, text| match kind {
                 AuthVerifyKind::Host => {
                     eprintln!("{}", text);
-                    match prompt("Enter [y/N]> ").as_deref() {
-                        Ok("y" | "Y" | "yes" | "YES") => true,
-                        _ => false,
-                    }
+                    matches!(
+                        prompt_2("Enter [y/N]> ").as_deref(),
+                        Ok("y" | "Y" | "yes" | "YES")
+                    )
                 }
                 _ => false,
             }),
