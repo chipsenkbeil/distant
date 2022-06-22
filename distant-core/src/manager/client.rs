@@ -3,8 +3,8 @@ use super::data::{
 };
 use crate::{DistantMsg, DistantRequestData, DistantResponseData};
 use distant_net::{
-    router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response,
-    SerdeTransport, ServerExt, ServerRef,
+    router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response, ServerExt,
+    ServerRef, UntypedTransport,
 };
 use std::io;
 
@@ -33,7 +33,7 @@ impl DistantManagerClient {
     /// Initializes a client using the provided [`SerdeTransport`]
     pub fn new<T>(transport: T, config: DistantManagerClientConfig) -> io::Result<Self>
     where
-        T: SerdeTransport + 'static,
+        T: UntypedTransport + 'static,
     {
         let DistantManagerClientRouter {
             auth_transport,

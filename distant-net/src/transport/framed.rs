@@ -1,5 +1,6 @@
 use crate::{
-    utils, Codec, IntoSplit, RawTransport, SerdeTransport, SerdeTransportRead, SerdeTransportWrite,
+    utils, Codec, IntoSplit, RawTransport, UntypedTransport, UntypedTransportRead,
+    UntypedTransportWrite,
 };
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
@@ -41,7 +42,7 @@ where
     }
 }
 
-impl<T, C> SerdeTransport for FramedTransport<T, C>
+impl<T, C> UntypedTransport for FramedTransport<T, C>
 where
     T: RawTransport,
     C: Codec + Send,
@@ -78,7 +79,7 @@ where
 }
 
 #[async_trait]
-impl<T, C> SerdeTransportWrite for FramedTransport<T, C>
+impl<T, C> UntypedTransportWrite for FramedTransport<T, C>
 where
     T: RawTransport + Send,
     C: Codec + Send,
@@ -97,7 +98,7 @@ where
 }
 
 #[async_trait]
-impl<T, C> SerdeTransportRead for FramedTransport<T, C>
+impl<T, C> UntypedTransportRead for FramedTransport<T, C>
 where
     T: RawTransport + Send,
     C: Codec + Send,

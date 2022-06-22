@@ -1,4 +1,4 @@
-use crate::{transport::framed::utils, Codec, SerdeTransportRead};
+use crate::{transport::framed::utils, Codec, UntypedTransportRead};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
@@ -17,7 +17,7 @@ where
     C: Codec;
 
 #[async_trait]
-impl<R, C> SerdeTransportRead for FramedTransportReadHalf<R, C>
+impl<R, C> UntypedTransportRead for FramedTransportReadHalf<R, C>
 where
     R: AsyncRead + Send + Unpin,
     C: Codec + Send,

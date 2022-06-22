@@ -31,6 +31,12 @@ pub trait Server: Send {
     /// Type of data to store locally tied to the specific connection
     type LocalData: Send + Sync;
 
+    /// Invoked immediately on server start, being provided the raw listener to use (untyped
+    /// transport), and returning the listener when ready to start (enabling servers that need to
+    /// tweak a listener to do so)
+    /* async fn on_start(&mut self, listener: L) -> Box<dyn Listener<Output = >> {
+    } */
+
     /// Invoked upon a new connection becoming established, which provides a mutable reference to
     /// the data created for the connection. This can be useful in performing some additional
     /// initialization on the data prior to it being used anywhere else.

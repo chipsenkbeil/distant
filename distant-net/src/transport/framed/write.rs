@@ -1,4 +1,4 @@
-use crate::{transport::framed::utils, Codec, SerdeTransportWrite};
+use crate::{transport::framed::utils, Codec, UntypedTransportWrite};
 use async_trait::async_trait;
 use futures::SinkExt;
 use serde::Serialize;
@@ -17,7 +17,7 @@ where
     C: Codec;
 
 #[async_trait]
-impl<W, C> SerdeTransportWrite for FramedTransportWriteHalf<W, C>
+impl<W, C> UntypedTransportWrite for FramedTransportWriteHalf<W, C>
 where
     W: AsyncWrite + Send + Unpin,
     C: Codec + Send,

@@ -4,8 +4,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use distant_net::{
-    router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response,
-    SerdeTransport, Server, ServerCtx, ServerExt,
+    router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response, Server,
+    ServerCtx, ServerExt, UntypedTransport,
 };
 use log::*;
 use std::{
@@ -61,7 +61,7 @@ impl DistantManager {
     ) -> io::Result<DistantManagerRef>
     where
         L: Listener<Output = T> + 'static,
-        T: SerdeTransport + 'static,
+        T: UntypedTransport + 'static,
     {
         let (conn_tx, mpsc_listener) = MpscListener::channel(config.connection_buffer_size);
         let (auth_client_tx, auth_client_rx) = mpsc::channel(1);
@@ -300,8 +300,8 @@ mod tests {
     use crate::DistantClient;
     use async_trait::async_trait;
     use distant_net::{
-        AuthClient, FramedTransport, InmemoryTransport, PlainCodec, SerdeTransportRead,
-        SerdeTransportWrite,
+        AuthClient, FramedTransport, InmemoryTransport, PlainCodec, UntypedTransportRead,
+        UntypedTransportWrite,
     };
 
     /// Create a new server, bypassing the start loop

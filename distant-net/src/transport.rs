@@ -89,9 +89,6 @@ pub use inmemory::*;
 mod mpsc;
 pub use mpsc::*;
 
-mod serde;
-pub use self::serde::*;
-
 mod tcp;
 pub use tcp::*;
 
@@ -100,6 +97,9 @@ mod unix;
 
 #[cfg(unix)]
 pub use unix::*;
+
+mod untyped;
+pub use untyped::*;
 
 #[cfg(windows)]
 mod windows;

@@ -1,8 +1,8 @@
-/// Creates a new struct around a [`SerdeTransport`](crate::SerdeTransport) that routes incoming
+/// Creates a new struct around a [`UntypedTransport`](crate::UntypedTransport) that routes incoming
 /// and outgoing messages to different transports, enabling the ability to transform a singular
 /// transport into multiple typed transports that can be combined with [`Client`](crate::Client)
 /// and [`Server`](crate::Server) to mix having a variety of clients and servers available on the
-/// same underlying [`SerdeTransport`](crate::SerdeTransport).
+/// same underlying [`UntypedTransport`](crate::UntypedTransport).
 ///
 /// ```no_run
 /// use distant_net::router;
@@ -88,8 +88,8 @@ macro_rules! router {
                 pub fn new<T, W, R>(split: T) -> Self
                 where
                     T: $crate::IntoSplit<Write = W, Read = R>,
-                    W: $crate::SerdeTransportWrite + 'static,
-                    R: $crate::SerdeTransportRead + 'static,
+                    W: $crate::UntypedTransportWrite + 'static,
+                    R: $crate::UntypedTransportRead + 'static,
                 {
                     let (writer, reader) = split.into_split();
                     Self::from_writer_and_reader(writer, reader)
@@ -98,8 +98,8 @@ macro_rules! router {
                 #[doc = "Creates a new instance of [`" $name "`] from the given writer and reader"]
                 pub fn from_writer_and_reader<W, R>(mut writer: W, mut reader: R) -> Self
                 where
-                    W: $crate::SerdeTransportWrite + 'static,
-                    R: $crate::SerdeTransportRead + 'static,
+                    W: $crate::UntypedTransportWrite + 'static,
+                    R: $crate::UntypedTransportRead + 'static,
                 {
 
                     $(
@@ -126,7 +126,7 @@ macro_rules! router {
 
                     let reader_task = tokio::spawn(async move {
                         loop {
-                            match $crate::SerdeTransportRead::read(&mut reader).await {$(
+                            match $crate::UntypedTransportRead::read(&mut reader).await {$(
                                 Ok(Some([<$name:camel In>]::[<$transport:camel>](x))) => {
                                     // TODO: Handle closed channel in some way?
                                     let _ = [<$transport:snake _inbound_tx>].send(x).await;
@@ -151,7 +151,7 @@ macro_rules! router {
                                 $(
                                     Some(x) = [<$transport:snake _outbound_rx>].recv() => {
                                         // TODO: Handle error with send in some way?
-                                        let _ = $crate::SerdeTransportWrite::write(
+                                        let _ = $crate::UntypedTransportWrite::write(
                                             &mut writer,
                                             x,
                                         ).await;
