@@ -30,35 +30,35 @@ pub use handler::*;
 mod r#ref;
 pub use r#ref::*;
 
-router!(DistantManagerServerRouter {
+router!(DistantManagerRouter {
     auth_transport: Response<Auth> => Request<Auth>,
     manager_transport: Request<ManagerRequest> => Response<ManagerResponse>,
 });
 
-/// Represents a server that can connect to a remote distant manager
-pub struct DistantManagerServer {
+/// Represents a manager of multiple distant server connections
+pub struct DistantManager {
     /// Receives authentication clients to feed into local data of server
     auth_client_rx: Mutex<mpsc::Receiver<AuthClient>>,
 
     /// Configuration settings for the server
-    config: DistantManagerServerConfig,
+    config: DistantManagerConfig,
 
     /// Mapping of connection id -> connection
     connections: RwLock<HashMap<usize, DistantManagerConnection>>,
 
     /// Handlers for connect requests
-    connect_handlers: Arc<RwLock<HashMap<String, Box<dyn ConnectHandler + Send + Sync>>>>,
+    handlers: Arc<RwLock<HashMap<String, Box<dyn ConnectHandler + Send + Sync>>>>,
 
     /// Primary task of server
     task: JoinHandle<()>,
 }
 
-impl DistantManagerServer {
+impl DistantManager {
     /// Initializes a new instance of [`DistantManagerServer`] using the provided [`SerdeTransport`]
     pub fn start<L, T>(
         mut listener: L,
-        config: DistantManagerServerConfig,
-    ) -> io::Result<DistantManagerServerRef>
+        config: DistantManagerConfig,
+    ) -> io::Result<DistantManagerRef>
     where
         L: Listener<Output = T> + 'static,
         T: SerdeTransport + 'static,
@@ -70,11 +70,11 @@ impl DistantManagerServer {
         // forwarding manager events to the internal mpsc listener
         let task = tokio::spawn(async move {
             while let Ok(transport) = listener.accept().await {
-                let DistantManagerServerRouter {
+                let DistantManagerRouter {
                     auth_transport,
                     manager_transport,
                     ..
-                } = DistantManagerServerRouter::new(transport);
+                } = DistantManagerRouter::new(transport);
 
                 let (writer, reader) = auth_transport.into_split();
                 let client = match Client::new(writer, reader) {
@@ -98,19 +98,19 @@ impl DistantManagerServer {
             }
         });
 
-        let connect_handlers = Arc::new(RwLock::new(HashMap::new()));
-        let weak_connect_handlers = Arc::downgrade(&connect_handlers);
+        let handlers = Arc::new(RwLock::new(HashMap::new()));
+        let weak_handlers = Arc::downgrade(&handlers);
         let server_ref = Self {
             auth_client_rx: Mutex::new(auth_client_rx),
             config,
-            connect_handlers,
+            handlers,
             connections: RwLock::new(HashMap::new()),
             task,
         }
         .start(mpsc_listener)?;
 
-        Ok(DistantManagerServerRef {
-            connect_handlers: weak_connect_handlers,
+        Ok(DistantManagerRef {
+            handlers: weak_handlers,
             inner: server_ref,
         })
     }
@@ -122,8 +122,15 @@ impl DistantManagerServer {
         &self,
         destination: Destination,
         extra: Extra,
-        auth: &AuthClient,
+        auth: Option<&AuthClient>,
     ) -> io::Result<usize> {
+        let auth = auth.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "Authentication client not initialized",
+            )
+        })?;
+
         let scheme = destination
             .scheme()
             .map(|scheme| scheme.as_str())
@@ -131,7 +138,7 @@ impl DistantManagerServer {
             .to_lowercase();
 
         let client = {
-            let lock = self.connect_handlers.read().await;
+            let lock = self.handlers.read().await;
             let handler = lock.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -221,15 +228,13 @@ pub struct DistantManagerServerConnection {
 
 impl DistantManagerServerConnection {
     /// Returns reference to authentication client associated with connection
-    pub fn auth(&self) -> &AuthClient {
-        // NOTE: We can unwrap as we know that the option should always be `Some(...)` by the time
-        //       this function would be invoked
-        self.auth_client.as_ref().unwrap()
+    pub fn auth(&self) -> Option<&AuthClient> {
+        self.auth_client.as_ref()
     }
 }
 
 #[async_trait]
-impl Server for DistantManagerServer {
+impl Server for DistantManager {
     type Request = ManagerRequest;
     type Response = ManagerResponse;
     type LocalData = DistantManagerServerConnection;
@@ -300,13 +305,13 @@ mod tests {
     };
 
     /// Create a new server, bypassing the start loop
-    fn setup() -> DistantManagerServer {
+    fn setup() -> DistantManager {
         let (_, rx) = mpsc::channel(1);
-        DistantManagerServer {
+        DistantManager {
             auth_client_rx: Mutex::new(rx),
             config: Default::default(),
             connections: RwLock::new(HashMap::new()),
-            connect_handlers: Arc::new(RwLock::new(HashMap::new())),
+            handlers: Arc::new(RwLock::new(HashMap::new())),
             task: tokio::spawn(async move {}),
         }
     }
@@ -338,7 +343,10 @@ mod tests {
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
         let auth = dummy_auth_client();
-        let err = server.connect(destination, extra, &auth).await.unwrap_err();
+        let err = server
+            .connect(destination, extra, Some(&auth))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", err);
     }
 
@@ -361,7 +369,7 @@ mod tests {
         }
 
         server
-            .connect_handlers
+            .handlers
             .write()
             .await
             .insert("scheme".to_string(), Box::new(TestConnectHandler));
@@ -369,7 +377,10 @@ mod tests {
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
         let auth = dummy_auth_client();
-        let err = server.connect(destination, extra, &auth).await.unwrap_err();
+        let err = server
+            .connect(destination, extra, Some(&auth))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "test failure");
     }
@@ -393,7 +404,7 @@ mod tests {
         }
 
         server
-            .connect_handlers
+            .handlers
             .write()
             .await
             .insert("scheme".to_string(), Box::new(TestConnectHandler));
@@ -401,7 +412,10 @@ mod tests {
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "key=value".parse::<Extra>().unwrap();
         let auth = dummy_auth_client();
-        let id = server.connect(destination, extra, &auth).await.unwrap();
+        let id = server
+            .connect(destination, extra, Some(&auth))
+            .await
+            .unwrap();
 
         let lock = server.connections.read().await;
         let connection = lock.get(&id).unwrap();
