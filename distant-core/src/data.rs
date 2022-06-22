@@ -1,7 +1,10 @@
 use derive_more::{From, IsVariant};
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
-use strum::{AsRefStr, VariantNames};
+use strum::AsRefStr;
+
+#[cfg(feature = "clap")]
+use strum::VariantNames;
 
 mod change;
 pub use change::*;
