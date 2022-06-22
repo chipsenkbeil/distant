@@ -1,6 +1,6 @@
 use super::{ManagerRequest, ManagerResponse};
 use async_trait::async_trait;
-use distant_core::net::{
+use distant_net::{
     router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response,
     SerdeTransport, Server, ServerCtx, ServerExt,
 };

@@ -2,12 +2,10 @@ use super::{
     data::{ConnectionInfo, ConnectionList, Destination, Extra},
     ManagerRequest, ManagerResponse,
 };
-use distant_core::{
-    net::{
-        router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response,
-        SerdeTransport, ServerExt, ServerRef,
-    },
-    DistantMsg, DistantRequestData, DistantResponseData,
+use crate::{DistantMsg, DistantRequestData, DistantResponseData};
+use distant_net::{
+    router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response,
+    SerdeTransport, ServerExt, ServerRef,
 };
 use std::io;
 

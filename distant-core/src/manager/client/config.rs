@@ -1,4 +1,4 @@
-use distant_core::net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
+use distant_net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
 pub struct DistantManagerClientConfig {

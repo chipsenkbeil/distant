@@ -7,6 +7,9 @@ pub use client::*;
 pub mod data;
 pub use data::{DistantMsg, DistantRequestData, DistantResponseData};
 
+mod manager;
+pub use manager::*;
+
 mod constants;
 
 /// Re-export of `distant-net` as `net`
