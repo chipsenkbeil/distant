@@ -1,4 +1,5 @@
 use distant_net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
+use std::io;
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
 pub struct DistantManagerClientConfig {
@@ -8,10 +9,13 @@ pub struct DistantManagerClientConfig {
     pub on_error: Box<AuthErrorFn>,
 }
 
-impl Default for DistantManagerClientConfig {
-    fn default() -> Self {
+impl DistantManagerClientConfig {
+    pub fn with_password_prompt<P>(prompt: P) -> Self
+    where
+        P: Fn(&str) -> io::Result<String> + Clone + Send + Sync + 'static,
+    {
         Self {
-            on_challenge: Box::new(|questions, extra| {
+            on_challenge: Box::new(move |questions, _extra| {
                 let mut answers = Vec::new();
                 for question in questions.iter() {
                     // Contains all prompt lines including same line
@@ -27,16 +31,16 @@ impl Default for DistantManagerClientConfig {
 
                     // Get an answer from user input, or use a blank string as an answer
                     // if we fail to get input from the user
-                    let answer = rpassword::prompt_password(line).unwrap_or_default();
+                    let answer = prompt(line).unwrap_or_default();
 
                     answers.push(answer);
                 }
                 answers
             }),
-            on_verify: Box::new(|kind, text| match kind {
+            on_verify: Box::new(move |kind, text| match kind {
                 AuthVerifyKind::Host => {
                     eprintln!("{}", text);
-                    match rpassword::prompt_password("Enter [y/N]> ").as_deref() {
+                    match prompt("Enter [y/N]> ").as_deref() {
                         Ok("y" | "Y" | "yes" | "YES") => true,
                         _ => false,
                     }

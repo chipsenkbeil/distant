@@ -1,4 +1,4 @@
-use super::{Destination, Extra, Stats};
+use super::{Destination, Extra};
 use serde::{Deserialize, Serialize};
 
 /// Information about a specific connection
@@ -12,7 +12,4 @@ pub struct ConnectionInfo {
 
     /// Extra information associated with this connection
     pub extra: Extra,
-
-    /// Statistics about this connection
-    pub stats: Stats,
 }

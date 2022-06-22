@@ -1,6 +1,6 @@
 use super::{Destination, Extra};
+use crate::{DistantMsg, DistantRequestData};
 use clap::{ArgAction, Subcommand};
-use distant_core::{data::DistantRequestData, DistantMsg};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Subcommand)]

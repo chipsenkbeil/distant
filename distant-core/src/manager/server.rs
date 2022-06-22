@@ -1,20 +1,31 @@
-use super::{ManagerRequest, ManagerResponse};
+use super::{
+    data::{ConnectionInfo, ConnectionList},
+    ManagerRequest, ManagerResponse,
+};
 use async_trait::async_trait;
 use distant_net::{
     router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response,
     SerdeTransport, Server, ServerCtx, ServerExt,
 };
 use log::*;
-use std::{collections::HashMap, io, sync::Arc};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    io,
+    sync::Arc,
+};
 use tokio::{
     sync::{mpsc, RwLock},
     task::JoinHandle,
 };
 
+const DEFAULT_SCHEME: &str = "distant";
 const CONNECTION_BUFFER_SIZE: usize = 100;
 
 mod config;
 pub use config::*;
+
+mod connection;
+pub use connection::*;
 
 mod handler;
 pub use handler::*;
@@ -32,8 +43,11 @@ pub struct DistantManagerServer {
     /// Receives authentication clients to feed into local data of server
     auth_client_rx: mpsc::Receiver<AuthClient>,
 
+    /// Mapping of connection id -> connection
+    connections: RwLock<HashMap<usize, DistantManagerConnection>>,
+
     /// Handlers for connect requests
-    connect_handlers: Arc<RwLock<HashMap<String, ConnectHandler>>>,
+    connect_handlers: Arc<RwLock<HashMap<String, Box<dyn ConnectHandler + Send + Sync>>>>,
 
     /// Primary task of server
     task: JoinHandle<()>,
@@ -89,6 +103,7 @@ impl DistantManagerServer {
         let server_ref = Self {
             auth_client_rx,
             connect_handlers,
+            connections: RwLock::new(HashMap::new()),
             task,
         }
         .start(mpsc_listener)?;
@@ -139,34 +154,143 @@ impl Server for DistantManagerServer {
                 let scheme = destination
                     .scheme()
                     .map(|scheme| scheme.as_str())
-                    .unwrap_or("distant");
+                    .unwrap_or(DEFAULT_SCHEME)
+                    .to_lowercase();
 
-                if let Some(handler) = self.connect_handlers.read().await.get(scheme) {
-                    match handler.do_connect(&destination, &extra).await {
-                        Ok(client) => todo!("Store client and send back Connected(id)"),
-                        Err(x) => todo!("Send an error back"),
+                if let Some(handler) = self.connect_handlers.read().await.get(&scheme) {
+                    match handler
+                        .connect(&destination, &extra, local_data.auth())
+                        .await
+                    {
+                        Ok(client) => {
+                            let id = rand::random();
+                            let connection = DistantManagerConnection {
+                                id,
+                                destination,
+                                extra,
+                                client,
+                            };
+                            self.connections.write().await.insert(id, connection);
+                            if let Err(x) = reply.send(ManagerResponse::Connected(id)).await {
+                                error!("[Conn {}] {}", connection_id, x);
+                            }
+                        }
+                        Err(x) => {
+                            if let Err(x) = reply.send(ManagerResponse::Error(x.into())).await {
+                                error!("[Conn {}] {}", connection_id, x);
+                            }
+                        }
                     }
-                } else {
-                    todo!("Send an error that the scheme is not supported");
+                } else if let Err(x) = reply
+                    .send(ManagerResponse::Error(
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("No scheme handler registered for {}", scheme),
+                        )
+                        .into(),
+                    ))
+                    .await
+                {
+                    error!("[Conn {}] {}", connection_id, x);
                 }
             }
             ManagerRequest::Request { id, payload } => {
-                todo!();
+                match self.connections.write().await.get_mut(&id) {
+                    Some(connection) => match connection.client.send(payload).await {
+                        Ok(x) => {
+                            if let Err(x) = reply.send(ManagerResponse::Response(x.payload)).await {
+                                error!("[Conn {}] {}", connection_id, x);
+                            }
+                        }
+                        Err(x) => {
+                            if let Err(x) = reply.send(ManagerResponse::Error(x.into())).await {
+                                error!("[Conn {}] {}", connection_id, x);
+                            }
+                        }
+                    },
+                    None => {
+                        if let Err(x) = reply
+                            .send(ManagerResponse::Error(
+                                io::Error::new(io::ErrorKind::NotConnected, "No connection found")
+                                    .into(),
+                            ))
+                            .await
+                        {
+                            error!("[Conn {}] {}", connection_id, x);
+                        }
+                    }
+                }
             }
-            ManagerRequest::Info { id } => {
-                todo!();
-            }
+            ManagerRequest::Info { id } => match self.connections.read().await.get(&id) {
+                Some(connection) => {
+                    let info = ConnectionInfo {
+                        id: connection.id,
+                        destination: connection.destination.clone(),
+                        extra: connection.extra.clone(),
+                    };
+
+                    if let Err(x) = reply.send(ManagerResponse::Info(info)).await {
+                        error!("[Conn {}] {}", connection_id, x);
+                    }
+                }
+                None => {
+                    if let Err(x) = reply
+                        .send(ManagerResponse::Error(
+                            io::Error::new(io::ErrorKind::NotConnected, "No connection found")
+                                .into(),
+                        ))
+                        .await
+                    {
+                        error!("[Conn {}] {}", connection_id, x);
+                    }
+                }
+            },
             ManagerRequest::Kill { id } => {
-                todo!();
+                match self.connections.write().await.entry(id) {
+                    Entry::Occupied(x) => {
+                        // Kill the client's tasks
+                        x.get().client.abort();
+
+                        // Remove the connection from our list
+                        let _ = x.remove();
+
+                        if let Err(x) = reply.send(ManagerResponse::Killed).await {
+                            error!("[Conn {}] {}", connection_id, x);
+                        }
+                    }
+                    Entry::Vacant(_) => {
+                        if let Err(x) = reply
+                            .send(ManagerResponse::Error(
+                                io::Error::new(io::ErrorKind::NotConnected, "No connection found")
+                                    .into(),
+                            ))
+                            .await
+                        {
+                            error!("[Conn {}] {}", connection_id, x);
+                        }
+                    }
+                }
             }
             ManagerRequest::List => {
-                todo!();
+                let list = ConnectionList(
+                    self.connections
+                        .read()
+                        .await
+                        .iter()
+                        .map(|(id, conn)| (*id, conn.destination.clone()))
+                        .collect(),
+                );
+                if let Err(x) = reply.send(ManagerResponse::List(list)).await {
+                    error!("[Conn {}] {}", connection_id, x);
+                }
             }
             ManagerRequest::Shutdown => {
-                // TODO: Actually perform shutdown
                 if let Err(x) = reply.send(ManagerResponse::Shutdown).await {
                     error!("[Conn {}] {}", connection_id, x);
                 }
+
+                // TODO: Perform a graceful shutdown instead of this?
+                std::process::exit(0);
             }
         }
     }

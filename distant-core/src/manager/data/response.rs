@@ -1,5 +1,5 @@
 use super::{ConnectionInfo, ConnectionList, Error};
-use distant_core::{data::DistantResponseData, DistantMsg};
+use crate::{DistantMsg, DistantResponseData};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

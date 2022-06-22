@@ -7,7 +7,7 @@ use std::{
 
 /// Represents a list of information about active connections
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConnectionList(HashMap<usize, Destination>);
+pub struct ConnectionList(pub(crate) HashMap<usize, Destination>);
 
 impl ConnectionList {
     /// Returns a reference to the destination associated with an active connection

@@ -759,6 +759,7 @@ dependencies = [
  "strum",
  "tokio",
  "tokio-util",
+ "uriparse",
  "walkdir",
 ]
 
