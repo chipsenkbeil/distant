@@ -59,11 +59,19 @@ impl FromStr for Extra {
             // Find {key}={tail...} where tail is everything after =
             let (key, tail) = s.split_once('=').ok_or("Missing = after key")?;
 
+            // Remove whitespace around the key and ensure it starts with a proper character
+            let key = key.trim();
+
+            if !key.starts_with(char::is_alphabetic) {
+                return Err("Key must start with alphabetic character");
+            }
+
             // Remove any extra whitespace at the front of the tail
             let tail = tail.trim_start();
 
             // Determine if we start with a quote " otherwise we will look for the next ,
             let (value, tail) = match tail.strip_prefix('"') {
+                // If quoted, we maintain the whitespace within the quotes
                 Some(tail) => {
                     // Skip the quote so we can look for the trailing quote
                     let (value, tail) =
@@ -74,14 +82,16 @@ impl FromStr for Extra {
 
                     (value, tail)
                 }
+
+                // If not quoted, we remove all whitespace around the value
                 None => match tail.split_once(',') {
-                    Some((value, tail)) => (value, tail),
-                    None => (tail, ""),
+                    Some((value, tail)) => (value.trim(), tail),
+                    None => (tail.trim(), ""),
                 },
             };
 
             // Insert our new pair and update the slice to be the tail (removing whitespace)
-            map.insert(key.trim().to_string(), value.trim().to_string());
+            map.insert(key.to_string(), value.to_string());
             s = tail.trim();
         }
 
