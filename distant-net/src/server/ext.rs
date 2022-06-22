@@ -126,8 +126,11 @@ where
                                 break;
                             }
                             Err(x) => {
-                                error!("[Conn {}] Connection failed: {:?}", connection_id, x);
-                                break;
+                                // NOTE: We do NOT break out of the loop, as this could happen
+                                //       if someone sends bad data at any point, but does not
+                                //       mean that the reader itself has failed. This can
+                                //       happen from getting non-compliant typed data
+                                error!("[Conn {}] {}", connection_id, x);
                             }
                         }
                     }

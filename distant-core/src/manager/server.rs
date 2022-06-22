@@ -57,7 +57,7 @@ impl DistantManager {
     /// Initializes a new instance of [`DistantManagerServer`] using the provided [`SerdeTransport`]
     pub fn start<L, T>(
         mut listener: L,
-        config: DistantManagerConfig,
+        mut config: DistantManagerConfig,
     ) -> io::Result<DistantManagerRef>
     where
         L: Listener<Output = T> + 'static,
@@ -98,7 +98,7 @@ impl DistantManager {
             }
         });
 
-        let handlers = Arc::new(RwLock::new(HashMap::new()));
+        let handlers = Arc::new(RwLock::new(config.handlers.drain().collect()));
         let weak_handlers = Arc::downgrade(&handlers);
         let server_ref = Self {
             auth_client_rx: Mutex::new(auth_client_rx),
