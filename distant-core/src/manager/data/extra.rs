@@ -16,6 +16,18 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extra(HashMap<String, String>);
 
+impl Extra {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl Default for Extra {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Deref for Extra {
     type Target = HashMap<String, String>;
 

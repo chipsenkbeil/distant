@@ -19,4 +19,5 @@ pub use port::*;
 pub use server::*;
 pub use transport::*;
 
+pub use log;
 pub use paste;

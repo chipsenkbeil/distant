@@ -55,9 +55,57 @@ impl<T> DistantMsg<T> {
         matches!(self, Self::Single(_))
     }
 
+    /// Returns reference to single value if msg is single variant
+    pub fn as_single(&self) -> Option<&T> {
+        match self {
+            Self::Single(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    /// Returns mutable reference to single value if msg is single variant
+    pub fn as_mut_single(&mut self) -> Option<&T> {
+        match self {
+            Self::Single(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    /// Returns the single value if msg is single variant
+    pub fn into_single(self) -> Option<T> {
+        match self {
+            Self::Single(x) => Some(x),
+            _ => None,
+        }
+    }
+
     /// Returns true if msg has a batch of payloads
     pub fn is_batch(&self) -> bool {
         matches!(self, Self::Batch(_))
+    }
+
+    /// Returns reference to batch value if msg is batch variant
+    pub fn as_batch(&self) -> Option<&[T]> {
+        match self {
+            Self::Batch(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    /// Returns mutable reference to batch value if msg is batch variant
+    pub fn as_mut_batch(&mut self) -> Option<&mut [T]> {
+        match self {
+            Self::Batch(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    /// Returns the batch value if msg is batch variant
+    pub fn into_batch(self) -> Option<Vec<T>> {
+        match self {
+            Self::Batch(x) => Some(x),
+            _ => None,
+        }
     }
 
     /// Convert into a collection of payload data

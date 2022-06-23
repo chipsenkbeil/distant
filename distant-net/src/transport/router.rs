@@ -128,8 +128,12 @@ macro_rules! router {
                         loop {
                             match $crate::UntypedTransportRead::read(&mut reader).await {$(
                                 Ok(Some([<$name:camel In>]::[<$transport:camel>](x))) => {
-                                    // TODO: Handle closed channel in some way?
-                                    let _ = [<$transport:snake _inbound_tx>].send(x).await;
+                                    if let Err(x) = [<$transport:snake _inbound_tx>].send(x).await {
+                                        $crate::log::error!(
+                                            "Failed to read using transport: {}",
+                                            x
+                                        );
+                                    }
                                 }
 
                                 // Quit if the reader no longer has data
@@ -150,11 +154,15 @@ macro_rules! router {
                             tokio::select! {
                                 $(
                                     Some(x) = [<$transport:snake _outbound_rx>].recv() => {
-                                        // TODO: Handle error with send in some way?
-                                        let _ = $crate::UntypedTransportWrite::write(
+                                        if let Err(x) = $crate::UntypedTransportWrite::write(
                                             &mut writer,
                                             x,
-                                        ).await;
+                                        ).await {
+                                            $crate::log::error!(
+                                                "Failed to write using transport: {}",
+                                                x
+                                            );
+                                        }
                                     }
                                 )+
                                 else => break,

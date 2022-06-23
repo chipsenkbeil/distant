@@ -71,7 +71,7 @@ impl DistantManagerClient {
             .send(ManagerRequest::Connect { destination, extra })
             .await?;
         match res.payload {
-            ManagerResponse::Connected(id) => Ok(id),
+            ManagerResponse::Connected { id } => Ok(id),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -106,6 +106,36 @@ impl DistantManagerClient {
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
+            )),
+        }
+    }
+
+    /// Same as `Self::send`, but specifically for single requests
+    pub async fn send_single(
+        &mut self,
+        id: usize,
+        payload: impl Into<DistantRequestData>,
+    ) -> io::Result<DistantResponseData> {
+        match self.send(id, DistantMsg::Single(payload.into())).await? {
+            DistantMsg::Single(x) => Ok(x),
+            DistantMsg::Batch(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Got batch response for a single request",
+            )),
+        }
+    }
+
+    /// Same as `Self::send`, but specifically for batch requests
+    pub async fn send_batch(
+        &mut self,
+        id: usize,
+        payload: impl Into<Vec<DistantRequestData>>,
+    ) -> io::Result<Vec<DistantResponseData>> {
+        match self.send(id, DistantMsg::Batch(payload.into())).await? {
+            DistantMsg::Batch(x) => Ok(x),
+            DistantMsg::Single(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Got single response for a batch request",
             )),
         }
     }

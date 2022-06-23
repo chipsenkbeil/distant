@@ -254,7 +254,7 @@ impl Server for DistantManager {
         let response = match request.payload {
             ManagerRequest::Connect { destination, extra } => {
                 match self.connect(*destination, extra, local_data.auth()).await {
-                    Ok(id) => ManagerResponse::Connected(id),
+                    Ok(id) => ManagerResponse::Connected { id },
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
             }

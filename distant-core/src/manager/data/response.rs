@@ -15,7 +15,7 @@ pub enum ManagerResponse {
     Error(Error),
 
     /// Confirmation of a connection being established
-    Connected(usize),
+    Connected { id: usize },
 
     /// Information about a specific connection
     Info(ConnectionInfo),
