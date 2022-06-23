@@ -30,8 +30,8 @@ impl Drop for DistantManagerClient {
 }
 
 impl DistantManagerClient {
-    /// Initializes a client using the provided [`SerdeTransport`]
-    pub fn new<T>(transport: T, config: DistantManagerClientConfig) -> io::Result<Self>
+    /// Initializes a client using the provided [`UntypedTransport`]
+    pub fn new<T>(config: DistantManagerClientConfig, transport: T) -> io::Result<Self>
     where
         T: UntypedTransport + 'static,
     {

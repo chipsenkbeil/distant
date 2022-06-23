@@ -54,10 +54,10 @@ pub struct DistantManager {
 }
 
 impl DistantManager {
-    /// Initializes a new instance of [`DistantManagerServer`] using the provided [`SerdeTransport`]
+    /// Initializes a new instance of [`DistantManagerServer`] using the provided [`UntypedTransport`]
     pub fn start<L, T>(
-        mut listener: L,
         mut config: DistantManagerConfig,
+        mut listener: L,
     ) -> io::Result<DistantManagerRef>
     where
         L: Listener<Output = T> + 'static,

@@ -1,5 +1,5 @@
 use distant_net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
-use std::{io, sync::Arc};
+use std::io;
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
 pub struct DistantManagerClientConfig {
@@ -10,12 +10,20 @@ pub struct DistantManagerClientConfig {
 }
 
 impl DistantManagerClientConfig {
-    pub fn with_password_prompt<P>(prompt: P) -> Self
+    /// Creates a new config with prompts that return empty strings
+    pub fn with_empty_prompts() -> Self {
+        Self::with_prompts(|_| Ok("".to_string()), |_| Ok("".to_string()))
+    }
+
+    /// Creates a new config with two prompts
+    ///
+    /// * `password_prompt` - used for prompting for a secret, and should not display what is typed
+    /// * `text_prompt` - used for general text, and is okay to display what is typed
+    pub fn with_prompts<PP, PT>(password_prompt: PP, text_prompt: PT) -> Self
     where
-        P: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
+        PP: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
+        PT: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
     {
-        let prompt = Arc::new(prompt);
-        let prompt_2 = Arc::clone(&prompt);
         Self {
             on_challenge: Box::new(move |questions, _extra| {
                 let mut answers = Vec::new();
@@ -33,7 +41,7 @@ impl DistantManagerClientConfig {
 
                     // Get an answer from user input, or use a blank string as an answer
                     // if we fail to get input from the user
-                    let answer = prompt(line).unwrap_or_default();
+                    let answer = password_prompt(line).unwrap_or_default();
 
                     answers.push(answer);
                 }
@@ -43,7 +51,7 @@ impl DistantManagerClientConfig {
                 AuthVerifyKind::Host => {
                     eprintln!("{}", text);
                     matches!(
-                        prompt_2("Enter [y/N]> ").as_deref(),
+                        text_prompt("Enter [y/N]> ").as_deref(),
                         Ok("y" | "Y" | "yes" | "YES")
                     )
                 }
