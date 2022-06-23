@@ -1,5 +1,6 @@
 use super::data::{
-    ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest, ManagerResponse,
+    ChannelKind, ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest,
+    ManagerResponse,
 };
 use crate::{DistantMsg, DistantRequestData, DistantResponseData};
 use distant_net::{
@@ -90,10 +91,14 @@ impl DistantManagerClient {
         let is_batch = payload.is_batch();
         let res = self
             .client
-            .send(ManagerRequest::Request { id, payload })
+            .send(ManagerRequest::OpenChannel {
+                id,
+                kind: ChannelKind::SingleResponse,
+                payload,
+            })
             .await?;
         match res.payload {
-            ManagerResponse::Response { payload } => match payload {
+            ManagerResponse::Channel { payload, .. } => match payload {
                 DistantMsg::Single(_) if is_batch => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Expected batch response, but got single payload",
@@ -329,7 +334,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
                     },
                 ))
@@ -358,7 +364,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Single(DistantResponseData::Ok),
                     },
                 ))
@@ -414,7 +421,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Single(DistantResponseData::Ok),
                     },
                 ))
@@ -446,7 +454,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
                     },
                 ))
@@ -484,7 +493,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
                     },
                 ))
@@ -537,7 +547,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Single(DistantResponseData::Ok),
                     },
                 ))
@@ -569,7 +580,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Single(DistantResponseData::Ok),
                     },
                 ))
@@ -622,7 +634,8 @@ mod tests {
             transport
                 .write(Response::new(
                     request.id,
-                    ManagerResponse::Response {
+                    ManagerResponse::Channel {
+                        id: 456,
                         payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
                     },
                 ))

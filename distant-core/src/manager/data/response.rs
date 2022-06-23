@@ -23,8 +23,24 @@ pub enum ManagerResponse {
     /// List of connections in the form of id -> destination
     List(ConnectionList),
 
-    /// Forward a response back to a specific connection that made a request
-    Response {
+    /// Forward a response back to a specific channel that made a request
+    Channel {
+        /// Id of the channel
+        id: usize,
+
+        /// Response to an earlier channel request
         payload: DistantMsg<DistantResponseData>,
+    },
+
+    /// Indicates that a channel has been opened
+    ChannelOpened {
+        /// Id of the channel
+        id: usize,
+    },
+
+    /// Indicates that a channel has been closed
+    ChannelClosed {
+        /// Id of the channel
+        id: usize,
     },
 }

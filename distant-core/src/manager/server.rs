@@ -1,11 +1,11 @@
 use crate::{
-    ConnectionInfo, ConnectionList, Destination, DistantMsg, DistantRequestData,
+    ChannelKind, ConnectionInfo, ConnectionList, Destination, DistantMsg, DistantRequestData,
     DistantResponseData, Extra, ManagerRequest, ManagerResponse,
 };
 use async_trait::async_trait;
 use distant_net::{
-    router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response, Server,
-    ServerCtx, ServerExt, UntypedTransport,
+    router, Auth, AuthClient, Client, IntoSplit, Listener, Mailbox, MpscListener, Reply, Request,
+    Response, Server, ServerCtx, ServerExt, UntypedTransport,
 };
 use log::*;
 use std::{
@@ -158,8 +158,23 @@ impl DistantManager {
         Ok(id)
     }
 
+    /// Makes a request to the server with the specified `id`,
+    /// by using a fire call (expects no reply)
+    async fn channel_fire(
+        &self,
+        id: usize,
+        payload: DistantMsg<DistantRequestData>,
+    ) -> io::Result<()> {
+        let mut lock = self.connections.write().await;
+        let connection = lock
+            .get_mut(&id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No connection found"))?;
+        connection.client.fire(payload).await
+    }
+
     /// Makes a request to the server with the specified `id`, returning the response
-    async fn request(
+    /// by using a send call (only expects one reply)
+    async fn channel_send(
         &self,
         id: usize,
         payload: DistantMsg<DistantRequestData>,
@@ -170,6 +185,20 @@ impl DistantManager {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No connection found"))?;
         let response = connection.client.send(payload).await?;
         Ok(response.payload)
+    }
+
+    /// Makes a request to the server with the specified `id`, returning the mailbox
+    /// by using a mail call (can send zero or more responses over time)
+    async fn channel_mail(
+        &self,
+        id: usize,
+        payload: DistantMsg<DistantRequestData>,
+    ) -> io::Result<Mailbox<Response<DistantMsg<DistantResponseData>>>> {
+        let mut lock = self.connections.write().await;
+        let connection = lock
+            .get_mut(&id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No connection found"))?;
+        connection.client.mail(payload).await
     }
 
     /// Retrieves information about the connection to the server with the specified `id`
@@ -224,6 +253,10 @@ pub struct DistantManagerServerConnection {
     /// Authentication client that manager can use when establishing a new connection
     /// and needing to get authentication details from the client to move forward
     auth_client: Option<AuthClient>,
+
+    /// Holds on to tasks associated with open channels feeding data back from a
+    /// server to some connected client, enabling us to cancel the tasks on demand
+    channels: Mutex<HashMap<usize, JoinHandle<()>>>,
 }
 
 impl DistantManagerServerConnection {
@@ -258,10 +291,57 @@ impl Server for DistantManager {
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
             }
-            ManagerRequest::Request { id, payload } => match self.request(id, payload).await {
-                Ok(payload) => ManagerResponse::Response { payload },
-                Err(x) => ManagerResponse::Error(x.into()),
-            },
+            ManagerRequest::OpenChannel { id, kind, payload } => {
+                let channel_id = rand::random();
+                match kind {
+                    ChannelKind::NoResponse => match self.channel_fire(id, payload).await {
+                        Ok(_) => return,
+                        Err(x) => ManagerResponse::Error(x.into()),
+                    },
+                    ChannelKind::SingleResponse => match self.channel_send(id, payload).await {
+                        Ok(payload) => ManagerResponse::Channel {
+                            id: channel_id,
+                            payload,
+                        },
+                        Err(x) => ManagerResponse::Error(x.into()),
+                    },
+                    ChannelKind::MultiResponse => match self.channel_mail(id, payload).await {
+                        Ok(mut mailbox) => {
+                            let reply = reply.clone_reply();
+                            local_data.channels.lock().await.insert(
+                                channel_id,
+                                tokio::spawn(async move {
+                                    while let Some(response) = mailbox.next().await {
+                                        let _ = reply
+                                            .send(ManagerResponse::Channel {
+                                                id: channel_id,
+                                                payload: response.payload,
+                                            })
+                                            .await;
+                                    }
+                                }),
+                            );
+                            ManagerResponse::ChannelOpened { id: channel_id }
+                        }
+                        Err(x) => ManagerResponse::Error(x.into()),
+                    },
+                }
+            }
+            ManagerRequest::CloseChannel { id } => {
+                match local_data.channels.lock().await.remove(&id) {
+                    Some(task) => {
+                        task.abort();
+                        ManagerResponse::ChannelClosed { id }
+                    }
+                    None => ManagerResponse::Error(
+                        io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            "Channel is not open or does not exist",
+                        )
+                        .into(),
+                    ),
+                }
+            }
             ManagerRequest::Info { id } => match self.info(id).await {
                 Ok(info) => ManagerResponse::Info(info),
                 Err(x) => ManagerResponse::Error(x.into()),
@@ -429,7 +509,7 @@ mod tests {
         let server = setup();
 
         let payload = DistantMsg::Single(DistantRequestData::SystemInfo {});
-        let err = server.request(999, payload).await.unwrap_err();
+        let err = server.channel_send(999, payload).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotConnected, "{:?}", err);
     }
 
@@ -449,7 +529,7 @@ mod tests {
         );
 
         let payload = DistantMsg::Single(DistantRequestData::SystemInfo {});
-        let err = server.request(id, payload).await.unwrap_err();
+        let err = server.channel_send(id, payload).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted, "{:?}", err);
     }
 
@@ -487,7 +567,7 @@ mod tests {
         );
 
         let payload = DistantMsg::Single(DistantRequestData::SystemInfo {});
-        let msg = server.request(id, payload).await.unwrap();
+        let msg = server.channel_send(id, payload).await.unwrap();
         assert_eq!(
             msg,
             DistantMsg::Single(DistantResponseData::SystemInfo(Default::default()))
