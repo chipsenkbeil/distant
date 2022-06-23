@@ -72,6 +72,7 @@ impl DistantManagerClient {
             .await?;
         match res.payload {
             ManagerResponse::Connected { id } => Ok(id),
+            ManagerResponse::Error(x) => Err(x.into()),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -145,6 +146,7 @@ impl DistantManagerClient {
         let res = self.client.send(ManagerRequest::Info { id }).await?;
         match res.payload {
             ManagerResponse::Info(info) => Ok(info),
+            ManagerResponse::Error(x) => Err(x.into()),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -157,6 +159,7 @@ impl DistantManagerClient {
         let res = self.client.send(ManagerRequest::Kill { id }).await?;
         match res.payload {
             ManagerResponse::Killed => Ok(()),
+            ManagerResponse::Error(x) => Err(x.into()),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -169,6 +172,7 @@ impl DistantManagerClient {
         let res = self.client.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
+            ManagerResponse::Error(x) => Err(x.into()),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -181,6 +185,7 @@ impl DistantManagerClient {
         let res = self.client.send(ManagerRequest::Shutdown).await?;
         match res.payload {
             ManagerResponse::Shutdown => Ok(()),
+            ManagerResponse::Error(x) => Err(x.into()),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),

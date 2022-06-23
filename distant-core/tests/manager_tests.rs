@@ -95,6 +95,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     assert_eq!(info.destination.to_string(), "scheme://host/");
     assert_eq!(info.extra, "key=value".parse::<Extra>().unwrap());
 
+    // Forward a request and get a response
     let response = client
         .send_single(id, DistantRequestData::SystemInfo {})
         .await
@@ -103,4 +104,12 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         DistantResponseData::SystemInfo { .. } => (),
         x => panic!("Got unexpected response: {:?}", x),
     }
+
+    // Test killing a connection
+    let _ = client.kill(id).await.expect("Failed to kill connection");
+
+    // Test getting an error to ensure that serialization of that data works,
+    // which we do by trying to access a connection that no longer exists
+    let err = client.info(id).await.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::NotConnected);
 }
