@@ -43,7 +43,7 @@ where
             let transport = FramedTransport::new(transport, codec.clone());
             transport.into_split()
         });
-        let inner = <S as ServerExt>::start(self, listener)?;
+        let inner = ServerExt::start(self, listener)?;
         Ok(TcpServerRef { addr, port, inner })
     }
 }

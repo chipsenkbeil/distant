@@ -1,7 +1,6 @@
 use crate::{
-    GenericServerRef, Listener, MappedListener, Request, Response, Server, ServerConnection,
-    ServerCtx, ServerRef, ServerReply, ServerState, TypedAsyncRead, TypedAsyncWrite,
-    UntypedTransportRead, UntypedTransportWrite,
+    GenericServerRef, Listener, Request, Response, Server, ServerConnection, ServerCtx, ServerRef,
+    ServerReply, ServerState, TypedAsyncRead, TypedAsyncWrite,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
