@@ -24,5 +24,7 @@ pub enum ManagerResponse {
     List(ConnectionList),
 
     /// Forward a response back to a specific connection that made a request
-    Response(DistantMsg<DistantResponseData>),
+    Response {
+        payload: DistantMsg<DistantResponseData>,
+    },
 }

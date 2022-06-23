@@ -92,7 +92,7 @@ impl DistantManagerClient {
             .send(ManagerRequest::Request { id, payload })
             .await?;
         match res.payload {
-            ManagerResponse::Response(payload) => match payload {
+            ManagerResponse::Response { payload } => match payload {
                 DistantMsg::Single(_) if is_batch => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Expected batch response, but got single payload",

@@ -126,26 +126,43 @@ macro_rules! router {
 
                     let reader_task = tokio::spawn(async move {
                         loop {
-                            match $crate::UntypedTransportRead::read(&mut reader).await {$(
-                                Ok(Some([<$name:camel In>]::[<$transport:camel>](x))) => {
-                                    if let Err(x) = [<$transport:snake _inbound_tx>].send(x).await {
-                                        $crate::log::error!(
-                                            "Failed to read using transport: {}",
-                                            x
-                                        );
+                            match $crate::UntypedTransportRead::read(&mut reader).await {
+                                $(
+                                    Ok(Some([<$name:camel In>]::[<$transport:camel>](x))) => {
+                                        if let Err(x) = [<$transport:snake _inbound_tx>].send(x).await {
+                                            $crate::log::error!(
+                                                "Failed to forward received data from {} of {}: {}",
+                                                std::stringify!($transport),
+                                                std::stringify!($name),
+                                                x
+                                            );
+                                        }
                                     }
-                                }
+                                )+
 
                                 // Quit if the reader no longer has data
                                 // NOTE: Compiler says this is unreachable, but it is?
                                 #[allow(unreachable_patterns)]
-                                Ok(None) => break,
+                                Ok(None) => {
+                                    $crate::log::trace!(
+                                        "Router {} has closed",
+                                        std::stringify!($name),
+                                    );
+                                    break;
+                                }
 
                                 // Drop any received data that does not map to something
                                 // NOTE: Compiler says this is unreachable, but it is?
                                 #[allow(unreachable_patterns)]
-                                Err(_) => continue,
-                            )+}
+                                Err(x) => {
+                                    $crate::log::error!(
+                                        "Failed to read from any transport of {}: {}",
+                                        std::stringify!($name),
+                                        x
+                                    );
+                                    continue;
+                                }
+                            }
                         }
                     });
 
@@ -159,7 +176,9 @@ macro_rules! router {
                                             x,
                                         ).await {
                                             $crate::log::error!(
-                                                "Failed to write using transport: {}",
+                                                "Failed to write to {} of {}: {}",
+                                                std::stringify!($transport),
+                                                std::stringify!($name),
                                                 x
                                             );
                                         }

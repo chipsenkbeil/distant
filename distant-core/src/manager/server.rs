@@ -259,7 +259,7 @@ impl Server for DistantManager {
                 }
             }
             ManagerRequest::Request { id, payload } => match self.request(id, payload).await {
-                Ok(payload) => ManagerResponse::Response(payload),
+                Ok(payload) => ManagerResponse::Response { payload },
                 Err(x) => ManagerResponse::Error(x.into()),
             },
             ManagerRequest::Info { id } => match self.info(id).await {

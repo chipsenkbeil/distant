@@ -37,6 +37,15 @@ where
     }
 }
 
+impl DistantApiServer<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
+    /// Creates a new server using the [`LocalDistantApi`] implementation
+    pub fn local() -> io::Result<Self> {
+        Ok(Self {
+            api: LocalDistantApi::initialize()?,
+        })
+    }
+}
+
 #[inline]
 fn unsupported<T>(label: &str) -> io::Result<T> {
     Err(io::Error::new(
