@@ -43,10 +43,7 @@ impl fmt::Debug for UnixSocketTransport {
     }
 }
 
-impl RawTransport for UnixSocketTransport {
-    type ReadHalf = OwnedReadHalf;
-    type WriteHalf = OwnedWriteHalf;
-}
+impl RawTransport for UnixSocketTransport {}
 impl RawTransportRead for UnixSocketTransport {}
 impl RawTransportWrite for UnixSocketTransport {}
 

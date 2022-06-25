@@ -1,6 +1,6 @@
 use crate::{
-    utils, Codec, IntoSplit, RawTransport, UntypedTransport, UntypedTransportRead,
-    UntypedTransportWrite,
+    utils, Codec, IntoSplit, RawTransport, RawTransportRead, RawTransportWrite, UntypedTransport,
+    UntypedTransportRead, UntypedTransportWrite,
 };
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
@@ -47,17 +47,17 @@ where
     T: RawTransport,
     C: Codec + Send,
 {
-    type ReadHalf = FramedTransportReadHalf<T::ReadHalf, C>;
-    type WriteHalf = FramedTransportWriteHalf<T::WriteHalf, C>;
 }
 
 impl<T, C> IntoSplit for FramedTransport<T, C>
 where
-    T: RawTransport,
-    C: Codec,
+    T: RawTransport + IntoSplit,
+    <T as IntoSplit>::Read: RawTransportRead,
+    <T as IntoSplit>::Write: RawTransportWrite,
+    C: Codec + Send,
 {
-    type Read = FramedTransportReadHalf<T::ReadHalf, C>;
-    type Write = FramedTransportWriteHalf<T::WriteHalf, C>;
+    type Read = FramedTransportReadHalf<<T as IntoSplit>::Read, C>;
+    type Write = FramedTransportWriteHalf<<T as IntoSplit>::Write, C>;
 
     fn into_split(self) -> (Self::Write, Self::Read) {
         let parts = self.0.into_parts();

@@ -52,10 +52,7 @@ impl InmemoryTransport {
     }
 }
 
-impl RawTransport for InmemoryTransport {
-    type ReadHalf = InmemoryTransportReadHalf;
-    type WriteHalf = InmemoryTransportWriteHalf;
-}
+impl RawTransport for InmemoryTransport {}
 impl RawTransportRead for InmemoryTransport {}
 impl RawTransportWrite for InmemoryTransport {}
 impl IntoSplit for InmemoryTransport {

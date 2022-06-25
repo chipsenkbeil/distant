@@ -1,18 +1,11 @@
-use crate::{IntoSplit, TypedAsyncRead, TypedAsyncWrite, TypedTransport};
+use crate::{TypedAsyncRead, TypedAsyncWrite, TypedTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
 
 /// Interface representing a transport that uses [`serde`] to serialize and deserialize data
 /// as it is sent and received
-pub trait UntypedTransport:
-    UntypedTransportRead
-    + UntypedTransportWrite
-    + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
-{
-    type ReadHalf: UntypedTransportRead;
-    type WriteHalf: UntypedTransportWrite;
-}
+pub trait UntypedTransport: UntypedTransportRead + UntypedTransportWrite {}
 
 /// Interface representing a transport's read half that uses [`serde`] to deserialize data as it is
 /// received
@@ -42,11 +35,7 @@ where
     T: UntypedTransport + Send,
     W: Serialize + Send + 'static,
     R: DeserializeOwned,
-    T::ReadHalf: Send,
-    T::WriteHalf: Send,
 {
-    type ReadHalf = T::ReadHalf;
-    type WriteHalf = T::WriteHalf;
 }
 
 #[async_trait]

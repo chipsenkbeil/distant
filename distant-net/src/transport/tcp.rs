@@ -53,10 +53,7 @@ impl fmt::Debug for TcpTransport {
     }
 }
 
-impl RawTransport for TcpTransport {
-    type ReadHalf = OwnedReadHalf;
-    type WriteHalf = OwnedWriteHalf;
-}
+impl RawTransport for TcpTransport {}
 impl RawTransportRead for TcpTransport {}
 impl RawTransportWrite for TcpTransport {}
 

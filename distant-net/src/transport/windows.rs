@@ -73,10 +73,7 @@ impl fmt::Debug for WindowsPipeTransport {
     }
 }
 
-impl RawTransport for WindowsPipeTransport {
-    type ReadHalf = ReadHalf<WindowsPipeTransport>;
-    type WriteHalf = WriteHalf<WindowsPipeTransport>;
-}
+impl RawTransport for WindowsPipeTransport {}
 impl RawTransportRead for WindowsPipeTransport {}
 impl RawTransportWrite for WindowsPipeTransport {}
 

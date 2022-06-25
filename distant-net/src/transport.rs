@@ -20,12 +20,7 @@ impl<W, R> IntoSplit for (W, R) {
 }
 
 /// Interface representing a transport of raw bytes into and out of the system
-pub trait RawTransport:
-    RawTransportRead + RawTransportWrite + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
-{
-    type ReadHalf: RawTransportRead;
-    type WriteHalf: RawTransportWrite;
-}
+pub trait RawTransport: RawTransportRead + RawTransportWrite {}
 
 /// Interface representing a transport of raw bytes into the system
 pub trait RawTransportRead: AsyncRead + Send + Unpin {}
@@ -34,12 +29,7 @@ pub trait RawTransportRead: AsyncRead + Send + Unpin {}
 pub trait RawTransportWrite: AsyncWrite + Send + Unpin {}
 
 /// Interface representing a transport of typed data into and out of the system
-pub trait TypedTransport<W, R>:
-    TypedAsyncRead<R> + TypedAsyncWrite<W> + IntoSplit<Write = Self::WriteHalf, Read = Self::ReadHalf>
-{
-    type ReadHalf: TypedAsyncRead<R>;
-    type WriteHalf: TypedAsyncWrite<W>;
-}
+pub trait TypedTransport<W, R>: TypedAsyncRead<R> + TypedAsyncWrite<W> {}
 
 /// Interface to read some structured data asynchronously
 #[async_trait]

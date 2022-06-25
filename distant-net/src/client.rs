@@ -1,6 +1,6 @@
 use crate::{
-    Codec, FramedTransport, IntoSplit, RawTransport, Request, Response, TypedAsyncRead,
-    TypedAsyncWrite,
+    Codec, FramedTransport, IntoSplit, RawTransport, RawTransportRead, RawTransportWrite, Request,
+    Response, TypedAsyncRead, TypedAsyncWrite,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -93,7 +93,9 @@ where
     /// Initializes a client using the provided framed transport
     pub fn from_framed_transport<TR, C>(transport: FramedTransport<TR, C>) -> io::Result<Self>
     where
-        TR: RawTransport + 'static,
+        TR: RawTransport + IntoSplit + 'static,
+        <TR as IntoSplit>::Read: RawTransportRead,
+        <TR as IntoSplit>::Write: RawTransportWrite,
         C: Codec + Send + 'static,
     {
         let (writer, reader) = transport.into_split();

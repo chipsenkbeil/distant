@@ -37,14 +37,7 @@ impl<T, U> MpscTransport<T, U> {
     }
 }
 
-impl<T, U> TypedTransport<T, U> for MpscTransport<T, U>
-where
-    T: Send,
-    U: Send,
-{
-    type ReadHalf = MpscTransportReadHalf<U>;
-    type WriteHalf = MpscTransportWriteHalf<T>;
-}
+impl<T: Send, U: Send> TypedTransport<T, U> for MpscTransport<T, U> {}
 
 #[async_trait]
 impl<T: Send, U: Send> TypedAsyncWrite<T> for MpscTransport<T, U> {
