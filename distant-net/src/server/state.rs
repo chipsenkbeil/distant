@@ -1,11 +1,11 @@
-use crate::{Id, ServerConnection};
+use crate::ServerConnection;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// Contains all top-level state for the server
 pub struct ServerState {
     /// Mapping of connection ids to their transports
-    pub connections: RwLock<HashMap<Id, ServerConnection>>,
+    pub connections: RwLock<HashMap<usize, ServerConnection>>,
 }
 
 impl ServerState {

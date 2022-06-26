@@ -1,13 +1,17 @@
 use super::data::{
-    ChannelKind, ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest,
-    ManagerResponse,
+    ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest, ManagerResponse,
 };
-use crate::{DistantMsg, DistantRequestData, DistantResponseData};
+use crate::{DistantChannel, DistantClient};
 use distant_net::{
-    router, Auth, AuthServer, Client, IntoSplit, OneshotListener, Request, Response, ServerExt,
-    ServerRef, UntypedTransportRead, UntypedTransportWrite,
+    router, Auth, AuthServer, Client, IntoSplit, MpscTransport, OneshotListener, Request, Response,
+    ServerExt, ServerRef, UntypedTransportRead, UntypedTransportWrite,
 };
-use std::io;
+use log::*;
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    io,
+};
+use tokio::task::JoinHandle;
 
 mod config;
 pub use config::*;
@@ -21,12 +25,26 @@ router!(DistantManagerClientRouter {
 pub struct DistantManagerClient {
     auth: Box<dyn ServerRef>,
     client: Client<ManagerRequest, ManagerResponse>,
+    distant_clients: HashMap<usize, ClientHandle>,
 }
 
 impl Drop for DistantManagerClient {
     fn drop(&mut self) {
         self.auth.abort();
         self.client.abort();
+    }
+}
+
+struct ClientHandle {
+    client: DistantClient,
+    forward_task: JoinHandle<()>,
+    mailbox_task: JoinHandle<()>,
+}
+
+impl Drop for ClientHandle {
+    fn drop(&mut self) {
+        self.forward_task.abort();
+        self.mailbox_task.abort();
     }
 }
 
@@ -57,7 +75,11 @@ impl DistantManagerClient {
         }
         .start(OneshotListener::from_value(auth_transport.into_split()))?;
 
-        Ok(Self { auth, client })
+        Ok(Self {
+            auth,
+            client,
+            distant_clients: HashMap::new(),
+        })
     }
 
     /// Request that the manager establishes a new connection at the given `destination`
@@ -83,68 +105,95 @@ impl DistantManagerClient {
         }
     }
 
-    /// Sends an arbitrary request to the connection with the specified `id`
-    pub async fn send(
-        &mut self,
-        id: usize,
-        payload: impl Into<DistantMsg<DistantRequestData>>,
-    ) -> io::Result<DistantMsg<DistantResponseData>> {
-        let payload = payload.into();
-        let is_batch = payload.is_batch();
-        let res = self
-            .client
-            .send(ManagerRequest::OpenChannel {
-                id,
-                kind: ChannelKind::SingleResponse,
-                payload,
-            })
-            .await?;
-        match res.payload {
-            ManagerResponse::Channel { payload, .. } => match payload {
-                DistantMsg::Single(_) if is_batch => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Expected batch response, but got single payload",
-                )),
-                DistantMsg::Batch(_) if !is_batch => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Expected single response, but got batch payload",
-                )),
-                x => Ok(x),
-            },
-            x => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
-            )),
-        }
-    }
+    /// Establishes a channel with the server represented by the `connection_id`,
+    /// returning a [`DistantChannel`] acting as the connection
+    ///
+    /// ### Note
+    ///
+    /// Multiple calls to open a channel against the same connection will result in
+    /// clones of the same [`DistantChannel`] rather than establishing a duplicate
+    /// remote connection to the same server
+    pub async fn open_channel(&mut self, connection_id: usize) -> io::Result<DistantChannel> {
+        match self.distant_clients.entry(connection_id) {
+            Entry::Occupied(entry) => Ok(entry.get().client.clone_channel()),
+            Entry::Vacant(entry) => {
+                let mut mailbox = self
+                    .client
+                    .mail(ManagerRequest::OpenChannel { id: connection_id })
+                    .await?;
 
-    /// Same as `Self::send`, but specifically for single requests
-    pub async fn send_single(
-        &mut self,
-        id: usize,
-        payload: impl Into<DistantRequestData>,
-    ) -> io::Result<DistantResponseData> {
-        match self.send(id, DistantMsg::Single(payload.into())).await? {
-            DistantMsg::Single(x) => Ok(x),
-            DistantMsg::Batch(_) => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Got batch response for a single request",
-            )),
-        }
-    }
+                // Wait for the first response, which should be channel confirmation
+                let channel_id = match mailbox.next().await {
+                    Some(response) => match response.payload {
+                        ManagerResponse::ChannelOpened { id } => Ok(id),
+                        ManagerResponse::Error(x) => Err(x.into()),
+                        x => Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Got unexpected response: {:?}", x),
+                        )),
+                    },
+                    None => Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "open_channel mailbox aborted",
+                    )),
+                }?;
 
-    /// Same as `Self::send`, but specifically for batch requests
-    pub async fn send_batch(
-        &mut self,
-        id: usize,
-        payload: impl Into<Vec<DistantRequestData>>,
-    ) -> io::Result<Vec<DistantResponseData>> {
-        match self.send(id, DistantMsg::Batch(payload.into())).await? {
-            DistantMsg::Batch(x) => Ok(x),
-            DistantMsg::Single(_) => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Got single response for a batch request",
-            )),
+                // Spawn reader and writer tasks to forward requests and replies
+                // using our
+                let (t1, t2) = MpscTransport::pair(1);
+                let (mut writer, mut reader) = t1.into_split();
+                let mailbox_task = tokio::spawn(async move {
+                    use distant_net::TypedAsyncWrite;
+                    while let Some(response) = mailbox.next().await {
+                        match response.payload {
+                            ManagerResponse::Channel { response, .. } => {
+                                if let Err(x) = writer.write(response).await {
+                                    error!("[Conn {}] {}", connection_id, x);
+                                }
+                            }
+                            ManagerResponse::ChannelClosed { .. } => break,
+                            _ => continue,
+                        }
+                    }
+                });
+
+                let mut manager_channel = self.client.clone_channel();
+                let forward_task = tokio::spawn(async move {
+                    use distant_net::TypedAsyncRead;
+                    loop {
+                        match reader.read().await {
+                            Ok(Some(request)) => {
+                                // NOTE: In this situation, we do expect a response to this
+                                //       request (even if the server sends something back)
+                                if let Err(x) = manager_channel
+                                    .fire(ManagerRequest::Channel {
+                                        id: channel_id,
+                                        request,
+                                    })
+                                    .await
+                                {
+                                    error!("[Conn {}] {}", connection_id, x);
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(x) => {
+                                error!("[Conn {}] {}", connection_id, x);
+                                continue;
+                            }
+                        }
+                    }
+                });
+
+                let (writer, reader) = t2.into_split();
+                let client = DistantClient::new(writer, reader)?;
+                let channel = client.clone_channel();
+                entry.insert(ClientHandle {
+                    client,
+                    forward_task,
+                    mailbox_task,
+                });
+                Ok(channel)
+            }
         }
     }
 
@@ -320,337 +369,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(id, expected_id);
-    }
-
-    #[tokio::test]
-    async fn send_should_report_error_if_receives_batch_response_for_single_request() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send(123, DistantMsg::Single(DistantRequestData::SystemInfo {}))
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_should_report_error_if_receives_single_response_for_batch_request() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Single(DistantResponseData::Ok),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send(
-                123,
-                DistantMsg::Batch(vec![DistantRequestData::SystemInfo {}]),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_should_report_error_if_receives_unexpected_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send(123, DistantMsg::Single(DistantRequestData::SystemInfo {}))
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_should_return_single_response_for_single_request() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Single(DistantResponseData::Ok),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let response = client
-            .send(123, DistantMsg::Single(DistantRequestData::SystemInfo {}))
-            .await
-            .unwrap();
-        match response {
-            DistantMsg::Single(DistantResponseData::Ok) => (),
-            x => panic!("Got unexpected response: {:?}", x),
-        }
-    }
-
-    #[tokio::test]
-    async fn send_should_return_batch_response_for_batch_request() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let response = client
-            .send(
-                123,
-                DistantMsg::Batch(vec![DistantRequestData::SystemInfo {}]),
-            )
-            .await
-            .unwrap();
-        match response {
-            DistantMsg::Batch(payloads) => {
-                assert_eq!(payloads.len(), 1);
-                assert_eq!(payloads[0], DistantResponseData::Ok);
-            }
-            x => panic!("Got unexpected response: {:?}", x),
-        }
-    }
-
-    #[tokio::test]
-    async fn send_single_should_report_error_if_receives_batch_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send_single(123, DistantRequestData::SystemInfo {})
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_single_should_report_error_if_receives_unexpected_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send_single(123, DistantRequestData::SystemInfo {})
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_single_should_return_single_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Single(DistantResponseData::Ok),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let response = client
-            .send_single(123, DistantRequestData::SystemInfo {})
-            .await
-            .unwrap();
-        match response {
-            DistantResponseData::Ok => (),
-            x => panic!("Got unexpected response: {:?}", x),
-        }
-    }
-
-    #[tokio::test]
-    async fn send_batch_should_report_error_if_receives_single_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Single(DistantResponseData::Ok),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send_batch(123, vec![DistantRequestData::SystemInfo {}])
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_batch_should_report_error_if_receives_unexpected_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
-                .await
-                .unwrap();
-        });
-
-        let err = client
-            .send_batch(123, vec![DistantRequestData::SystemInfo {}])
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn send_batch_should_return_batch_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Channel {
-                        id: 456,
-                        payload: DistantMsg::Batch(vec![DistantResponseData::Ok]),
-                    },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let payloads = client
-            .send_batch(123, vec![DistantRequestData::SystemInfo {}])
-            .await
-            .unwrap();
-        assert_eq!(payloads.len(), 1);
-        assert_eq!(payloads[0], DistantResponseData::Ok);
     }
 
     #[tokio::test]

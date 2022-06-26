@@ -663,7 +663,7 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -699,7 +699,7 @@ mod tests {
         // Send half of LSP message over stdout
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_a.to_vec(),
@@ -717,7 +717,7 @@ mod tests {
         // Send other half of LSP message over stdout
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: msg_b.to_vec(),
@@ -751,7 +751,7 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
@@ -794,7 +794,7 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: format!(
@@ -836,7 +836,7 @@ mod tests {
         // Send complete LSP message as stdout to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -866,7 +866,7 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
@@ -902,7 +902,7 @@ mod tests {
         // Send half of LSP message over stderr
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_a.to_vec(),
@@ -920,7 +920,7 @@ mod tests {
         // Send other half of LSP message over stderr
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: msg_b.to_vec(),
@@ -954,7 +954,7 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
@@ -997,7 +997,7 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: format!(
@@ -1039,7 +1039,7 @@ mod tests {
         // Send complete LSP message as stderr to process
         transport
             .write(Response::new(
-                proc.origin_id(),
+                proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({

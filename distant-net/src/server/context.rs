@@ -1,10 +1,10 @@
-use crate::{Id, Request, ServerReply};
+use crate::{Request, ServerReply};
 use std::sync::Arc;
 
 /// Represents contextual information for working with an inbound request
 pub struct ServerCtx<RequestData, ResponseData, LocalData> {
     /// Unique identifer associated with the connection that sent the request
-    pub connection_id: Id,
+    pub connection_id: usize,
 
     /// The request being handled
     pub request: Request<RequestData>,

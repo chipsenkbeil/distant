@@ -108,7 +108,7 @@ where
                         match reader.read().await {
                             Ok(Some(request)) => {
                                 let reply = ServerReply {
-                                    origin_id: request.id,
+                                    origin_id: request.id.clone(),
                                     tx: tx.clone(),
                                 };
 

@@ -1,12 +1,7 @@
-use async_trait::async_trait;
 use distant_core::{
-    net::{
-        AuthClient, FramedTransport, InmemoryTransport, IntoSplit, OneshotListener, PlainCodec,
-        ServerRef,
-    },
-    ConnectHandler, Destination, DistantApiServer, DistantClient, DistantManager,
-    DistantManagerClient, DistantManagerClientConfig, DistantManagerConfig, DistantRequestData,
-    DistantResponseData, Extra,
+    net::{FramedTransport, InmemoryTransport, IntoSplit, OneshotListener, PlainCodec},
+    BoxedDistantReader, BoxedDistantWriter, Destination, DistantApiServer, DistantChannelExt,
+    DistantManager, DistantManagerClient, DistantManagerClientConfig, DistantManagerConfig, Extra,
 };
 use std::io;
 
@@ -23,34 +18,6 @@ async fn setup() -> (
     (transport, listener)
 }
 
-/// Creates a [`DistantClient`] and [`DistantApiServer`] pair connected inmemory
-fn setup_distant_client_server() -> (DistantClient, Box<dyn ServerRef>) {
-    use distant_core::net::ServerExt;
-    let (t1, t2) = FramedTransport::pair(100);
-    (
-        DistantClient::from_framed_transport(t1).unwrap(),
-        DistantApiServer::local()
-            .unwrap()
-            .start(OneshotListener::from_value(t2.into_split()))
-            .unwrap(),
-    )
-}
-
-struct TestConnectHandler;
-
-#[async_trait]
-impl ConnectHandler for TestConnectHandler {
-    async fn connect(
-        &self,
-        _destination: &Destination,
-        _extra: &Extra,
-        _auth: &AuthClient,
-    ) -> io::Result<DistantClient> {
-        let (client, _server) = setup_distant_client_server();
-        Ok(client)
-    }
-}
-
 #[tokio::test]
 async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     let (transport, listener) = setup().await;
@@ -61,7 +28,21 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     // NOTE: To pass in a raw function, we HAVE to specify the types of the parameters manually,
     //       otherwise we get a compilation error about lifetime mismatches
     manager_ref
-        .register_connect_handler("scheme", TestConnectHandler)
+        .register_connect_handler("scheme", |_: &_, _: &_, _: &_| async {
+            use distant_core::net::ServerExt;
+            let (t1, t2) = FramedTransport::pair(100);
+
+            // Spawn a server on one end
+            let _ = DistantApiServer::local()
+                .unwrap()
+                .start(OneshotListener::from_value(t2.into_split()))?;
+
+            // Create a reader/writer pair on the other end
+            let (writer, reader) = t1.into_split();
+            let writer: BoxedDistantWriter = Box::new(writer);
+            let reader: BoxedDistantReader = Box::new(reader);
+            Ok((writer, reader))
+        })
         .await
         .expect("Failed to register handler");
 
@@ -95,15 +76,15 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     assert_eq!(info.destination.to_string(), "scheme://host/");
     assert_eq!(info.extra, "key=value".parse::<Extra>().unwrap());
 
-    // Forward a request and get a response
-    let response = client
-        .send_single(id, DistantRequestData::SystemInfo {})
+    // Create a new channel and request some data
+    let mut channel = client
+        .open_channel(id)
         .await
-        .expect("Failed to get response to request");
-    match response {
-        DistantResponseData::SystemInfo { .. } => (),
-        x => panic!("Got unexpected response: {:?}", x),
-    }
+        .expect("Failed to open channel");
+    let _ = channel
+        .system_info()
+        .await
+        .expect("Failed to get system information");
 
     // Test killing a connection
     let _ = client.kill(id).await.expect("Failed to kill connection");

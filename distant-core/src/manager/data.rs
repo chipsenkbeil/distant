@@ -1,6 +1,3 @@
-mod channel;
-pub use channel::*;
-
 mod destination;
 pub use destination::*;
 

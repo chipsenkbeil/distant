@@ -1,4 +1,4 @@
-use super::ConnectHandler;
+use super::{BoxedConnectHandler, ConnectHandler};
 use distant_net::{ServerRef, ServerState};
 use std::{collections::HashMap, io, sync::Weak};
 use tokio::sync::RwLock;
@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 /// Reference to a distant manager's server instance
 pub struct DistantManagerRef {
     /// Mapping of "scheme" -> handler
-    pub(crate) handlers: Weak<RwLock<HashMap<String, Box<dyn ConnectHandler + Send + Sync>>>>,
+    pub(crate) handlers: Weak<RwLock<HashMap<String, BoxedConnectHandler>>>,
 
     pub(crate) inner: Box<dyn ServerRef>,
 }
@@ -16,7 +16,7 @@ impl DistantManagerRef {
     pub async fn register_connect_handler(
         &self,
         scheme: impl Into<String>,
-        handler: impl ConnectHandler + Send + Sync + 'static,
+        handler: impl ConnectHandler + 'static,
     ) -> io::Result<()> {
         let handlers = Weak::upgrade(&self.handlers).ok_or_else(|| {
             io::Error::new(

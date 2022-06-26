@@ -1,10 +1,9 @@
-use crate::Id;
 use tokio::task::JoinHandle;
 
 /// Represents an individual connection on the server
 pub struct ServerConnection {
     /// Unique identifier tied to the connection
-    pub id: Id,
+    pub id: usize,
 
     /// Task that is processing incoming requests from the connection
     pub(crate) reader_task: Option<JoinHandle<()>>,

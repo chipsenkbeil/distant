@@ -1,4 +1,4 @@
-use crate::ConnectHandler;
+use crate::BoxedConnectHandler;
 use std::collections::HashMap;
 
 pub struct DistantManagerConfig {
@@ -9,7 +9,7 @@ pub struct DistantManagerConfig {
     pub connection_buffer_size: usize,
 
     /// Handlers to use for connect requests
-    pub handlers: HashMap<String, Box<dyn ConnectHandler + Send + Sync>>,
+    pub handlers: HashMap<String, BoxedConnectHandler>,
 }
 
 impl Default for DistantManagerConfig {

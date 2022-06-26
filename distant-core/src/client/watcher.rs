@@ -255,7 +255,7 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id, DistantResponseData::Ok))
+            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -323,7 +323,7 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id, DistantResponseData::Ok))
+            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -333,7 +333,7 @@ mod tests {
         // Send a change from the appropriate origin
         transport
             .write(Response::new(
-                req.id,
+                req.id.clone(),
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Access,
                     paths: vec![test_path.to_path_buf()],
@@ -345,7 +345,7 @@ mod tests {
         // Send a change from a different origin
         transport
             .write(Response::new(
-                req.id + 1,
+                req.id.clone() + "1",
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Content,
                     paths: vec![test_path.to_path_buf()],
@@ -409,7 +409,7 @@ mod tests {
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id, DistantResponseData::Ok))
+            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -464,7 +464,7 @@ mod tests {
         let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
 
         transport
-            .write(Response::new(req.id, DistantResponseData::Ok))
+            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 

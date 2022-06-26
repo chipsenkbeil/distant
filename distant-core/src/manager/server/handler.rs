@@ -1,35 +1,38 @@
 use crate::{
     manager::data::{Destination, Extra},
-    DistantClient,
+    DistantMsg, DistantRequestData, DistantResponseData,
 };
-use async_trait::async_trait;
-use distant_net::AuthClient;
-use std::{future::Future, io};
+use distant_net::{AuthClient, Request, Response, TypedAsyncRead, TypedAsyncWrite};
+use std::{future::Future, io, pin::Pin};
 
-/// Interface used to connect to the specified destination, returning a connected client
-#[async_trait]
-pub trait ConnectHandler {
-    /// Attempt to connect to the specified destination, returning a connected client if successful
-    async fn connect(
+pub type BoxedDistantWriter =
+    Box<dyn TypedAsyncWrite<Request<DistantMsg<DistantRequestData>>> + Send>;
+pub type BoxedDistantReader =
+    Box<dyn TypedAsyncRead<Response<DistantMsg<DistantResponseData>>> + Send>;
+pub type BoxedDistantWriterReader = (BoxedDistantWriter, BoxedDistantReader);
+pub type BoxedConnectHandler = Box<dyn ConnectHandler>;
+
+/// Used to connect to a destination, returning a connected reader and writer pair
+pub trait ConnectHandler: Send + Sync {
+    fn connect(
         &self,
         destination: &Destination,
         extra: &Extra,
-        auth: &AuthClient,
-    ) -> io::Result<DistantClient>;
+        auth_client: &AuthClient,
+    ) -> Pin<Box<dyn Future<Output = io::Result<BoxedDistantWriterReader>> + Send>>;
 }
 
-#[async_trait]
 impl<F, R> ConnectHandler for F
 where
-    F: Fn(&Destination, &Extra, &AuthClient) -> R + Send + Sync,
-    R: Future<Output = io::Result<DistantClient>> + Send + Sync,
+    F: for<'a> Fn(&'a Destination, &'a Extra, &'a AuthClient) -> R + Send + Sync + 'static,
+    R: Future<Output = io::Result<BoxedDistantWriterReader>> + Send + 'static,
 {
-    async fn connect(
+    fn connect(
         &self,
         destination: &Destination,
         extra: &Extra,
-        auth: &AuthClient,
-    ) -> io::Result<DistantClient> {
-        self(destination, extra, auth).await
+        auth_client: &AuthClient,
+    ) -> Pin<Box<dyn Future<Output = io::Result<BoxedDistantWriterReader>> + Send>> {
+        Box::pin(self(destination, extra, auth_client))
     }
 }

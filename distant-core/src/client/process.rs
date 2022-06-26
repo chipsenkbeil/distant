@@ -171,7 +171,7 @@ pub struct RemoteProcess {
     id: usize,
 
     /// Id used to map back to mailbox
-    origin_id: usize,
+    origin_id: String,
 
     // Sender to abort req task
     abort_req_task_tx: mpsc::Sender<()>,
@@ -208,8 +208,8 @@ impl RemoteProcess {
     }
 
     /// Returns the id of the request that spawned this process
-    pub fn origin_id(&self) -> usize {
-        self.origin_id
+    pub fn origin_id(&self) -> &str {
+        &self.origin_id
     }
 
     /// Checks if the process has completed, returning the exit status if it has, without
@@ -770,7 +770,7 @@ mod tests {
         let id = 12345;
         transport
             .write(Response::new(
-                req.id,
+                req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
@@ -813,7 +813,7 @@ mod tests {
         let id = 12345;
         transport
             .write(Response::new(
-                req.id,
+                req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
@@ -928,7 +928,7 @@ mod tests {
         let id = 12345;
         transport
             .write(Response::new(
-                req.id,
+                req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await
@@ -1053,7 +1053,7 @@ mod tests {
         let id = 12345;
         transport
             .write(Response::new(
-                req.id,
+                req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
             .await

@@ -1,5 +1,6 @@
 use crate::{data::Error, ConnectionInfo, ConnectionList};
 use crate::{DistantMsg, DistantResponseData};
+use distant_net::Response;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,7 +30,7 @@ pub enum ManagerResponse {
         id: usize,
 
         /// Response to an earlier channel request
-        payload: DistantMsg<DistantResponseData>,
+        response: Response<DistantMsg<DistantResponseData>>,
     },
 
     /// Indicates that a channel has been opened

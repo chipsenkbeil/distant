@@ -61,7 +61,7 @@ where
                     "Session's post office is no longer available",
                 )
             })?
-            .make_mailbox(req.id, CHANNEL_MAILBOX_CAPACITY)
+            .make_mailbox(req.id.clone(), CHANNEL_MAILBOX_CAPACITY)
             .await;
 
         // Second, send the request
@@ -133,18 +133,18 @@ mod tests {
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
-        let res = Response::new(req.id, 1);
+        let res = Response::new(req.id.clone(), 1);
 
         let mut mailbox = channel.mail(req).await.unwrap();
 
         // Get first response
-        match tokio::join!(mailbox.next(), t2.write(res)) {
+        match tokio::join!(mailbox.next(), t2.write(res.clone())) {
             (Some(actual), _) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
         }
 
         // Get second response
-        match tokio::join!(mailbox.next(), t2.write(res)) {
+        match tokio::join!(mailbox.next(), t2.write(res.clone())) {
             (Some(actual), _) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -168,9 +168,9 @@ mod tests {
         let mut channel = session.clone_channel();
 
         let req = Request::new(0);
-        let res = Response::new(req.id, 1);
+        let res = Response::new(req.id.clone(), 1);
 
-        let (actual, _) = tokio::join!(channel.send(req), t2.write(res));
+        let (actual, _) = tokio::join!(channel.send(req), t2.write(res.clone()));
         match actual {
             Ok(actual) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),

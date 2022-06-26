@@ -1,5 +1,6 @@
-use super::{ChannelKind, Destination, Extra};
+use super::{Destination, Extra};
 use crate::{DistantMsg, DistantRequestData};
+use distant_net::Request;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,14 +22,17 @@ pub enum ManagerRequest {
     OpenChannel {
         /// Id of the connection
         id: usize,
+    },
 
-        /// Type of channel to open
-        #[cfg_attr(feature = "clap", clap(value_enum))]
-        kind: ChannelKind,
+    /// Sends data through channel
+    #[cfg_attr(feature = "clap", clap(skip))]
+    Channel {
+        /// Id of the channel
+        id: usize,
 
-        /// Payload to use with channel
-        #[cfg_attr(feature = "clap", clap(subcommand))]
-        payload: DistantMsg<DistantRequestData>,
+        /// Request to send to through the channel
+        #[cfg_attr(feature = "clap", clap(skip = skipped_request()))]
+        request: Request<DistantMsg<DistantRequestData>>,
     },
 
     /// Closes an open channel
@@ -49,4 +53,10 @@ pub enum ManagerRequest {
 
     /// Signals the manager to shutdown
     Shutdown,
+}
+
+/// Produces some default request, purely to satisfy clap
+#[cfg(feature = "clap")]
+fn skipped_request() -> Request<DistantMsg<DistantRequestData>> {
+    Request::new(DistantMsg::Single(DistantRequestData::SystemInfo {}))
 }

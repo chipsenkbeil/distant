@@ -46,7 +46,7 @@ pub struct ServerReply<T> {
 impl<T> Clone for ServerReply<T> {
     fn clone(&self) -> Self {
         Self {
-            origin_id: self.origin_id,
+            origin_id: self.origin_id.clone(),
             tx: self.tx.clone(),
         }
     }
@@ -55,14 +55,14 @@ impl<T> Clone for ServerReply<T> {
 impl<T> ServerReply<T> {
     pub async fn send(&self, data: T) -> io::Result<()> {
         self.tx
-            .send(Response::new(self.origin_id, data))
+            .send(Response::new(self.origin_id.clone(), data))
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Connection reply closed"))
     }
 
     pub fn blocking_send(&self, data: T) -> io::Result<()> {
         self.tx
-            .blocking_send(Response::new(self.origin_id, data))
+            .blocking_send(Response::new(self.origin_id.clone(), data))
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Connection reply closed"))
     }
 

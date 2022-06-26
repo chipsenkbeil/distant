@@ -1,4 +1,4 @@
-use crate::Response;
+use crate::{Id, Response};
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
@@ -12,7 +12,7 @@ use tokio::{
 
 #[derive(Clone)]
 pub struct PostOffice<T> {
-    mailboxes: Arc<Mutex<HashMap<usize, mpsc::Sender<T>>>>,
+    mailboxes: Arc<Mutex<HashMap<Id, mpsc::Sender<T>>>>,
 }
 
 impl<T> Default for PostOffice<T>
@@ -56,22 +56,22 @@ where
 
     /// Creates a new mailbox using the given id and buffer size for maximum values that
     /// can be queued in the mailbox
-    pub async fn make_mailbox(&self, id: usize, buffer: usize) -> Mailbox<T> {
+    pub async fn make_mailbox(&self, id: Id, buffer: usize) -> Mailbox<T> {
         let (tx, rx) = mpsc::channel(buffer);
-        self.mailboxes.lock().await.insert(id, tx);
+        self.mailboxes.lock().await.insert(id.clone(), tx);
 
         Mailbox { id, rx }
     }
 
     /// Delivers some value to appropriate mailbox, returning false if no mailbox is found
     /// for the specified id or if the mailbox is no longer receiving values
-    pub async fn deliver(&self, id: usize, value: T) -> bool {
-        if let Some(tx) = self.mailboxes.lock().await.get_mut(&id) {
+    pub async fn deliver(&self, id: &Id, value: T) -> bool {
+        if let Some(tx) = self.mailboxes.lock().await.get_mut(id) {
             let success = tx.send(value).await.is_ok();
 
             // If failed, we want to remove the mailbox sender as it is no longer valid
             if !success {
-                self.mailboxes.lock().await.remove(&id);
+                self.mailboxes.lock().await.remove(id);
             }
 
             success
@@ -88,14 +88,14 @@ where
     /// Delivers some response to appropriate mailbox, returning false if no mailbox is found
     /// for the response's origin or if the mailbox is no longer receiving values
     pub async fn deliver_response(&self, res: Response<T>) -> bool {
-        self.deliver(res.origin_id, res).await
+        self.deliver(&res.origin_id.clone(), res).await
     }
 }
 
 /// Represents a destination for responses
 pub struct Mailbox<T> {
     /// Represents id associated with the mailbox
-    id: usize,
+    id: Id,
 
     /// Underlying mailbox storage
     rx: mpsc::Receiver<T>,
@@ -103,8 +103,8 @@ pub struct Mailbox<T> {
 
 impl<T> Mailbox<T> {
     /// Represents id associated with the mailbox
-    pub fn id(&self) -> usize {
-        self.id
+    pub fn id(&self) -> &Id {
+        &self.id
     }
 
     /// Receives next value in mailbox

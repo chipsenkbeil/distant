@@ -1,18 +1,11 @@
-use crate::{
-    ChannelKind, ConnectionInfo, ConnectionList, Destination, DistantMsg, DistantRequestData,
-    DistantResponseData, Extra, ManagerRequest, ManagerResponse,
-};
+use crate::{ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest, ManagerResponse};
 use async_trait::async_trait;
 use distant_net::{
-    router, Auth, AuthClient, Client, IntoSplit, Listener, Mailbox, MpscListener, Reply, Request,
-    Response, Server, ServerCtx, ServerExt, UntypedTransportRead, UntypedTransportWrite,
+    router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response, Server,
+    ServerCtx, ServerExt, UntypedTransportRead, UntypedTransportWrite,
 };
 use log::*;
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    io,
-    sync::Arc,
-};
+use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
     sync::{mpsc, Mutex, RwLock},
     task::JoinHandle,
@@ -47,7 +40,7 @@ pub struct DistantManager {
     connections: RwLock<HashMap<usize, DistantManagerConnection>>,
 
     /// Handlers for connect requests
-    handlers: Arc<RwLock<HashMap<String, Box<dyn ConnectHandler + Send + Sync>>>>,
+    handlers: Arc<RwLock<HashMap<String, BoxedConnectHandler>>>,
 
     /// Primary task of server
     task: JoinHandle<()>,
@@ -139,7 +132,7 @@ impl DistantManager {
             .unwrap_or(self.config.fallback_scheme.as_str())
             .to_lowercase();
 
-        let client = {
+        let (writer, reader) = {
             let lock = self.handlers.read().await;
             let handler = lock.get(&scheme).ok_or_else(|| {
                 io::Error::new(
@@ -149,58 +142,11 @@ impl DistantManager {
             })?;
             handler.connect(&destination, &extra, auth).await?
         };
-        let id = rand::random();
-        let connection = DistantManagerConnection {
-            id,
-            destination,
-            extra,
-            client,
-        };
+
+        let connection = DistantManagerConnection::new(destination, extra, writer, reader);
+        let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
-    }
-
-    /// Makes a request to the server with the specified `id`,
-    /// by using a fire call (expects no reply)
-    async fn channel_fire(
-        &self,
-        id: usize,
-        payload: DistantMsg<DistantRequestData>,
-    ) -> io::Result<()> {
-        let mut lock = self.connections.write().await;
-        let connection = lock
-            .get_mut(&id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No connection found"))?;
-        connection.client.fire(payload).await
-    }
-
-    /// Makes a request to the server with the specified `id`, returning the response
-    /// by using a send call (only expects one reply)
-    async fn channel_send(
-        &self,
-        id: usize,
-        payload: DistantMsg<DistantRequestData>,
-    ) -> io::Result<DistantMsg<DistantResponseData>> {
-        let mut lock = self.connections.write().await;
-        let connection = lock
-            .get_mut(&id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No connection found"))?;
-        let response = connection.client.send(payload).await?;
-        Ok(response.payload)
-    }
-
-    /// Makes a request to the server with the specified `id`, returning the mailbox
-    /// by using a mail call (can send zero or more responses over time)
-    async fn channel_mail(
-        &self,
-        id: usize,
-        payload: DistantMsg<DistantRequestData>,
-    ) -> io::Result<Mailbox<Response<DistantMsg<DistantResponseData>>>> {
-        let mut lock = self.connections.write().await;
-        let connection = lock
-            .get_mut(&id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "No connection found"))?;
-        connection.client.mail(payload).await
     }
 
     /// Retrieves information about the connection to the server with the specified `id`
@@ -232,17 +178,9 @@ impl DistantManager {
 
     /// Kills the connection to the server with the specified `id`
     async fn kill(&self, id: usize) -> io::Result<()> {
-        match self.connections.write().await.entry(id) {
-            Entry::Occupied(x) => {
-                // Kill the client's tasks
-                x.get().client.abort();
-
-                // Remove the connection from our list
-                let _ = x.remove();
-
-                Ok(())
-            }
-            Entry::Vacant(_) => Err(io::Error::new(
+        match self.connections.write().await.remove(&id) {
+            Some(_) => Ok(()),
+            None => Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "No connection found",
             )),
@@ -256,9 +194,9 @@ pub struct DistantManagerServerConnection {
     /// and needing to get authentication details from the client to move forward
     auth_client: Option<AuthClient>,
 
-    /// Holds on to tasks associated with open channels feeding data back from a
-    /// server to some connected client, enabling us to cancel the tasks on demand
-    channels: Mutex<HashMap<usize, JoinHandle<()>>>,
+    /// Holds on to open channels feeding data back from a server to some connected client,
+    /// enabling us to cancel the tasks on demand
+    channels: RwLock<HashMap<usize, DistantManagerChannel>>,
 }
 
 impl DistantManagerServerConnection {
@@ -293,48 +231,40 @@ impl Server for DistantManager {
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
             }
-            ManagerRequest::OpenChannel { id, kind, payload } => {
-                let channel_id = rand::random();
-                match kind {
-                    ChannelKind::NoResponse => match self.channel_fire(id, payload).await {
+            ManagerRequest::OpenChannel { id } => match self.connections.read().await.get(&id) {
+                Some(connection) => match connection.open_channel(reply.clone()).await {
+                    Ok(channel) => {
+                        let id = channel.id();
+                        local_data.channels.write().await.insert(id, channel);
+                        ManagerResponse::ChannelOpened { id }
+                    }
+                    Err(x) => ManagerResponse::Error(x.into()),
+                },
+                None => ManagerResponse::Error(
+                    io::Error::new(io::ErrorKind::NotConnected, "Connection does not exist").into(),
+                ),
+            },
+            ManagerRequest::Channel { id, request } => {
+                match local_data.channels.read().await.get(&id) {
+                    Some(channel) => match channel.send(request).await {
                         Ok(_) => return,
                         Err(x) => ManagerResponse::Error(x.into()),
                     },
-                    ChannelKind::SingleResponse => match self.channel_send(id, payload).await {
-                        Ok(payload) => ManagerResponse::Channel {
-                            id: channel_id,
-                            payload,
-                        },
-                        Err(x) => ManagerResponse::Error(x.into()),
-                    },
-                    ChannelKind::MultiResponse => match self.channel_mail(id, payload).await {
-                        Ok(mut mailbox) => {
-                            let reply = reply.clone_reply();
-                            local_data.channels.lock().await.insert(
-                                channel_id,
-                                tokio::spawn(async move {
-                                    while let Some(response) = mailbox.next().await {
-                                        let _ = reply
-                                            .send(ManagerResponse::Channel {
-                                                id: channel_id,
-                                                payload: response.payload,
-                                            })
-                                            .await;
-                                    }
-                                }),
-                            );
-                            ManagerResponse::ChannelOpened { id: channel_id }
-                        }
-                        Err(x) => ManagerResponse::Error(x.into()),
-                    },
+                    None => ManagerResponse::Error(
+                        io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            "Channel is not open or does not exist",
+                        )
+                        .into(),
+                    ),
                 }
             }
             ManagerRequest::CloseChannel { id } => {
-                match local_data.channels.lock().await.remove(&id) {
-                    Some(task) => {
-                        task.abort();
-                        ManagerResponse::ChannelClosed { id }
-                    }
+                match local_data.channels.write().await.remove(&id) {
+                    Some(channel) => match channel.close().await {
+                        Ok(_) => ManagerResponse::ChannelClosed { id },
+                        Err(x) => ManagerResponse::Error(x.into()),
+                    },
                     None => ManagerResponse::Error(
                         io::Error::new(
                             io::ErrorKind::NotConnected,
@@ -379,12 +309,7 @@ impl Server for DistantManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DistantClient;
-    use async_trait::async_trait;
-    use distant_net::{
-        AuthClient, FramedTransport, InmemoryTransport, PlainCodec, UntypedTransportRead,
-        UntypedTransportWrite,
-    };
+    use distant_net::{AuthClient, FramedTransport, InmemoryTransport, PlainCodec};
 
     /// Create a new server, bypassing the start loop
     fn setup() -> DistantManager {
@@ -404,18 +329,18 @@ mod tests {
         AuthClient::from(Client::from_framed_transport(transport).unwrap())
     }
 
-    /// Creates a dummy [`DistantClient`]
-    fn dummy_distant_client() -> DistantClient {
-        setup_distant_client().0
+    fn dummy_distant_writer_reader() -> (BoxedDistantWriter, BoxedDistantReader) {
+        setup_distant_writer_reader().0
     }
 
-    /// Creates a [`DistantClient`] with a connected transport
-    fn setup_distant_client() -> (
-        DistantClient,
+    /// Creates a writer & reader with a connected transport
+    fn setup_distant_writer_reader() -> (
+        (BoxedDistantWriter, BoxedDistantReader),
         FramedTransport<InmemoryTransport, PlainCodec>,
     ) {
         let (t1, t2) = FramedTransport::pair(1);
-        (Client::from_framed_transport(t1).unwrap(), t2)
+        let (writer, reader) = t1.into_split();
+        ((Box::new(writer), Box::new(reader)), t2)
     }
 
     #[tokio::test]
@@ -436,25 +361,15 @@ mod tests {
     async fn connect_should_fail_if_handler_tied_to_scheme_fails() {
         let server = setup();
 
-        struct TestConnectHandler;
-
-        #[async_trait]
-        impl ConnectHandler for TestConnectHandler {
-            async fn connect(
-                &self,
-                _destination: &Destination,
-                _extra: &Extra,
-                _auth: &AuthClient,
-            ) -> io::Result<DistantClient> {
-                Err(io::Error::new(io::ErrorKind::Other, "test failure"))
-            }
-        }
+        let handler: Box<dyn ConnectHandler> = Box::new(|_: &_, _: &_, _: &_| async {
+            Err(io::Error::new(io::ErrorKind::Other, "test failure"))
+        });
 
         server
             .handlers
             .write()
             .await
-            .insert("scheme".to_string(), Box::new(TestConnectHandler));
+            .insert("scheme".to_string(), handler);
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
@@ -471,25 +386,14 @@ mod tests {
     async fn connect_should_return_id_of_new_connection_on_success() {
         let server = setup();
 
-        struct TestConnectHandler;
-
-        #[async_trait]
-        impl ConnectHandler for TestConnectHandler {
-            async fn connect(
-                &self,
-                _destination: &Destination,
-                _extra: &Extra,
-                _auth: &AuthClient,
-            ) -> io::Result<DistantClient> {
-                Ok(dummy_distant_client())
-            }
-        }
+        let handler: Box<dyn ConnectHandler> =
+            Box::new(|_: &_, _: &_, _: &_| async { Ok(dummy_distant_writer_reader()) });
 
         server
             .handlers
             .write()
             .await
-            .insert("scheme".to_string(), Box::new(TestConnectHandler));
+            .insert("scheme".to_string(), handler);
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "key=value".parse::<Extra>().unwrap();
@@ -507,77 +411,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_should_fail_if_no_connection_found_for_specified_id() {
-        let server = setup();
-
-        let payload = DistantMsg::Single(DistantRequestData::SystemInfo {});
-        let err = server.channel_send(999, payload).await.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::NotConnected, "{:?}", err);
-    }
-
-    #[tokio::test]
-    async fn request_should_fail_if_connected_client_fails_when_sending_request() {
-        let server = setup();
-
-        let id = 999;
-        server.connections.write().await.insert(
-            id,
-            DistantManagerConnection {
-                id,
-                destination: "".parse().unwrap(),
-                extra: "".parse().unwrap(),
-                client: dummy_distant_client(),
-            },
-        );
-
-        let payload = DistantMsg::Single(DistantRequestData::SystemInfo {});
-        let err = server.channel_send(id, payload).await.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted, "{:?}", err);
-    }
-
-    #[tokio::test]
-    async fn request_should_return_payload_of_response_on_success() {
-        let server = setup();
-
-        let (client, mut transport) = setup_distant_client();
-
-        let transport_task = tokio::spawn(async move {
-            let request = transport
-                .read::<Request<DistantMsg<DistantRequestData>>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    DistantMsg::Single(DistantResponseData::SystemInfo(Default::default())),
-                ))
-                .await
-                .unwrap();
-        });
-
-        let id = 999;
-        server.connections.write().await.insert(
-            id,
-            DistantManagerConnection {
-                id,
-                destination: "".parse().unwrap(),
-                extra: "".parse().unwrap(),
-                client,
-            },
-        );
-
-        let payload = DistantMsg::Single(DistantRequestData::SystemInfo {});
-        let msg = server.channel_send(id, payload).await.unwrap();
-        assert_eq!(
-            msg,
-            DistantMsg::Single(DistantResponseData::SystemInfo(Default::default()))
-        );
-        transport_task.await.unwrap();
-    }
-
-    #[tokio::test]
     async fn info_should_fail_if_no_connection_found_for_specified_id() {
         let server = setup();
 
@@ -589,16 +422,15 @@ mod tests {
     async fn info_should_return_information_about_established_connection() {
         let server = setup();
 
-        let id = 999;
-        server.connections.write().await.insert(
-            id,
-            DistantManagerConnection {
-                id,
-                destination: "scheme://host".parse().unwrap(),
-                extra: "key=value".parse().unwrap(),
-                client: dummy_distant_client(),
-            },
+        let (writer, reader) = dummy_distant_writer_reader();
+        let connection = DistantManagerConnection::new(
+            "scheme://host".parse().unwrap(),
+            "key=value".parse().unwrap(),
+            writer,
+            reader,
         );
+        let id = connection.id;
+        server.connections.write().await.insert(id, connection);
 
         let info = server.info(id).await.unwrap();
         assert_eq!(
@@ -623,33 +455,33 @@ mod tests {
     async fn list_should_return_a_list_of_established_connections() {
         let server = setup();
 
-        server.connections.write().await.insert(
-            1,
-            DistantManagerConnection {
-                id: 1,
-                destination: "scheme://host".parse().unwrap(),
-                extra: "key=value".parse().unwrap(),
-                client: dummy_distant_client(),
-            },
+        let (writer, reader) = dummy_distant_writer_reader();
+        let connection = DistantManagerConnection::new(
+            "scheme://host".parse().unwrap(),
+            "key=value".parse().unwrap(),
+            writer,
+            reader,
         );
+        let id_1 = connection.id;
+        server.connections.write().await.insert(id_1, connection);
 
-        server.connections.write().await.insert(
-            2,
-            DistantManagerConnection {
-                id: 2,
-                destination: "other://host2".parse().unwrap(),
-                extra: "key=value".parse().unwrap(),
-                client: dummy_distant_client(),
-            },
+        let (writer, reader) = dummy_distant_writer_reader();
+        let connection = DistantManagerConnection::new(
+            "other://host2".parse().unwrap(),
+            "key=value".parse().unwrap(),
+            writer,
+            reader,
         );
+        let id_2 = connection.id;
+        server.connections.write().await.insert(id_2, connection);
 
         let list = server.list().await.unwrap();
         assert_eq!(
-            list.get(&1).unwrap(),
+            list.get(&id_1).unwrap(),
             &"scheme://host".parse::<Destination>().unwrap()
         );
         assert_eq!(
-            list.get(&2).unwrap(),
+            list.get(&id_2).unwrap(),
             &"other://host2".parse::<Destination>().unwrap()
         );
     }
@@ -666,16 +498,15 @@ mod tests {
     async fn kill_should_terminate_established_connection_and_remove_it_from_the_list() {
         let server = setup();
 
-        let id = 999;
-        server.connections.write().await.insert(
-            id,
-            DistantManagerConnection {
-                id,
-                destination: "scheme://host".parse().unwrap(),
-                extra: "key=value".parse().unwrap(),
-                client: dummy_distant_client(),
-            },
+        let (writer, reader) = dummy_distant_writer_reader();
+        let connection = DistantManagerConnection::new(
+            "scheme://host".parse().unwrap(),
+            "key=value".parse().unwrap(),
+            writer,
+            reader,
         );
+        let id = connection.id;
+        server.connections.write().await.insert(id, connection);
 
         let _ = server.kill(id).await.unwrap();
 
