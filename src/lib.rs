@@ -1,5 +1,6 @@
 use log::error;
 
+mod constants;
 // pub mod cli;
 
 /// Main entrypoint into the program
