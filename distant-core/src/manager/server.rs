@@ -246,6 +246,9 @@ impl Server for DistantManager {
             },
             ManagerRequest::Channel { id, request } => {
                 match local_data.channels.read().await.get(&id) {
+                    // TODO: For now, we are NOT sending back a response to acknowledge
+                    //       a successful channel send. We could do this in order for
+                    //       the client to listen for a complete send, but is it worth it?
                     Some(channel) => match channel.send(request).await {
                         Ok(_) => return,
                         Err(x) => ManagerResponse::Error(x.into()),

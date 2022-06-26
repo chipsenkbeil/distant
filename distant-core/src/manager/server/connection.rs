@@ -72,7 +72,6 @@ enum StateMachine {
     },
 
     Read {
-        id: usize,
         response: Response<DistantMsg<DistantResponseData>>,
     },
 
@@ -96,29 +95,8 @@ impl DistantManagerConnection {
             tokio::spawn(async move {
                 loop {
                     match reader.read().await {
-                        Ok(Some(mut response)) => {
-                            // Split {channel id}_{request id} back into pieces and
-                            // update the origin id to match the request id only
-                            let channel_id = match response.origin_id.split_once('_') {
-                                Some((cid_str, oid_str)) => {
-                                    if let Ok(cid) = cid_str.parse::<usize>() {
-                                        response.origin_id = oid_str.to_string();
-                                        cid
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                                None => continue,
-                            };
-
-                            if tx
-                                .send(StateMachine::Read {
-                                    id: channel_id,
-                                    response,
-                                })
-                                .await
-                                .is_err()
-                            {
+                        Ok(Some(response)) => {
+                            if tx.send(StateMachine::Read { response }).await.is_err() {
                                 break;
                             }
                         }
@@ -141,9 +119,26 @@ impl DistantManagerConnection {
                     StateMachine::Unregister { id } => {
                         registered.remove(&id);
                     }
-                    StateMachine::Read { id, response } => {
-                        if let Some(reply) = registered.get(&id) {
-                            let response = ManagerResponse::Channel { id, response };
+                    StateMachine::Read { mut response } => {
+                        // Split {channel id}_{request id} back into pieces and
+                        // update the origin id to match the request id only
+                        let channel_id = match response.origin_id.split_once('_') {
+                            Some((cid_str, oid_str)) => {
+                                if let Ok(cid) = cid_str.parse::<usize>() {
+                                    response.origin_id = oid_str.to_string();
+                                    cid
+                                } else {
+                                    continue;
+                                }
+                            }
+                            None => continue,
+                        };
+
+                        if let Some(reply) = registered.get(&channel_id) {
+                            let response = ManagerResponse::Channel {
+                                id: channel_id,
+                                response,
+                            };
                             if let Err(x) = reply.send(response).await {
                                 error!("[Conn {}] {}", connection_id, x);
                             }
