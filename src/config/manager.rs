@@ -1,9 +1,11 @@
 use distant_core::Destination;
+use merge::Merge;
 use serde::{Deserialize, Serialize};
 
 /// Represents configuration settings for the distant manager
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Merge, Serialize, Deserialize)]
 pub struct ManagerConfig {
+    #[merge(strategy = merge::vec::append)]
     pub connections: Vec<ManagerConnectionConfig>,
 }
 

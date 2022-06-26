@@ -444,18 +444,6 @@ impl Default for SessionInput {
 /// Represents subcommand to launch a remote server
 #[derive(Clone, Debug, StructOpt)]
 pub struct LaunchSubcommand {
-    /// Represents the medium for sharing the session upon launching on a remote machine
-    #[structopt(
-        long,
-        default_value = SessionOutput::default().into(),
-        possible_values = SessionOutput::VARIANTS
-    )]
-    pub session: SessionOutput,
-
-    /// Contains additional information related to sessions
-    #[structopt(flatten)]
-    pub session_data: SessionOpt,
-
     /// If specified, launch will fail when attempting to bind to a unix socket that
     /// already exists, rather than removing the old socket
     #[structopt(long)]
