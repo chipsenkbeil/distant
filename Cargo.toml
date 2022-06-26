@@ -41,6 +41,7 @@ serde_json = "1.0.81"
 sysinfo = "0.23.13"
 tabled = "0.7.0"
 tokio = { version = "1.19.0", features = ["full"] }
+toml = "0.5.9"
 terminal_size = "0.1.17"
 termwiz = "0.15.0"
 uriparse = "0.6.4"

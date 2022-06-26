@@ -1,5 +1,6 @@
 use log::error;
 
+mod config;
 mod constants;
 // pub mod cli;
 
