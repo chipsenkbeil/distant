@@ -39,7 +39,8 @@ impl Default for LogLevel {
 pub struct CommonConfig {
     /// Quiet mode, suppresses all logging (shortcut for log level off)
     #[clap(short, long, global = true)]
-    pub quiet: Option<bool>,
+    #[merge(strategy = merge::bool::overwrite_false)]
+    pub quiet: bool,
 
     /// Log level to use throughout the application
     #[clap(long, global = true, case_insensitive = true, value_enum)]
@@ -55,10 +56,6 @@ pub struct CommonConfig {
 }
 
 impl CommonConfig {
-    pub fn quiet_or_default(&self) -> bool {
-        self.quiet.as_ref().copied().unwrap_or_default()
-    }
-
     pub fn log_level_or_default(&self) -> LogLevel {
         self.log_level.as_ref().copied().unwrap_or_default()
     }
