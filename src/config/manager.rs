@@ -1,4 +1,4 @@
-use super::NetworkConfig;
+use super::{CommonConfig, NetworkConfig};
 use clap::Args;
 use distant_core::Destination;
 use merge::Merge;
@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 /// Represents configuration settings for the distant manager
 #[derive(Args, Debug, Default, Merge, Serialize, Deserialize)]
 pub struct ManagerConfig {
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub common: CommonConfig,
+
     #[clap(skip)]
     #[merge(strategy = merge::vec::append)]
     pub connections: Vec<ManagerConnectionConfig>,

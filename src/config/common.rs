@@ -35,7 +35,7 @@ impl Default for LogLevel {
 }
 
 /// Contains options that are common across subcommands
-#[derive(Args, Clone, Debug, Default, Merge)]
+#[derive(Args, Clone, Debug, Default, Merge, Serialize, Deserialize)]
 pub struct CommonConfig {
     /// Quiet mode, suppresses all logging (shortcut for log level off)
     #[clap(short, long, global = true)]

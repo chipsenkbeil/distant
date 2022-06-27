@@ -1,4 +1,3 @@
-use crate::constants::CONFIG_FILE_PATH;
 use clap::Args;
 use merge::Merge;
 use serde::{Deserialize, Serialize};
@@ -27,16 +26,16 @@ pub struct Config {
 
 impl Config {
     /// Loads the configuration from the specified file, defaulting to the standard config file
-    pub async fn load_from_file(path: Option<&Path>) -> io::Result<Self> {
-        let text = tokio::fs::read_to_string(path.unwrap_or(CONFIG_FILE_PATH.as_path())).await?;
+    pub async fn load_from_file(path: &Path) -> io::Result<Self> {
+        let text = tokio::fs::read_to_string(path).await?;
         toml_edit::de::from_str(&text).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
     }
 
     /// Saves the configuration to the specified file, defaulting to the standard config file
-    pub async fn save_to_file(&self, path: Option<&Path>) -> io::Result<()> {
+    pub async fn save_to_file(&self, path: &Path) -> io::Result<()> {
         let text = toml_edit::ser::to_string_pretty(self)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
-        tokio::fs::write(path.unwrap_or(CONFIG_FILE_PATH.as_path()), text).await
+        tokio::fs::write(path, text).await
     }
 }
 
