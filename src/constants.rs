@@ -11,12 +11,6 @@ static PROJECT_DIR: Lazy<ProjectDirs> = Lazy::new(|| {
 pub static CONFIG_FILE_PATH: Lazy<PathBuf> =
     Lazy::new(|| PROJECT_DIR.config_dir().join("config.toml"));
 
-/// TODO: CHIP CHIP CHIP
-///
-///       When binding to a unix socket, we will fail if the file exists. If it does exist,
-///       we can try connecting to it. If that succeeds, something is already listening on
-///       that file, otherwise nothing is and we can delete the file and try again.
-
 /// For Linux, this uses the runtime path. For Mac, this uses the tmp path
 ///
 /// * `/run/user/1001/distant/distant.sock`
