@@ -27,3 +27,6 @@ pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
 /// Name of the pipe used by Windows
 #[cfg(windows)]
 pub const WINDOWS_PIPE_NAME: &str = "distant";
+
+/// Name of user executing the cli
+pub static USERNAME: Lazy<String> = Lazy::new(whoami::username);

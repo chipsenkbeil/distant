@@ -1,10 +1,10 @@
 use crate::{constants::USERNAME, Config};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use derive_more::IsVariant;
 use std::{io, net::IpAddr, path::PathBuf};
 
 #[derive(Args, Debug)]
-pub struct Subcommand {
+pub struct ServerListenConfig {
     /// If specified, launch will fail when attempting to bind to a unix socket that
     /// already exists, rather than removing the old socket
     #[clap(long)]
@@ -68,8 +68,8 @@ pub struct Subcommand {
     pub extra_server_args: Option<String>,
 
     /// Username to use when sshing into remote machine
-    #[clap(short, long, default_value = &USERNAME)]
-    pub username: String,
+    #[clap(short, long)]
+    pub username: Option<String>,
 
     /// Explicit identity file to use with ssh
     #[clap(short, long)]
@@ -82,14 +82,14 @@ pub struct Subcommand {
     /// Port to use for sshing into the remote machine
     #[clap(short, long, default_value = "22")]
     pub port: u16,
-
-    /// Host to use for sshing into the remote machine
-    #[clap(name = "HOST")]
-    pub host: String,
 }
 
-impl Subcommand {
-    pub async fn run(self, config: Config) -> io::Result<()> {
-        todo!();
-    }
+/// Represents options for binding a server to an IP address
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, IsVariant)]
+pub enum BindAddress {
+    #[display(fmt = "ssh")]
+    Ssh,
+    #[display(fmt = "any")]
+    Any,
+    Ip(IpAddr),
 }

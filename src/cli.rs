@@ -3,6 +3,7 @@ use crate::{
     constants::CONFIG_FILE_PATH,
 };
 use clap::{Parser, Subcommand};
+use merge::Merge;
 use std::{io, path::PathBuf};
 
 mod action;
@@ -29,7 +30,7 @@ impl Cli {
         } = Opt::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
         let mut config = Config::load_from_file(config_path.as_path()).await?;
-        config.client.common.merge(&mut common);
+        config.client.common.merge(common);
 
         Ok(Cli { command, config })
     }
