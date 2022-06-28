@@ -426,6 +426,12 @@ where
                         local_data: Arc::clone(&local_data),
                     };
 
+                    // TODO: This does not run in parallel, meaning that the next item in the
+                    //       batch will not be queued until the previous item completes! This
+                    //       would be useful if we wanted to chain requests where the previous
+                    //       request feeds into the current request, but not if we just want
+                    //       to run everything together. So we should instead rewrite this
+                    //       to spawn a task per request and then await completion of all tasks
                     let data = handle_request(self, ctx, data).await;
 
                     // Report outgoing errors in our debug logs
