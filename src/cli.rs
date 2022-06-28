@@ -13,39 +13,31 @@ mod manager;
 mod repl;
 mod shell;
 
-#[derive(Debug, Parser)]
-#[clap(name = "distant")]
+/// Represents the primary CLI entrypoint
 pub struct Cli {
-    #[clap(flatten)]
-    common: CommonConfig,
-
-    /// Configuration file to load
-    #[clap(short, long = "config", value_parser, default_value_os_t = CONFIG_FILE_PATH.to_path_buf())]
-    config_path: PathBuf,
-
-    #[clap(subcommand)]
     command: DistantSubcommand,
-
-    #[clap(skip)]
-    config: Option<Config>,
+    config: Config,
 }
 
 impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
     pub async fn initialize() -> io::Result<Self> {
-        let mut cli =
-            Self::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
+        let Opt {
+            common,
+            config_path,
+            command,
+        } = Opt::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        cli.config = Some(Config::load_from_file(cli.config_path.as_path()).await?);
+        let mut config = Config::load_from_file(config_path.as_path()).await?;
+        config.client.common.merge(&mut common);
 
-        Ok(cli)
+        Ok(Cli { command, config })
     }
 
     /// Initializes a logger for the CLI, returning a handle to the logger
     pub fn init_logger(&self) -> flexi_logger::LoggerHandle {
         use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
         let modules = &["distant", "distant_core", "distant_net", "distant_ssh2"];
-        let config = self.config.as_ref().unwrap();
 
         // Disable logging for everything but our binary, which is based on verbosity
         let mut builder = LogSpecification::builder();
@@ -55,7 +47,10 @@ impl Cli {
         for module in modules {
             builder.module(
                 module,
-                config.log_level.unwrap_or_default().to_log_level_filter(),
+                self.config
+                    .log_level
+                    .unwrap_or_default()
+                    .to_log_level_filter(),
             );
 
             // If quiet, we suppress all logging output
@@ -66,7 +61,7 @@ impl Cli {
             //       Without this, CI tests can sporadically fail when getting the exit code of a
             //       process because an error log is provided about failing to broadcast a response
             //       on the client side
-            if config.quiet || (is_remote_process && config.log_file.is_none()) {
+            if self.config.quiet || (self.is_remote_process() && self.config.log_file.is_none()) {
                 builder.module(module, LevelFilter::Off);
             }
         }
@@ -75,7 +70,7 @@ impl Cli {
         let logger = Logger::with(builder.build()).format_for_files(flexi_logger::opt_format);
 
         // If provided, log to file instead of stderr
-        let logger = if let Some(path) = config.log_file.as_ref() {
+        let logger = if let Some(path) = self.config.log_file.as_ref() {
             logger.log_to_file(FileSpec::try_from(path).expect("Failed to create log file spec"))
         } else {
             logger
@@ -85,18 +80,35 @@ impl Cli {
     }
 
     /// Runs the CLI
-    pub async fn run(mut self) -> io::Result<()> {
-        let config = self.config.take().unwrap();
+    pub async fn run(self) -> io::Result<()> {
         match self.command {
-            DistantSubcommand::Action(cmd) => cmd.run(config).await,
-            DistantSubcommand::Launch(cmd) => cmd.run(config).await,
-            DistantSubcommand::Listen(cmd) => cmd.run(config).await,
-            DistantSubcommand::Lsp(cmd) => cmd.run(config).await,
-            DistantSubcommand::Manager(cmd) => cmd.run(config).await,
-            DistantSubcommand::Repl(cmd) => cmd.run(config).await,
-            DistantSubcommand::Shell(cmd) => cmd.run(config).await,
+            DistantSubcommand::Action(cmd) => cmd.run(self.config).await,
+            DistantSubcommand::Launch(cmd) => cmd.run(self.config).await,
+            DistantSubcommand::Listen(cmd) => cmd.run(self.config).await,
+            DistantSubcommand::Lsp(cmd) => cmd.run(self.config).await,
+            DistantSubcommand::Manager(cmd) => cmd.run(self.config).await,
+            DistantSubcommand::Repl(cmd) => cmd.run(self.config).await,
+            DistantSubcommand::Shell(cmd) => cmd.run(self.config).await,
         }
     }
+
+    fn is_remote_process(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Parser)]
+#[clap(name = "distant")]
+struct Opt {
+    #[clap(flatten)]
+    common: CommonConfig,
+
+    /// Configuration file to load
+    #[clap(short, long = "config", value_parser, default_value_os_t = CONFIG_FILE_PATH.to_path_buf())]
+    config_path: PathBuf,
+
+    #[clap(subcommand)]
+    command: DistantSubcommand,
 }
 
 #[derive(Debug, Subcommand)]

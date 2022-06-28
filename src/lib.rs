@@ -11,10 +11,9 @@ pub use error::{ExitCode, ExitCodeError};
 
 /// Main entrypoint into the program
 pub async fn run() {
-    let cli = Cli::new();
-    let config = cli.load_config().await.expect("Failed to load config");
-    let logger = init_logging(&config, opt.subcommand.is_remote_process());
-    if let Err(x) = cli.run(config).await {
+    let cli = Cli::initialize().await.expect("Failed to initialize CLI");
+    let logger = cli.init_logger();
+    if let Err(x) = cli.run().await {
         if !x.is_silent() {
             error!("Exiting due to error: {}", x);
         }
