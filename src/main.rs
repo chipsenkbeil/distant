@@ -11,7 +11,24 @@
 //! * EX_IOERR (74) - being used as catchall for IO errors
 //! * EX_TEMPFAIL (75) - being used when we get a timeout
 //! * EX_PROTOCOL (76) - being used as catchall for transport errors
+use distant::{Cli, ExitCodeError};
+use log::*;
 
-fn main() {
-    distant::run();
+#[tokio::main]
+async fn main() {
+    match Cli::initialize().await {
+        Ok(cli) => {
+            let logger = cli.init_logger();
+            if let Err(x) = cli.run().await {
+                if !x.is_silent() {
+                    error!("Exiting due to error: {}", x);
+                }
+                logger.flush();
+                logger.shutdown();
+
+                std::process::exit(x.to_i32());
+            }
+        }
+        Err(x) => eprintln!("{}", x),
+    }
 }

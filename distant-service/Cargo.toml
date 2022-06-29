@@ -1,0 +1,22 @@
+[package]
+name = "distant-service"
+description = "Service library for distant, providing support in configuring and launching processes as services on different platforms"
+categories = []
+keywords = []
+version = "0.17.0"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2018"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+clap = { version = "3.2.5", features = ["derive"], optional = true }
+serde = { version = "1.0.126", features = ["derive"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.4.0"
+
+[target.'cfg(unix)'.dependencies]
+fork = "0.1.19"

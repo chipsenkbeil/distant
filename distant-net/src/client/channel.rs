@@ -87,7 +87,7 @@ where
     /// Sends a request and waits for a response, timing out after duration has passed
     pub async fn send_timeout(
         &mut self,
-        req: Request<T>,
+        req: impl Into<Request<T>>,
         duration: Duration,
     ) -> io::Result<Response<U>> {
         tokio::time::timeout(duration, self.send(req))

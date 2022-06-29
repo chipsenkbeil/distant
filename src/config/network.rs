@@ -1,10 +1,10 @@
+use crate::Merge;
 use clap::Args;
-use merge::Merge;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Represents common networking configuration
-#[derive(Args, Debug, Default, Merge, Serialize, Deserialize)]
+#[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NetworkConfig {
     /// Unix socket to listen on
     #[cfg(unix)]
@@ -32,5 +32,19 @@ impl NetworkConfig {
         self.windows_pipe
             .as_deref()
             .unwrap_or(crate::constants::WINDOWS_PIPE_NAME.as_str())
+    }
+}
+
+impl Merge for NetworkConfig {
+    fn merge(&mut self, other: Self) {
+        #[cfg(unix)]
+        if let Some(x) = other.unix_socket {
+            self.unix_socket = Some(x);
+        }
+
+        #[cfg(windows)]
+        if let Some(x) = other.windows_pipe {
+            self.windows_pipe = Some(x);
+        }
     }
 }

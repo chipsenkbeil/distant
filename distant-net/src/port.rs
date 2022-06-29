@@ -1,4 +1,5 @@
 use derive_more::Display;
+use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
     ops::RangeInclusive,
@@ -6,7 +7,7 @@ use std::{
 };
 
 /// Represents some range of ports
-#[derive(Clone, Debug, Display, PartialEq, Eq)]
+#[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[display(
     fmt = "{}{}",
     start,
