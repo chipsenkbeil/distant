@@ -115,6 +115,9 @@ impl Client {
         };
     }
 
+    /// Connect to the manager listening on the socket or windows pipe based on
+    /// the [`NetworkConfig`] provided to the client earlier. Will return a new instance
+    /// of the [`DistantManagerClient`] upon successful connection
     pub async fn connect(self) -> io::Result<DistantManagerClient> {
         #[cfg(unix)]
         let transport = {

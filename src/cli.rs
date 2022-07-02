@@ -121,6 +121,7 @@ impl Cli {
 }
 
 #[derive(Debug, Parser)]
+#[clap(author, version, about)]
 #[clap(name = "distant")]
 struct Opt {
     #[clap(flatten)]

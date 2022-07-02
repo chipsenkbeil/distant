@@ -71,6 +71,21 @@ where
         Ok(mailbox)
     }
 
+    /// Sends a request and returns a mailbox, timing out after duration has passed
+    pub async fn mail_timeout(
+        &mut self,
+        req: impl Into<Request<T>>,
+        duration: impl Into<Option<Duration>>,
+    ) -> io::Result<Mailbox<Response<U>>> {
+        match duration.into() {
+            Some(duration) => tokio::time::timeout(duration, self.mail(req))
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
+                .and_then(convert::identity),
+            None => self.mail(req).await,
+        }
+    }
+
     /// Sends a request and waits for a response, failing if unable to send a request or if
     /// the session's receiving line to the remote server has already been severed
     pub async fn send(&mut self, req: impl Into<Request<T>>) -> io::Result<Response<U>> {
@@ -88,12 +103,15 @@ where
     pub async fn send_timeout(
         &mut self,
         req: impl Into<Request<T>>,
-        duration: Duration,
+        duration: impl Into<Option<Duration>>,
     ) -> io::Result<Response<U>> {
-        tokio::time::timeout(duration, self.send(req))
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-            .and_then(convert::identity)
+        match duration.into() {
+            Some(duration) => tokio::time::timeout(duration, self.send(req))
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
+                .and_then(convert::identity),
+            None => self.send(req).await,
+        }
     }
 
     /// Sends a request without waiting for a response; this method is able to be used even
@@ -109,12 +127,15 @@ where
     pub async fn fire_timeout(
         &mut self,
         req: impl Into<Request<T>>,
-        duration: Duration,
+        duration: impl Into<Option<Duration>>,
     ) -> io::Result<()> {
-        tokio::time::timeout(duration, self.fire(req))
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-            .and_then(convert::identity)
+        match duration.into() {
+            Some(duration) => tokio::time::timeout(duration, self.fire(req))
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
+                .and_then(convert::identity),
+            None => self.fire(req).await,
+        }
     }
 }
 

@@ -24,7 +24,7 @@ pub struct ServerListenConfig {
     /// another tool that makes the SSH connection appear to come from localhost.
     ///
     /// 3. `IP`: the server will attempt to bind to the specified IP address.
-    #[clap(short, long, value_name = "ssh|any|IP")]
+    #[clap(long, value_name = "ssh|any|IP")]
     pub host: Option<BindAddress>,
 
     /// If specified, will bind to the ipv6 interface if host is "any" instead of ipv4
