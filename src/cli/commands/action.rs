@@ -22,17 +22,12 @@ impl Subcommand {
 
         let mut client = Client::new(config.network).connect().await?;
         let mut channel = client.open_channel(1).await?;
-        let response = match config.common.timeout {
-            Some(secs) => {
-                channel
-                    .send_timeout(
-                        DistantMsg::Single(self.request),
-                        Duration::from_secs_f32(secs),
-                    )
-                    .await?
-            }
-            None => channel.send(DistantMsg::Single(self.request)).await?,
-        };
+        let response = channel
+            .send_timeout(
+                DistantMsg::Single(self.request),
+                config.common.timeout.map(Duration::from_secs_f32),
+            )
+            .await?;
 
         ResponseOut::new(ReplFormat::Shell, response)?.print();
 

@@ -1,4 +1,5 @@
 use super::Destination;
+use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -6,7 +7,7 @@ use std::{
 };
 
 /// Represents a list of information about active connections
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]
 pub struct ConnectionList(pub(crate) HashMap<usize, Destination>);
 
 impl ConnectionList {

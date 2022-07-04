@@ -8,6 +8,10 @@ pub struct WindowsPipeServerRef {
 }
 
 impl WindowsPipeServerRef {
+    pub fn new(addr: OsString, inner: Box<dyn ServerRef>) -> Self {
+        Self { addr, inner }
+    }
+
     /// Returns the addr that the listener is bound to
     pub fn addr(&self) -> &OsStr {
         &self.addr

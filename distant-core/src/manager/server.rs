@@ -17,6 +17,9 @@ pub use config::*;
 mod connection;
 pub use connection::*;
 
+mod ext;
+pub use ext::*;
+
 mod handler;
 pub use handler::*;
 

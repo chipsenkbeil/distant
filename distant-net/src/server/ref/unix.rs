@@ -8,6 +8,10 @@ pub struct UnixSocketServerRef {
 }
 
 impl UnixSocketServerRef {
+    pub fn new(path: PathBuf, inner: Box<dyn ServerRef>) -> Self {
+        Self { path, inner }
+    }
+
     /// Returns the path to the socket
     pub fn path(&self) -> &Path {
         &self.path

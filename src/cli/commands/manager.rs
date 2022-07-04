@@ -1,8 +1,10 @@
 use crate::{
+    cli::Client,
     config::{ManagerConfig, ServiceKind},
     Merge,
 };
 use clap::Args;
+use distant_core::DistantManager;
 use std::io;
 
 #[derive(Args, Debug)]
@@ -23,12 +25,15 @@ impl Subcommand {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum ManagerSubcommand {
-    /// Start the manager
+    /// Start the manager as a service
     Start {
         /// Type of service manager used to run this service
         #[clap(value_enum)]
         kind: ServiceKind,
     },
+
+    /// Stop the manager as a service
+    Stop,
 
     /// Install the manager as a service
     Install {
@@ -42,6 +47,9 @@ pub enum ManagerSubcommand {
         kind: ServiceKind,
     },
 
+    /// Listen for incoming requests as a manager
+    Listen,
+
     /// Retrieve information about a specific connection
     Info { id: usize },
 
@@ -50,21 +58,47 @@ pub enum ManagerSubcommand {
 
     /// Kill a specific connection
     Kill { id: usize },
-
-    /// Stop the manager
-    Stop,
 }
 
 impl ManagerSubcommand {
     pub async fn run(self, config: ManagerConfig) -> io::Result<()> {
         match self {
             Self::Start { kind } => todo!(),
+            Self::Stop => {
+                Client::new(config.network)
+                    .connect()
+                    .await?
+                    .shutdown()
+                    .await
+            }
+
             Self::Install { kind } => todo!(),
             Self::Uninstall { kind } => todo!(),
-            Self::Info { id } => todo!(),
-            Self::List => todo!(),
-            Self::Kill { id } => todo!(),
-            Self::Stop => todo!(),
+
+            Self::Listen => todo!(),
+            Self::Info { id } => {
+                let info = Client::new(config.network)
+                    .connect()
+                    .await?
+                    .info(id)
+                    .await?;
+
+                println!("id: {}", info.id);
+                println!("destination: {}", info.destination);
+                println!("extra: {}", info.extra);
+
+                Ok(())
+            }
+            Self::List => {
+                let list = Client::new(config.network).connect().await?.list().await?;
+
+                for (id, destination) in list {
+                    println!("{}: {}", id, destination);
+                }
+
+                Ok(())
+            }
+            Self::Kill { id } => Client::new(config.network).connect().await?.kill(id).await,
         }
     }
 }

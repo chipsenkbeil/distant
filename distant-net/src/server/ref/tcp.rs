@@ -9,6 +9,10 @@ pub struct TcpServerRef {
 }
 
 impl TcpServerRef {
+    pub fn new(addr: IpAddr, port: u16, inner: Box<dyn ServerRef>) -> Self {
+        Self { addr, port, inner }
+    }
+
     /// Returns the IP address that the listener is bound to
     pub fn ip_addr(&self) -> IpAddr {
         self.addr

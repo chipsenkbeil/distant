@@ -16,6 +16,9 @@ use tokio::task::JoinHandle;
 mod config;
 pub use config::*;
 
+mod ext;
+pub use ext::*;
+
 router!(DistantManagerClientRouter {
     auth_transport: Request<Auth> => Response<Auth>,
     manager_transport: Response<ManagerResponse> => Request<ManagerRequest>,
