@@ -12,7 +12,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["distant-core", "distant-net", "distant-service", "distant-ssh2"]
+members = ["distant-core", "distant-net", "distant-ssh2"]
 
 [profile.release]
 opt-level = 'z'
@@ -53,8 +53,8 @@ distant-ssh2 = { version = "=0.17.0", path = "distant-ssh2", default-features = 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.19"
 
-# [target.'cfg(windows)'.dependencies]
-# sysinfo = "0.23.2"
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.4.0"
 
 [dev-dependencies]
 assert_cmd = "2.0.4"

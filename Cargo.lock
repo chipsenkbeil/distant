@@ -749,6 +749,7 @@ dependencies = [
  "toml_edit",
  "uriparse",
  "whoami",
+ "windows-service",
 ]
 
 [[package]]
@@ -805,16 +806,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "distant-service"
-version = "0.17.0"
-dependencies = [
- "clap",
- "fork",
- "serde",
- "windows-service",
 ]
 
 [[package]]
