@@ -11,6 +11,18 @@ static PROJECT_DIR: Lazy<ProjectDirs> = Lazy::new(|| {
 pub static CONFIG_FILE_PATH: Lazy<PathBuf> =
     Lazy::new(|| PROJECT_DIR.config_dir().join("config.toml"));
 
+/// Path to log file for distant client
+pub static CLIENT_LOG_FILE_PATH: Lazy<PathBuf> =
+    Lazy::new(|| PROJECT_DIR.cache_dir().join("client.log"));
+
+/// Path to log file for distant manager
+pub static MANAGER_LOG_FILE_PATH: Lazy<PathBuf> =
+    Lazy::new(|| PROJECT_DIR.cache_dir().join("manager.log"));
+
+/// Path to log file for distant server
+pub static SERVER_LOG_FILE_PATH: Lazy<PathBuf> =
+    Lazy::new(|| PROJECT_DIR.cache_dir().join("server.log"));
+
 /// For Linux, this uses the runtime path. For Mac, this uses the tmp path
 ///
 /// * `/run/user/1001/distant/distant.sock`

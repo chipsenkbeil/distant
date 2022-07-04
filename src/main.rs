@@ -21,7 +21,7 @@ async fn main() {
             let logger = cli.init_logger();
             if let Err(x) = cli.run().await {
                 if !x.is_silent() {
-                    error!("Exiting due to error: {}", x);
+                    error!("{}", x);
                 }
                 logger.flush();
                 logger.shutdown();

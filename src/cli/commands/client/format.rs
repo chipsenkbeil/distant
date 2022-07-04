@@ -1,4 +1,4 @@
-use crate::config::ReplFormat;
+use clap::ValueEnum;
 use distant_core::{
     data::{ChangeKind, DistantMsg, DistantResponseData, Error, Metadata, SystemInfo},
     net::Response,
@@ -7,42 +7,53 @@ use log::*;
 use std::io;
 use std::io::Write;
 
-/// Represents the output content and destination
-pub enum ResponseOut {
-    Stdout(Vec<u8>),
-    StdoutLine(Vec<u8>),
-    Stderr(Vec<u8>),
-    StderrLine(Vec<u8>),
-    None,
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+pub enum Format {
+    /// Sends and receives data in JSON format
+    Json,
+
+    /// Commands are traditional shell commands and output responses are
+    /// inline with what is expected of a program's output in a shell
+    Shell,
 }
 
-impl ResponseOut {
+impl Default for Format {
+    fn default() -> Self {
+        Self::Shell
+    }
+}
+
+pub struct Formatter {
+    format: Format,
+}
+
+impl Formatter {
     /// Create a new output message for the given response based on the specified format
-    pub fn new(
-        format: ReplFormat,
-        res: Response<DistantMsg<DistantResponseData>>,
-    ) -> io::Result<ResponseOut> {
-        Ok(match format {
-            ReplFormat::Json => ResponseOut::StdoutLine(
+    pub fn new(format: Format) -> Self {
+        Self { format }
+    }
+
+    /// Consumes the output message, printing it based on its configuration
+    pub fn print(&self, res: Response<DistantMsg<DistantResponseData>>) -> io::Result<()> {
+        let output = match self.format {
+            Format::Json => Output::StdoutLine(
                 serde_json::to_vec(&res)
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
             ),
 
             // NOTE: For shell, we assume a singular entry in the response's payload
-            ReplFormat::Shell if res.payload.is_batch() => {
+            Format::Shell if res.payload.is_batch() => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Shell does not support batch responses",
                 ))
             }
-            ReplFormat::Shell => format_shell(res.payload.into_single().unwrap()),
-        })
-    }
+            Format::Shell => format_shell(res.payload.into_single().unwrap()),
+        };
 
-    /// Consumes the output message, printing it based on its configuration
-    pub fn print(self) {
-        match self {
-            Self::Stdout(x) => {
+        match output {
+            Output::Stdout(x) => {
                 // NOTE: Because we are not including a newline in the output,
                 //       it is not guaranteed to be written out. In the case of
                 //       LSP protocol, the JSON content is not followed by a
@@ -56,7 +67,7 @@ impl ResponseOut {
                     error!("Failed to flush stdout: {}", x);
                 }
             }
-            Self::StdoutLine(x) => {
+            Output::StdoutLine(x) => {
                 if let Err(x) = io::stdout().lock().write_all(&x) {
                     error!("Failed to write stdout: {}", x);
                 }
@@ -65,7 +76,7 @@ impl ResponseOut {
                     error!("Failed to write stdout newline: {}", x);
                 }
             }
-            Self::Stderr(x) => {
+            Output::Stderr(x) => {
                 // NOTE: Because we are not including a newline in the output,
                 //       it is not guaranteed to be written out. In the case of
                 //       LSP protocol, the JSON content is not followed by a
@@ -79,7 +90,7 @@ impl ResponseOut {
                     error!("Failed to flush stderr: {}", x);
                 }
             }
-            Self::StderrLine(x) => {
+            Output::StderrLine(x) => {
                 if let Err(x) = io::stderr().lock().write_all(&x) {
                     error!("Failed to write stderr: {}", x);
                 }
@@ -88,20 +99,31 @@ impl ResponseOut {
                     error!("Failed to write stderr newline: {}", x);
                 }
             }
-            Self::None => {}
+            Output::None => {}
         }
+
+        Ok(())
     }
 }
 
-fn format_shell(data: DistantResponseData) -> ResponseOut {
+/// Represents the output content and destination
+enum Output {
+    Stdout(Vec<u8>),
+    StdoutLine(Vec<u8>),
+    Stderr(Vec<u8>),
+    StderrLine(Vec<u8>),
+    None,
+}
+
+fn format_shell(data: DistantResponseData) -> Output {
     match data {
-        DistantResponseData::Ok => ResponseOut::None,
+        DistantResponseData::Ok => Output::None,
         DistantResponseData::Error(Error { kind, description }) => {
-            ResponseOut::StderrLine(format!("Failed ({}): '{}'.", kind, description).into_bytes())
+            Output::StderrLine(format!("Failed ({}): '{}'.", kind, description).into_bytes())
         }
-        DistantResponseData::Blob { data } => ResponseOut::StdoutLine(data),
-        DistantResponseData::Text { data } => ResponseOut::StdoutLine(data.into_bytes()),
-        DistantResponseData::DirEntries { entries, .. } => ResponseOut::StdoutLine(
+        DistantResponseData::Blob { data } => Output::StdoutLine(data),
+        DistantResponseData::Text { data } => Output::StdoutLine(data.into_bytes()),
+        DistantResponseData::DirEntries { entries, .. } => Output::StdoutLine(
             entries
                 .into_iter()
                 .map(|entry| {
@@ -125,7 +147,7 @@ fn format_shell(data: DistantResponseData) -> ResponseOut {
                 .join("\n")
                 .into_bytes(),
         ),
-        DistantResponseData::Changed(change) => ResponseOut::StdoutLine(
+        DistantResponseData::Changed(change) => Output::StdoutLine(
             format!(
                 "{}{}",
                 match change.kind {
@@ -147,9 +169,9 @@ fn format_shell(data: DistantResponseData) -> ResponseOut {
         ),
         DistantResponseData::Exists { value: exists } => {
             if exists {
-                ResponseOut::StdoutLine(b"true".to_vec())
+                Output::StdoutLine(b"true".to_vec())
             } else {
-                ResponseOut::StdoutLine(b"false".to_vec())
+                Output::StdoutLine(b"false".to_vec())
             }
         }
         DistantResponseData::Metadata(Metadata {
@@ -162,7 +184,7 @@ fn format_shell(data: DistantResponseData) -> ResponseOut {
             modified,
             unix,
             windows,
-        }) => ResponseOut::StdoutLine(
+        }) => Output::StdoutLine(
             format!(
                 concat!(
                     "{}",
@@ -252,18 +274,16 @@ fn format_shell(data: DistantResponseData) -> ResponseOut {
             )
             .into_bytes(),
         ),
-        DistantResponseData::ProcSpawned { .. } => ResponseOut::None,
-        DistantResponseData::ProcStdout { data, .. } => ResponseOut::Stdout(data),
-        DistantResponseData::ProcStderr { data, .. } => ResponseOut::Stderr(data),
+        DistantResponseData::ProcSpawned { .. } => Output::None,
+        DistantResponseData::ProcStdout { data, .. } => Output::Stdout(data),
+        DistantResponseData::ProcStderr { data, .. } => Output::Stderr(data),
         DistantResponseData::ProcDone { id, success, code } => {
             if success {
-                ResponseOut::None
+                Output::None
             } else if let Some(code) = code {
-                ResponseOut::StderrLine(
-                    format!("Proc {} failed with code {}", id, code).into_bytes(),
-                )
+                Output::StderrLine(format!("Proc {} failed with code {}", id, code).into_bytes())
             } else {
-                ResponseOut::StderrLine(format!("Proc {} failed", id).into_bytes())
+                Output::StderrLine(format!("Proc {} failed", id).into_bytes())
             }
         }
         DistantResponseData::SystemInfo(SystemInfo {
@@ -272,7 +292,7 @@ fn format_shell(data: DistantResponseData) -> ResponseOut {
             arch,
             current_dir,
             main_separator,
-        }) => ResponseOut::StdoutLine(
+        }) => Output::StdoutLine(
             format!(
                 concat!(
                     "Family: {:?}\n",

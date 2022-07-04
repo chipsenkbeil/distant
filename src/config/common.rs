@@ -1,34 +1,7 @@
 use crate::Merge;
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::{
-    net::{AddrParseError, IpAddr},
-    path::PathBuf,
-    str::FromStr,
-};
-
-/// Represents options for binding a server to an IP address
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BindAddress {
-    Ssh,
-    Any,
-    Ip(IpAddr),
-}
-
-impl FromStr for BindAddress {
-    type Err = AddrParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.trim();
-        Ok(if s.eq_ignore_ascii_case("ssh") {
-            Self::Ssh
-        } else if s.eq_ignore_ascii_case("any") {
-            Self::Any
-        } else {
-            s.parse()?
-        })
-    }
-}
+use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[clap(rename_all = "snake_case")]

@@ -26,9 +26,3 @@ impl Merge<CommonConfig> for ServerConfig {
         self.common.merge(other);
     }
 }
-
-impl Merge<ServerListenConfig> for ServerConfig {
-    fn merge(&mut self, other: ServerListenConfig) {
-        self.listen.merge(other);
-    }
-}

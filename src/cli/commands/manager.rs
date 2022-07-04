@@ -1,29 +1,12 @@
 use crate::{
-    cli::Client,
+    cli::{CliResult, Client},
     config::{ManagerConfig, ServiceKind},
     Merge,
 };
-use clap::Args;
+use clap::Subcommand;
 use distant_core::DistantManager;
-use std::io;
 
-#[derive(Args, Debug)]
-pub struct Subcommand {
-    #[clap(flatten)]
-    pub config: ManagerConfig,
-
-    #[clap(subcommand)]
-    pub cmd: ManagerSubcommand,
-}
-
-impl Subcommand {
-    pub async fn run(self, mut config: ManagerConfig) -> io::Result<()> {
-        config.merge(self.config);
-        self.cmd.run(config).await
-    }
-}
-
-#[derive(Debug, clap::Subcommand)]
+#[derive(Debug, Subcommand)]
 pub enum ManagerSubcommand {
     /// Start the manager as a service
     Start {
@@ -48,7 +31,11 @@ pub enum ManagerSubcommand {
     },
 
     /// Listen for incoming requests as a manager
-    Listen,
+    Listen {
+        /// If specified, will fork the process to run as a standalone daemon
+        #[clap(long)]
+        daemon: bool,
+    },
 
     /// Retrieve information about a specific connection
     Info { id: usize },
@@ -61,21 +48,22 @@ pub enum ManagerSubcommand {
 }
 
 impl ManagerSubcommand {
-    pub async fn run(self, config: ManagerConfig) -> io::Result<()> {
+    pub async fn run(self, config: ManagerConfig) -> CliResult<()> {
         match self {
             Self::Start { kind } => todo!(),
             Self::Stop => {
-                Client::new(config.network)
+                let _ = Client::new(config.network)
                     .connect()
                     .await?
                     .shutdown()
-                    .await
+                    .await?;
+                Ok(())
             }
 
             Self::Install { kind } => todo!(),
             Self::Uninstall { kind } => todo!(),
 
-            Self::Listen => todo!(),
+            Self::Listen { daemon } => todo!(),
             Self::Info { id } => {
                 let info = Client::new(config.network)
                     .connect()
@@ -98,7 +86,14 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::Kill { id } => Client::new(config.network).connect().await?.kill(id).await,
+            Self::Kill { id } => {
+                let _ = Client::new(config.network)
+                    .connect()
+                    .await?
+                    .kill(id)
+                    .await?;
+                Ok(())
+            }
         }
     }
 }

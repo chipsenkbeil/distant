@@ -1,5 +1,7 @@
+use derive_more::Display;
+
 /// Exit codes following https://www.freebsd.org/cgi/man.cgi?query=sysexits&sektion=3
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Hash)]
 pub enum ExitCode {
     /// EX_USAGE (64) - being used when arguments missing or bad arguments provided to CLI
     Usage,
@@ -52,6 +54,24 @@ impl ExitCode {
             Self::TempFail => 75,
             Self::Protocol => 76,
             Self::Custom(x) => x,
+        }
+    }
+}
+
+impl From<i32> for ExitCode {
+    fn from(code: i32) -> Self {
+        match code {
+            64 => Self::Usage,
+            65 => Self::DataErr,
+            66 => Self::NoInput,
+            68 => Self::NoHost,
+            69 => Self::Unavailable,
+            70 => Self::Software,
+            71 => Self::OsErr,
+            74 => Self::IoError,
+            75 => Self::TempFail,
+            76 => Self::Protocol,
+            x => Self::Custom(x),
         }
     }
 }

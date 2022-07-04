@@ -1,15 +1,20 @@
-mod action;
-mod launch;
-mod listen;
-mod lsp;
-mod manager;
-mod repl;
-mod shell;
+use clap::Subcommand;
 
-pub use action::Subcommand as Action;
-pub use launch::Subcommand as Launch;
-pub use listen::Subcommand as Listen;
-pub use lsp::Subcommand as Lsp;
-pub use manager::Subcommand as Manager;
-pub use repl::Subcommand as Repl;
-pub use shell::Subcommand as Shell;
+mod client;
+mod manager;
+mod server;
+
+#[derive(Debug, Subcommand)]
+pub enum DistantSubcommand {
+    /// Perform client commands
+    #[clap(subcommand)]
+    Client(client::ClientSubcommand),
+
+    /// Perform manager commands
+    #[clap(subcommand)]
+    Manager(manager::ManagerSubcommand),
+
+    /// Perform server commands
+    #[clap(subcommand)]
+    Server(server::ServerSubcommand),
+}

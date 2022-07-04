@@ -1,4 +1,5 @@
-use crate::{constants::MAX_PIPE_CHUNK_SIZE, stdin};
+use super::stdin;
+use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use distant_core::{
     RemoteLspStderr, RemoteLspStdin, RemoteLspStdout, RemoteStderr, RemoteStdin, RemoteStdout,
 };

@@ -6,15 +6,7 @@ use distant_core::{
 use log::*;
 use std::io;
 
-mod buf;
-mod format;
-mod link;
 mod msg;
-mod stdin;
-
-pub use buf::*;
-pub use format::*;
-pub use link::*;
 pub use msg::*;
 
 pub struct Client {
@@ -40,12 +32,12 @@ impl Client {
     }
 
     /// Configure client to talk over stdin and stdout using messages
-    pub fn using_msg_stdin_stdout(&mut self) {
+    pub fn using_msg_stdin_stdout(self) -> Self {
         self.using_msg(MsgSender::from_stdout(), MsgReceiver::from_stdin())
     }
 
     /// Configure client to use a pair of msg sender and receiver
-    pub fn using_msg(&mut self, tx: MsgSender, rx: MsgReceiver) {
+    pub fn using_msg(mut self, tx: MsgSender, rx: MsgReceiver) -> Self {
         self.config = DistantManagerClientConfig {
             on_challenge: {
                 let tx = tx.clone();
@@ -113,6 +105,7 @@ impl Client {
                 })
             },
         };
+        self
     }
 
     /// Connect to the manager listening on the socket or windows pipe based on
