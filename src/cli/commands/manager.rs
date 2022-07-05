@@ -1,7 +1,6 @@
 use crate::{
     cli::{CliResult, Client},
     config::{ManagerConfig, ServiceKind},
-    Merge,
 };
 use clap::Subcommand;
 use distant_core::DistantManager;
@@ -48,7 +47,12 @@ pub enum ManagerSubcommand {
 }
 
 impl ManagerSubcommand {
-    pub async fn run(self, config: ManagerConfig) -> CliResult<()> {
+    pub fn run(self, config: ManagerConfig) -> CliResult<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(Self::async_run(self, config))
+    }
+
+    async fn async_run(self, config: ManagerConfig) -> CliResult<()> {
         match self {
             Self::Start { kind } => todo!(),
             Self::Stop => {

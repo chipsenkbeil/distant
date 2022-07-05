@@ -14,12 +14,11 @@
 use distant::{Cli, ExitCodeError};
 use log::*;
 
-#[tokio::main]
-async fn main() {
-    match Cli::initialize().await {
+fn main() {
+    match Cli::initialize() {
         Ok(cli) => {
             let logger = cli.init_logger();
-            if let Err(x) = cli.run().await {
+            if let Err(x) = cli.run() {
                 if !x.is_silent() {
                     error!("{}", x);
                 }

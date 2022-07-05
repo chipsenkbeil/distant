@@ -4,7 +4,8 @@ use derive_more::Display;
 use distant_core::net::PortRange;
 use serde::{Deserialize, Serialize};
 use std::{
-    net::{AddrParseError, IpAddr},
+    env, io,
+    net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr},
     path::PathBuf,
     str::FromStr,
 };
@@ -25,7 +26,7 @@ pub struct ServerListenConfig {
     ///
     /// 3. `IP`: the server will attempt to bind to the specified IP address.
     #[clap(long, value_name = "ssh|any|IP")]
-    host: Option<BindAddress>,
+    pub host: Option<BindAddress>,
 
     /// Set the port(s) that the server will attempt to bind to
     ///
@@ -34,22 +35,22 @@ pub struct ServerListenConfig {
     ///
     /// Please note that this option does not affect the server-side port used by SSH
     #[clap(long, value_name = "PORT[:PORT2]")]
-    port: Option<PortRange>,
+    pub port: Option<PortRange>,
 
     /// If specified, will bind to the ipv6 interface if host is "any" instead of ipv4
     #[clap(short = '6', long)]
-    use_ipv6: bool,
+    pub use_ipv6: bool,
 
     /// The time in seconds before shutting down the server if there are no active
     /// connections. The countdown begins once all connections have closed and
     /// stops when a new connection is made. In not specified, the server will not
     /// shutdown at any point when there are no active connections.
     #[clap(long)]
-    shutdown_after: Option<f32>,
+    pub shutdown_after: Option<f32>,
 
     /// Changes the current working directory (cwd) to the specified directory
     #[clap(long)]
-    current_dir: Option<PathBuf>,
+    pub current_dir: Option<PathBuf>,
 }
 
 impl Merge for ServerListenConfig {
@@ -93,5 +94,31 @@ impl FromStr for BindAddress {
         } else {
             s.parse()?
         })
+    }
+}
+
+impl BindAddress {
+    /// Resolves address into valid IP; in the case of "any", will leverage the
+    /// `use_ipv6` flag to determine if binding should use ipv4 or ipv6
+    pub fn resolve(self, use_ipv6: bool) -> io::Result<IpAddr> {
+        match self {
+            Self::Ssh => {
+                let ssh_connection = env::var("SSH_CONNECTION")
+                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                let ip_str = ssh_connection.split(' ').nth(2).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        "SSH_CONNECTION missing 3rd argument (host ip)",
+                    )
+                })?;
+                let ip = ip_str
+                    .parse::<IpAddr>()
+                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                Ok(ip)
+            }
+            Self::Any if use_ipv6 => Ok(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
+            Self::Any => Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            Self::Ip(addr) => Ok(addr),
+        }
     }
 }

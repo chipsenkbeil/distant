@@ -43,7 +43,7 @@ struct Opt {
 
 impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
-    pub async fn initialize() -> CliResult<Self> {
+    pub fn initialize() -> CliResult<Self> {
         let Opt {
             common,
             config_path,
@@ -51,7 +51,7 @@ impl Cli {
         } = Opt::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
         // Try to load a configuration file, defaulting if no config file is found
-        let mut config = match Config::load_from_file(config_path.as_path()).await {
+        let mut config = match Config::blocking_load_from_file(config_path.as_path()) {
             Ok(config) => config,
             Err(x) if x.kind() == io::ErrorKind::NotFound => Config::default(),
             Err(x) => return Err(x.into()),
@@ -119,11 +119,11 @@ impl Cli {
     }
 
     /// Runs the CLI
-    pub async fn run(self) -> CliResult<()> {
+    pub fn run(self) -> CliResult<()> {
         match self.command {
-            DistantSubcommand::Client(cmd) => cmd.run(self.config.client).await,
-            DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager).await,
-            DistantSubcommand::Server(cmd) => cmd.run(self.config.server).await,
+            DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
+            DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),
+            DistantSubcommand::Server(cmd) => cmd.run(self.config.server),
         }
     }
 

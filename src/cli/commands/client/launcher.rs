@@ -18,6 +18,7 @@ use tokio::process::Command;
 pub struct Launcher;
 
 impl Launcher {
+    /// Spawn a remote distant server via ssh and return the single-key credentials
     pub async fn spawn_remote_server(
         format: Format,
         config: ClientLaunchConfig,
@@ -37,7 +38,7 @@ impl Launcher {
 
 /// Spawns a remote server using native ssh library that listens for requests
 ///
-/// Returns the session associated with the server
+/// Returns the credentials associated with the server
 #[cfg(any(feature = "libssh", feature = "ssh2"))]
 async fn native_spawn_remote_server(
     format: Format,
@@ -164,7 +165,7 @@ async fn native_spawn_remote_server(
 
 /// Spawns a remote server using external ssh command that listens for requests
 ///
-/// Returns the session associated with the server
+/// Returns the credentials associated with the server
 async fn external_spawn_remote_server(
     config: ClientLaunchConfig,
     destination: impl AsRef<Destination>,

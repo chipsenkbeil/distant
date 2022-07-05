@@ -83,7 +83,12 @@ impl ClientSubcommand {
         }
     }
 
-    pub async fn run(self, config: ClientConfig) -> CliResult<()> {
+    pub fn run(self, config: ClientConfig) -> CliResult<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(Self::async_run(self, config))
+    }
+
+    async fn async_run(self, config: ClientConfig) -> CliResult<()> {
         match self {
             Self::Action { request } => {
                 let mut client = Client::new(config.network).connect().await?;
