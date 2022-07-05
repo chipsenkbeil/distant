@@ -64,11 +64,36 @@ impl ServerSubcommand {
 
     #[cfg(windows)]
     fn run_daemon(self, _config: ServerConfig) -> CliResult<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows does not support daemon via fork",
-        )
-        .into())
+        use std::{
+            os::windows::process::CommandExt,
+            process::{Command, Stdio},
+        };
+        let mut args = std::env::args_os();
+        let program = args
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Fork failed"))?;
+
+        // Remove daemon argument to to ensure runs in foreground, otherwise we would fork bomb ourselves
+        let args = args.filter(|arg| {
+            !arg.to_str()
+                .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
+                .unwrap_or_default()
+        });
+
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        // TODO: Can the detached process still communicate to stdout?
+        let child = Command::new(program)
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        info!("[distant detached, pid = {}]", child.id());
+        Ok(())
     }
 
     #[cfg(unix)]

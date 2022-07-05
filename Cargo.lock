@@ -824,6 +824,7 @@ dependencies = [
  "indoc",
  "log",
  "once_cell",
+ "openssl-src",
  "predicates",
  "rand 0.8.5",
  "rpassword",

@@ -7,8 +7,8 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
-#[cfg(windows)]
+/* #[cfg(windows)]
 mod windows;
 
 #[cfg(windows)]
-pub use windows::*;
+pub use windows::*; */

@@ -14,7 +14,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 async-trait = "0.1.56"
 bytes = "1.1.0"
-chacha20poly1305 = "0.10.0-pre"
+chacha20poly1305 = "=0.10.0-pre"
 ciborium = "0.2.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
 futures = "0.3.21"

@@ -23,12 +23,13 @@ distant-core = { version = "=0.17.0", path = "../distant-core" }
 futures = "0.3.16"
 hex = "0.4.3"
 log = "0.4.14"
+openssl-src = "=300.0.7+3.0.3"
 rand = { version = "0.8.4", features = ["getrandom"] }
 rpassword = "6.0.1"
 shell-words = "1.0"
 smol = "1.2"
 tokio = { version = "1.12.0", features = ["full"] }
-wezterm-ssh = { version = "0.4.0", default-features = false }
+wezterm-ssh = { version = "=0.4.0", default-features = false }
 
 # Optional serde support for data structures
 serde = { version = "1.0.126", features = ["derive"], optional = true }
