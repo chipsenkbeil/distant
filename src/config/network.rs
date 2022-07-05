@@ -31,7 +31,7 @@ impl NetworkConfig {
     pub fn windows_pipe_name_or_default(&self) -> &str {
         self.windows_pipe
             .as_deref()
-            .unwrap_or(crate::constants::WINDOWS_PIPE_NAME.as_str())
+            .unwrap_or(crate::constants::WINDOWS_PIPE_NAME)
     }
 }
 
