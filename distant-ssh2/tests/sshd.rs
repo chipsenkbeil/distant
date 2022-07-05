@@ -472,5 +472,8 @@ pub async fn launched_client(
         .await
         .unwrap();
 
-    ssh_client.launch(Default::default()).await.unwrap()
+    ssh_client
+        .launch_and_connect(Default::default())
+        .await
+        .unwrap()
 }

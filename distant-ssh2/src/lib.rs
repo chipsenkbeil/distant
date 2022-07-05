@@ -450,7 +450,7 @@ impl Ssh {
 
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote
     /// distant server that is spawned using the ssh client
-    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
+    pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -489,7 +489,7 @@ impl Ssh {
             ));
         }
 
-        let info = self.launch_impl(opts).await?;
+        let info = self.launch(opts).await?;
         let key = info.key;
         let codec = XChaCha20Poly1305Codec::from(key);
 
@@ -508,9 +508,9 @@ impl Ssh {
         Err(err.expect("Err set above"))
     }
 
-    /// Consume [`Ssh`] and produce a distant [`ClientInfo`] representing a remote
+    /// Consume [`Ssh`] and produce a distant [`LaunchInfo`] representing a remote
     /// distant server that is spawned using the ssh client
-    async fn launch_impl(self, opts: DistantLaunchOpts) -> io::Result<LaunchInfo> {
+    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<LaunchInfo> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -526,7 +526,9 @@ impl Ssh {
 
         // Build arguments for distant to execute listen subcommand
         let mut args = vec![
+            String::from("server"),
             String::from("listen"),
+            String::from("--daemon"),
             String::from("--host"),
             String::from("ssh"),
         ];

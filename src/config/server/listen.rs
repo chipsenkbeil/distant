@@ -1,5 +1,6 @@
 use crate::Merge;
 use clap::Args;
+use derive_more::Display;
 use distant_core::net::PortRange;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -71,9 +72,11 @@ impl Merge for ServerListenConfig {
 }
 
 /// Represents options for binding a server to an IP address
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BindAddress {
+    #[display = "ssh"]
     Ssh,
+    #[display = "any"]
     Any,
     Ip(IpAddr),
 }

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 mod buf;
 mod format;
+mod launcher;
 mod link;
 mod lsp;
 mod shell;
@@ -18,6 +19,7 @@ mod stdin;
 
 pub use format::Format;
 use format::Formatter;
+use launcher::Launcher;
 use lsp::Lsp;
 use shell::Shell;
 
