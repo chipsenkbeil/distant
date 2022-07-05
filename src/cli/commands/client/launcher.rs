@@ -1,27 +1,38 @@
 use super::Format;
 use crate::{
-    cli::{CliError, CliResult},
+    cli::{
+        client::{MsgReceiver, MsgSender},
+        CliResult,
+    },
     config::{BindAddress, ClientLaunchConfig},
     constants::USERNAME,
 };
-use distant_core::Destination;
+use distant_core::{
+    net::{AuthErrorKind, AuthQuestion, AuthRequest, AuthResponse, AuthVerifyKind},
+    Destination, DistantSingleKeyCredentials,
+};
 use log::*;
-use std::io;
+use std::{collections::HashMap, io};
 use tokio::process::Command;
 
-async fn spawn_remote_server(
-    config: ClientLaunchConfig,
-    destination: Destination,
-) -> CliResult<SessionInfo> {
-    #[cfg(any(feature = "libssh", feature = "ssh2"))]
-    if config.ssh.external {
-        external_spawn_remote_server(config, destination).await
-    } else {
-        native_spawn_remote_server(config, destination).await
-    }
+pub struct Launcher;
 
-    #[cfg(not(any(feature = "libssh", feature = "ssh2")))]
-    external_spawn_remote_server(config, destination).await
+impl Launcher {
+    pub async fn spawn_remote_server(
+        format: Format,
+        config: ClientLaunchConfig,
+        destination: impl AsRef<Destination>,
+    ) -> CliResult<DistantSingleKeyCredentials> {
+        #[cfg(any(feature = "libssh", feature = "ssh2"))]
+        if config.ssh.external {
+            external_spawn_remote_server(config, destination).await
+        } else {
+            native_spawn_remote_server(format, config, destination).await
+        }
+
+        #[cfg(not(any(feature = "libssh", feature = "ssh2")))]
+        external_spawn_remote_server(config, destination).await
+    }
 }
 
 /// Spawns a remote server using native ssh library that listens for requests
@@ -29,95 +40,126 @@ async fn spawn_remote_server(
 /// Returns the session associated with the server
 #[cfg(any(feature = "libssh", feature = "ssh2"))]
 async fn native_spawn_remote_server(
+    format: Format,
     config: ClientLaunchConfig,
-    destination: Destination,
-) -> CliResult<SessionInfo> {
-    trace!("native_spawn_remote_server({:?})", cmd);
-    use distant_ssh2::{
-        IntoDistantSessionOpts, SshAuthEvent, SshAuthHandler, SshSession, SshSessionOpts,
-    };
+    destination: impl AsRef<Destination>,
+) -> CliResult<DistantSingleKeyCredentials> {
+    let destination = destination.as_ref();
+    trace!(
+        "native_spawn_remote_server({:?}, {:?}, {})",
+        format,
+        config,
+        destination
+    );
+    use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthHandler, SshOpts};
 
-    let host = cmd.host;
+    let host = destination
+        .host()
+        .map(ToString::to_string)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing host"))?;
 
     // Build our options based on cli input
-    let mut opts = Ssh2SessionOpts::default();
-    if let Some(path) = cmd.identity_file {
+    let mut opts = SshOpts::default();
+    if let Some(path) = config.ssh.identity_file {
         opts.identity_files.push(path);
     }
-    opts.port = Some(cmd.port);
-    opts.user = Some(cmd.username);
+
+    opts.port = destination.port().or(config.ssh.port);
+    opts.user = Some(
+        destination
+            .username()
+            .map(ToString::to_string)
+            .or(config.ssh.username)
+            .unwrap_or_else(|| USERNAME.to_string()),
+    );
 
     debug!("Connecting to {} {:#?}", host, opts);
-    let mut ssh_session = Ssh2Session::connect(host.as_str(), opts)?;
+    let mut ssh = Ssh::connect(host.as_str(), opts)?;
 
     debug!("Authenticating against {}", host);
-    ssh_session
-        .authenticate(match cmd.format {
-            Format::Shell => Ssh2AuthHandler::default(),
-            Format::Json => {
-                let tx = MsgSender::from_stdout();
-                let tx_2 = tx.clone();
-                let tx_3 = tx.clone();
-                let tx_4 = tx.clone();
-                let rx = MsgReceiver::from_stdin();
-                let rx_2 = rx.clone();
+    ssh.authenticate(match format {
+        Format::Shell => SshAuthHandler::default(),
+        Format::Json => {
+            let tx = MsgSender::from_stdout();
+            let tx_2 = tx.clone();
+            let tx_3 = tx.clone();
+            let tx_4 = tx.clone();
+            let rx = MsgReceiver::from_stdin();
+            let rx_2 = rx.clone();
 
-                Ssh2AuthHandler {
-                    on_authenticate: Box::new(move |ev| {
-                        let _ = tx.send_blocking(&SshMsg::Authenticate(ev));
+            SshAuthHandler {
+                on_authenticate: Box::new(move |ev| {
+                    let mut extra = HashMap::new();
+                    extra.insert("instructions".to_string(), ev.instructions);
+                    extra.insert("username".to_string(), ev.username);
 
-                        let msg: SshMsg = rx.recv_blocking()?;
-                        match msg {
-                            SshMsg::AuthenticateAnswer { answers } => Ok(answers),
-                            x => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidInput,
-                                    format!("Invalid response received: {:?}", x),
-                                ))
-                            }
-                        }
-                    }),
-                    on_banner: Box::new(move |banner| {
-                        let _ = tx_2.send_blocking(&SshMsg::Banner {
-                            text: banner.to_string(),
+                    let mut questions = Vec::new();
+                    for prompt in ev.prompts {
+                        let mut extra = HashMap::new();
+                        extra.insert("echo".to_string(), prompt.echo.to_string());
+
+                        questions.push(AuthQuestion {
+                            text: prompt.prompt,
+                            extra,
                         });
-                    }),
-                    on_host_verify: Box::new(move |host| {
-                        let _ = tx_3.send_blocking(&SshMsg::HostVerify {
-                            host: host.to_string(),
-                        })?;
+                    }
 
-                        let msg: SshMsg = rx_2.recv_blocking()?;
-                        match msg {
-                            SshMsg::HostVerifyAnswer { answer } => Ok(answer),
-                            x => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidInput,
-                                    format!("Invalid response received: {:?}", x),
-                                ))
-                            }
+                    let _ = tx.send_blocking(&AuthRequest::Challenge { questions, extra });
+
+                    let msg: AuthResponse = rx.recv_blocking()?;
+                    match msg {
+                        AuthResponse::Challenge { answers } => Ok(answers),
+                        x => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid response received: {:?}", x),
+                            ))
                         }
-                    }),
-                    on_error: Box::new(move |err| {
-                        let _ = tx_4.send_blocking(&SshMsg::Error {
-                            msg: err.to_string(),
-                        });
-                    }),
-                }
+                    }
+                }),
+                on_banner: Box::new(move |banner| {
+                    let _ = tx_2.send_blocking(&AuthRequest::Info {
+                        text: banner.to_string(),
+                    });
+                }),
+                on_host_verify: Box::new(move |host| {
+                    let _ = tx_3.send_blocking(&AuthRequest::Verify {
+                        kind: AuthVerifyKind::Host,
+                        text: host.to_string(),
+                    })?;
+
+                    let msg: AuthResponse = rx_2.recv_blocking()?;
+                    match msg {
+                        AuthResponse::Verify { valid } => Ok(valid),
+                        x => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid response received: {:?}", x),
+                            ))
+                        }
+                    }
+                }),
+                on_error: Box::new(move |err| {
+                    let _ = tx_4.send_blocking(&AuthRequest::Error {
+                        kind: AuthErrorKind::Unknown,
+                        text: err.to_string(),
+                    });
+                }),
             }
-        })
-        .await?;
+        }
+    })
+    .await?;
 
-    debug!("Mapping session for {}", host);
-    let session_info = ssh_session
-        .into_distant_session_info(IntoDistantSessionOpts {
-            binary: cmd.distant,
-            args: cmd.extra_server_args.unwrap_or_default(),
+    debug!("Launching for {}", host);
+    let credentials = ssh
+        .launch(DistantLaunchOpts {
+            binary: config.distant.bin.unwrap_or_else(|| "distant".to_string()),
+            args: config.distant.args.unwrap_or_default(),
             ..Default::default()
         })
         .await?;
 
-    Ok(session_info)
+    Ok(credentials)
 }
 
 /// Spawns a remote server using external ssh command that listens for requests
@@ -125,10 +167,16 @@ async fn native_spawn_remote_server(
 /// Returns the session associated with the server
 async fn external_spawn_remote_server(
     config: ClientLaunchConfig,
-    destination: Destination,
-) -> CliResult<SessionInfo> {
+    destination: impl AsRef<Destination>,
+) -> CliResult<DistantSingleKeyCredentials> {
+    let destination = destination.as_ref();
+    trace!(
+        "external_spawn_remote_server({:?}, {})",
+        config,
+        destination
+    );
     let distant_command = format!(
-        "{} listen --host {} {}",
+        "{} server listen --daemon --host {} {}",
         config.distant.bin.unwrap_or_else(|| "distant".to_string()),
         config.distant.bind_server.unwrap_or(BindAddress::Ssh),
         config.distant.args.unwrap_or_default(),
@@ -169,19 +217,23 @@ async fn external_spawn_remote_server(
     if !out.status.success() {
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            String::from_utf8(out.stderr)?.trim().to_string(),
-        ))
-        .into();
+            String::from_utf8(out.stderr)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
+                .trim()
+                .to_string(),
+        )
+        .into());
     }
 
-    // Parse our output for the specific session line
+    // Parse our output for the specific credentials line
     // NOTE: The host provided on this line isn't valid, so we fill it in with our actual host
-    let out = String::from_utf8(out.stdout)?.trim().to_string();
-    let mut info = out
+    let out = String::from_utf8(out.stdout)
+        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
+        .trim()
+        .to_string();
+    let credentials = out
         .lines()
-        .find_map(|line| line.parse::<SessionInfo>().ok())
-        .ok_or(Error::MissingSessionData)?;
-    info.host = cmd.host;
-
-    Ok(info)
+        .find_map(|line| line.parse::<DistantSingleKeyCredentials>().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing launch info"))?;
+    Ok(credentials)
 }

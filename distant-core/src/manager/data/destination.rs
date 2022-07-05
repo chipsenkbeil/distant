@@ -38,6 +38,12 @@ impl Destination {
     }
 }
 
+impl AsRef<Destination> for &Destination {
+    fn as_ref(&self) -> &Destination {
+        *self
+    }
+}
+
 impl Deref for Destination {
     type Target = URIReference<'static>;
 

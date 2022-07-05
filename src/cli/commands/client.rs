@@ -6,7 +6,7 @@ use crate::{
     config::{ClientConfig, ClientLaunchConfig},
 };
 use clap::Subcommand;
-use distant_core::{Destination, DistantMsg, DistantRequestData};
+use distant_core::{Destination, DistantMsg, DistantRequestData, Extra};
 use std::time::Duration;
 
 mod buf;
@@ -35,6 +35,9 @@ pub enum ClientSubcommand {
     Launch {
         #[clap(flatten)]
         config: ClientLaunchConfig,
+
+        #[clap(short, long, value_enum)]
+        format: Format,
 
         destination: Destination,
     },
@@ -95,9 +98,17 @@ impl ClientSubcommand {
                 Formatter::new(Format::Shell).print(response)?;
             }
             Self::Launch {
-                config,
+                config: launcher_config,
+                format,
                 destination,
-            } => todo!(),
+            } => {
+                let credentials =
+                    Launcher::spawn_remote_server(format, launcher_config, &destination).await?;
+                let mut client = Client::new(config.network).connect().await?;
+                let mut extra = Extra::new();
+                extra.insert("key".to_string(), credentials.key.to_string());
+                let id = client.connect(destination, extra).await?;
+            }
             Self::Lsp { persist, pty, cmd } => {
                 let mut client = Client::new(config.network).connect().await?;
                 let channel = client.open_channel(1).await?;

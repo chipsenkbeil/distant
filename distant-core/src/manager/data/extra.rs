@@ -7,12 +7,7 @@ use std::{
     str::FromStr,
 };
 
-/// `distant` connects and logs into the specified destination, which may be specified as either
-/// `hostname:port` where an attempt to connect to a **distant** server will be made, or a URI of
-/// one of the following forms:
-///
-/// * `distant://hostname:port` - connect to a distant server
-/// * `ssh://[user@]hostname[:port]` - connect to an SSH server
+/// Contains extra information for connections and other use cases
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extra(HashMap<String, String>);
 

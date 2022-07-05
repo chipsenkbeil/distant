@@ -1,7 +1,6 @@
 use crate::{config::BindAddress, Merge};
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
@@ -13,12 +12,6 @@ pub struct ClientLaunchConfig {
     #[clap(flatten)]
     #[serde(flatten)]
     pub ssh: ClientLaunchSshConfig,
-}
-
-impl From<HashMap<String, String>> for ClientLaunchConfig {
-    fn from(map: HashMap<String, String>) -> Self {
-        Self {}
-    }
 }
 
 impl Merge for ClientLaunchConfig {

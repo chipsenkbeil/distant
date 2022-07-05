@@ -85,18 +85,16 @@ impl<const N: usize> From<[u8; N]> for SecretKey<N> {
 impl<const N: usize> FromStr for SecretKey<N> {
     type Err = SecretKeyError;
 
+    /// Parse a str of hex as an N-byte secret key
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = hex::decode(s).map_err(|_| SecretKeyError)?;
         Self::from_slice(&bytes)
     }
 }
 
-pub trait UnprotectedToHexKey {
-    fn unprotected_to_hex_key(&self) -> String;
-}
-
-impl<const N: usize> UnprotectedToHexKey for SecretKey<N> {
-    fn unprotected_to_hex_key(&self) -> String {
-        hex::encode(self.unprotected_as_bytes())
+impl<const N: usize> fmt::Display for SecretKey<N> {
+    /// Display an N-byte secret key as a hex string
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", hex::encode(self.unprotected_as_bytes()))
     }
 }

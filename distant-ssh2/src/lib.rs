@@ -7,7 +7,7 @@ use distant_core::{
         FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
         XChaCha20Poly1305Codec,
     },
-    DistantApiServer, DistantChannelExt, DistantClient,
+    DistantApiServer, DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
 };
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
@@ -23,11 +23,9 @@ use std::{
 use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
 
 mod api;
-mod info;
 mod process;
 
 use api::SshDistantApi;
-pub use info::LaunchInfo;
 
 /// Represents the backend to use for ssh operations
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -489,14 +487,14 @@ impl Ssh {
             ));
         }
 
-        let info = self.launch(opts).await?;
-        let key = info.key;
+        let credentials = self.launch(opts).await?;
+        let key = credentials.key;
         let codec = XChaCha20Poly1305Codec::from(key);
 
         // Try each IP address with the same port to see if one works
         let mut err = None;
         for ip in candidate_ips {
-            let addr = SocketAddr::new(ip, info.port);
+            let addr = SocketAddr::new(ip, credentials.port);
             debug!("Attempting to connect to distant server @ {}", addr);
             match DistantClient::connect_timeout(addr, codec.clone(), timeout).await {
                 Ok(client) => return Ok(client),
@@ -508,9 +506,9 @@ impl Ssh {
         Err(err.expect("Err set above"))
     }
 
-    /// Consume [`Ssh`] and produce a distant [`LaunchInfo`] representing a remote
-    /// distant server that is spawned using the ssh client
-    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<LaunchInfo> {
+    /// Consume [`Ssh`] and launch a distant server, returning a [`DistantSingleKeyCredentials`]
+    /// tied to the launched server that includes credentials
+    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -583,7 +581,7 @@ impl Ssh {
             let maybe_info = output
                 .split(|&b| b == b'\n')
                 .map(String::from_utf8_lossy)
-                .find_map(|line| line.parse::<LaunchInfo>().ok());
+                .find_map(|line| line.parse::<DistantSingleKeyCredentials>().ok());
             match maybe_info {
                 Some(mut info) => {
                     info.host = host;
