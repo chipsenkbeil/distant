@@ -107,12 +107,22 @@ impl ClientSubcommand {
                 format,
                 destination,
             } => {
-                let credentials =
-                    Launcher::spawn_remote_server(format, launcher_config, &destination).await?;
-                let mut client = Client::new(config.network).connect().await?;
-                let mut extra = Extra::new();
-                extra.insert("key".to_string(), credentials.key.to_string());
-                let id = client.connect(destination, extra).await?;
+                let client = match format {
+                    Format::Shell => Client::new(config.network),
+                    Format::Json => Client::new(config.network).using_msg_stdin_stdout(),
+                };
+                let mut client = client.connect().await?;
+
+                // Start the server using our manager
+                let destination = client
+                    .launch(destination, Extra::from(launcher_config))
+                    .await?;
+
+                // Trigger our manager to connect to the launched server
+                let id = client.connect(destination, Extra::new()).await?;
+
+                // Mark the server's id as the new default
+                todo!()
             }
             Self::Lsp { persist, pty, cmd } => {
                 let mut client = Client::new(config.network).connect().await?;

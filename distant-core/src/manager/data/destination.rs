@@ -16,7 +16,7 @@ use uriparse::URIReference;
 /// * `distant://hostname:port` - connect to a distant server
 /// * `ssh://[user@]hostname[:port]` - connect to an SSH server
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct Destination(URIReference<'static>);
+pub struct Destination(pub(crate) URIReference<'static>);
 
 impl Destination {
     /// Returns true if destination represents a distant server

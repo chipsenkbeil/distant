@@ -85,6 +85,30 @@ impl DistantManagerClient {
         })
     }
 
+    /// Request that the manager launches a new server at the given `destination`
+    /// with `extra` being passed for destination-specific details, returning the new
+    /// `destination` of the spawned server to connect to
+    pub async fn launch(
+        &mut self,
+        destination: impl Into<Destination>,
+        extra: impl Into<Extra>,
+    ) -> io::Result<Destination> {
+        let destination = Box::new(destination.into());
+        let extra = extra.into();
+        let res = self
+            .client
+            .send(ManagerRequest::Launch { destination, extra })
+            .await?;
+        match res.payload {
+            ManagerResponse::Launched { destination } => Ok(destination),
+            ManagerResponse::Error(x) => Err(x.into()),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {:?}", x),
+            )),
+        }
+    }
+
     /// Request that the manager establishes a new connection at the given `destination`
     /// with `extra` being passed for destination-specific details
     pub async fn connect(

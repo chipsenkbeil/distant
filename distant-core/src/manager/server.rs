@@ -42,8 +42,11 @@ pub struct DistantManager {
     /// Mapping of connection id -> connection
     connections: RwLock<HashMap<usize, DistantManagerConnection>>,
 
+    /// Handlers for launch requests
+    launch_handlers: Arc<RwLock<HashMap<String, BoxedLaunchHandler>>>,
+
     /// Handlers for connect requests
-    handlers: Arc<RwLock<HashMap<String, BoxedConnectHandler>>>,
+    connect_handlers: Arc<RwLock<HashMap<String, BoxedConnectHandler>>>,
 
     /// Primary task of server
     task: JoinHandle<()>,
@@ -96,21 +99,62 @@ impl DistantManager {
             }
         });
 
-        let handlers = Arc::new(RwLock::new(config.handlers.drain().collect()));
-        let weak_handlers = Arc::downgrade(&handlers);
+        let launch_handlers = Arc::new(RwLock::new(config.launch_handlers.drain().collect()));
+        let weak_launch_handlers = Arc::downgrade(&launch_handlers);
+        let connect_handlers = Arc::new(RwLock::new(config.connect_handlers.drain().collect()));
+        let weak_connect_handlers = Arc::downgrade(&connect_handlers);
         let server_ref = Self {
             auth_client_rx: Mutex::new(auth_client_rx),
             config,
-            handlers,
+            launch_handlers,
+            connect_handlers,
             connections: RwLock::new(HashMap::new()),
             task,
         }
         .start(mpsc_listener)?;
 
         Ok(DistantManagerRef {
-            handlers: weak_handlers,
+            launch_handlers: weak_launch_handlers,
+            connect_handlers: weak_connect_handlers,
             inner: server_ref,
         })
+    }
+
+    /// Launches a new server at the specified `destination` using the given `extra` information
+    /// and authentication client (if needed) to retrieve additional information needed to
+    /// enter the destination prior to starting the server, returning the destination of the
+    /// launched server
+    async fn launch(
+        &self,
+        destination: Destination,
+        extra: Extra,
+        auth: Option<&AuthClient>,
+    ) -> io::Result<Destination> {
+        let auth = auth.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "Authentication client not initialized",
+            )
+        })?;
+
+        let scheme = destination
+            .scheme()
+            .map(|scheme| scheme.as_str())
+            .unwrap_or(self.config.fallback_scheme.as_str())
+            .to_lowercase();
+
+        let credentials = {
+            let lock = self.launch_handlers.read().await;
+            let handler = lock.get(&scheme).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("No launch handler registered for {}", scheme),
+                )
+            })?;
+            handler.launch(&destination, &extra, auth).await?
+        };
+
+        Ok(credentials)
     }
 
     /// Connects to a new server at the specified `destination` using the given `extra` information
@@ -136,11 +180,11 @@ impl DistantManager {
             .to_lowercase();
 
         let (writer, reader) = {
-            let lock = self.handlers.read().await;
+            let lock = self.connect_handlers.read().await;
             let handler = lock.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("No scheme handler registered for {}", scheme),
+                    format!("No connect handler registered for {}", scheme),
                 )
             })?;
             handler.connect(&destination, &extra, auth).await?
@@ -228,6 +272,12 @@ impl Server for DistantManager {
         } = ctx;
 
         let response = match request.payload {
+            ManagerRequest::Launch { destination, extra } => {
+                match self.launch(*destination, extra, local_data.auth()).await {
+                    Ok(destination) => ManagerResponse::Launched { destination },
+                    Err(x) => ManagerResponse::Error(x.into()),
+                }
+            }
             ManagerRequest::Connect { destination, extra } => {
                 match self.connect(*destination, extra, local_data.auth()).await {
                     Ok(id) => ManagerResponse::Connected { id },
@@ -324,7 +374,8 @@ mod tests {
             auth_client_rx: Mutex::new(rx),
             config: Default::default(),
             connections: RwLock::new(HashMap::new()),
-            handlers: Arc::new(RwLock::new(HashMap::new())),
+            launch_handlers: Arc::new(RwLock::new(HashMap::new())),
+            connect_handlers: Arc::new(RwLock::new(HashMap::new())),
             task: tokio::spawn(async move {}),
         }
     }
@@ -350,6 +401,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn launch_should_fail_if_destination_scheme_is_unsupported() {
+        let server = setup();
+
+        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let extra = "".parse::<Extra>().unwrap();
+        let auth = dummy_auth_client();
+        let err = server
+            .launch(destination, extra, Some(&auth))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", err);
+    }
+
+    #[tokio::test]
+    async fn launch_should_fail_if_handler_tied_to_scheme_fails() {
+        let server = setup();
+
+        let handler: Box<dyn LaunchHandler> = Box::new(|_: &_, _: &_, _: &_| async {
+            Err(io::Error::new(io::ErrorKind::Other, "test failure"))
+        });
+
+        server
+            .launch_handlers
+            .write()
+            .await
+            .insert("scheme".to_string(), handler);
+
+        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let extra = "".parse::<Extra>().unwrap();
+        let auth = dummy_auth_client();
+        let err = server
+            .launch(destination, extra, Some(&auth))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "test failure");
+    }
+
+    #[tokio::test]
+    async fn launch_should_return_new_destination_on_success() {
+        let server = setup();
+
+        let handler: Box<dyn LaunchHandler> = {
+            Box::new(|_: &_, _: &_, _: &_| async {
+                Ok("scheme2://host2".parse::<Destination>().unwrap())
+            })
+        };
+
+        server
+            .launch_handlers
+            .write()
+            .await
+            .insert("scheme".to_string(), handler);
+
+        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let extra = "key=value".parse::<Extra>().unwrap();
+        let auth = dummy_auth_client();
+        let destination = server
+            .launch(destination, extra, Some(&auth))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            destination,
+            "scheme2://host2".parse::<Destination>().unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn connect_should_fail_if_destination_scheme_is_unsupported() {
         let server = setup();
 
@@ -372,7 +492,7 @@ mod tests {
         });
 
         server
-            .handlers
+            .connect_handlers
             .write()
             .await
             .insert("scheme".to_string(), handler);
@@ -396,7 +516,7 @@ mod tests {
             Box::new(|_: &_, _: &_, _: &_| async { Ok(dummy_distant_writer_reader()) });
 
         server
-            .handlers
+            .connect_handlers
             .write()
             .await
             .insert("scheme".to_string(), handler);

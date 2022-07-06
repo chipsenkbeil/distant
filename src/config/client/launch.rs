@@ -1,5 +1,6 @@
 use crate::{config::BindAddress, Merge};
 use clap::Args;
+use distant_core::Extra;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -12,6 +13,91 @@ pub struct ClientLaunchConfig {
     #[clap(flatten)]
     #[serde(flatten)]
     pub ssh: ClientLaunchSshConfig,
+}
+
+impl From<Extra> for ClientLaunchConfig {
+    fn from(mut extra: Extra) -> Self {
+        Self {
+            distant: ClientLaunchDistantConfig {
+                bin: extra.remove("distant.bin"),
+                bind_server: extra
+                    .remove("distant.bind_server")
+                    .and_then(|x| x.parse::<BindAddress>().ok()),
+                args: extra.remove("distant.args"),
+                no_shell: extra
+                    .remove("distant.no_shell")
+                    .and_then(|x| x.parse::<bool>().ok())
+                    .unwrap_or_default(),
+            },
+            ssh: ClientLaunchSshConfig {
+                bin: extra.remove("ssh.bind"),
+                #[cfg(any(feature = "libssh", feature = "ssh2"))]
+                backend: extra
+                    .remove("ssh.backend")
+                    .and_then(|x| x.parse::<distant_ssh2::SshBackend>().ok()),
+                external: extra
+                    .remove("ssh.external")
+                    .and_then(|x| x.parse::<bool>().ok())
+                    .unwrap_or_default(),
+                username: extra.remove("ssh.username"),
+                identity_file: extra
+                    .remove("ssh.identity_file")
+                    .and_then(|x| x.parse::<PathBuf>().ok()),
+                port: extra.remove("ssh.port").and_then(|x| x.parse::<u16>().ok()),
+            },
+        }
+    }
+}
+
+impl From<ClientLaunchConfig> for Extra {
+    fn from(config: ClientLaunchConfig) -> Self {
+        let mut this = Self::new();
+
+        if let Some(x) = config.distant.bin {
+            this.insert("distant.bin".to_string(), x);
+        }
+
+        if let Some(x) = config.distant.bind_server {
+            this.insert("distant.bind_server".to_string(), x.to_string());
+        }
+
+        if let Some(x) = config.distant.args {
+            this.insert("distant.args".to_string(), x);
+        }
+
+        this.insert(
+            "distant.no_shell".to_string(),
+            config.distant.no_shell.to_string(),
+        );
+
+        if let Some(x) = config.ssh.bin {
+            this.insert("ssh.bin".to_string(), x);
+        }
+
+        #[cfg(any(feature = "libssh", feature = "ssh2"))]
+        if let Some(x) = config.ssh.backend {
+            this.insert("ssh.backend".to_string(), x.to_string());
+        }
+
+        this.insert("ssh.external".to_string(), config.ssh.external.to_string());
+
+        if let Some(x) = config.ssh.username {
+            this.insert("ssh.username".to_string(), x);
+        }
+
+        if let Some(x) = config.ssh.identity_file {
+            this.insert(
+                "ssh.identity_file".to_string(),
+                x.to_string_lossy().to_string(),
+            );
+        }
+
+        if let Some(x) = config.ssh.port {
+            this.insert("ssh.port".to_string(), x.to_string());
+        }
+
+        this
+    }
 }
 
 impl Merge for ClientLaunchConfig {

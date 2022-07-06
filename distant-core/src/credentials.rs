@@ -1,4 +1,7 @@
+use super::serde::{deserialize_from_str, serialize_to_str};
+use crate::Destination;
 use distant_net::SecretKey32;
+use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{
     convert::{TryFrom, TryInto},
     fmt, io,
@@ -8,6 +11,7 @@ use uriparse::{URIReference, URI};
 
 /// Represents credentials used for a distant server that is maintaining a single key
 /// across all connections
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DistantSingleKeyCredentials {
     pub host: String,
     pub port: u16,
@@ -38,7 +42,32 @@ impl FromStr for DistantSingleKeyCredentials {
     }
 }
 
+impl Serialize for DistantSingleKeyCredentials {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serialize_to_str(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DistantSingleKeyCredentials {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_from_str(deserializer)
+    }
+}
+
 impl DistantSingleKeyCredentials {
+    /// Converts credentials into a [`Destination`] of the form `distant://[username]:{key}@{host}`,
+    /// failing if the credentials would not produce a valid [`Destination`]
+    pub fn try_to_destination(&self) -> io::Result<Destination> {
+        let uri = self.try_to_uri()?;
+        Ok(Destination(uri.into()))
+    }
+
     /// Converts credentials into a [`URI`] of the form `distant://[username]:{key}@{host}`,
     /// failing if the credentials would not produce a valid [`URI`]
     pub fn try_to_uri(&self) -> io::Result<URI<'static>> {

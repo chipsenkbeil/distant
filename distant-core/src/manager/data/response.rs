@@ -1,4 +1,4 @@
-use crate::{data::Error, ConnectionInfo, ConnectionList};
+use crate::{data::Error, ConnectionInfo, ConnectionList, Destination};
 use crate::{DistantMsg, DistantResponseData};
 use distant_net::Response;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,12 @@ pub enum ManagerResponse {
 
     /// Indicates that some error occurred during a request
     Error(Error),
+
+    /// Confirmation of a distant server being launched
+    Launched {
+        /// Updated location of the spawned server
+        destination: Destination,
+    },
 
     /// Confirmation of a connection being established
     Connected { id: usize },
