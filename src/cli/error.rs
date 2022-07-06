@@ -8,6 +8,12 @@ pub type CliResult<T> = Result<T, CliError>;
 pub enum CliError {
     Io(std::io::Error),
     ExitCode(#[error(not(source))] ExitCode),
+
+    #[display(fmt = "Need to pick a connection as there are multiple choices")]
+    NeedToPickConnection,
+
+    #[display(fmt = "No active connection exists")]
+    NoConnection,
 }
 
 impl From<i32> for CliError {
@@ -26,6 +32,8 @@ impl ExitCodeError for CliError {
         match self {
             Self::Io(x) => x.to_exit_code(),
             Self::ExitCode(x) => *x,
+            Self::NeedToPickConnection => ExitCode::Unavailable,
+            Self::NoConnection => ExitCode::Unavailable,
         }
     }
 }

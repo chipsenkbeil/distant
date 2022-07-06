@@ -9,7 +9,9 @@ mod manager;
 mod client;
 mod commands;
 mod error;
+mod storage;
 
+pub(crate) use storage::Storage;
 pub(crate) use manager::Manager;
 pub(crate) use client::Client;
 use commands::DistantSubcommand;

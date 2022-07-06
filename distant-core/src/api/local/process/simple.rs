@@ -1,5 +1,5 @@
 use super::{
-    wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process,
+    wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process, ProcessId,
     ProcessKiller, WaitRx,
 };
 use std::{ffi::OsStr, process::Stdio};
@@ -9,7 +9,7 @@ mod tasks;
 
 /// Represents a simple process that does not have a pty
 pub struct SimpleProcess {
-    id: usize,
+    id: ProcessId,
     stdin: Option<Box<dyn InputChannel>>,
     stdout: Option<Box<dyn OutputChannel>>,
     stderr: Option<Box<dyn OutputChannel>>,
@@ -80,7 +80,7 @@ impl SimpleProcess {
 }
 
 impl Process for SimpleProcess {
-    fn id(&self) -> usize {
+    fn id(&self) -> ProcessId {
         self.id
     }
 

@@ -3,7 +3,7 @@ use crate::{
     config::{ManagerConfig, ServiceKind},
 };
 use clap::Subcommand;
-use distant_core::{net::ServerRef, DistantManagerConfig};
+use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 
 mod handlers;
 
@@ -39,13 +39,13 @@ pub enum ManagerSubcommand {
     },
 
     /// Retrieve information about a specific connection
-    Info { id: usize },
+    Info { id: ConnectionId },
 
     /// List information about all connections
     List,
 
     /// Kill a specific connection
-    Kill { id: usize },
+    Kill { id: ConnectionId },
 }
 
 impl ManagerSubcommand {

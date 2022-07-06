@@ -1,4 +1,4 @@
-use super::Destination;
+use super::{ConnectionId, Destination};
 use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -8,7 +8,7 @@ use std::{
 
 /// Represents a list of information about active connections
 #[derive(Clone, Debug, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]
-pub struct ConnectionList(pub(crate) HashMap<usize, Destination>);
+pub struct ConnectionList(pub(crate) HashMap<ConnectionId, Destination>);
 
 impl ConnectionList {
     pub fn new() -> Self {
@@ -16,7 +16,7 @@ impl ConnectionList {
     }
 
     /// Returns a reference to the destination associated with an active connection
-    pub fn connection_destination(&self, id: usize) -> Option<&Destination> {
+    pub fn connection_destination(&self, id: ConnectionId) -> Option<&Destination> {
         self.0.get(&id)
     }
 }
@@ -28,7 +28,7 @@ impl Default for ConnectionList {
 }
 
 impl Deref for ConnectionList {
-    type Target = HashMap<usize, Destination>;
+    type Target = HashMap<ConnectionId, Destination>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

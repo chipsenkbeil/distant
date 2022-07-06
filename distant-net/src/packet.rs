@@ -15,7 +15,7 @@ impl<T> Request<T> {
     /// Creates a new request with a random, unique id
     pub fn new(payload: T) -> Self {
         Self {
-            id: rand::random::<usize>().to_string(),
+            id: rand::random::<u64>().to_string(),
             payload,
         }
     }
@@ -44,7 +44,7 @@ impl<T> Response<T> {
     /// Creates a new response with a random, unique id
     pub fn new(origin_id: Id, payload: T) -> Self {
         Self {
-            id: rand::random::<usize>().to_string(),
+            id: rand::random::<u64>().to_string(),
             origin_id,
             payload,
         }

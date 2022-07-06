@@ -1,7 +1,7 @@
 use crate::{
     client::DistantChannel,
     constants::CLIENT_PIPE_CAPACITY,
-    data::{DistantRequestData, DistantResponseData, PtySize},
+    data::{DistantRequestData, DistantResponseData, ProcessId, PtySize},
     DistantMsg,
 };
 use distant_net::{Mailbox, Request, Response};
@@ -168,7 +168,7 @@ impl RemoteCommand {
 #[derive(Debug)]
 pub struct RemoteProcess {
     /// Id of the process
-    id: usize,
+    id: ProcessId,
 
     /// Id used to map back to mailbox
     origin_id: String,
@@ -203,7 +203,7 @@ pub struct RemoteProcess {
 
 impl RemoteProcess {
     /// Returns the id of the running process
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> ProcessId {
         self.id
     }
 
@@ -424,7 +424,7 @@ impl RemoteStderr {
 /// Helper function that loops, processing outgoing stdin requests to a remote process as well as
 /// supporting a kill request to terminate the remote process
 async fn process_outgoing_requests(
-    id: usize,
+    id: ProcessId,
     mut channel: DistantChannel,
     mut stdin_rx: mpsc::Receiver<Vec<u8>>,
     mut resize_rx: mpsc::Receiver<PtySize>,
@@ -471,7 +471,7 @@ async fn process_outgoing_requests(
 
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
 async fn process_incoming_responses(
-    proc_id: usize,
+    proc_id: ProcessId,
     mut mailbox: Mailbox<Response<DistantMsg<DistantResponseData>>>,
     stdout_tx: mpsc::Sender<Vec<u8>>,
     stderr_tx: mpsc::Sender<Vec<u8>>,

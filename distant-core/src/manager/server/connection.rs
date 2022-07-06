@@ -1,6 +1,6 @@
 use crate::{
     manager::{
-        data::{Destination, Extra},
+        data::{ChannelId, ConnectionId, Destination, Extra},
         BoxedDistantReader, BoxedDistantWriter,
     },
     DistantMsg, DistantRequestData, DistantResponseData, ManagerResponse,
@@ -12,7 +12,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 /// Represents a connection a distant manager has with some distant-compatible server
 pub struct DistantManagerConnection {
-    pub id: usize,
+    pub id: ConnectionId,
     pub destination: Destination,
     pub extra: Extra,
     tx: mpsc::Sender<StateMachine>,
@@ -22,12 +22,12 @@ pub struct DistantManagerConnection {
 
 #[derive(Clone)]
 pub struct DistantManagerChannel {
-    channel_id: usize,
+    channel_id: ChannelId,
     tx: mpsc::Sender<StateMachine>,
 }
 
 impl DistantManagerChannel {
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> ChannelId {
         self.channel_id
     }
 
@@ -63,12 +63,12 @@ impl DistantManagerChannel {
 
 enum StateMachine {
     Register {
-        id: usize,
+        id: ChannelId,
         reply: ServerReply<ManagerResponse>,
     },
 
     Unregister {
-        id: usize,
+        id: ChannelId,
     },
 
     Read {
@@ -76,7 +76,7 @@ enum StateMachine {
     },
 
     Write {
-        id: usize,
+        id: ChannelId,
         request: Request<DistantMsg<DistantRequestData>>,
     },
 }
@@ -124,7 +124,7 @@ impl DistantManagerConnection {
                         // update the origin id to match the request id only
                         let channel_id = match response.origin_id.split_once('_') {
                             Some((cid_str, oid_str)) => {
-                                if let Ok(cid) = cid_str.parse::<usize>() {
+                                if let Ok(cid) = cid_str.parse::<ChannelId>() {
                                     response.origin_id = oid_str.to_string();
                                     cid
                                 } else {

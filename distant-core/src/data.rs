@@ -30,6 +30,9 @@ pub use system::*;
 mod utils;
 pub(crate) use utils::*;
 
+/// Id for a remote process
+pub type ProcessId = u32;
+
 /// Type alias for a vec of bytes
 ///
 /// NOTE: This only exists to support properly parsing a Vec<u8> from an entire string
@@ -340,13 +343,13 @@ pub enum DistantRequestData {
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["kill"]))]
     ProcKill {
         /// Id of the actively-running process
-        id: usize,
+        id: ProcessId,
     },
 
     /// Sends additional data to stdin of running process
     ProcStdin {
         /// Id of the actively-running process to send stdin data
-        id: usize,
+        id: ProcessId,
 
         /// Data to send to a process's stdin pipe
         data: Vec<u8>,
@@ -355,7 +358,7 @@ pub enum DistantRequestData {
     /// Resize pty of remote process
     ProcResizePty {
         /// Id of the actively-running process whose pty to resize
-        id: usize,
+        id: ProcessId,
 
         /// The new pty dimensions
         size: PtySize,
@@ -411,13 +414,13 @@ pub enum DistantResponseData {
     /// Response to starting a new process
     ProcSpawned {
         /// Arbitrary id associated with running process
-        id: usize,
+        id: ProcessId,
     },
 
     /// Actively-transmitted stdout as part of running process
     ProcStdout {
         /// Arbitrary id associated with running process
-        id: usize,
+        id: ProcessId,
 
         /// Data read from a process' stdout pipe
         data: Vec<u8>,
@@ -426,7 +429,7 @@ pub enum DistantResponseData {
     /// Actively-transmitted stderr as part of running process
     ProcStderr {
         /// Arbitrary id associated with running process
-        id: usize,
+        id: ProcessId,
 
         /// Data read from a process' stderr pipe
         data: Vec<u8>,
@@ -435,7 +438,7 @@ pub enum DistantResponseData {
     /// Response to a process finishing
     ProcDone {
         /// Arbitrary id associated with running process
-        id: usize,
+        id: ProcessId,
 
         /// Whether or not termination was successful
         success: bool,

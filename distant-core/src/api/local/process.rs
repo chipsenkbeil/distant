@@ -1,4 +1,4 @@
-use crate::data::PtySize;
+use crate::data::{ProcessId, PtySize};
 use std::{future::Future, pin::Pin};
 use tokio::{io, sync::mpsc};
 
@@ -17,7 +17,7 @@ pub type FutureReturn<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Represents a process on the remote server
 pub trait Process: ProcessKiller + ProcessPty {
     /// Represents the id of the process
-    fn id(&self) -> usize;
+    fn id(&self) -> ProcessId;
 
     /// Waits for the process to exit, returning the exit status
     ///

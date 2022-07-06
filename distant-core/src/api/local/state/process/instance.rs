@@ -2,7 +2,7 @@ use crate::{
     api::local::process::{
         InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
     },
-    data::{DistantResponseData, PtySize},
+    data::{DistantResponseData, ProcessId, PtySize},
 };
 use distant_net::Reply;
 use log::*;
@@ -15,7 +15,7 @@ pub struct ProcessInstance {
     pub args: Vec<String>,
     pub persist: bool,
 
-    pub id: usize,
+    pub id: ProcessId,
     pub stdin: Option<Box<dyn InputChannel>>,
     pub killer: Box<dyn ProcessKiller>,
     pub pty: Box<dyn ProcessPty>,
@@ -145,7 +145,7 @@ impl ProcessInstance {
 }
 
 async fn stdout_task(
-    id: usize,
+    id: ProcessId,
     mut stdout: Box<dyn OutputChannel>,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> io::Result<()> {
@@ -166,7 +166,7 @@ async fn stdout_task(
 }
 
 async fn stderr_task(
-    id: usize,
+    id: ProcessId,
     mut stderr: Box<dyn OutputChannel>,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> io::Result<()> {
@@ -187,7 +187,7 @@ async fn stderr_task(
 }
 
 async fn wait_task(
-    id: usize,
+    id: ProcessId,
     mut child: Box<dyn Process>,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> io::Result<()> {

@@ -1,5 +1,7 @@
 use crate::{
-    data::{ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, PtySize, SystemInfo},
+    data::{
+        ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, ProcessId, PtySize, SystemInfo,
+    },
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
@@ -417,7 +419,7 @@ impl DistantApi for LocalDistantApi {
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> io::Result<usize> {
+    ) -> io::Result<ProcessId> {
         debug!(
             "[Conn {}] Spawning {} {{persist: {}, pty: {:?}}}",
             ctx.connection_id, cmd, persist, pty
@@ -425,7 +427,7 @@ impl DistantApi for LocalDistantApi {
         self.state.process.spawn(cmd, persist, pty, ctx.reply).await
     }
 
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
         self.state.process.kill(id).await
     }
@@ -433,7 +435,7 @@ impl DistantApi for LocalDistantApi {
     async fn proc_stdin(
         &self,
         ctx: DistantCtx<Self::LocalData>,
-        id: usize,
+        id: ProcessId,
         data: Vec<u8>,
     ) -> io::Result<()> {
         debug!(
@@ -446,7 +448,7 @@ impl DistantApi for LocalDistantApi {
     async fn proc_resize_pty(
         &self,
         ctx: DistantCtx<Self::LocalData>,
-        id: usize,
+        id: ProcessId,
         size: PtySize,
     ) -> io::Result<()> {
         debug!(

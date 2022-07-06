@@ -1,4 +1,4 @@
-use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind};
+use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind, ConnectionId};
 use log::*;
 use notify::{
     Config as WatcherConfig, Error as WatcherError, Event as WatcherEvent, RecommendedWatcher,
@@ -131,7 +131,7 @@ impl WatcherChannel {
     }
 
     /// Unwatch a path for a specific connection denoted by the id
-    pub async fn unwatch(&self, id: usize, path: impl AsRef<Path>) -> io::Result<()> {
+    pub async fn unwatch(&self, id: ConnectionId, path: impl AsRef<Path>) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         let path = tokio::fs::canonicalize(path.as_ref())
             .await
@@ -153,7 +153,7 @@ enum InnerWatcherMsg {
         cb: oneshot::Sender<io::Result<()>>,
     },
     Unwatch {
-        id: usize,
+        id: ConnectionId,
         path: PathBuf,
         cb: oneshot::Sender<io::Result<()>>,
     },

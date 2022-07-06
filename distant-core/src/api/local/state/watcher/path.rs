@@ -1,4 +1,7 @@
-use crate::data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error};
+use crate::{
+    data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error},
+    ConnectionId,
+};
 use distant_net::Reply;
 use std::{
     fmt,
@@ -11,7 +14,7 @@ use std::{
 /// the ability to reply with
 pub struct RegisteredPath {
     /// Unique id tied to the path to distinguish it
-    id: usize,
+    id: ConnectionId,
 
     /// The raw path provided to the watcher, which is not canonicalized
     raw_path: PathBuf,
@@ -64,7 +67,7 @@ impl Hash for RegisteredPath {
 impl RegisteredPath {
     /// Registers a new path to be watched (does not actually do any watching)
     pub async fn register(
-        id: usize,
+        id: ConnectionId,
         path: impl Into<PathBuf>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
@@ -95,7 +98,7 @@ impl RegisteredPath {
 
     /// Represents a unique id to distinguish this path from other registrations
     /// of the same path
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> ConnectionId {
         self.id
     }
 

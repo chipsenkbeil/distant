@@ -1,7 +1,7 @@
 use crate::{
     cli::{
         client::{MsgReceiver, MsgSender},
-        CliResult, Client,
+        CliError, CliResult, Client, Storage,
     },
     config::{ClientConfig, ClientLaunchConfig},
 };
@@ -90,6 +90,22 @@ impl ClientSubcommand {
         match self {
             Self::Action { request } => {
                 let mut client = Client::new(config.network).connect().await?;
+                let connection_id = {
+                    let mut storage = Storage::read_or_default().await?;
+                    let list = client.list().await?;
+                    if list.contains_key(&storage.default_connection_id) {
+                        storage.default_connection_id
+                    } else if list.is_empty() {
+                        return Err(CliError::NoConnection);
+                    } else if list.len() > 1 {
+                        return Err(CliError::NeedToPickConnection);
+                    } else {
+                        storage.default_connection_id = *list.keys().next().unwrap();
+                        storage.write().await?;
+                        storage.default_connection_id
+                    }
+                };
+
                 let mut channel = client.open_channel(1).await?;
                 let response = channel
                     .send_timeout(

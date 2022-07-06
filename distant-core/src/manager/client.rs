@@ -1,5 +1,6 @@
 use super::data::{
-    ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest, ManagerResponse,
+    ConnectionId, ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest,
+    ManagerResponse,
 };
 use crate::{DistantChannel, DistantClient};
 use distant_net::{
@@ -28,7 +29,7 @@ router!(DistantManagerClientRouter {
 pub struct DistantManagerClient {
     auth: Box<dyn ServerRef>,
     client: Client<ManagerRequest, ManagerResponse>,
-    distant_clients: HashMap<usize, ClientHandle>,
+    distant_clients: HashMap<ConnectionId, ClientHandle>,
 }
 
 impl Drop for DistantManagerClient {
@@ -115,7 +116,7 @@ impl DistantManagerClient {
         &mut self,
         destination: impl Into<Destination>,
         extra: impl Into<Extra>,
-    ) -> io::Result<usize> {
+    ) -> io::Result<ConnectionId> {
         let destination = Box::new(destination.into());
         let extra = extra.into();
         let res = self
@@ -140,7 +141,10 @@ impl DistantManagerClient {
     /// Multiple calls to open a channel against the same connection will result in
     /// clones of the same [`DistantChannel`] rather than establishing a duplicate
     /// remote connection to the same server
-    pub async fn open_channel(&mut self, connection_id: usize) -> io::Result<DistantChannel> {
+    pub async fn open_channel(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> io::Result<DistantChannel> {
         match self.distant_clients.entry(connection_id) {
             Entry::Occupied(entry) => Ok(entry.get().client.clone_channel()),
             Entry::Vacant(entry) => {
@@ -225,7 +229,7 @@ impl DistantManagerClient {
     }
 
     /// Retrieves information about a specific connection
-    pub async fn info(&mut self, id: usize) -> io::Result<ConnectionInfo> {
+    pub async fn info(&mut self, id: ConnectionId) -> io::Result<ConnectionInfo> {
         let res = self.client.send(ManagerRequest::Info { id }).await?;
         match res.payload {
             ManagerResponse::Info(info) => Ok(info),
@@ -238,7 +242,7 @@ impl DistantManagerClient {
     }
 
     /// Kills the specified connection
-    pub async fn kill(&mut self, id: usize) -> io::Result<()> {
+    pub async fn kill(&mut self, id: ConnectionId) -> io::Result<()> {
         let res = self.client.send(ManagerRequest::Kill { id }).await?;
         match res.payload {
             ManagerResponse::Killed => Ok(()),

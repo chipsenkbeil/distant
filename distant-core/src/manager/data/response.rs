@@ -1,5 +1,5 @@
 use crate::{data::Error, ConnectionInfo, ConnectionList, Destination};
-use crate::{DistantMsg, DistantResponseData};
+use crate::{ChannelId, ConnectionId, DistantMsg, DistantResponseData};
 use distant_net::Response;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ pub enum ManagerResponse {
     },
 
     /// Confirmation of a connection being established
-    Connected { id: usize },
+    Connected { id: ConnectionId },
 
     /// Information about a specific connection
     Info(ConnectionInfo),
@@ -33,7 +33,7 @@ pub enum ManagerResponse {
     /// Forward a response back to a specific channel that made a request
     Channel {
         /// Id of the channel
-        id: usize,
+        id: ChannelId,
 
         /// Response to an earlier channel request
         response: Response<DistantMsg<DistantResponseData>>,
@@ -42,12 +42,12 @@ pub enum ManagerResponse {
     /// Indicates that a channel has been opened
     ChannelOpened {
         /// Id of the channel
-        id: usize,
+        id: ChannelId,
     },
 
     /// Indicates that a channel has been closed
     ChannelClosed {
         /// Id of the channel
-        id: usize,
+        id: ChannelId,
     },
 }

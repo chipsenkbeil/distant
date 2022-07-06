@@ -1,4 +1,4 @@
-use crate::data::{DistantResponseData, PtySize};
+use crate::data::{DistantResponseData, ProcessId, PtySize};
 use distant_net::Reply;
 use std::{collections::HashMap, io, ops::Deref};
 use tokio::{
@@ -72,7 +72,7 @@ impl ProcessChannel {
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
-    ) -> io::Result<usize> {
+    ) -> io::Result<ProcessId> {
         let (cb, rx) = oneshot::channel();
         let _ = self
             .tx
@@ -90,7 +90,7 @@ impl ProcessChannel {
     }
 
     /// Resizes the pty of a running process
-    pub async fn resize_pty(&self, id: usize, size: PtySize) -> io::Result<()> {
+    pub async fn resize_pty(&self, id: ProcessId, size: PtySize) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         let _ = self
             .tx
@@ -102,7 +102,7 @@ impl ProcessChannel {
     }
 
     /// Send stdin to a running process
-    pub async fn send_stdin(&self, id: usize, data: Vec<u8>) -> io::Result<()> {
+    pub async fn send_stdin(&self, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         let _ = self
             .tx
@@ -114,7 +114,7 @@ impl ProcessChannel {
     }
 
     /// Kills a running process
-    pub async fn kill(&self, id: usize) -> io::Result<()> {
+    pub async fn kill(&self, id: ProcessId) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         let _ = self
             .tx
@@ -133,29 +133,29 @@ enum InnerProcessMsg {
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
-        cb: oneshot::Sender<io::Result<usize>>,
+        cb: oneshot::Sender<io::Result<ProcessId>>,
     },
     Resize {
-        id: usize,
+        id: ProcessId,
         size: PtySize,
         cb: oneshot::Sender<io::Result<()>>,
     },
     Stdin {
-        id: usize,
+        id: ProcessId,
         data: Vec<u8>,
         cb: oneshot::Sender<io::Result<()>>,
     },
     Kill {
-        id: usize,
+        id: ProcessId,
         cb: oneshot::Sender<io::Result<()>>,
     },
     InternalRemove {
-        id: usize,
+        id: ProcessId,
     },
 }
 
 async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<InnerProcessMsg>) {
-    let mut processes: HashMap<usize, ProcessInstance> = HashMap::new();
+    let mut processes: HashMap<ProcessId, ProcessInstance> = HashMap::new();
 
     while let Some(msg) = rx.recv().await {
         match msg {

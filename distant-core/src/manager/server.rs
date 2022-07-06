@@ -1,4 +1,7 @@
-use crate::{ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest, ManagerResponse};
+use crate::{
+    ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest,
+    ManagerResponse,
+};
 use async_trait::async_trait;
 use distant_net::{
     router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response, Server,
@@ -40,7 +43,7 @@ pub struct DistantManager {
     config: DistantManagerConfig,
 
     /// Mapping of connection id -> connection
-    connections: RwLock<HashMap<usize, DistantManagerConnection>>,
+    connections: RwLock<HashMap<ConnectionId, DistantManagerConnection>>,
 
     /// Handlers for launch requests
     launch_handlers: Arc<RwLock<HashMap<String, BoxedLaunchHandler>>>,
@@ -165,7 +168,7 @@ impl DistantManager {
         destination: Destination,
         extra: Extra,
         auth: Option<&mut AuthClient>,
-    ) -> io::Result<usize> {
+    ) -> io::Result<ConnectionId> {
         let auth = auth.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Other,
@@ -197,7 +200,7 @@ impl DistantManager {
     }
 
     /// Retrieves information about the connection to the server with the specified `id`
-    async fn info(&self, id: usize) -> io::Result<ConnectionInfo> {
+    async fn info(&self, id: ConnectionId) -> io::Result<ConnectionInfo> {
         match self.connections.read().await.get(&id) {
             Some(connection) => Ok(ConnectionInfo {
                 id: connection.id,
@@ -224,7 +227,7 @@ impl DistantManager {
     }
 
     /// Kills the connection to the server with the specified `id`
-    async fn kill(&self, id: usize) -> io::Result<()> {
+    async fn kill(&self, id: ConnectionId) -> io::Result<()> {
         match self.connections.write().await.remove(&id) {
             Some(_) => Ok(()),
             None => Err(io::Error::new(
@@ -243,7 +246,7 @@ pub struct DistantManagerServerConnection {
 
     /// Holds on to open channels feeding data back from a server to some connected client,
     /// enabling us to cancel the tasks on demand
-    channels: RwLock<HashMap<usize, DistantManagerChannel>>,
+    channels: RwLock<HashMap<ChannelId, DistantManagerChannel>>,
 }
 
 #[async_trait]

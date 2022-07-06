@@ -1,3 +1,4 @@
+use crate::{data::ProcessId, ConnectionId};
 use std::{io, path::PathBuf};
 
 mod process;
@@ -28,7 +29,7 @@ impl GlobalState {
 #[derive(Default)]
 pub struct ConnectionState {
     /// Unique id associated with connection
-    id: usize,
+    id: ConnectionId,
 
     /// Channel connected to global process state
     pub(crate) process_channel: ProcessChannel,
@@ -37,7 +38,7 @@ pub struct ConnectionState {
     pub(crate) watcher_channel: WatcherChannel,
 
     /// Contains ids of processes that will be terminated when the connection is closed
-    processes: Vec<usize>,
+    processes: Vec<ProcessId>,
 
     /// Contains paths being watched that will be unwatched when the connection is closed
     paths: Vec<PathBuf>,
@@ -46,7 +47,7 @@ pub struct ConnectionState {
 impl Drop for ConnectionState {
     fn drop(&mut self) {
         let id = self.id;
-        let processes: Vec<usize> = self.processes.drain(..).collect();
+        let processes: Vec<ProcessId> = self.processes.drain(..).collect();
         let paths: Vec<PathBuf> = self.paths.drain(..).collect();
 
         let process_channel = self.process_channel.clone();

@@ -1,6 +1,6 @@
 use async_compat::CompatExt;
 use distant_core::{
-    data::{DistantResponseData, PtySize},
+    data::{DistantResponseData, ProcessId, PtySize},
     net::Reply,
 };
 use log::*;
@@ -20,7 +20,7 @@ const THREAD_PAUSE_MILLIS: u64 = 50;
 /// Result of spawning a process, containing means to send stdin, means to kill the process,
 /// and the initialization function to use to start processing stdin, stdout, and stderr
 pub struct SpawnResult {
-    pub id: usize,
+    pub id: ProcessId,
     pub stdin: mpsc::Sender<Vec<u8>>,
     pub killer: mpsc::Sender<()>,
     pub resizer: mpsc::Sender<PtySize>,
@@ -35,7 +35,7 @@ pub async fn spawn_simple<F, R>(
     cleanup: F,
 ) -> io::Result<SpawnResult>
 where
-    F: FnOnce(usize) -> R + Send + 'static,
+    F: FnOnce(ProcessId) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
 {
     let ExecResult {
@@ -104,7 +104,7 @@ pub async fn spawn_pty<F, R>(
     cleanup: F,
 ) -> io::Result<SpawnResult>
 where
-    F: FnOnce(usize) -> R + Send + 'static,
+    F: FnOnce(ProcessId) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
 {
     // TODO: Do we need to support other terminal types for TERM?
@@ -167,7 +167,7 @@ where
 }
 
 fn spawn_blocking_stdout_task(
-    id: usize,
+    id: ProcessId,
     mut reader: impl Read + Send + 'static,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> JoinHandle<()> {
@@ -198,7 +198,7 @@ fn spawn_blocking_stdout_task(
 }
 
 fn spawn_nonblocking_stdout_task(
-    id: usize,
+    id: ProcessId,
     mut reader: impl Read + Send + 'static,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> JoinHandle<()> {
@@ -232,7 +232,7 @@ fn spawn_nonblocking_stdout_task(
 }
 
 fn spawn_nonblocking_stderr_task(
-    id: usize,
+    id: ProcessId,
     mut reader: impl Read + Send + 'static,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
 ) -> JoinHandle<()> {
@@ -266,7 +266,7 @@ fn spawn_nonblocking_stderr_task(
 }
 
 fn spawn_blocking_stdin_task(
-    id: usize,
+    id: ProcessId,
     mut writer: impl Write + Send + 'static,
     mut rx: mpsc::Receiver<Vec<u8>>,
 ) -> JoinHandle<()> {
@@ -283,7 +283,7 @@ fn spawn_blocking_stdin_task(
 }
 
 fn spawn_nonblocking_stdin_task(
-    id: usize,
+    id: ProcessId,
     mut writer: impl Write + Send + 'static,
     mut rx: mpsc::Receiver<Vec<u8>>,
 ) -> JoinHandle<()> {
@@ -306,7 +306,7 @@ fn spawn_nonblocking_stdin_task(
 #[allow(clippy::too_many_arguments)]
 fn spawn_cleanup_task<F, R>(
     session: Session,
-    id: usize,
+    id: ProcessId,
     mut child: SshChildProcess,
     mut kill_rx: mpsc::Receiver<()>,
     stdin_task: JoinHandle<()>,
@@ -316,7 +316,7 @@ fn spawn_cleanup_task<F, R>(
     cleanup: F,
 ) -> JoinHandle<()>
 where
-    F: FnOnce(usize) -> R + Send + 'static,
+    F: FnOnce(ProcessId) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
 {
     tokio::spawn(async move {

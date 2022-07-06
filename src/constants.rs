@@ -11,6 +11,10 @@ static PROJECT_DIR: Lazy<ProjectDirs> = Lazy::new(|| {
 pub static CONFIG_FILE_PATH: Lazy<PathBuf> =
     Lazy::new(|| PROJECT_DIR.config_dir().join("config.toml"));
 
+/// Path to storage file used for arbitrary CLI data
+pub static STORAGE_FILE_PATH: Lazy<PathBuf> =
+    Lazy::new(|| PROJECT_DIR.cache_dir().join("storage.toml"));
+
 /// Path to log file for distant client
 pub static CLIENT_LOG_FILE_PATH: Lazy<PathBuf> =
     Lazy::new(|| PROJECT_DIR.cache_dir().join("client.log"));

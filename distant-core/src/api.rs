@@ -1,6 +1,6 @@
 use crate::{
-    data::{ChangeKind, DirEntry, Error, Metadata, PtySize, SystemInfo},
-    DistantMsg, DistantRequestData, DistantResponseData,
+    data::{ChangeKind, DirEntry, Error, Metadata, ProcessId, PtySize, SystemInfo},
+    ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
 use distant_net::{Reply, Server, ServerCtx};
@@ -15,7 +15,7 @@ use reply::DistantSingleReply;
 
 /// Represents the context provided to the [`DistantApi`] for incoming requests
 pub struct DistantCtx<T> {
-    pub connection_id: usize,
+    pub connection_id: ConnectionId,
     pub reply: Box<dyn Reply<Data = DistantResponseData>>,
     pub local_data: Arc<T>,
 }
@@ -316,7 +316,7 @@ pub trait DistantApi {
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> io::Result<usize> {
+    ) -> io::Result<ProcessId> {
         unsupported("proc_spawn")
     }
 
@@ -326,7 +326,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
         unsupported("proc_kill")
     }
 
@@ -340,7 +340,7 @@ pub trait DistantApi {
     async fn proc_stdin(
         &self,
         ctx: DistantCtx<Self::LocalData>,
-        id: usize,
+        id: ProcessId,
         data: Vec<u8>,
     ) -> io::Result<()> {
         unsupported("proc_stdin")
@@ -356,7 +356,7 @@ pub trait DistantApi {
     async fn proc_resize_pty(
         &self,
         ctx: DistantCtx<Self::LocalData>,
-        id: usize,
+        id: ProcessId,
         size: PtySize,
     ) -> io::Result<()> {
         unsupported("proc_resize_pty")

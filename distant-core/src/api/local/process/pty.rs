@@ -1,5 +1,5 @@
 use super::{
-    wait, ExitStatus, FutureReturn, InputChannel, OutputChannel, Process, ProcessKiller,
+    wait, ExitStatus, FutureReturn, InputChannel, OutputChannel, Process, ProcessId, ProcessKiller,
     ProcessPty, PtySize, WaitRx,
 };
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS};
@@ -13,7 +13,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 /// Represents a process that is associated with a pty
 pub struct PtyProcess {
-    id: usize,
+    id: ProcessId,
     pty_master: PtyProcessMaster,
     stdin: Option<Box<dyn InputChannel>>,
     stdout: Option<Box<dyn OutputChannel>>,
@@ -137,7 +137,7 @@ impl PtyProcess {
 }
 
 impl Process for PtyProcess {
-    fn id(&self) -> usize {
+    fn id(&self) -> ProcessId {
         self.id
     }
 

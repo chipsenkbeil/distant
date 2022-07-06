@@ -2,7 +2,7 @@ use crate::process::{spawn_pty, spawn_simple, SpawnResult};
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::{
-    data::{DirEntry, FileType, Metadata, PtySize, SystemInfo, UnixMetadata},
+    data::{DirEntry, FileType, Metadata, PtySize, SystemInfo, UnixMetadata, ProcessId},
     DistantApi, DistantCtx,
 };
 use log::*;
@@ -25,11 +25,11 @@ where
 #[derive(Default)]
 pub struct ConnectionState {
     /// List of process ids that will be killed when the connection terminates
-    processes: Arc<RwLock<HashSet<usize>>>,
+    processes: Arc<RwLock<HashSet<ProcessId>>>,
 
     /// Internal reference to global process list for removals
     /// NOTE: Initialized during `on_accept` of [`DistantApi`]
-    global_processes: Weak<RwLock<HashMap<usize, Process>>>,
+    global_processes: Weak<RwLock<HashMap<ProcessId, Process>>>,
 }
 
 struct Process {
@@ -44,7 +44,7 @@ pub struct SshDistantApi {
     session: WezSession,
 
     /// Global tracking of running processes by id
-    processes: Arc<RwLock<HashMap<usize, Process>>>,
+    processes: Arc<RwLock<HashMap<ProcessId, Process>>>,
 }
 
 impl SshDistantApi {
@@ -669,7 +669,7 @@ impl DistantApi for SshDistantApi {
         cmd: String,
         persist: bool,
         pty: Option<PtySize>,
-    ) -> io::Result<usize> {
+    ) -> io::Result<ProcessId> {
         debug!(
             "[Conn {}] Spawning {} {{persist: {}, pty: {:?}}}",
             ctx.connection_id, cmd, persist, pty
@@ -678,7 +678,7 @@ impl DistantApi for SshDistantApi {
 
         let global_processes = Arc::downgrade(&self.processes);
         let local_processes = Arc::downgrade(&ctx.local_data.processes);
-        let cleanup = |id: usize| async move {
+        let cleanup = |id: ProcessId| async move {
             if let Some(processes) = Weak::upgrade(&global_processes) {
                 processes.write().await.remove(&id);
             }
@@ -721,7 +721,7 @@ impl DistantApi for SshDistantApi {
         Ok(id)
     }
 
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: usize) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
 
         if let Some(process) = self.processes.read().await.get(&id) {
@@ -739,7 +739,7 @@ impl DistantApi for SshDistantApi {
     async fn proc_stdin(
         &self,
         ctx: DistantCtx<Self::LocalData>,
-        id: usize,
+        id: ProcessId,
         data: Vec<u8>,
     ) -> io::Result<()> {
         debug!(
@@ -762,7 +762,7 @@ impl DistantApi for SshDistantApi {
     async fn proc_resize_pty(
         &self,
         ctx: DistantCtx<Self::LocalData>,
-        id: usize,
+        id: ProcessId,
         size: PtySize,
     ) -> io::Result<()> {
         debug!(
