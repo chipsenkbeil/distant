@@ -1,5 +1,5 @@
 use crate::constants::STORAGE_FILE_PATH;
-use distant_core::ConnectionId;
+use distant_core::{ConnectionId, DistantManagerClient};
 use serde::{Deserialize, Serialize};
 use std::io;
 

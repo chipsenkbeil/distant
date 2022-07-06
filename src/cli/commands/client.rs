@@ -6,7 +6,9 @@ use crate::{
     config::{ClientConfig, ClientLaunchConfig},
 };
 use clap::Subcommand;
-use distant_core::{Destination, DistantMsg, DistantRequestData, Extra};
+use distant_core::{
+    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData, Extra,
+};
 use std::time::Duration;
 
 mod buf;
@@ -25,6 +27,9 @@ use shell::Shell;
 pub enum ClientSubcommand {
     /// Performs some action on a remote machine
     Action {
+        #[clap(short, long)]
+        connection: Option<ConnectionId>,
+
         #[clap(subcommand)]
         request: DistantRequestData,
     },
@@ -81,6 +86,22 @@ impl ClientSubcommand {
         }
     }
 
+    async fn lookup_connection_id(client: &mut DistantManagerClient) -> CliResult<ConnectionId> {
+        let mut storage = Storage::read_or_default().await?;
+        let list = client.list().await?;
+        if list.contains_key(&storage.default_connection_id) {
+            Ok(storage.default_connection_id)
+        } else if list.is_empty() {
+            Err(CliError::NoConnection)
+        } else if list.len() > 1 {
+            Err(CliError::NeedToPickConnection)
+        } else {
+            storage.default_connection_id = *list.keys().next().unwrap();
+            storage.write().await?;
+            Ok(storage.default_connection_id)
+        }
+    }
+
     pub fn run(self, config: ClientConfig) -> CliResult<()> {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(Self::async_run(self, config))
@@ -90,23 +111,8 @@ impl ClientSubcommand {
         match self {
             Self::Action { request } => {
                 let mut client = Client::new(config.network).connect().await?;
-                let connection_id = {
-                    let mut storage = Storage::read_or_default().await?;
-                    let list = client.list().await?;
-                    if list.contains_key(&storage.default_connection_id) {
-                        storage.default_connection_id
-                    } else if list.is_empty() {
-                        return Err(CliError::NoConnection);
-                    } else if list.len() > 1 {
-                        return Err(CliError::NeedToPickConnection);
-                    } else {
-                        storage.default_connection_id = *list.keys().next().unwrap();
-                        storage.write().await?;
-                        storage.default_connection_id
-                    }
-                };
 
-                let mut channel = client.open_channel(1).await?;
+                let mut channel = client.open_channel(connection_id).await?;
                 let response = channel
                     .send_timeout(
                         DistantMsg::Single(request),
