@@ -61,16 +61,17 @@ impl ServerSubcommand {
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
 
         // TODO: Can the detached process still communicate to stdout?
         let child = Command::new(program)
-            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+            .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        info!("[distant detached, pid = {}]", child.id());
+        println!("[distant server detached, pid = {}]", child.id());
         Ok(())
     }
 
@@ -86,7 +87,7 @@ impl ServerSubcommand {
                 Ok(())
             }
             Ok(Fork::Parent(pid)) => {
-                info!("[distant server detached, pid = {}]", pid);
+                println!("[distant server detached, pid = {}]", pid);
                 if fork::close_fd().is_err() {
                     Err(io::Error::new(io::ErrorKind::Other, "Fork failed to close fd").into())
                 } else {
@@ -143,6 +144,12 @@ impl ServerSubcommand {
                 println!("{}", credentials);
                 println!("\r");
                 io::stdout().flush()?;
+
+                // Disassociate our server from stdin/stdout/stderr
+                #[cfg(windows)]
+                unsafe {
+                    windows::Win32::System::Console::FreeConsole();
+                }
 
                 // For the child, we want to fully disconnect it from pipes, which we do now
                 #[cfg(unix)]

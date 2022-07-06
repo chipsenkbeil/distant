@@ -535,7 +535,7 @@ impl Ssh {
 
         let host = self.host().to_string();
 
-        // Turn our ssh connection into a client client so we can use it to spawn our server
+        // Turn our ssh connection into a client/server pair so we can use it to spawn our server
         let (mut client, server) = self.into_distant_pair().await?;
 
         // Build arguments for distant to execute listen subcommand
