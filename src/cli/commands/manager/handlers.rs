@@ -7,7 +7,7 @@ use distant_core::{
     BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, ConnectHandler, Destination,
     Extra, LaunchHandler,
 };
-use std::{io, path::PathBuf};
+use std::{io, path::PathBuf, time::Duration};
 
 #[inline]
 fn missing(label: &str) -> io::Error {
@@ -45,10 +45,34 @@ impl LaunchHandler for SshLaunchHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        use distant_ssh2::SshAuthHandler;
-
-        let ssh = load_ssh(destination, extra)?;
-        todo!()
+        use distant_ssh2::DistantLaunchOpts;
+        let mut ssh = load_ssh(destination, extra)?;
+        let handler = make_async_ssh_auth_handler(auth_client);
+        let _ = ssh.authenticate(handler).await?;
+        let opts = {
+            let opts = DistantLaunchOpts::default();
+            DistantLaunchOpts {
+                binary: extra
+                    .get("binary")
+                    .map(ToString::to_string)
+                    .unwrap_or(opts.binary),
+                args: extra
+                    .get("args")
+                    .map(ToString::to_string)
+                    .unwrap_or(opts.args),
+                use_login_shell: match extra.get("use_login_shell") {
+                    Some(s) => s.parse().map_err(|_| invalid("use_login_shell"))?,
+                    None => opts.use_login_shell,
+                },
+                timeout: match extra.get("timeout") {
+                    Some(s) => {
+                        Duration::from_millis(s.parse::<u64>().map_err(|_| invalid("timeout"))?)
+                    }
+                    None => opts.timeout,
+                },
+            }
+        };
+        ssh.launch(opts).await?.try_to_destination()
     }
 }
 
@@ -115,22 +139,22 @@ impl ConnectHandler for SshConnectHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        use distant_ssh2::SshAuthHandler;
-
         let mut ssh = load_ssh(destination, extra)?;
-
-        // TODO: Need to support async functions
-        let handler = SshAuthHandler {
-            on_authenticate: Box::new(|ev| async {}),
-            on_banner: Box::new(|text| async {}),
-            on_host_verify: Box::new(|host| async {}),
-            on_error: Box::new(|text| async {}),
-        };
-
+        let handler = make_async_ssh_auth_handler(auth_client);
         let _ = ssh.authenticate(handler).await?;
-
-        // TODO: Need to create another method that just splits and does not produce a client
         ssh.into_distant_writer_reader().await
+    }
+}
+
+fn make_async_ssh_auth_handler<'a>(
+    auth_client: &'a mut AuthClient,
+) -> distant_ssh2::SshAuthHandler<'a> {
+    // TODO: Need to support async functions
+    SshAuthHandler {
+        on_authenticate: Box::new(|ev| async {}),
+        on_banner: Box::new(|text| async {}),
+        on_host_verify: Box::new(|host| async {}),
+        on_error: Box::new(|text| async {}),
     }
 }
 
