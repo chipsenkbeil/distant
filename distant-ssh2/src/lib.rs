@@ -7,7 +7,8 @@ use distant_core::{
         FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
         XChaCha20Poly1305Codec,
     },
-    DistantApiServer, DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
+    BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, DistantApiServer,
+    DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
 };
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
@@ -615,11 +616,26 @@ impl Ssh {
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is powered by an ssh client
     /// underneath
     pub async fn into_distant_client(self) -> io::Result<DistantClient> {
-        self.into_distant_pair().await.map(|x| x.0)
+        Ok(self.into_distant_pair().await?.0)
+    }
+
+    /// Consume [`Ssh`] and produce a [`BoxedDistantWriterReader`] that is powered by an ssh client
+    /// underneath
+    pub async fn into_distant_writer_reader(self) -> io::Result<BoxedDistantWriterReader> {
+        Ok(self.into_writer_reader_and_server().await?.0)
     }
 
     /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`DistantApiServer`] pair
-    async fn into_distant_pair(self) -> io::Result<(DistantClient, Box<dyn ServerRef>)> {
+    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, Box<dyn ServerRef>)> {
+        let ((writer, reader), server) = self.into_writer_reader_and_server().await?;
+        let client = DistantClient::new(writer, reader)?;
+        Ok((client, server))
+    }
+
+    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`DistantApiServer`] pair
+    async fn into_writer_reader_and_server(
+        self,
+    ) -> io::Result<(BoxedDistantWriterReader, Box<dyn ServerRef>)> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -631,20 +647,21 @@ impl Ssh {
         let (t1, t2) = FramedTransport::pair(1);
 
         // Spawn a bridge client that is directly connected to our server
-        let client = {
-            let (writer, reader) = t1.into_split();
-            DistantClient::new(writer, reader)?
-        };
+        let (writer, reader) = t1.into_split();
+        let writer: BoxedDistantWriter = Box::new(writer);
+        let reader: BoxedDistantReader = Box::new(reader);
 
         // Spawn a bridge server that is directly connected to our client
-        let Self {
-            session: wez_session,
-            ..
-        } = self;
-        let (writer, reader) = t2.into_split();
-        let server = DistantApiServer::new(SshDistantApi::new(wez_session))
-            .start(OneshotListener::from_value((writer, reader)))?;
+        let server = {
+            let Self {
+                session: wez_session,
+                ..
+            } = self;
+            let (writer, reader) = t2.into_split();
+            DistantApiServer::new(SshDistantApi::new(wez_session))
+                .start(OneshotListener::from_value((writer, reader)))?
+        };
 
-        Ok((client, server))
+        Ok(((writer, reader), server))
     }
 }

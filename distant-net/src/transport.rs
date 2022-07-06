@@ -50,6 +50,13 @@ where
     }
 }
 
+#[async_trait]
+impl<T: Send> TypedAsyncRead<T> for Box<dyn TypedAsyncRead<T> + Send> {
+    async fn read(&mut self) -> io::Result<Option<T>> {
+        (**self).read().await
+    }
+}
+
 /// Interface to write some structured data asynchronously
 #[async_trait]
 pub trait TypedAsyncWrite<T> {
@@ -65,6 +72,13 @@ where
 {
     async fn write(&mut self, data: T) -> io::Result<()> {
         self.0.write(data).await
+    }
+}
+
+#[async_trait]
+impl<T: Send> TypedAsyncWrite<T> for Box<dyn TypedAsyncWrite<T> + Send> {
+    async fn write(&mut self, data: T) -> io::Result<()> {
+        (**self).write(data).await
     }
 }
 

@@ -130,7 +130,7 @@ impl ConnectHandler for SshConnectHandler {
         let _ = ssh.authenticate(handler).await?;
 
         // TODO: Need to create another method that just splits and does not produce a client
-        ssh.into_distant_client()
+        ssh.into_distant_writer_reader().await
     }
 }
 
