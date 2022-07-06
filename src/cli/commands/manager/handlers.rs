@@ -7,7 +7,7 @@ use distant_core::{
     BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, ConnectHandler, Destination,
     Extra, LaunchHandler,
 };
-use std::io;
+use std::{io, path::PathBuf};
 
 #[inline]
 fn missing(label: &str) -> io::Error {
@@ -45,6 +45,9 @@ impl LaunchHandler for SshLaunchHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
+        use distant_ssh2::SshAuthHandler;
+
+        let ssh = load_ssh(destination, extra)?;
         todo!()
     }
 }
@@ -113,6 +116,65 @@ impl ConnectHandler for SshConnectHandler {
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
         use distant_ssh2::SshAuthHandler;
-        todo!()
+
+        let mut ssh = load_ssh(destination, extra)?;
+
+        // TODO: Need to support async functions
+        let handler = SshAuthHandler {
+            on_authenticate: Box::new(|ev| async {}),
+            on_banner: Box::new(|text| async {}),
+            on_host_verify: Box::new(|host| async {}),
+            on_error: Box::new(|text| async {}),
+        };
+
+        let _ = ssh.authenticate(handler).await?;
+
+        // TODO: Need to create another method that just splits and does not produce a client
+        ssh.into_distant_client()
     }
+}
+
+fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2::Ssh> {
+    use distant_ssh2::{Ssh, SshOpts};
+
+    let host = destination
+        .host()
+        .map(ToString::to_string)
+        .ok_or_else(|| missing("host"))?;
+
+    let opts = SshOpts {
+        backend: match extra.get("backend") {
+            Some(s) => s.parse().map_err(|_| invalid("backend"))?,
+            None => Default::default(),
+        },
+
+        identity_files: extra
+            .get("identity_files")
+            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
+            .unwrap_or_default(),
+
+        identities_only: match extra.get("identities_only") {
+            Some(s) => Some(s.parse().map_err(|_| invalid("identities_only"))?),
+            None => None,
+        },
+
+        port: destination.port(),
+
+        proxy_command: extra.get("proxy_command").cloned(),
+
+        user: destination.username().map(ToString::to_string),
+
+        user_known_hosts_files: extra
+            .get("user_known_hosts_files")
+            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
+            .unwrap_or_default(),
+
+        verbose: match extra.get("verbose") {
+            Some(s) => s.parse().map_err(|_| invalid("verbose"))?,
+            None => false,
+        },
+
+        ..Default::default()
+    };
+    Ssh::connect(host, opts)
 }
