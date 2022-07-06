@@ -1,6 +1,7 @@
 use assert_fs::{prelude::*, TempDir};
+use async_trait::async_trait;
 use distant_core::DistantClient;
-use distant_ssh2::{Ssh, SshAuthHandler, SshOpts};
+use distant_ssh2::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use once_cell::sync::{Lazy, OnceCell};
 use rstest::*;
 use std::{
@@ -393,6 +394,26 @@ pub fn logger() -> &'static flexi_logger::LoggerHandle {
     })
 }
 
+/// Mocked version of [`SshAuthHandler`]
+pub struct MockSshAuthHandler;
+
+#[async_trait]
+impl SshAuthHandler for MockSshAuthHandler {
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
+        println!("on_authenticate: {:?}", event);
+        Ok(vec![String::new(); event.prompts.len()])
+    }
+
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+        println!("on_host_verify: {}", host);
+        Ok(true)
+    }
+
+    async fn on_banner(&self, _text: &str) {}
+
+    async fn on_error(&self, _text: &str) {}
+}
+
 #[fixture]
 pub fn sshd() -> &'static Sshd {
     static SSHD: OnceCell<Sshd> = OnceCell::new();
@@ -418,20 +439,7 @@ pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> 
     )
     .unwrap();
 
-    ssh_client
-        .authenticate(SshAuthHandler {
-            on_authenticate: Box::new(|ev| {
-                println!("on_authenticate: {:?}", ev);
-                Ok(vec![String::new(); ev.prompts.len()])
-            }),
-            on_host_verify: Box::new(|host| {
-                println!("on_host_verify: {}", host);
-                Ok(true)
-            }),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    ssh_client.authenticate(MockSshAuthHandler).await.unwrap();
 
     ssh_client.into_distant_client().await.unwrap()
 }
@@ -457,20 +465,7 @@ pub async fn launched_client(
     )
     .unwrap();
 
-    ssh_client
-        .authenticate(SshAuthHandler {
-            on_authenticate: Box::new(|ev| {
-                println!("on_authenticate: {:?}", ev);
-                Ok(vec![String::new(); ev.prompts.len()])
-            }),
-            on_host_verify: Box::new(|host| {
-                println!("on_host_verify: {}", host);
-                Ok(true)
-            }),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    ssh_client.authenticate(MockSshAuthHandler).await.unwrap();
 
     ssh_client
         .launch_and_connect(Default::default())

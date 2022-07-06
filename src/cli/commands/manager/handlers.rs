@@ -1,13 +1,15 @@
 use async_trait::async_trait;
 use distant_core::{
     net::{
-        AuthClient, AuthQuestion, FramedTransport, IntoSplit, SecretKey32, TcpTransport,
-        XChaCha20Poly1305Codec,
+        AuthClient, AuthErrorKind, AuthQuestion, AuthVerifyKind, FramedTransport, IntoSplit,
+        SecretKey32, TcpTransport, XChaCha20Poly1305Codec,
     },
     BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, ConnectHandler, Destination,
     Extra, LaunchHandler,
 };
-use std::{io, path::PathBuf, time::Duration};
+use log::*;
+use std::{collections::HashMap, io, path::PathBuf, time::Duration};
+use tokio::sync::Mutex;
 
 #[inline]
 fn missing(label: &str) -> io::Error {
@@ -47,7 +49,7 @@ impl LaunchHandler for SshLaunchHandler {
     ) -> io::Result<Destination> {
         use distant_ssh2::DistantLaunchOpts;
         let mut ssh = load_ssh(destination, extra)?;
-        let handler = make_async_ssh_auth_handler(auth_client);
+        let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
         let opts = {
             let opts = DistantLaunchOpts::default();
@@ -140,21 +142,65 @@ impl ConnectHandler for SshConnectHandler {
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
         let mut ssh = load_ssh(destination, extra)?;
-        let handler = make_async_ssh_auth_handler(auth_client);
+        let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
         ssh.into_distant_writer_reader().await
     }
 }
 
-fn make_async_ssh_auth_handler<'a>(
-    auth_client: &'a mut AuthClient,
-) -> distant_ssh2::SshAuthHandler<'a> {
-    // TODO: Need to support async functions
-    SshAuthHandler {
-        on_authenticate: Box::new(|ev| async {}),
-        on_banner: Box::new(|text| async {}),
-        on_host_verify: Box::new(|host| async {}),
-        on_error: Box::new(|text| async {}),
+struct AuthClientSshAuthHandler<'a>(Mutex<&'a mut AuthClient>);
+
+impl<'a> AuthClientSshAuthHandler<'a> {
+    pub fn new(auth_client: &'a mut AuthClient) -> Self {
+        Self(Mutex::new(auth_client))
+    }
+}
+
+#[async_trait]
+impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
+    async fn on_authenticate(&self, event: distant_ssh2::SshAuthEvent) -> io::Result<Vec<String>> {
+        let mut extra = HashMap::new();
+        let mut questions = Vec::new();
+
+        for prompt in event.prompts {
+            let mut extra = HashMap::new();
+            extra.insert("echo".to_string(), prompt.echo.to_string());
+            questions.push(AuthQuestion {
+                text: prompt.prompt,
+                extra,
+            });
+        }
+
+        extra.insert("instructions".to_string(), event.instructions);
+        extra.insert("username".to_string(), event.username);
+
+        self.0.lock().await.challenge(questions, extra).await
+    }
+
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+        self.0
+            .lock()
+            .await
+            .verify(AuthVerifyKind::Host, host.to_string())
+            .await
+    }
+
+    async fn on_banner(&self, text: &str) {
+        if let Err(x) = self.0.lock().await.info(text.to_string()).await {
+            error!("ssh on_banner failed: {}", x);
+        }
+    }
+
+    async fn on_error(&self, text: &str) {
+        if let Err(x) = self
+            .0
+            .lock()
+            .await
+            .error(AuthErrorKind::Unknown, text.to_string())
+            .await
+        {
+            error!("ssh on_error failed: {}", x);
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
 
 use async_compat::CompatExt;
+use async_trait::async_trait;
 use distant_core::{
     net::{
         FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
@@ -200,84 +201,98 @@ impl Default for DistantLaunchOpts {
     }
 }
 
-/// Represents callback functions to be invoked during authentication of an ssh client
-pub struct SshAuthHandler<'a> {
+/// Interface to handle various events during ssh authentication
+#[async_trait]
+pub trait SshAuthHandler {
     /// Invoked whenever a series of authentication prompts need to be displayed and responded to,
     /// receiving one event at a time and returning a collection of answers matching the total
     /// prompts provided in the event
-    pub on_authenticate: Box<dyn FnMut(SshAuthEvent) -> io::Result<Vec<String>> + 'a>,
-
-    /// Invoked when receiving a banner from the ssh server, receiving the banner as a str, useful
-    /// to display to the user
-    pub on_banner: Box<dyn FnMut(&str) + 'a>,
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>>;
 
     /// Invoked when the host is unknown for a new ssh connection, receiving the host as a str and
     /// returning true if the host is acceptable or false if the host (and thereby ssh client)
     /// should be declined
-    pub on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool> + 'a>,
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool>;
+
+    /// Invoked when receiving a banner from the ssh server, receiving the banner as a str, useful
+    /// to display to the user
+    async fn on_banner(&self, text: &str);
 
     /// Invoked when an error is encountered, receiving the error as a str
-    pub on_error: Box<dyn FnMut(&str) + 'a>,
+    async fn on_error(&self, text: &str);
 }
 
-impl Default for SshAuthHandler<'static> {
-    fn default() -> Self {
-        Self {
-            on_authenticate: Box::new(|ev| {
-                if !ev.username.is_empty() {
-                    eprintln!("Authentication for {}", ev.username);
+/// Implementation of [`SshAuthHandler`] that prompts locally for authentication and verification
+/// events
+pub struct LocalSshAuthHandler;
+
+#[async_trait]
+impl SshAuthHandler for LocalSshAuthHandler {
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
+        let task = tokio::task::spawn_blocking(move || {
+            if !event.username.is_empty() {
+                eprintln!("Authentication for {}", event.username);
+            }
+
+            if !event.instructions.is_empty() {
+                eprintln!("{}", event.instructions);
+            }
+
+            let mut answers = Vec::new();
+            for prompt in &event.prompts {
+                // Contains all prompt lines including same line
+                let mut prompt_lines = prompt.prompt.split('\n').collect::<Vec<_>>();
+
+                // Line that is prompt on same line as answer
+                let prompt_line = prompt_lines.pop().unwrap();
+
+                // Go ahead and display all other lines
+                for line in prompt_lines.into_iter() {
+                    eprintln!("{}", line);
                 }
 
-                if !ev.instructions.is_empty() {
-                    eprintln!("{}", ev.instructions);
-                }
+                let answer = if prompt.echo {
+                    eprint!("{}", prompt_line);
+                    std::io::stderr().lock().flush()?;
 
-                let mut answers = Vec::new();
-                for prompt in &ev.prompts {
-                    // Contains all prompt lines including same line
-                    let mut prompt_lines = prompt.prompt.split('\n').collect::<Vec<_>>();
+                    let mut answer = String::new();
+                    std::io::stdin().read_line(&mut answer)?;
+                    answer
+                } else {
+                    rpassword::prompt_password(prompt_line)?
+                };
 
-                    // Line that is prompt on same line as answer
-                    let prompt_line = prompt_lines.pop().unwrap();
+                answers.push(answer);
+            }
+            Ok(answers)
+        });
 
-                    // Go ahead and display all other lines
-                    for line in prompt_lines.into_iter() {
-                        eprintln!("{}", line);
-                    }
-
-                    let answer = if prompt.echo {
-                        eprint!("{}", prompt_line);
-                        std::io::stderr().lock().flush()?;
-
-                        let mut answer = String::new();
-                        std::io::stdin().read_line(&mut answer)?;
-                        answer
-                    } else {
-                        rpassword::prompt_password(prompt_line)?
-                    };
-
-                    answers.push(answer);
-                }
-                Ok(answers)
-            }),
-            on_banner: Box::new(|_| {}),
-            on_host_verify: Box::new(|message| {
-                eprintln!("{}", message);
-
-                eprint!("Enter [y/N]> ");
-                std::io::stderr().lock().flush()?;
-
-                let mut answer = String::new();
-                std::io::stdin().read_line(&mut answer)?;
-
-                match answer.as_str() {
-                    "y" | "Y" | "yes" | "YES" => Ok(true),
-                    _ => Ok(false),
-                }
-            }),
-            on_error: Box::new(|_| {}),
-        }
+        task.await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
     }
+
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+        eprintln!("{}", host);
+        let task = tokio::task::spawn_blocking(|| {
+            eprint!("Enter [y/N]> ");
+            std::io::stderr().lock().flush()?;
+
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+
+            match answer.as_str() {
+                "y" | "Y" | "yes" | "YES" => Ok(true),
+                _ => Ok(false),
+            }
+        });
+
+        task.await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+    }
+
+    async fn on_banner(&self, _text: &str) {}
+
+    async fn on_error(&self, _text: &str) {}
 }
 
 /// Represents an ssh2 client
@@ -390,7 +405,7 @@ impl Ssh {
     }
 
     /// Authenticates the [`Ssh`] if not already authenticated
-    pub async fn authenticate(&mut self, mut handler: SshAuthHandler<'_>) -> io::Result<()> {
+    pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
         // If already authenticated, exit
         if self.authenticated {
             return Ok(());
@@ -402,11 +417,11 @@ impl Ssh {
             match event {
                 WezSessionEvent::Banner(banner) => {
                     if let Some(banner) = banner {
-                        (handler.on_banner)(banner.as_ref());
+                        handler.on_banner(banner.as_ref()).await;
                     }
                 }
                 WezSessionEvent::HostVerify(verify) => {
-                    let verified = (handler.on_host_verify)(verify.message.as_str())?;
+                    let verified = handler.on_verify_host(verify.message.as_str()).await?;
                     verify
                         .answer(verified)
                         .compat()
@@ -427,14 +442,14 @@ impl Ssh {
                             .collect(),
                     };
 
-                    let answers = (handler.on_authenticate)(ev)?;
+                    let answers = handler.on_authenticate(ev).await?;
                     auth.answer(answers)
                         .compat()
                         .await
                         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
                 }
                 WezSessionEvent::Error(err) => {
-                    (handler.on_error)(&err);
+                    handler.on_error(&err).await;
                     return Err(io::Error::new(io::ErrorKind::PermissionDenied, err));
                 }
                 WezSessionEvent::Authenticated => break,
