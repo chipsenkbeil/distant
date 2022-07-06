@@ -128,7 +128,7 @@ impl DistantManager {
         &self,
         destination: Destination,
         extra: Extra,
-        auth: Option<&AuthClient>,
+        auth: Option<&mut AuthClient>,
     ) -> io::Result<Destination> {
         let auth = auth.ok_or_else(|| {
             io::Error::new(
@@ -164,7 +164,7 @@ impl DistantManager {
         &self,
         destination: Destination,
         extra: Extra,
-        auth: Option<&AuthClient>,
+        auth: Option<&mut AuthClient>,
     ) -> io::Result<usize> {
         let auth = auth.ok_or_else(|| {
             io::Error::new(
@@ -239,18 +239,11 @@ impl DistantManager {
 pub struct DistantManagerServerConnection {
     /// Authentication client that manager can use when establishing a new connection
     /// and needing to get authentication details from the client to move forward
-    auth_client: Option<AuthClient>,
+    auth_client: Option<Mutex<AuthClient>>,
 
     /// Holds on to open channels feeding data back from a server to some connected client,
     /// enabling us to cancel the tasks on demand
     channels: RwLock<HashMap<usize, DistantManagerChannel>>,
-}
-
-impl DistantManagerServerConnection {
-    /// Returns reference to authentication client associated with connection
-    pub fn auth(&self) -> Option<&AuthClient> {
-        self.auth_client.as_ref()
-    }
 }
 
 #[async_trait]
@@ -260,7 +253,13 @@ impl Server for DistantManager {
     type LocalData = DistantManagerServerConnection;
 
     async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        local_data.auth_client = self.auth_client_rx.lock().await.recv().await;
+        local_data.auth_client = self
+            .auth_client_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .map(Mutex::new);
     }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
@@ -273,13 +272,23 @@ impl Server for DistantManager {
 
         let response = match request.payload {
             ManagerRequest::Launch { destination, extra } => {
-                match self.launch(*destination, extra, local_data.auth()).await {
+                let mut auth = match local_data.auth_client.as_ref() {
+                    Some(client) => Some(client.lock().await),
+                    None => None,
+                };
+
+                match self.launch(*destination, extra, auth.as_deref_mut()).await {
                     Ok(destination) => ManagerResponse::Launched { destination },
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
             }
             ManagerRequest::Connect { destination, extra } => {
-                match self.connect(*destination, extra, local_data.auth()).await {
+                let mut auth = match local_data.auth_client.as_ref() {
+                    Some(client) => Some(client.lock().await),
+                    None => None,
+                };
+
+                match self.connect(*destination, extra, auth.as_deref_mut()).await {
                     Ok(id) => ManagerResponse::Connected { id },
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
@@ -406,9 +415,9 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let auth = dummy_auth_client();
+        let mut auth = dummy_auth_client();
         let err = server
-            .launch(destination, extra, Some(&auth))
+            .launch(destination, extra, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", err);
@@ -418,7 +427,7 @@ mod tests {
     async fn launch_should_fail_if_handler_tied_to_scheme_fails() {
         let server = setup();
 
-        let handler: Box<dyn LaunchHandler> = Box::new(|_: &_, _: &_, _: &_| async {
+        let handler: Box<dyn LaunchHandler> = Box::new(|_: &_, _: &_, _: &mut _| async {
             Err(io::Error::new(io::ErrorKind::Other, "test failure"))
         });
 
@@ -430,9 +439,9 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let auth = dummy_auth_client();
+        let mut auth = dummy_auth_client();
         let err = server
-            .launch(destination, extra, Some(&auth))
+            .launch(destination, extra, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
@@ -444,7 +453,7 @@ mod tests {
         let server = setup();
 
         let handler: Box<dyn LaunchHandler> = {
-            Box::new(|_: &_, _: &_, _: &_| async {
+            Box::new(|_: &_, _: &_, _: &mut _| async {
                 Ok("scheme2://host2".parse::<Destination>().unwrap())
             })
         };
@@ -457,9 +466,9 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "key=value".parse::<Extra>().unwrap();
-        let auth = dummy_auth_client();
+        let mut auth = dummy_auth_client();
         let destination = server
-            .launch(destination, extra, Some(&auth))
+            .launch(destination, extra, Some(&mut auth))
             .await
             .unwrap();
 
@@ -475,9 +484,9 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let auth = dummy_auth_client();
+        let mut auth = dummy_auth_client();
         let err = server
-            .connect(destination, extra, Some(&auth))
+            .connect(destination, extra, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", err);
@@ -487,7 +496,7 @@ mod tests {
     async fn connect_should_fail_if_handler_tied_to_scheme_fails() {
         let server = setup();
 
-        let handler: Box<dyn ConnectHandler> = Box::new(|_: &_, _: &_, _: &_| async {
+        let handler: Box<dyn ConnectHandler> = Box::new(|_: &_, _: &_, _: &mut _| async {
             Err(io::Error::new(io::ErrorKind::Other, "test failure"))
         });
 
@@ -499,9 +508,9 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let auth = dummy_auth_client();
+        let mut auth = dummy_auth_client();
         let err = server
-            .connect(destination, extra, Some(&auth))
+            .connect(destination, extra, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
@@ -513,7 +522,7 @@ mod tests {
         let server = setup();
 
         let handler: Box<dyn ConnectHandler> =
-            Box::new(|_: &_, _: &_, _: &_| async { Ok(dummy_distant_writer_reader()) });
+            Box::new(|_: &_, _: &_, _: &mut _| async { Ok(dummy_distant_writer_reader()) });
 
         server
             .connect_handlers
@@ -523,9 +532,9 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "key=value".parse::<Extra>().unwrap();
-        let auth = dummy_auth_client();
+        let mut auth = dummy_auth_client();
         let id = server
-            .connect(destination, extra, Some(&auth))
+            .connect(destination, extra, Some(&mut auth))
             .await
             .unwrap();
 

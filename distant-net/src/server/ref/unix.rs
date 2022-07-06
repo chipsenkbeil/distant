@@ -16,6 +16,11 @@ impl UnixSocketServerRef {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Consumes ref, returning inner ref
+    pub fn into_inner(self) -> Box<dyn ServerRef> {
+        self.inner
+    }
 }
 
 impl ServerRef for UnixSocketServerRef {

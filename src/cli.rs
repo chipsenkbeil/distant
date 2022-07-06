@@ -5,10 +5,12 @@ use crate::{
 use clap::Parser;
 use std::{io, path::PathBuf};
 
+mod manager;
 mod client;
 mod commands;
 mod error;
 
+pub(crate) use manager::Manager;
 pub(crate) use client::Client;
 use commands::DistantSubcommand;
 pub use error::{CliError, CliResult};

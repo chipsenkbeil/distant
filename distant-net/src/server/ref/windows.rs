@@ -16,6 +16,11 @@ impl WindowsPipeServerRef {
     pub fn addr(&self) -> &OsStr {
         &self.addr
     }
+
+    /// Consumes ref, returning inner ref
+    pub fn into_inner(self) -> Box<dyn ServerRef> {
+        self.inner
+    }
 }
 
 impl ServerRef for WindowsPipeServerRef {

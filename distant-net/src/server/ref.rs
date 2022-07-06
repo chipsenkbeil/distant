@@ -1,4 +1,4 @@
-use crate::ServerState;
+use crate::{AsAny, ServerState};
 use std::{
     future::Future,
     io,
@@ -10,7 +10,7 @@ use std::{
 use tokio::task::{JoinError, JoinHandle};
 
 /// Interface to engage with a server instance
-pub trait ServerRef: Send {
+pub trait ServerRef: AsAny + Send {
     /// Returns a reference to the state of the server
     fn state(&self) -> &ServerState;
 
@@ -33,6 +33,25 @@ pub trait ServerRef: Send {
             task.await
                 .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
         })
+    }
+}
+
+impl dyn ServerRef {
+    /// Attempts to convert this ref into a concrete ref by downcasting
+    pub fn as_server_ref<R: ServerRef>(&self) -> Option<&R> {
+        self.as_any().downcast_ref::<R>()
+    }
+
+    /// Attempts to convert this mutable ref into a concrete mutable ref by downcasting
+    pub fn as_mut_server_ref<R: ServerRef>(&mut self) -> Option<&mut R> {
+        self.as_mut_any().downcast_mut::<R>()
+    }
+
+    /// Attempts to convert this into a concrete, boxed ref by downcasting
+    pub fn into_boxed_server_ref<R: ServerRef>(
+        self: Box<Self>,
+    ) -> Result<Box<R>, Box<dyn std::any::Any>> {
+        self.into_any().downcast::<R>()
     }
 }
 
