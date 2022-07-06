@@ -1,12 +1,18 @@
-use crate::DistantManager;
+use crate::{DistantManager, DistantManagerConfig};
 use distant_net::{
-    Codec, FramedTransport, IntoSplit, MappedListener, PortRange, ServerExt, TcpListener,
-    TcpServerRef,
+    Codec, FramedTransport, IntoSplit, MappedListener, PortRange, TcpListener, TcpServerRef,
 };
 use std::{io, net::IpAddr};
 
 impl DistantManager {
-    pub async fn start_tcp<P, C>(self, addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
+    /// Start a new server by binding to the given IP address and one of the ports in the
+    /// specified range, mapping all connections to use the given codec
+    pub async fn start_tcp<P, C>(
+        config: DistantManagerConfig,
+        addr: IpAddr,
+        port: P,
+        codec: C,
+    ) -> io::Result<TcpServerRef>
     where
         P: Into<PortRange> + Send,
         C: Codec + Send + Sync + 'static,
@@ -18,7 +24,7 @@ impl DistantManager {
             let transport = FramedTransport::new(transport, codec.clone());
             transport.into_split()
         });
-        let inner = self.start(listener)?;
-        Ok(TcpServerRef::new(addr, port, inner))
+        let inner = DistantManager::start(config, listener)?;
+        Ok(TcpServerRef::new(addr, port, Box::new(inner)))
     }
 }

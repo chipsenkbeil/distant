@@ -1,9 +1,11 @@
 use crate::{
-    cli::{CliResult, Client},
+    cli::{CliResult, Client, Manager},
     config::{ManagerConfig, ServiceKind},
 };
 use clap::Subcommand;
-use distant_core::DistantManager;
+use distant_core::{net::ServerRef, DistantManagerConfig};
+
+mod handlers;
 
 #[derive(Debug, Subcommand)]
 pub enum ManagerSubcommand {
@@ -67,7 +69,30 @@ impl ManagerSubcommand {
             Self::Install { kind } => todo!(),
             Self::Uninstall { kind } => todo!(),
 
-            Self::Listen { daemon } => todo!(),
+            Self::Listen { daemon } => {
+                let manager_ref = Manager::new(DistantManagerConfig::default(), config.network)
+                    .listen()
+                    .await?;
+
+                // Register our handlers for different schemes
+                manager_ref
+                    .register_launch_handler("local", handlers::LocalLaunchHandler)
+                    .await?;
+                manager_ref
+                    .register_launch_handler("ssh", handlers::SshLaunchHandler)
+                    .await?;
+                manager_ref
+                    .register_connect_handler("distant", handlers::DistantConnectHandler)
+                    .await?;
+                manager_ref
+                    .register_connect_handler("ssh", handlers::SshConnectHandler)
+                    .await?;
+
+                // Let our server run to completion
+                manager_ref.wait().await?;
+
+                Ok(())
+            }
             Self::Info { id } => {
                 let info = Client::new(config.network)
                     .connect()

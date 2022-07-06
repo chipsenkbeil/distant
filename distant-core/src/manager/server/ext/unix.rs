@@ -1,12 +1,16 @@
-use crate::DistantManager;
+use crate::{DistantManager, DistantManagerConfig};
 use distant_net::{
-    Codec, FramedTransport, IntoSplit, MappedListener, ServerExt, UnixSocketListener,
-    UnixSocketServerRef,
+    Codec, FramedTransport, IntoSplit, MappedListener, UnixSocketListener, UnixSocketServerRef,
 };
 use std::{io, path::Path};
 
 impl DistantManager {
-    pub async fn start_unix_socket<P, C>(self, path: P, codec: C) -> io::Result<UnixSocketServerRef>
+    /// Start a new server using the specified path as a unix socket
+    pub async fn start_unix_socket<P, C>(
+        config: DistantManagerConfig,
+        path: P,
+        codec: C,
+    ) -> io::Result<UnixSocketServerRef>
     where
         P: AsRef<Path> + Send,
         C: Codec + Send + Sync + 'static,
@@ -18,7 +22,7 @@ impl DistantManager {
             let transport = FramedTransport::new(transport, codec.clone());
             transport.into_split()
         });
-        let inner = self.start(listener)?;
-        Ok(UnixSocketServerRef::new(path, inner))
+        let inner = DistantManager::start(config, listener)?;
+        Ok(UnixSocketServerRef::new(path, Box::new(inner)))
     }
 }

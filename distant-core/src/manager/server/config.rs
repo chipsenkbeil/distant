@@ -1,4 +1,4 @@
-use crate::BoxedConnectHandler;
+use crate::{BoxedConnectHandler, BoxedLaunchHandler};
 use std::collections::HashMap;
 
 pub struct DistantManagerConfig {
@@ -8,8 +8,11 @@ pub struct DistantManagerConfig {
     /// Buffer size for queue of incoming connections before blocking
     pub connection_buffer_size: usize,
 
+    /// Handlers to use for launch requests
+    pub launch_handlers: HashMap<String, BoxedLaunchHandler>,
+
     /// Handlers to use for connect requests
-    pub handlers: HashMap<String, BoxedConnectHandler>,
+    pub connect_handlers: HashMap<String, BoxedConnectHandler>,
 }
 
 impl Default for DistantManagerConfig {
@@ -17,7 +20,8 @@ impl Default for DistantManagerConfig {
         Self {
             fallback_scheme: "distant".to_string(),
             connection_buffer_size: 100,
-            handlers: HashMap::new(),
+            launch_handlers: HashMap::new(),
+            connect_handlers: HashMap::new(),
         }
     }
 }

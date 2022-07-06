@@ -28,7 +28,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     // NOTE: To pass in a raw function, we HAVE to specify the types of the parameters manually,
     //       otherwise we get a compilation error about lifetime mismatches
     manager_ref
-        .register_connect_handler("scheme", |_: &_, _: &_, _: &_| async {
+        .register_connect_handler("scheme", |_: &_, _: &_, _: &mut _| async {
             use distant_core::net::ServerExt;
             let (t1, t2) = FramedTransport::pair(100);
 

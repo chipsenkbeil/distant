@@ -1,6 +1,6 @@
 use crate::{
     cli::CliResult,
-    config::{BindAddress, ServerConfig, ServerListenConfig, ServiceKind},
+    config::{BindAddress, ServerConfig, ServerListenConfig},
 };
 use clap::Subcommand;
 use distant_core::{
@@ -12,28 +12,6 @@ use std::io::{self, Read, Write};
 
 #[derive(Debug, Subcommand)]
 pub enum ServerSubcommand {
-    /// Start the server as a service
-    Start {
-        /// Type of service manager used to run this service
-        #[clap(value_enum)]
-        kind: ServiceKind,
-    },
-
-    /// Stop the server as a service
-    Stop,
-
-    /// Install the server as a service
-    Install {
-        #[clap(value_enum)]
-        kind: ServiceKind,
-    },
-
-    /// Uninstall the server as a service
-    Uninstall {
-        #[clap(value_enum)]
-        kind: ServiceKind,
-    },
-
     /// Listen for incoming requests as a server
     Listen {
         #[clap(flatten)]
@@ -89,8 +67,8 @@ impl ServerSubcommand {
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()?;
         info!("[distant detached, pid = {}]", child.id());
         Ok(())
@@ -121,12 +99,6 @@ impl ServerSubcommand {
 
     async fn async_run(self, config: ServerConfig, is_forked: bool) -> CliResult<()> {
         match self {
-            Self::Start { kind } => todo!(),
-            Self::Stop => todo!(),
-
-            Self::Install { kind } => todo!(),
-            Self::Uninstall { kind } => todo!(),
-
             Self::Listen {
                 config,
                 key_from_stdin,
