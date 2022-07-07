@@ -8,7 +8,10 @@ use distant_core::{
     DistantApiServer, DistantSingleKeyCredentials,
 };
 use log::*;
-use std::io::{self, Read, Write};
+use std::{
+    ffi::OsString,
+    io::{self, Read, Write},
+};
 
 #[derive(Debug, Subcommand)]
 pub enum ServerSubcommand {
@@ -26,6 +29,10 @@ pub enum ServerSubcommand {
         /// is closed is considered an error and any bytes after the first 32 are not used for the key
         #[clap(long)]
         key_from_stdin: bool,
+
+        /// If specified, will send output to the specified named pipe
+        #[cfg(windows)]
+        output_to_local_pipe: Option<OsString>,
     },
 }
 
@@ -40,12 +47,38 @@ impl ServerSubcommand {
         }
     }
 
-    #[cfg(windows)]
+    // #[cfg(wincdows)]
     fn run_daemon(self) -> CliResult<()> {
         use crate::cli::Spawner;
-        let pid = Spawner::spawn_running_background()?;
-        println!("[distant server detached, pid = {}]", pid);
-        Ok(())
+        use distant_core::net::{Listener, WindowsPipeListener};
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            let name = format!("distant_daemon_{}", rand::random::<usize>());
+            let mut listener = WindowsPipeListener::bind_local(name.as_str())?;
+
+            let pid = Spawner::spawn_running_background(vec![
+                OsString::from("--output-to-local-pipe"),
+                OsString::from(name),
+            ])?;
+            println!("[distant server detached, pid = {}]", pid);
+
+            // Wait to receive a connection from the above process
+            let mut transport = listener.accept().await?;
+
+            // Get the credentials and print them
+            let mut s = String::new();
+            let n = transport.read_to_string(&mut s).await?;
+            let credentials = s
+                .trim()
+                .parse::<DistantSingleKeyCredentials>()
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+
+            println!("\r");
+            println!("{}", credentials);
+            println!("\r");
+            io::stdout().flush()?;
+            Ok(())
+        })
     }
 
     #[cfg(unix)]
@@ -77,6 +110,8 @@ impl ServerSubcommand {
             Self::Listen {
                 config,
                 key_from_stdin,
+                #[cfg(windows)]
+                output_to_local_pipe,
                 ..
             } => {
                 let addr = config
@@ -127,10 +162,28 @@ impl ServerSubcommand {
 
                 // Print information about port, key, etc.
                 // NOTE: Following mosh approach of printing to make sure there's no garbage floating around
-                println!("\r");
-                println!("{}", credentials);
-                println!("\r");
-                io::stdout().flush()?;
+                #[cfg(not(windows))]
+                {
+                    println!("\r");
+                    println!("{}", credentials);
+                    println!("\r");
+                    io::stdout().flush()?;
+                }
+
+                #[cfg(windows)]
+                if let Some(name) = output_to_local_pipe {
+                    use distant_core::net::WindowsPipeTransport;
+                    use tokio::io::AsyncWriteExt;
+                    let transport = WindowsPipeTransport::connect_local(name).await?;
+                    transport
+                        .write_all(credentials.to_string().as_bytes())
+                        .await?;
+                } else {
+                    println!("\r");
+                    println!("{}", credentials);
+                    println!("\r");
+                    io::stdout().flush()?;
+                }
 
                 // For the child, we want to fully disconnect it from pipes, which we do now
                 #[cfg(unix)]

@@ -7,45 +7,66 @@ use std::{
 };
 
 /// Utility functions to spawn a process in the background
+#[allow(dead_code)]
 pub struct Spawner;
 
+#[allow(dead_code)]
 impl Spawner {
     /// Spawns a new instance of this running process without a `--daemon` flag,
     /// returning the id of the spawned process
-    pub fn spawn_running_background() -> io::Result<u32> {
+    pub fn spawn_running_background(extra_args: Vec<OsString>) -> io::Result<u32> {
+        let cmd = Self::make_current_cmd(extra_args, "--daemon")?;
+
+        #[cfg(windows)]
+        let cmd = {
+            let mut s = OsString::new();
+            s.push("'");
+            s.push(&cmd);
+            s.push("'");
+            s
+        };
+
+        Self::spawn_background(cmd)
+    }
+
+    #[inline]
+    fn make_current_cmd(extra_args: Vec<OsString>, exclude: &str) -> io::Result<OsString> {
         // Get absolute path to our binary
-        let program =
-            which::which(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("distant.exe")))
-                .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+        let program = which::which(std::env::current_exe().unwrap_or_else(|_| {
+            PathBuf::from(if cfg!(windows) {
+                "distant.exe"
+            } else {
+                "distant"
+            })
+        }))
+        .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
 
         // Remove --daemon argument to to ensure runs in foreground,
         // otherwise we would fork bomb ourselves
         //
         // Also, remove first argument (program) since we determined it above
-        let cmd = {
-            let mut cmd = OsString::new();
-            cmd.push("'");
-            cmd.push(program.as_os_str());
+        let mut cmd = OsString::new();
+        cmd.push(program.as_os_str());
 
-            let it = std::env::args_os().skip(1).filter(|arg| {
+        let it = std::env::args_os()
+            .skip(1)
+            .filter(|arg| {
                 !arg.to_str()
-                    .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
+                    .map(|s| s.trim().eq_ignore_ascii_case(exclude))
                     .unwrap_or_default()
-            });
-            for arg in it {
-                cmd.push(" ");
-                cmd.push(&arg);
-            }
+            })
+            .chain(extra_args.into_iter());
+        for arg in it {
+            cmd.push(" ");
+            cmd.push(&arg);
+        }
 
-            cmd.push("'");
-            cmd
-        };
-
-        Self::spawn_background(cmd)
+        Ok(cmd)
     }
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 impl Spawner {
     /// Spawns a process on Unix that runs in the background and won't be terminated when the
     /// parent process exits
