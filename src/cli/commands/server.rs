@@ -145,13 +145,14 @@ impl ServerSubcommand {
         let mut return_value = None;
         for line in stdout.lines().filter_map(|l| l.ok()) {
             let line = line.trim();
+            println!("Checking {}", line);
             if line.starts_with("ProcessId") {
                 if let Some((_, id)) = line.split_once(':') {
-                    process_id = id.parse::<u64>().ok();
+                    process_id = id.trim().parse::<u64>().ok();
                 }
             } else if line.starts_with("ReturnValue") {
                 if let Some((_, value)) = line.split_once(':') {
-                    return_value = value.parse::<i32>().ok();
+                    return_value = value.trim().parse::<i32>().ok();
                 }
             }
         }
