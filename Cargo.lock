@@ -780,6 +780,7 @@ dependencies = [
  "rstest 0.13.0",
  "serde",
  "serde_json",
+ "shell-words",
  "strum",
  "tokio",
  "tokio-util",

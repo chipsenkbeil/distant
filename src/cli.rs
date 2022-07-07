@@ -11,12 +11,14 @@ mod client;
 mod commands;
 mod error;
 mod manager;
+mod spawner;
 mod storage;
 
 pub(crate) use client::Client;
 use commands::DistantSubcommand;
 pub use error::{CliError, CliResult};
 pub(crate) use manager::Manager;
+pub(crate) use spawner::Spawner;
 pub(crate) use storage::Storage;
 
 /// Represents the primary CLI entrypoint

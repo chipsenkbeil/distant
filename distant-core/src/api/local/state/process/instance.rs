@@ -69,7 +69,8 @@ impl ProcessInstance {
         let (cmd, args) = match cmd.split_once(' ') {
             Some((cmd_str, args_str)) => (
                 cmd_str.to_string(),
-                args_str.split(' ').map(ToString::to_string).collect(),
+                shell_words::split(args_str)
+                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
             ),
             None => (cmd, Vec::new()),
         };
