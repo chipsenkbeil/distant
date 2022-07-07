@@ -8,10 +8,7 @@ use distant_core::{
     DistantApiServer, DistantSingleKeyCredentials,
 };
 use log::*;
-use std::{
-    ffi::OsString,
-    io::{self, Read, Write},
-};
+use std::io::{self, Read, Write};
 
 #[derive(Debug, Subcommand)]
 pub enum ServerSubcommand {
@@ -32,8 +29,8 @@ pub enum ServerSubcommand {
 
         /// If specified, will send output to the specified named pipe
         #[cfg(windows)]
-        #[clap(long)]
-        output_to_local_pipe: Option<OsString>,
+        #[clap(long, help = None, long_help = None)]
+        output_to_local_pipe: Option<std::ffi::OsString>,
     },
 }
 
@@ -52,6 +49,7 @@ impl ServerSubcommand {
     fn run_daemon(self) -> CliResult<()> {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
+        use std::ffi::OsString;
         use tokio::io::AsyncReadExt;
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
