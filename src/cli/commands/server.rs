@@ -60,7 +60,7 @@ impl ServerSubcommand {
 
         // Get absolute path to our binary
         let program =
-            which::which(std::env::current_exe().unwrap_or_else(|| PathBuf::from("distant.exe")))
+            which::which(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("distant.exe")))
                 .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
 
         // Remove --daemon argument to to ensure runs in foreground,
@@ -102,7 +102,7 @@ impl ServerSubcommand {
         let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
 
         debug!("Spawning child process: {} {:?}", powershell, args);
-        let child = Command::new(powershell)
+        let child = Command::new(powershell.into_os_string())
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
