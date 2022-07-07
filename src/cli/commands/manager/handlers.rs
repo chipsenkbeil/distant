@@ -9,7 +9,14 @@ use distant_core::{
     Extra, LaunchHandler,
 };
 use log::*;
-use std::{collections::HashMap, io, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    collections::HashMap,
+    io,
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    process::Stdio,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
@@ -157,6 +164,24 @@ impl LaunchHandler for SshLaunchHandler {
 /// Supports connecting to a remote distant TCP server as defined by `distant://...`
 pub struct DistantConnectHandler;
 
+impl DistantConnectHandler {
+    pub async fn try_connect(ips: Vec<IpAddr>, port: u16) -> io::Result<TcpTransport> {
+        // Try each IP address with the same port to see if one works
+        let mut err = None;
+        for ip in ips {
+            let addr = SocketAddr::new(ip, port);
+            debug!("Attempting to connect to distant server @ {}", addr);
+            match TcpTransport::connect(addr).await {
+                Ok(transport) => return Ok(transport),
+                Err(x) => err = Some(x),
+            }
+        }
+
+        // If all failed, return the last error we got
+        Err(err.expect("Err set above"))
+    }
+}
+
 #[async_trait]
 impl ConnectHandler for DistantConnectHandler {
     async fn connect(
@@ -165,12 +190,27 @@ impl ConnectHandler for DistantConnectHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        // Build address like `example.com:8080`
-        let addr = format!(
-            "{}:{}",
-            destination.to_host_string(),
-            destination.port().ok_or_else(|| missing("port"))?
-        );
+        let host = destination.to_host_string();
+        let port = destination.port().ok_or_else(|| missing("port"))?;
+        let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", host, port))
+            .await
+            .map_err(|x| {
+                io::Error::new(
+                    x.kind(),
+                    format!("{} needs to be resolvable outside of ssh: {}", host, x),
+                )
+            })?
+            .into_iter()
+            .map(|addr| addr.ip())
+            .collect::<Vec<IpAddr>>();
+        candidate_ips.sort_unstable();
+        candidate_ips.dedup();
+        if candidate_ips.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("Unable to resolve {}:{}", host, port),
+            ));
+        }
 
         // Use provided password or extra key if available, otherwise ask for it, and produce a
         // codec using the key
@@ -196,7 +236,7 @@ impl ConnectHandler for DistantConnectHandler {
         };
 
         // Establish a TCP connection, wrap it, and split it out into a writer and reader
-        let transport = TcpTransport::connect(addr).await?;
+        let transport = Self::try_connect(candidate_ips, port).await?;
         let transport = FramedTransport::new(transport, codec);
         let (writer, reader) = transport.into_split();
         let writer: BoxedDistantWriter = Box::new(writer);
