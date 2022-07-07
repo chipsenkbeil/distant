@@ -101,7 +101,7 @@ where
                     }
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        "Handshake must be performed first",
+                        "Handshake must be performed first (server decrypt message)",
                     )),
                 };
 
@@ -146,7 +146,7 @@ where
                     }
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        "Handshake must be performed first",
+                        "Handshake must be performed first (server encrypt messaage)",
                     )),
                 };
 

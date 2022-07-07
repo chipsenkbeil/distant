@@ -119,7 +119,10 @@ impl AuthClient {
 
     fn serialize_and_encrypt(&mut self, payload: &AuthRequest) -> io::Result<Vec<u8>> {
         let codec = self.codec.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Handshake must be performed first")
+            io::Error::new(
+                io::ErrorKind::Other,
+                "Handshake must be performed first (client encrypt message)",
+            )
         })?;
 
         let mut encryped_payload = BytesMut::new();
@@ -130,7 +133,10 @@ impl AuthClient {
 
     fn decrypt_and_deserialize(&mut self, payload: &[u8]) -> io::Result<AuthResponse> {
         let codec = self.codec.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Handshake must be performed first")
+            io::Error::new(
+                io::ErrorKind::Other,
+                "Handshake must be performed first (client decrypt message)",
+            )
         })?;
 
         let mut payload = BytesMut::from(payload);
