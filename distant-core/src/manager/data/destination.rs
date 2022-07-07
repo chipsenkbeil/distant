@@ -46,6 +46,33 @@ impl Destination {
             None => false,
         }
     }
+
+    /// Replaces the host of the destination
+    pub fn replace_host(&mut self, host: &str) -> Result<(), URIReferenceError> {
+        let username = self
+            .username()
+            .map(Username::as_borrowed)
+            .map(Username::into_owned);
+        let password = self
+            .password()
+            .map(Password::as_borrowed)
+            .map(Password::into_owned);
+        let port = self.port();
+        let _ = self.set_authority(Some(
+            Authority::from_parts(
+                username,
+                password,
+                Host::try_from(host)
+                    .map(Host::into_owned)
+                    .map_err(AuthorityError::from)
+                    .map_err(URIReferenceError::from)?,
+                port,
+            )
+            .map(Authority::into_owned)
+            .map_err(URIReferenceError::from)?,
+        ))?;
+        Ok(())
+    }
 }
 
 impl AsRef<Destination> for &Destination {
@@ -93,18 +120,7 @@ impl FromStr for Destination {
         // we convert that to a relative reference with a host
         if destination.is_relative_reference() {
             let path = destination.path().to_string();
-            let _ = destination.set_authority(Some(
-                Authority::from_parts(
-                    None::<Username>,
-                    None::<Password>,
-                    Host::try_from(path.as_str())
-                        .map(Host::into_owned)
-                        .map_err(AuthorityError::from)
-                        .map_err(URIReferenceError::from)?,
-                    None,
-                )
-                .map_err(URIReferenceError::from)?,
-            ))?;
+            destination.replace_host(path.as_str())?;
             let _ = destination.set_path("/")?;
         }
 
