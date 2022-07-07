@@ -4,5 +4,5 @@ mod constants;
 mod error;
 
 pub use cli::Cli;
-pub use config::{Config, Merge};
+pub use config::Config;
 pub use error::{ExitCode, ExitCodeError};

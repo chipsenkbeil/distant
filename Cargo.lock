@@ -741,6 +741,7 @@ dependencies = [
  "rstest 0.11.0",
  "serde",
  "serde_json",
+ "shell-words",
  "sysinfo",
  "tabled",
  "terminal_size",
@@ -748,6 +749,7 @@ dependencies = [
  "tokio",
  "toml_edit",
  "uriparse",
+ "which",
  "whoami",
  "windows",
  "windows-service",
@@ -3064,6 +3066,17 @@ dependencies = [
  "smol",
  "ssh2",
  "thiserror",
+]
+
+[[package]]
+name = "which"
+version = "4.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c4fb54e6113b6a8772ee41c3404fb0301ac79604489467e0a9ce1f3e97c24ae"
+dependencies = [
+ "either",
+ "lazy_static",
+ "libc",
 ]
 
 [[package]]

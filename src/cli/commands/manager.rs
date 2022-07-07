@@ -4,6 +4,7 @@ use crate::{
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
+use log::*;
 
 mod handlers;
 
@@ -56,8 +57,9 @@ impl ManagerSubcommand {
 
     async fn async_run(self, config: ManagerConfig) -> CliResult<()> {
         match self {
-            Self::Start { kind } => todo!(),
+            Self::Start { .. } => todo!(),
             Self::Stop => {
+                debug!("Stopping manager: {:?}", config.network.as_os_str());
                 let _ = Client::new(config.network)
                     .connect()
                     .await?
@@ -66,15 +68,17 @@ impl ManagerSubcommand {
                 Ok(())
             }
 
-            Self::Install { kind } => todo!(),
-            Self::Uninstall { kind } => todo!(),
+            Self::Install { .. } => todo!(),
+            Self::Uninstall { .. } => todo!(),
 
-            Self::Listen { daemon } => {
+            Self::Listen { .. } => {
+                debug!("Starting manager: {:?}", config.network.as_os_str());
                 let manager_ref = Manager::new(DistantManagerConfig::default(), config.network)
                     .listen()
                     .await?;
 
                 // Register our handlers for different schemes
+                debug!("Registering handlers with manager");
                 manager_ref
                     .register_launch_handler("local", handlers::LocalLaunchHandler)
                     .await?;
@@ -90,10 +94,16 @@ impl ManagerSubcommand {
 
                 // Let our server run to completion
                 manager_ref.wait().await?;
+                debug!("Manager is shutting down");
 
                 Ok(())
             }
             Self::Info { id } => {
+                debug!(
+                    "Getting info about connection {} from manager: {:?}",
+                    id,
+                    config.network.as_os_str()
+                );
                 let info = Client::new(config.network)
                     .connect()
                     .await?
@@ -107,6 +117,10 @@ impl ManagerSubcommand {
                 Ok(())
             }
             Self::List => {
+                debug!(
+                    "Getting list of connections from manager: {:?}",
+                    config.network.as_os_str()
+                );
                 let list = Client::new(config.network).connect().await?.list().await?;
 
                 for (id, destination) in list {
@@ -116,6 +130,11 @@ impl ManagerSubcommand {
                 Ok(())
             }
             Self::Kill { id } => {
+                debug!(
+                    "Killing connection {} from manager: {:?}",
+                    id,
+                    config.network.as_os_str()
+                );
                 let _ = Client::new(config.network)
                     .connect()
                     .await?

@@ -1,4 +1,4 @@
-use crate::{config::BindAddress, Merge};
+use crate::config::BindAddress;
 use clap::Args;
 use distant_core::Extra;
 use serde::{Deserialize, Serialize};
@@ -100,25 +100,6 @@ impl From<ClientLaunchConfig> for Extra {
     }
 }
 
-impl Merge for ClientLaunchConfig {
-    fn merge(&mut self, other: Self) {
-        self.distant.merge(other.distant);
-        self.ssh.merge(other.ssh);
-    }
-}
-
-impl Merge<ClientLaunchDistantConfig> for ClientLaunchConfig {
-    fn merge(&mut self, other: ClientLaunchDistantConfig) {
-        self.distant.merge(other);
-    }
-}
-
-impl Merge<ClientLaunchSshConfig> for ClientLaunchConfig {
-    fn merge(&mut self, other: ClientLaunchSshConfig) {
-        self.ssh.merge(other);
-    }
-}
-
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
 pub struct ClientLaunchDistantConfig {
     /// Path to distant program on remote machine to execute via ssh;
@@ -150,22 +131,6 @@ pub struct ClientLaunchDistantConfig {
     pub no_shell: bool,
 }
 
-impl Merge for ClientLaunchDistantConfig {
-    fn merge(&mut self, other: Self) {
-        self.no_shell = other.no_shell;
-
-        if let Some(x) = other.bin {
-            self.bin = Some(x);
-        }
-        if let Some(x) = other.bind_server {
-            self.bind_server = Some(x);
-        }
-        if let Some(x) = other.args {
-            self.args = Some(x);
-        }
-    }
-}
-
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
 pub struct ClientLaunchSshConfig {
     /// Path to ssh program on local machine to execute when using external ssh
@@ -194,26 +159,4 @@ pub struct ClientLaunchSshConfig {
     /// Port to use for sshing into the remote machine
     #[clap(short, long = "ssh-port")]
     pub port: Option<u16>,
-}
-
-impl Merge for ClientLaunchSshConfig {
-    fn merge(&mut self, other: Self) {
-        self.external = other.external;
-
-        if let Some(x) = other.bin {
-            self.bin = Some(x);
-        }
-        if let Some(x) = other.backend {
-            self.backend = Some(x);
-        }
-        if let Some(x) = other.username {
-            self.username = Some(x);
-        }
-        if let Some(x) = other.identity_file {
-            self.identity_file = Some(x);
-        }
-        if let Some(x) = other.port {
-            self.port = Some(x);
-        }
-    }
 }

@@ -1,3 +1,4 @@
+use crate::config::ClientLaunchConfig;
 use async_trait::async_trait;
 use distant_core::{
     net::{
@@ -8,8 +9,12 @@ use distant_core::{
     Extra, LaunchHandler,
 };
 use log::*;
-use std::{collections::HashMap, io, path::PathBuf, time::Duration};
-use tokio::sync::Mutex;
+use std::{collections::HashMap, io, path::PathBuf, process::Stdio, time::Duration};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+    sync::Mutex,
+};
 
 #[inline]
 fn missing(label: &str) -> io::Error {
@@ -30,9 +35,82 @@ impl LaunchHandler for LocalLaunchHandler {
         &self,
         destination: &Destination,
         extra: &Extra,
-        auth_client: &mut AuthClient,
+        _auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        todo!()
+        let config = ClientLaunchConfig::from(extra.clone());
+
+        // Get the path to the distant binary, ensuring it exists and is executable
+        let program = which::which(match config.distant.bin {
+            Some(bin) => PathBuf::from(bin),
+            None => std::env::current_exe().unwrap_or_else(|_| PathBuf::from("distant")),
+        })
+        .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+
+        // Build our command to run
+        let mut args = vec![
+            String::from("server"),
+            String::from("listen"),
+            String::from("--daemon"),
+            String::from("--host"),
+            config
+                .distant
+                .bind_server
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| String::from("any")),
+        ];
+
+        if let Some(port) = destination.port() {
+            args.push("--port".to_string());
+            args.push(port.to_string());
+        }
+
+        // Add any extra arguments to the command
+        if let Some(extra_args) = config.distant.args {
+            args.extend(
+                shell_words::split(&extra_args)
+                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+            );
+        }
+
+        // Spawn it and wait to get the communicated destination
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+        let mut line = String::new();
+        loop {
+            match stdout.read_line(&mut line).await {
+                Ok(n) if n > 0 => {
+                    if let Ok(destination) = line[..n].trim().parse::<Destination>() {
+                        break Ok(destination);
+                    }
+                }
+
+                // If we reach the point of no more data, then fail with EOF
+                Ok(_) => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Missing output destination",
+                    ))
+                }
+
+                // If we fail to read a line, we assume that the child has completed
+                // and we missed it, so capture the stderr to report issues
+                Err(x) => {
+                    let output = child.wait_with_output().await?;
+                    break Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        String::from_utf8(output.stderr).unwrap_or_else(|_| x.to_string()),
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -47,6 +125,8 @@ impl LaunchHandler for SshLaunchHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
+        let config = ClientLaunchConfig::from(extra.clone());
+
         use distant_ssh2::DistantLaunchOpts;
         let mut ssh = load_ssh(destination, extra)?;
         let handler = AuthClientSshAuthHandler::new(auth_client);
@@ -54,18 +134,9 @@ impl LaunchHandler for SshLaunchHandler {
         let opts = {
             let opts = DistantLaunchOpts::default();
             DistantLaunchOpts {
-                binary: extra
-                    .get("binary")
-                    .map(ToString::to_string)
-                    .unwrap_or(opts.binary),
-                args: extra
-                    .get("args")
-                    .map(ToString::to_string)
-                    .unwrap_or(opts.args),
-                use_login_shell: match extra.get("use_login_shell") {
-                    Some(s) => s.parse().map_err(|_| invalid("use_login_shell"))?,
-                    None => opts.use_login_shell,
-                },
+                binary: config.distant.bin.unwrap_or(opts.binary),
+                args: config.distant.args.unwrap_or(opts.args),
+                use_login_shell: !config.distant.no_shell,
                 timeout: match extra.get("timeout") {
                     Some(s) => {
                         Duration::from_millis(s.parse::<u64>().map_err(|_| invalid("timeout"))?)

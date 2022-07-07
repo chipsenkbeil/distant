@@ -7,7 +7,7 @@ use std::{
 };
 
 /// Represents some range of ports
-#[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[display(
     fmt = "{}{}",
     start,

@@ -38,7 +38,7 @@ impl ServerSubcommand {
     pub fn run(self, _config: ServerConfig) -> CliResult<()> {
         match &self {
             Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self),
-            _ => {
+            Self::Listen { .. } => {
                 let rt = tokio::runtime::Runtime::new()?;
                 rt.block_on(Self::async_run(self, false))
             }
@@ -54,30 +54,30 @@ impl ServerSubcommand {
             process::{Command, Stdio},
         };
         let mut args = std::env::args_os();
-        let program = args
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Fork failed"))?;
 
         // Remove --daemon argument to to ensure runs in foreground,
         // otherwise we would fork bomb ourselves
         //
         // Add in --no-console to ensure that our child process properly disassociates itself
         // so it won't be killed later when a console is terminated
-        let args = args
-            .filter(|arg| {
+        let args: Vec<OsString> = vec![OsString::from("/C"), OsString::from("start")]
+            .into_iter()
+            .chain(args.filter(|arg| {
                 !arg.to_str()
                     .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
                     .unwrap_or_default()
-            })
-            .chain(iter::once(OsString::from("--no-console")));
+            }))
+            // .chain(iter::once(OsString::from("--no-console")))
+            .collect();
 
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        // let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
-        let flags = CREATE_NEW_PROCESS_GROUP;
+        let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+        // let flags = CREATE_NEW_PROCESS_GROUP;
 
-        let child = Command::new(program)
+        debug!("Spawning child process: {} {}", program, args.join(' '));
+        let child = Command::new("cmd")
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
@@ -93,6 +93,7 @@ impl ServerSubcommand {
         use fork::{daemon, Fork};
 
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
+        debug!("Forking process");
         match daemon(false, true) {
             Ok(Fork::Child) => {
                 let rt = tokio::runtime::Runtime::new()?;
@@ -133,6 +134,7 @@ impl ServerSubcommand {
 
                 // Bind & start our server
                 let key = if key_from_stdin {
+                    debug!("Reading secret key from stdin");
                     let mut buf = [0u8; 32];
                     let _ = io::stdin().read_exact(&mut buf)?;
                     SecretKey32::from(buf)
@@ -142,6 +144,14 @@ impl ServerSubcommand {
 
                 let codec = XChaCha20Poly1305Codec::new(key.unprotected_as_bytes());
 
+                debug!(
+                    "Starting local API server, binding to {} {}",
+                    addr,
+                    match config.port {
+                        Some(range) => format!("with port in range {}", range),
+                        None => "using an ephemeral port".to_string(),
+                    }
+                );
                 let server = DistantApiServer::local()?
                     .start(addr, config.port.unwrap_or_else(|| 0.into()), codec)
                     .await?;
@@ -152,6 +162,10 @@ impl ServerSubcommand {
                     key,
                     username: None,
                 };
+                info!(
+                    "Server listening at {}:{}",
+                    credentials.host, credentials.port
+                );
 
                 // Print information about port, key, etc.
                 // NOTE: Following mosh approach of printing to make sure there's no garbage floating around
@@ -163,6 +177,7 @@ impl ServerSubcommand {
                 // Disassociate our server from stdin/stdout/stderr
                 #[cfg(windows)]
                 if no_console {
+                    debug!("Freeing console connected to server");
                     unsafe {
                         windows::Win32::System::Console::FreeConsole();
                     }
@@ -178,6 +193,7 @@ impl ServerSubcommand {
 
                 // Let our server run to completion
                 server.wait().await?;
+                info!("Server is shutting down");
             }
         }
 

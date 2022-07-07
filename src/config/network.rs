@@ -1,7 +1,6 @@
-use crate::Merge;
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
 
 /// Represents common networking configuration
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
@@ -9,7 +8,7 @@ pub struct NetworkConfig {
     /// Unix socket to listen on
     #[cfg(unix)]
     #[clap(long)]
-    pub unix_socket: Option<PathBuf>,
+    pub unix_socket: Option<std::path::PathBuf>,
 
     /// Windows pipe to listen on
     #[cfg(windows)]
@@ -18,9 +17,22 @@ pub struct NetworkConfig {
 }
 
 impl NetworkConfig {
+    /// Returns either the unix socket or windows pipe name as an [`OsStr`]
+    pub fn as_os_str(&self) -> &OsStr {
+        #[cfg(unix)]
+        {
+            self.unix_socket_path_or_default().as_os_str()
+        }
+
+        #[cfg(windows)]
+        {
+            self.windows_pipe_name_or_default().as_ref()
+        }
+    }
+
     /// Returns the custom unix socket path, or the default path
     #[cfg(unix)]
-    pub fn unix_socket_path_or_default(&self) -> &Path {
+    pub fn unix_socket_path_or_default(&self) -> &std::path::Path {
         self.unix_socket
             .as_deref()
             .unwrap_or(crate::constants::UNIX_SOCKET_PATH.as_path())
@@ -32,19 +44,5 @@ impl NetworkConfig {
         self.windows_pipe
             .as_deref()
             .unwrap_or(crate::constants::WINDOWS_PIPE_NAME)
-    }
-}
-
-impl Merge for NetworkConfig {
-    fn merge(&mut self, other: Self) {
-        #[cfg(unix)]
-        if let Some(x) = other.unix_socket {
-            self.unix_socket = Some(x);
-        }
-
-        #[cfg(windows)]
-        if let Some(x) = other.windows_pipe {
-            self.windows_pipe = Some(x);
-        }
     }
 }

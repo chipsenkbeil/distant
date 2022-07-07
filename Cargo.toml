@@ -38,6 +38,7 @@ rand = { version = "0.8.5", features = ["getrandom"] }
 rpassword = "6.0.1"
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
+shell-words = "1.0"
 sysinfo = "0.23.13"
 tabled = "0.7.0"
 tokio = { version = "1.19.0", features = ["full"] }
@@ -45,6 +46,7 @@ toml_edit = { version = "0.14.4", features = ["serde"] }
 terminal_size = "0.1.17"
 termwiz = "0.15.0"
 uriparse = "0.6.4"
+which = "4.2.5"
 whoami = "1.2.1"
 
 # Optional native SSH functionality

@@ -1,4 +1,3 @@
-use crate::Merge;
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -37,10 +36,6 @@ impl Default for LogLevel {
 /// Contains options that are common across subcommands
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CommonConfig {
-    /// Quiet mode, suppresses all logging (shortcut for log level off)
-    #[clap(short, long, global = true)]
-    pub quiet: bool,
-
     /// Log level to use throughout the application
     #[clap(long, global = true, case_insensitive = true, value_enum)]
     pub log_level: Option<LogLevel>,
@@ -48,29 +43,10 @@ pub struct CommonConfig {
     /// Log output to disk instead of stderr
     #[clap(long, global = true)]
     pub log_file: Option<PathBuf>,
-
-    /// Represents the maximum time (in seconds) to wait for a network request before timing out
-    #[clap(short, long, global = true)]
-    pub timeout: Option<f32>,
 }
 
 impl CommonConfig {
     pub fn log_level_or_default(&self) -> LogLevel {
         self.log_level.as_ref().copied().unwrap_or_default()
-    }
-}
-
-impl Merge for CommonConfig {
-    fn merge(&mut self, other: Self) {
-        self.quiet = other.quiet;
-        if let Some(x) = other.log_level {
-            self.log_level = Some(x);
-        }
-        if let Some(x) = other.log_file {
-            self.log_file = Some(x);
-        }
-        if let Some(x) = other.timeout {
-            self.timeout = Some(x);
-        }
     }
 }

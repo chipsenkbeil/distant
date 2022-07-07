@@ -1,7 +1,6 @@
-use crate::Merge;
 use clap::Args;
 use derive_more::Display;
-use distant_core::net::PortRange;
+use distant_core::{net::PortRange, Extra};
 use serde::{Deserialize, Serialize};
 use std::{
     env, io,
@@ -53,22 +52,52 @@ pub struct ServerListenConfig {
     pub current_dir: Option<PathBuf>,
 }
 
-impl Merge for ServerListenConfig {
-    fn merge(&mut self, other: Self) {
-        self.use_ipv6 = other.use_ipv6;
+impl From<Extra> for ServerListenConfig {
+    fn from(mut extra: Extra) -> Self {
+        Self {
+            host: extra
+                .remove("host")
+                .and_then(|x| x.parse::<BindAddress>().ok()),
+            port: extra
+                .remove("port")
+                .and_then(|x| x.parse::<PortRange>().ok()),
+            use_ipv6: extra
+                .remove("use_ipv6")
+                .and_then(|x| x.parse::<bool>().ok())
+                .unwrap_or_default(),
+            shutdown_after: extra
+                .remove("shutdown_after")
+                .and_then(|x| x.parse::<f32>().ok()),
+            current_dir: extra
+                .remove("current_dir")
+                .and_then(|x| x.parse::<PathBuf>().ok()),
+        }
+    }
+}
 
-        if let Some(x) = other.host {
-            self.host = Some(x);
+impl From<ServerListenConfig> for Extra {
+    fn from(config: ServerListenConfig) -> Self {
+        let mut this = Self::new();
+
+        if let Some(x) = config.host {
+            this.insert("host".to_string(), x.to_string());
         }
-        if let Some(x) = other.port {
-            self.port = Some(x);
+
+        if let Some(x) = config.port {
+            this.insert("port".to_string(), x.to_string());
         }
-        if let Some(x) = other.shutdown_after {
-            self.shutdown_after = Some(x);
+
+        this.insert("use_ipv6".to_string(), config.use_ipv6.to_string());
+
+        if let Some(x) = config.shutdown_after {
+            this.insert("shutdown_after".to_string(), x.to_string());
         }
-        if let Some(x) = other.current_dir {
-            self.current_dir = Some(x);
+
+        if let Some(x) = config.current_dir {
+            this.insert("current_dir".to_string(), x.to_string_lossy().to_string());
         }
+
+        this
     }
 }
 

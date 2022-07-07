@@ -96,6 +96,8 @@ impl DistantManagerClient {
     ) -> io::Result<Destination> {
         let destination = Box::new(destination.into());
         let extra = extra.into();
+        trace!("launch({}, {})", destination, extra);
+
         let res = self
             .client
             .send(ManagerRequest::Launch { destination, extra })
@@ -119,6 +121,8 @@ impl DistantManagerClient {
     ) -> io::Result<ConnectionId> {
         let destination = Box::new(destination.into());
         let extra = extra.into();
+        trace!("connect({}, {})", destination, extra);
+
         let res = self
             .client
             .send(ManagerRequest::Connect { destination, extra })
@@ -145,6 +149,7 @@ impl DistantManagerClient {
         &mut self,
         connection_id: ConnectionId,
     ) -> io::Result<DistantChannel> {
+        trace!("open_channel({})", connection_id);
         match self.distant_clients.entry(connection_id) {
             Entry::Occupied(entry) => Ok(entry.get().client.clone_channel()),
             Entry::Vacant(entry) => {
@@ -230,6 +235,7 @@ impl DistantManagerClient {
 
     /// Retrieves information about a specific connection
     pub async fn info(&mut self, id: ConnectionId) -> io::Result<ConnectionInfo> {
+        trace!("info({})", id);
         let res = self.client.send(ManagerRequest::Info { id }).await?;
         match res.payload {
             ManagerResponse::Info(info) => Ok(info),
@@ -243,6 +249,7 @@ impl DistantManagerClient {
 
     /// Kills the specified connection
     pub async fn kill(&mut self, id: ConnectionId) -> io::Result<()> {
+        trace!("kill({})", id);
         let res = self.client.send(ManagerRequest::Kill { id }).await?;
         match res.payload {
             ManagerResponse::Killed => Ok(()),
@@ -256,6 +263,7 @@ impl DistantManagerClient {
 
     /// Retrieves a list of active connections
     pub async fn list(&mut self) -> io::Result<ConnectionList> {
+        trace!("list()");
         let res = self.client.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
@@ -269,6 +277,7 @@ impl DistantManagerClient {
 
     /// Requests that the manager shuts down
     pub async fn shutdown(&mut self) -> io::Result<()> {
+        trace!("shutdown()");
         let res = self.client.send(ManagerRequest::Shutdown).await?;
         match res.payload {
             ManagerResponse::Shutdown => Ok(()),

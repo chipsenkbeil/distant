@@ -9,6 +9,7 @@ use clap::Subcommand;
 use distant_core::{
     ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData, Extra,
 };
+use log::*;
 use std::time::Duration;
 
 mod buf;
@@ -30,6 +31,10 @@ pub enum ClientSubcommand {
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
+
+        /// Represents the maximum time (in seconds) to wait for a network request before timing out
+        #[clap(short, long)]
+        timeout: Option<f32>,
 
         #[clap(subcommand)]
         request: DistantRequestData,
@@ -73,6 +78,10 @@ pub enum ClientSubcommand {
         /// Format used for input into and output from the repl
         #[clap(short, long, value_enum)]
         format: Format,
+
+        /// Represents the maximum time (in seconds) to wait for a network request before timing out
+        #[clap(short, long)]
+        timeout: Option<f32>,
     },
 
     /// Specialized treatment of running a remote shell process
@@ -92,30 +101,6 @@ pub enum ClientSubcommand {
 }
 
 impl ClientSubcommand {
-    pub fn is_remote_process(&self) -> bool {
-        match self {
-            Self::Action { request, .. } => request.is_proc_spawn(),
-            Self::Lsp { .. } | Self::Shell { .. } => true,
-            _ => false,
-        }
-    }
-
-    async fn lookup_connection_id(client: &mut DistantManagerClient) -> CliResult<ConnectionId> {
-        let mut storage = Storage::read_or_default().await?;
-        let list = client.list().await?;
-        if list.contains_key(&storage.default_connection_id) {
-            Ok(storage.default_connection_id)
-        } else if list.is_empty() {
-            Err(CliError::NoConnection)
-        } else if list.len() > 1 {
-            Err(CliError::NeedToPickConnection)
-        } else {
-            storage.default_connection_id = *list.keys().next().unwrap();
-            storage.write().await?;
-            Ok(storage.default_connection_id)
-        }
-    }
-
     pub fn run(self, config: ClientConfig) -> CliResult<()> {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(Self::async_run(self, config))
@@ -126,21 +111,34 @@ impl ClientSubcommand {
             Self::Action {
                 connection,
                 request,
+                timeout,
             } => {
+                debug!("Connecting to manager: {:?}", config.network.as_os_str());
                 let mut client = Client::new(config.network).connect().await?;
-                let connection_id = match connection {
-                    Some(id) => id,
-                    None => Self::lookup_connection_id(&mut client).await?,
-                };
 
+                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+
+                debug!("Opening channel to connection {}", connection_id);
                 let mut channel = client.open_channel(connection_id).await?;
+
+                debug!(
+                    "Timeout configured to be {}",
+                    match timeout {
+                        Some(secs) => format!("{}s", secs),
+                        None => "none".to_string(),
+                    }
+                );
+                debug!("Sending request {:?}", request);
                 let response = channel
                     .send_timeout(
                         DistantMsg::Single(request),
-                        config.common.timeout.map(Duration::from_secs_f32),
+                        timeout
+                            .or(config.action.timeout)
+                            .map(Duration::from_secs_f32),
                     )
                     .await?;
 
+                debug!("Got response {:?}", response);
                 Formatter::new(Format::Shell).print(response)?;
             }
             Self::Launch {
@@ -148,21 +146,30 @@ impl ClientSubcommand {
                 format,
                 destination,
             } => {
-                let client = match format {
-                    Format::Shell => Client::new(config.network),
-                    Format::Json => Client::new(config.network).using_msg_stdin_stdout(),
+                debug!("Connecting to manager: {:?}", config.network.as_os_str());
+                let mut client = {
+                    let client = match format {
+                        Format::Shell => Client::new(config.network),
+                        Format::Json => Client::new(config.network).using_msg_stdin_stdout(),
+                    };
+                    client.connect().await?
                 };
-                let mut client = client.connect().await?;
+
+                // Merge our launch configs, overwriting anything in the config file
+                // with our cli arguments
+                let mut extra = Extra::from(config.launch);
+                extra.extend(Extra::from(launcher_config).into_map());
 
                 // Start the server using our manager
-                let destination = client
-                    .launch(*destination, Extra::from(launcher_config))
-                    .await?;
+                debug!("Launching server at {} with {}", destination, extra);
+                let destination = client.launch(*destination, extra).await?;
 
                 // Trigger our manager to connect to the launched server
+                debug!("Connecting to server at {}", destination);
                 let id = client.connect(destination, Extra::new()).await?;
 
                 // Mark the server's id as the new default
+                debug!("Updating cached default connection id to {}", id);
                 let mut storage = Storage::read_or_default().await?;
                 storage.default_connection_id = id;
                 storage.write().await?;
@@ -173,35 +180,67 @@ impl ClientSubcommand {
                 pty,
                 cmd,
             } => {
+                debug!("Connecting to manager: {:?}", config.network.as_os_str());
                 let mut client = Client::new(config.network).connect().await?;
-                let connection_id = match connection {
-                    Some(id) => id,
-                    None => Self::lookup_connection_id(&mut client).await?,
-                };
+
+                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+
+                debug!("Opening channel to connection {}", connection_id);
                 let channel = client.open_channel(connection_id).await?;
+
+                debug!(
+                    "Spawning LSP server (persist = {}, pty = {}): {}",
+                    persist, pty, cmd
+                );
                 Lsp::new(channel).spawn(cmd, persist, pty).await?;
             }
-            Self::Repl { connection, format } => {
+            Self::Repl {
+                connection,
+                format,
+                timeout,
+            } => {
+                debug!("Connecting to manager: {:?}", config.network.as_os_str());
                 let mut client = Client::new(config.network)
                     .using_msg_stdin_stdout()
                     .connect()
                     .await?;
-                let connection_id = match connection {
-                    Some(id) => id,
-                    None => Self::lookup_connection_id(&mut client).await?,
-                };
+
+                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+
+                debug!("Opening channel to connection {}", connection_id);
                 let mut channel = client.open_channel(connection_id).await?;
 
+                debug!(
+                    "Timeout configured to be {}",
+                    match timeout {
+                        Some(secs) => format!("{}s", secs),
+                        None => "none".to_string(),
+                    }
+                );
+
+                debug!("Starting repl using format {:?}", format);
                 let tx = MsgSender::from_stdout();
                 let mut rx = MsgReceiver::from_stdin().into_rx();
-                while let Some(Ok(request)) = rx.recv().await {
-                    let response = channel
-                        .send_timeout(
-                            DistantMsg::Single(request),
-                            config.common.timeout.map(Duration::from_secs_f32),
-                        )
-                        .await?;
-                    tx.send_blocking(&response)?;
+                loop {
+                    match rx.recv().await {
+                        Some(Ok(request)) => {
+                            debug!("Sending request {:?}", request);
+                            let response = channel
+                                .send_timeout(
+                                    DistantMsg::Single(request),
+                                    timeout.or(config.repl.timeout).map(Duration::from_secs_f32),
+                                )
+                                .await?;
+
+                            debug!("Got response {:?}", response);
+                            tx.send_blocking(&response)?;
+                        }
+                        Some(Err(x)) => error!("{}", x),
+                        None => {
+                            debug!("Shutting down repl");
+                            break;
+                        }
+                    }
                 }
             }
             Self::Shell {
@@ -209,16 +248,63 @@ impl ClientSubcommand {
                 persist,
                 cmd,
             } => {
+                debug!("Connecting to manager: {:?}", config.network.as_os_str());
                 let mut client = Client::new(config.network).connect().await?;
-                let connection_id = match connection {
-                    Some(id) => id,
-                    None => Self::lookup_connection_id(&mut client).await?,
-                };
+
+                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+
+                debug!("Opening channel to connection {}", connection_id);
                 let channel = client.open_channel(connection_id).await?;
+
+                debug!(
+                    "Spawning shell (persist = {}): {}",
+                    persist,
+                    cmd.as_deref().unwrap_or(r"$SHELL")
+                );
                 Shell::new(channel).spawn(cmd, persist).await?;
             }
         }
 
         Ok(())
+    }
+}
+
+async fn use_or_lookup_connection_id(
+    connection: Option<ConnectionId>,
+    client: &mut DistantManagerClient,
+) -> CliResult<ConnectionId> {
+    match connection {
+        Some(id) => {
+            trace!("Using specified connection id: {}", id);
+            Ok(id)
+        }
+        None => {
+            trace!("Looking up connection id");
+            let mut storage = Storage::read_or_default().await?;
+            let list = client.list().await?;
+
+            if list.contains_key(&storage.default_connection_id) {
+                trace!(
+                    "Using cached connection id: {}",
+                    storage.default_connection_id
+                );
+                Ok(storage.default_connection_id)
+            } else if list.is_empty() {
+                trace!("Cached connection id is invalid as there are no connections");
+                Err(CliError::NoConnection)
+            } else if list.len() > 1 {
+                trace!("Cached connection id is invalid and there are multiple connections");
+                Err(CliError::NeedToPickConnection)
+            } else {
+                trace!("Cached connection id is invalid");
+                storage.default_connection_id = *list.keys().next().unwrap();
+                trace!(
+                    "Detected singular connection id, so updating cache: {}",
+                    storage.default_connection_id
+                );
+                storage.write().await?;
+                Ok(storage.default_connection_id)
+            }
+        }
     }
 }

@@ -1,5 +1,5 @@
 use clap::ValueEnum;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[clap(rename_all = "snake_case")]

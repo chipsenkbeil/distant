@@ -1,21 +1,23 @@
 use crate::{
-    config::{CommonConfig, Config, Merge},
-    constants::CONFIG_FILE_PATH,
+    config::{CommonConfig, Config},
+    constants::{
+        CLIENT_LOG_FILE_PATH, CONFIG_FILE_PATH, MANAGER_LOG_FILE_PATH, SERVER_LOG_FILE_PATH,
+    },
 };
 use clap::Parser;
 use std::{io, path::PathBuf};
 
-mod manager;
 mod client;
 mod commands;
 mod error;
+mod manager;
 mod storage;
 
-pub(crate) use storage::Storage;
-pub(crate) use manager::Manager;
 pub(crate) use client::Client;
 use commands::DistantSubcommand;
 pub use error::{CliError, CliResult};
+pub(crate) use manager::Manager;
+pub(crate) use storage::Storage;
 
 /// Represents the primary CLI entrypoint
 pub struct Cli {
@@ -33,10 +35,10 @@ struct Opt {
 
     /// Configuration file to load
     #[clap(
-        short = 'c', 
-        long = "config", 
-        global = true, 
-        value_parser, 
+        short = 'c',
+        long = "config",
+        global = true,
+        value_parser,
         default_value_os_t = CONFIG_FILE_PATH.to_path_buf()
     )]
     config_path: PathBuf,
@@ -49,26 +51,37 @@ impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
     pub fn initialize() -> CliResult<Self> {
         let Opt {
-            common,
+            mut common,
             config_path,
             command,
         } = Opt::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
         // Try to load a configuration file, defaulting if no config file is found
-        let mut config = match Config::blocking_load_from_file(config_path.as_path()) {
+        let config = match Config::blocking_load_from_file(config_path.as_path()) {
             Ok(config) => config,
             Err(x) if x.kind() == io::ErrorKind::NotFound => Config::default(),
             Err(x) => return Err(x.into()),
         };
 
-        // Update the common configuration based on our cli
-        config.merge(common);
-
-        let common = match &command {
+        // Extract the common config from our config file
+        let config_common = match &command {
             DistantSubcommand::Client(_) => config.client.common.clone(),
             DistantSubcommand::Manager(_) => config.manager.common.clone(),
             DistantSubcommand::Server(_) => config.server.common.clone(),
         };
+
+        // Blend common configs together
+        common.log_file = common.log_file.or(config_common.log_file);
+        common.log_level = common.log_level.or(config_common.log_level);
+
+        // Assign the appropriate log file based on client/manager/server
+        if common.log_file.is_none() {
+            common.log_file = Some(match &command {
+                DistantSubcommand::Client(_) => CLIENT_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Manager(_) => MANAGER_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Server(_) => SERVER_LOG_FILE_PATH.to_path_buf(),
+            });
+        }
 
         Ok(Cli {
             common,
@@ -95,29 +108,17 @@ impl Cli {
                     .unwrap_or_default()
                     .to_log_level_filter(),
             );
-
-            // If quiet, we suppress all logging output
-            //
-            // NOTE: For a process request, unless logging to a file, we also suppress logging output
-            //       to avoid unexpected results when being treated like a process
-            //
-            //       Without this, CI tests can sporadically fail when getting the exit code of a
-            //       process because an error log is provided about failing to broadcast a response
-            //       on the client side
-            if self.common.quiet || (self.is_remote_process() && self.common.log_file.is_none()) {
-                builder.module(module, LevelFilter::Off);
-            }
         }
 
         // Create our logger, but don't initialize yet
         let logger = Logger::with(builder.build()).format_for_files(flexi_logger::opt_format);
 
-        // If provided, log to file instead of stderr
-        let logger = if let Some(path) = self.common.log_file.as_ref() {
-            logger.log_to_file(FileSpec::try_from(path).expect("Failed to create log file spec"))
-        } else {
-            logger
-        };
+        // Assign our log output to a file
+        // NOTE: We can unwrap here as we assign the log file earlier
+        let logger = logger.log_to_file(
+            FileSpec::try_from(self.common.log_file.as_ref().unwrap())
+                .expect("Failed to create log file spec"),
+        );
 
         logger.start().expect("Failed to initialize logger")
     }
@@ -128,13 +129,6 @@ impl Cli {
             DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
             DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),
             DistantSubcommand::Server(cmd) => cmd.run(self.config.server),
-        }
-    }
-
-    fn is_remote_process(&self) -> bool {
-        match &self.command {
-            DistantSubcommand::Client(cmd) => cmd.is_remote_process(),
-            _ => false,
         }
     }
 }

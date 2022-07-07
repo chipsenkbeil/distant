@@ -15,6 +15,10 @@ impl Extra {
     pub fn new() -> Self {
         Self(HashMap::new())
     }
+
+    pub fn into_map(self) -> HashMap<String, String> {
+        self.0
+    }
 }
 
 impl Default for Extra {
