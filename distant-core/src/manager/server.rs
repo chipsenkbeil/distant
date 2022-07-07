@@ -281,6 +281,11 @@ impl Server for DistantManager {
             .recv()
             .await
             .map(Mutex::new);
+
+        // Enable jit handshake
+        if let Some(auth_client) = local_data.auth_client.as_ref() {
+            auth_client.lock().await.set_jit_handshake(true);
+        }
     }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
@@ -395,7 +400,10 @@ impl Server for DistantManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use distant_net::{AuthClient, FramedTransport, InmemoryTransport, PlainCodec};
+    use distant_net::{
+        AuthClient, FramedTransport, HeapAuthServer, InmemoryTransport, IntoSplit, MappedListener,
+        OneshotListener, PlainCodec, ServerExt, ServerRef,
+    };
 
     /// Create a new server, bypassing the start loop
     fn setup() -> DistantManager {
@@ -410,10 +418,24 @@ mod tests {
         }
     }
 
-    /// Creates a dummy [`AuthClient`]
-    fn dummy_auth_client() -> AuthClient {
-        let (transport, _) = FramedTransport::pair(1);
-        AuthClient::from(Client::from_framed_transport(transport).unwrap())
+    /// Creates a connected [`AuthClient`] with a launched auth server that blindly responds
+    fn auth_client_server() -> (AuthClient, Box<dyn ServerRef>) {
+        let (t1, t2) = FramedTransport::pair(1);
+        let client = AuthClient::from(Client::from_framed_transport(t1).unwrap());
+
+        // Create a server that does nothing, but will support
+        let server = HeapAuthServer {
+            on_challenge: Box::new(|_, _| Vec::new()),
+            on_verify: Box::new(|_, _| false),
+            on_info: Box::new(|_| ()),
+            on_error: Box::new(|_, _| ()),
+        }
+        .start(MappedListener::new(OneshotListener::from_value(t2), |t| {
+            t.into_split()
+        }))
+        .unwrap();
+
+        (client, server)
     }
 
     fn dummy_distant_writer_reader() -> (BoxedDistantWriter, BoxedDistantReader) {
@@ -436,7 +458,7 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let mut auth = dummy_auth_client();
+        let (mut auth, _auth_server) = auth_client_server();
         let err = server
             .launch(destination, extra, Some(&mut auth))
             .await
@@ -460,7 +482,7 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let mut auth = dummy_auth_client();
+        let (mut auth, _auth_server) = auth_client_server();
         let err = server
             .launch(destination, extra, Some(&mut auth))
             .await
@@ -487,7 +509,7 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "key=value".parse::<Extra>().unwrap();
-        let mut auth = dummy_auth_client();
+        let (mut auth, _auth_server) = auth_client_server();
         let destination = server
             .launch(destination, extra, Some(&mut auth))
             .await
@@ -505,7 +527,7 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let mut auth = dummy_auth_client();
+        let (mut auth, _auth_server) = auth_client_server();
         let err = server
             .connect(destination, extra, Some(&mut auth))
             .await
@@ -529,7 +551,7 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "".parse::<Extra>().unwrap();
-        let mut auth = dummy_auth_client();
+        let (mut auth, _auth_server) = auth_client_server();
         let err = server
             .connect(destination, extra, Some(&mut auth))
             .await
@@ -553,7 +575,7 @@ mod tests {
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
         let extra = "key=value".parse::<Extra>().unwrap();
-        let mut auth = dummy_auth_client();
+        let (mut auth, _auth_server) = auth_client_server();
         let id = server
             .connect(destination, extra, Some(&mut auth))
             .await

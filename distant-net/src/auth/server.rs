@@ -57,6 +57,10 @@ where
 
         match ctx.request.payload {
             Auth::Handshake { public_key, salt } => {
+                trace!(
+                    "Received handshake request from client, request id = {}",
+                    ctx.request.id
+                );
                 let handshake = Handshake::default();
                 match handshake.handshake(public_key, salt) {
                     Ok(key) => {
@@ -65,6 +69,10 @@ where
                             .await
                             .replace(XChaCha20Poly1305Codec::new(&key));
 
+                        trace!(
+                            "Sending reciprocal handshake to client, response origin id = {}",
+                            ctx.request.id
+                        );
                         if let Err(x) = reply
                             .send(Auth::Handshake {
                                 public_key: handshake.pk_bytes(),
@@ -84,6 +92,11 @@ where
             Auth::Msg {
                 ref encrypted_payload,
             } => {
+                trace!(
+                    "Received auth msg, encrypted payload size = {}",
+                    encrypted_payload.len()
+                );
+
                 // Attempt to decrypt the message so we can understand what to do
                 let request = match ctx.local_data.write().await.as_mut() {
                     Some(codec) => {
@@ -108,18 +121,33 @@ where
                 let response = match request {
                     Ok(request) => match request {
                         AuthRequest::Challenge { questions, extra } => {
+                            trace!("Received challenge request");
+                            trace!("questions = {:?}", questions);
+                            trace!("extra = {:?}", extra);
+
                             let answers = (self.on_challenge)(questions, extra);
                             AuthResponse::Challenge { answers }
                         }
                         AuthRequest::Verify { kind, text } => {
+                            trace!("Received verify request");
+                            trace!("kind = {:?}", kind);
+                            trace!("text = {:?}", text);
+
                             let valid = (self.on_verify)(kind, text);
                             AuthResponse::Verify { valid }
                         }
                         AuthRequest::Info { text } => {
+                            trace!("Received info request");
+                            trace!("text = {:?}", text);
+
                             (self.on_info)(text);
                             return;
                         }
                         AuthRequest::Error { kind, text } => {
+                            trace!("Received error request");
+                            trace!("kind = {:?}", kind);
+                            trace!("text = {:?}", text);
+
                             (self.on_error)(kind, text);
                             return;
                         }

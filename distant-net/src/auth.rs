@@ -16,12 +16,13 @@ pub use server::*;
 ///
 /// NOTE: Must use serde's content attribute with the tag attribute. Just the tag attribute will
 ///       cause deserialization to fail
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type", content = "data")]
 pub enum Auth {
     /// Represents a request to perform an authentication handshake,
     /// providing the public key and salt from one side in order to
     /// derive the shared key
+    #[serde(rename = "auth_handshake")]
     Handshake {
         /// Bytes of the public key
         public_key: EncodedPoint,
@@ -33,12 +34,13 @@ pub enum Auth {
     /// Represents the bytes of an encrypted message
     ///
     /// Underneath, will be one of either [`AuthRequest`] or [`AuthResponse`]
+    #[serde(rename = "auth_msg")]
     Msg { encrypted_payload: Vec<u8> },
 }
 
 /// Represents authentication messages that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthRequest {
     /// Represents a challenge comprising a series of questions to be presented
@@ -59,7 +61,7 @@ pub enum AuthRequest {
 
 /// Represents authentication messages that are responses to auth requests such
 /// as answers to challenges or verifying information
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthResponse {
     /// Represents the answers to a previously-asked challenge
@@ -79,7 +81,7 @@ pub enum AuthVerifyKind {
 }
 
 /// Represents a single question in a challenge
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthQuestion {
     /// The text of the question
     pub text: String,

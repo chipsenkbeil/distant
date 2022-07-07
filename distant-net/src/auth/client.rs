@@ -3,11 +3,13 @@ use crate::{
     Codec, Handshake, XChaCha20Poly1305Codec,
 };
 use bytes::BytesMut;
+use log::*;
 use std::{collections::HashMap, io};
 
 pub struct AuthClient {
     inner: Client<Auth, Auth>,
     codec: Option<XChaCha20Poly1305Codec>,
+    jit_handshake: bool,
 }
 
 impl From<Client<Auth, Auth>> for AuthClient {
@@ -15,6 +17,7 @@ impl From<Client<Auth, Auth>> for AuthClient {
         Self {
             inner: client,
             codec: None,
+            jit_handshake: false,
         }
     }
 }
@@ -45,10 +48,34 @@ impl AuthClient {
         }
     }
 
+    /// Perform a handshake only if jit is enabled and no handshake has succeeded yet
+    async fn jit_handshake(&mut self) -> io::Result<()> {
+        if self.will_jit_handshake() && !self.is_ready() {
+            self.handshake().await
+        } else {
+            Ok(())
+        }
+    }
+
     /// Returns true if client has successfully performed a handshake
     /// and is ready to communicate with the server
     pub fn is_ready(&self) -> bool {
         self.codec.is_some()
+    }
+
+    /// Returns true if this client will perform a handshake just-in-time (JIT) prior to making a
+    /// request in the scenario where the client has not already performed a handshake
+    #[inline]
+    pub fn will_jit_handshake(&self) -> bool {
+        self.jit_handshake
+    }
+
+    /// Sets the jit flag on this client with `true` indicating that this client will perform a
+    /// handshake just-in-time (JIT) prior to making a request in the scenario where the client has
+    /// not already performed a handshake
+    #[inline]
+    pub fn set_jit_handshake(&mut self, flag: bool) {
+        self.jit_handshake = flag;
     }
 
     /// Provides a challenge to the server and returns the answers to the questions
@@ -58,6 +85,15 @@ impl AuthClient {
         questions: Vec<AuthQuestion>,
         extra: HashMap<String, String>,
     ) -> io::Result<Vec<String>> {
+        trace!(
+            "AuthClient::challenge(questions = {:?}, extra = {:?})",
+            questions,
+            extra
+        );
+
+        // Perform JIT handshake if enabled
+        let _ = self.jit_handshake().await?;
+
         let payload = AuthRequest::Challenge { questions, extra };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
         let response = self.inner.send(Auth::Msg { encrypted_payload }).await?;
@@ -82,6 +118,11 @@ impl AuthClient {
     /// Provides a verification request to the server and returns whether or not
     /// the server approved
     pub async fn verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool> {
+        trace!("AuthClient::verify(kind = {:?}, text = {:?})", kind, text);
+
+        // Perform JIT handshake if enabled
+        let _ = self.jit_handshake().await?;
+
         let payload = AuthRequest::Verify { kind, text };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
         let response = self.inner.send(Auth::Msg { encrypted_payload }).await?;
@@ -105,6 +146,11 @@ impl AuthClient {
 
     /// Provides information to the server to use as it pleases with no response expected
     pub async fn info(&mut self, text: String) -> io::Result<()> {
+        trace!("AuthClient::info(text = {:?})", text);
+
+        // Perform JIT handshake if enabled
+        let _ = self.jit_handshake().await?;
+
         let payload = AuthRequest::Info { text };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
         self.inner.fire(Auth::Msg { encrypted_payload }).await
@@ -112,6 +158,11 @@ impl AuthClient {
 
     /// Provides an error to the server to use as it pleases with no response expected
     pub async fn error(&mut self, kind: AuthErrorKind, text: String) -> io::Result<()> {
+        trace!("AuthClient::error(kind = {:?}, text = {:?})", kind, text);
+
+        // Perform JIT handshake if enabled
+        let _ = self.jit_handshake().await?;
+
         let payload = AuthRequest::Error { kind, text };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
         self.inner.fire(Auth::Msg { encrypted_payload }).await
