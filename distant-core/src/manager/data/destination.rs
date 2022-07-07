@@ -94,7 +94,7 @@ impl Destination {
                 // NOTE: 14 is the global flag
                 x.is_multicast() && (x.segments()[0] & 0x000f == 14)
             }
-            Some(Host::RegisteredName(_)) => true,
+            Some(Host::RegisteredName(name)) => !name.trim().is_empty(),
             None => false,
         }
     }
