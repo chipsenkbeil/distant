@@ -69,7 +69,7 @@ impl ServerSubcommand {
             // Get the credentials and print them
             let mut s = String::new();
             let n = transport.read_to_string(&mut s).await?;
-            let credentials = s
+            let credentials = s[..n]
                 .trim()
                 .parse::<DistantSingleKeyCredentials>()
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
