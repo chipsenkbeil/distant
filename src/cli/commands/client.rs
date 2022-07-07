@@ -27,7 +27,8 @@ use shell::Shell;
 pub enum ClientSubcommand {
     /// Performs some action on a remote machine
     Action {
-        #[clap(short, long)]
+        /// Specify a connection being managed
+        #[clap(long)]
         connection: Option<ConnectionId>,
 
         #[clap(subcommand)]
@@ -42,11 +43,15 @@ pub enum ClientSubcommand {
         #[clap(short, long, value_enum)]
         format: Format,
 
-        destination: Destination,
+        destination: Box<Destination>,
     },
 
     /// Specialized treatment of running a remote LSP process
     Lsp {
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
         /// If provided, will run in persist mode, meaning that the process will not be killed if the
         /// client disconnects from the server
         #[clap(long)]
@@ -61,12 +66,21 @@ pub enum ClientSubcommand {
 
     /// Runs actions in a read-eval-print loop
     Repl {
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        /// Format used for input into and output from the repl
         #[clap(short, long, value_enum)]
         format: Format,
     },
 
     /// Specialized treatment of running a remote shell process
     Shell {
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
         /// If provided, will run in persist mode, meaning that the process will not be killed if the
         /// client disconnects from the server
         #[clap(long)]
@@ -80,7 +94,7 @@ pub enum ClientSubcommand {
 impl ClientSubcommand {
     pub fn is_remote_process(&self) -> bool {
         match self {
-            Self::Action { request } => request.is_proc_spawn(),
+            Self::Action { request, .. } => request.is_proc_spawn(),
             Self::Lsp { .. } | Self::Shell { .. } => true,
             _ => false,
         }
@@ -109,8 +123,15 @@ impl ClientSubcommand {
 
     async fn async_run(self, config: ClientConfig) -> CliResult<()> {
         match self {
-            Self::Action { request } => {
+            Self::Action {
+                connection,
+                request,
+            } => {
                 let mut client = Client::new(config.network).connect().await?;
+                let connection_id = match connection {
+                    Some(id) => id,
+                    None => Self::lookup_connection_id(&mut client).await?,
+                };
 
                 let mut channel = client.open_channel(connection_id).await?;
                 let response = channel
@@ -135,26 +156,41 @@ impl ClientSubcommand {
 
                 // Start the server using our manager
                 let destination = client
-                    .launch(destination, Extra::from(launcher_config))
+                    .launch(*destination, Extra::from(launcher_config))
                     .await?;
 
                 // Trigger our manager to connect to the launched server
                 let id = client.connect(destination, Extra::new()).await?;
 
                 // Mark the server's id as the new default
-                todo!()
+                let mut storage = Storage::read_or_default().await?;
+                storage.default_connection_id = id;
+                storage.write().await?;
             }
-            Self::Lsp { persist, pty, cmd } => {
+            Self::Lsp {
+                connection,
+                persist,
+                pty,
+                cmd,
+            } => {
                 let mut client = Client::new(config.network).connect().await?;
-                let channel = client.open_channel(1).await?;
+                let connection_id = match connection {
+                    Some(id) => id,
+                    None => Self::lookup_connection_id(&mut client).await?,
+                };
+                let channel = client.open_channel(connection_id).await?;
                 Lsp::new(channel).spawn(cmd, persist, pty).await?;
             }
-            Self::Repl { format } => {
+            Self::Repl { connection, format } => {
                 let mut client = Client::new(config.network)
                     .using_msg_stdin_stdout()
                     .connect()
                     .await?;
-                let mut channel = client.open_channel(1).await?;
+                let connection_id = match connection {
+                    Some(id) => id,
+                    None => Self::lookup_connection_id(&mut client).await?,
+                };
+                let mut channel = client.open_channel(connection_id).await?;
 
                 let tx = MsgSender::from_stdout();
                 let mut rx = MsgReceiver::from_stdin().into_rx();
@@ -168,9 +204,17 @@ impl ClientSubcommand {
                     tx.send_blocking(&response)?;
                 }
             }
-            Self::Shell { persist, cmd } => {
+            Self::Shell {
+                connection,
+                persist,
+                cmd,
+            } => {
                 let mut client = Client::new(config.network).connect().await?;
-                let channel = client.open_channel(1).await?;
+                let connection_id = match connection {
+                    Some(id) => id,
+                    None => Self::lookup_connection_id(&mut client).await?,
+                };
+                let channel = client.open_channel(connection_id).await?;
                 Shell::new(channel).spawn(cmd, persist).await?;
             }
         }
