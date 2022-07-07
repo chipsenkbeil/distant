@@ -65,7 +65,8 @@ impl DistantSingleKeyCredentials {
     /// failing if the credentials would not produce a valid [`Destination`]
     pub fn try_to_destination(&self) -> io::Result<Destination> {
         let uri = self.try_to_uri()?;
-        Ok(Destination(uri.into()))
+        Destination::try_from(uri.as_uri_reference().to_borrowed())
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
     }
 
     /// Converts credentials into a [`URI`] of the form `distant://[username]:{key}@{host}`,

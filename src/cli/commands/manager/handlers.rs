@@ -171,7 +171,7 @@ impl ConnectHandler for DistantConnectHandler {
         // Build address like `example.com:8080`
         let addr = format!(
             "{}:{}",
-            destination.host().ok_or_else(|| missing("host"))?,
+            destination.to_host_string(),
             destination.port().ok_or_else(|| missing("port"))?
         );
 
@@ -180,7 +180,6 @@ impl ConnectHandler for DistantConnectHandler {
         let codec = {
             let key = destination
                 .password()
-                .map(|p| p.as_str())
                 .or_else(|| extra.get("key").map(|s| s.as_str()));
 
             let key = match key {
@@ -286,10 +285,7 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
 fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2::Ssh> {
     use distant_ssh2::{Ssh, SshOpts};
 
-    let host = destination
-        .host()
-        .map(ToString::to_string)
-        .ok_or_else(|| missing("host"))?;
+    let host = destination.to_host_string();
 
     let opts = SshOpts {
         backend: match extra.get("backend") {

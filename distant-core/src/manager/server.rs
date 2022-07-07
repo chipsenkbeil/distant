@@ -142,8 +142,8 @@ impl DistantManager {
 
         let scheme = match destination.scheme() {
             Some(scheme) => {
-                trace!("Using scheme {}", scheme.as_str());
-                scheme.as_str()
+                trace!("Using scheme {}", scheme);
+                scheme
             }
             None => {
                 trace!(
@@ -187,8 +187,8 @@ impl DistantManager {
 
         let scheme = match destination.scheme() {
             Some(scheme) => {
-                trace!("Using scheme {}", scheme.as_str());
-                scheme.as_str()
+                trace!("Using scheme {}", scheme);
+                scheme
             }
             None => {
                 trace!(

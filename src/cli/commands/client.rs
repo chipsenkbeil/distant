@@ -10,7 +10,7 @@ use distant_core::{
     ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData, Extra,
 };
 use log::*;
-use std::time::Duration;
+use std::{io, time::Duration};
 
 mod buf;
 mod format;
@@ -160,13 +160,24 @@ impl ClientSubcommand {
                 let mut extra = Extra::from(config.launch);
                 extra.extend(Extra::from(launcher_config).into_map());
 
+                // Grab the host we are connecting to for later use
+                let host = destination.to_host_string();
+
                 // Start the server using our manager
                 debug!("Launching server at {} with {}", destination, extra);
-                let destination = client.launch(*destination, extra).await?;
+                let mut new_destination = client.launch(*destination, extra).await?;
+
+                // Update the new destination with our previously-used host if the
+                // new host is not globally-accessible
+                if !new_destination.is_host_global() {
+                    new_destination
+                        .replace_host(host.as_str())
+                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+                }
 
                 // Trigger our manager to connect to the launched server
-                debug!("Connecting to server at {}", destination);
-                let id = client.connect(destination, Extra::new()).await?;
+                debug!("Connecting to server at {}", new_destination);
+                let id = client.connect(new_destination, Extra::new()).await?;
 
                 // Mark the server's id as the new default
                 debug!("Updating cached default connection id to {}", id);
