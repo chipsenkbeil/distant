@@ -21,11 +21,6 @@ pub enum ServerSubcommand {
         #[clap(long)]
         daemon: bool,
 
-        /// If specified, will detach from the console
-        #[cfg(windows)]
-        #[clap(long)]
-        no_console: bool,
-
         /// If specified, the server will not generate a key but instead listen on stdin for the next
         /// 32 bytes that it will use as the key instead. Receiving less than 32 bytes before stdin
         /// is closed is considered an error and any bytes after the first 32 are not used for the key
@@ -69,7 +64,6 @@ impl ServerSubcommand {
         // Also, remove first argument (program) since we determined it above
         let cmd = {
             let mut cmd = OsString::new();
-            cmd.push("'");
             cmd.push(program.as_os_str());
 
             let it = std::env::args_os().skip(1).filter(|arg| {
@@ -82,7 +76,6 @@ impl ServerSubcommand {
                 cmd.push(&arg);
             }
 
-            cmd.push("'");
             cmd
         };
 
@@ -207,15 +200,6 @@ impl ServerSubcommand {
                 println!("{}", credentials);
                 println!("\r");
                 io::stdout().flush()?;
-
-                // Disassociate our server from stdin/stdout/stderr
-                #[cfg(windows)]
-                if no_console {
-                    debug!("Freeing console connected to server");
-                    unsafe {
-                        windows::Win32::System::Console::FreeConsole();
-                    }
-                }
 
                 // For the child, we want to fully disconnect it from pipes, which we do now
                 #[cfg(unix)]

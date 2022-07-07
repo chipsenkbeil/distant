@@ -56,7 +56,6 @@ distant-ssh2 = { version = "=0.17.0", path = "distant-ssh2", default-features = 
 fork = "0.1.19"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.38.0", features = ["Win32_System_Console", "Win32_Foundation"] }
 windows-service = "0.4.0"
 
 [dev-dependencies]
