@@ -47,7 +47,7 @@ impl ServerSubcommand {
         }
     }
 
-    // #[cfg(wincdows)]
+    #[cfg(wincdows)]
     fn run_daemon(self) -> CliResult<()> {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
@@ -65,12 +65,10 @@ impl ServerSubcommand {
 
             // Wait to receive a connection from the above process
             let mut transport = listener.accept().await?;
-            println!("GOT CONNECTION");
 
             // Get the credentials and print them
             let mut s = String::new();
             let n = transport.read_to_string(&mut s).await?;
-            println!("READ {} BYTES", n);
             if n == 0 {
                 Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,

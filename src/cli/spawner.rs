@@ -26,6 +26,7 @@ impl Spawner {
             s
         };
 
+        println!("Spawning {:?}", cmd);
         Self::spawn_background(cmd)
     }
 
