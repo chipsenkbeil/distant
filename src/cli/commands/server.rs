@@ -55,18 +55,14 @@ impl ServerSubcommand {
 
         // Remove --daemon argument to to ensure runs in foreground,
         // otherwise we would fork bomb ourselves
-        let args: Vec<OsString> = vec![
-            OsString::from("/C"),
-            OsString::from("start"),
-            OsString::from("/B"),
-        ]
-        .into_iter()
-        .chain(std::env::args_os().filter(|arg| {
-            !arg.to_str()
-                .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
-                .unwrap_or_default()
-        }))
-        .collect();
+        let args: Vec<OsString> = vec![OsString::from("/B")]
+            .into_iter()
+            .chain(std::env::args_os().filter(|arg| {
+                !arg.to_str()
+                    .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
+                    .unwrap_or_default()
+            }))
+            .collect();
 
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
@@ -75,7 +71,7 @@ impl ServerSubcommand {
         // let flags = CREATE_NEW_PROCESS_GROUP;
 
         debug!("Spawning child process: cmd {:?}", args);
-        let child = Command::new("cmd")
+        let child = Command::new("start")
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
