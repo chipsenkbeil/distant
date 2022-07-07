@@ -36,7 +36,8 @@ where
         P: AsRef<Path> + Send,
         C: Codec + Send + Sync + 'static,
     {
-        let listener = UnixSocketListener::bind(path)?;
+        let path = path.as_ref();
+        let listener = UnixSocketListener::bind(path).await?;
         let path = listener.path().to_path_buf();
 
         let listener = MappedListener::new(listener, move |transport| {

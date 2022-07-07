@@ -50,28 +50,59 @@ impl ServerSubcommand {
         use std::{
             ffi::OsString,
             os::windows::process::CommandExt,
+            path::PathBuf,
             process::{Command, Stdio},
         };
 
+        // Get absolute path to powershell
+        let powershell = which::which("powershell.exe")
+            .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+
+        // Get absolute path to our binary
+        let program =
+            which::which(std::env::current_exe().unwrap_or_else(|| PathBuf::from("distant.exe")))
+                .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+
         // Remove --daemon argument to to ensure runs in foreground,
         // otherwise we would fork bomb ourselves
-        let args: Vec<OsString> = vec![OsString::from("/B")]
-            .into_iter()
-            .chain(std::env::args_os().filter(|arg| {
+        //
+        // Also, remove first argument (program) since we determined it above
+        let cmd = {
+            let mut cmd = OsString::new();
+            cmd.push("'");
+            cmd.push(program.as_os_str());
+
+            let it = std::env::args_os().skip(1).filter(|arg| {
                 !arg.to_str()
                     .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
                     .unwrap_or_default()
-            }))
-            .collect();
+            });
+            for arg in it {
+                cmd.push(" ");
+                cmd.push(&arg);
+            }
+
+            cmd.push("'");
+            cmd
+        };
+
+        let args = vec![
+            OsString::from("Invoke-WmiMethod"),
+            OsString::from("-Class"),
+            OsString::from("Win32_Process"),
+            OsString::from("-Name"),
+            OsString::from("Create"),
+            OsString::from("-ArgumentList"),
+            cmd,
+        ];
 
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
-        // let flags = CREATE_NEW_PROCESS_GROUP;
 
-        debug!("Spawning child process: cmd {:?}", args);
-        let child = Command::new("start")
+        debug!("Spawning child process: {} {:?}", powershell, args);
+        let child = Command::new(powershell)
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())

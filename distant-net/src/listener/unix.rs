@@ -4,6 +4,7 @@ use std::{
     fmt, io,
     path::{Path, PathBuf},
 };
+use tokio::net::{UnixListener, UnixStream};
 
 /// Represents a [`Listener`] for incoming connections over a Unix socket
 pub struct UnixSocketListener {
@@ -14,8 +15,23 @@ pub struct UnixSocketListener {
 impl UnixSocketListener {
     /// Creates a new listener by binding to the specified path, failing
     /// if the path already exists
-    pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
-        let listener = tokio::net::UnixListener::bind(path.as_ref())?;
+    pub async fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
+        // Attempt to bind to the path, and if we fail, we see if we can connect
+        // to the path -- if not, we can try to delete the path and start again
+        let listener = match UnixListener::bind(path.as_ref()) {
+            Ok(listener) => listener,
+            Err(_) => {
+                // If we can connect to the path, then it's already in use
+                if UnixStream::connect(path.as_ref()).await.is_ok() {
+                    return Err(io::Error::from(io::ErrorKind::AddrInUse));
+                }
+
+                // Otherwise, remove the file and try again
+                tokio::fs::remove_file(path.as_ref()).await?;
+
+                UnixListener::bind(path.as_ref())?
+            }
+        };
         Ok(Self {
             path: path.as_ref().to_path_buf(),
             inner: listener,
@@ -63,7 +79,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn should_fail_to_bind_if_file_exists_at_path() {
+    async fn should_succeed_to_bind_if_file_exists_at_path_but_nothing_listening() {
         // Generate a socket path
         let path = NamedTempFile::new()
             .expect("Failed to create file")
@@ -71,7 +87,8 @@ mod tests {
 
         // This should fail as we're already got a file at the path
         UnixSocketListener::bind(&path)
-            .expect_err("Unexpectedly succeeded in binding to existing file");
+            .await
+            .expect("Unexpectedly failed to bind to existing file");
     }
 
     #[tokio::test]
@@ -83,11 +100,13 @@ mod tests {
             .to_path_buf();
 
         // Listen at the socket
-        let _listener =
-            UnixSocketListener::bind(&path).expect("Unexpectedly failed to bind first time");
+        let _listener = UnixSocketListener::bind(&path)
+            .await
+            .expect("Unexpectedly failed to bind first time");
 
         // Now this should fail as we're already bound to the path
         UnixSocketListener::bind(&path)
+            .await
             .expect_err("Unexpectedly succeeded in binding to same socket");
     }
 
@@ -105,7 +124,7 @@ mod tests {
                 .to_path_buf();
 
             // Listen at the socket
-            let mut listener = UnixSocketListener::bind(&path)?;
+            let mut listener = UnixSocketListener::bind(&path).await?;
 
             // Send the name path to our main test thread
             tx.send(path)
