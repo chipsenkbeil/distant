@@ -44,6 +44,7 @@ impl ServerSubcommand {
     fn run_daemon(self) -> CliResult<()> {
         use std::{
             ffi::OsString,
+            io::{BufRead, Cursor},
             os::windows::process::CommandExt,
             path::PathBuf,
             process::{Command, Stdio},
@@ -104,15 +105,63 @@ impl ServerSubcommand {
             powershell.to_string_lossy(),
             args
         );
-        let child = Command::new(powershell.into_os_string())
+        let output = Command::new(powershell.into_os_string())
             // .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .spawn()?;
-        println!("[distant server detached, pid = {}]", child.id());
-        Ok(())
+            .output()?;
+
+        /* __GENUS          : 2
+        __CLASS          : __PARAMETERS
+        __SUPERCLASS     :
+        __DYNASTY        : __PARAMETERS
+        __RELPATH        :
+        __PROPERTY_COUNT : 2
+        __DERIVATION     : {}
+        __SERVER         :
+        __NAMESPACE      :
+        __PATH           :
+        ProcessId        : 7016
+        ReturnValue      : 0
+        PSComputerName   : */
+        let stdout = Cursor::new(output.stdout);
+
+        let mut process_id = None;
+        let mut return_value = None;
+        for line in stdout.lines().filter_map(|l| l.ok()) {
+            let line = line.trim();
+            if line.starts_with("ProcessId") {
+                if let Some((_, id)) = line.split_once(':') {
+                    process_id = id.parse::<u64>().ok();
+                }
+            } else if line.starts_with("ReturnValue") {
+                if let Some((_, value)) = line.split_once(':') {
+                    return_value = value.parse::<i64>().ok();
+                }
+            }
+        }
+
+        match (return_value, process_id) {
+            (Some(0), Some(pid)) => {
+                println!("[distant server detached, pid = {}]", pid);
+                Ok(())
+            }
+            (Some(0), Some(pid)) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Program succeeded, but missing process pid",
+            ))?,
+            (Some(code), _) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Program failed [{}]: {}",
+                    code,
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ))?,
+            (None, _) => Err(io::Error::new(io::ErrorKind::Other, "Missing return value"))?,
+        }
     }
 
     #[cfg(unix)]
