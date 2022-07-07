@@ -1,7 +1,6 @@
 use crate::{DistantManager, DistantManagerConfig};
 use distant_net::{
-    Codec, FramedTransport, IntoSplit, MappedListener, ServerExt, WindowsPipeListener,
-    WindowsPipeServerRef,
+    Codec, FramedTransport, IntoSplit, MappedListener, WindowsPipeListener, WindowsPipeServerRef,
 };
 use std::{
     ffi::{OsStr, OsString},
