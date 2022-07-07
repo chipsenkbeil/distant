@@ -43,7 +43,7 @@ impl ServerSubcommand {
     #[cfg(windows)]
     fn run_daemon(self) -> CliResult<()> {
         use crate::cli::Spawner;
-        let id = Spawner::spawn_running_background()?;
+        let pid = Spawner::spawn_running_background()?;
         println!("[distant server detached, pid = {}]", pid);
         Ok(())
     }
