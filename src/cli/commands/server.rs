@@ -55,7 +55,7 @@ impl ServerSubcommand {
         use tokio::io::AsyncReadExt;
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
-            let name = format!("distant_daemon_{}", rand::random::<usize>());
+            let name = format!("distant_{}_{}", std::process::id(), rand::random::<u16>());
             let mut listener = WindowsPipeListener::bind_local(name.as_str())?;
 
             let pid = Spawner::spawn_running_background(vec![
