@@ -56,7 +56,6 @@ impl LaunchHandler for ManagerLaunchHandler {
         let mut args = vec![
             String::from("server"),
             String::from("listen"),
-            String::from("--daemon"),
             String::from("--host"),
             config
                 .distant
