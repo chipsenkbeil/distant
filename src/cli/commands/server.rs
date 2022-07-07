@@ -106,6 +106,11 @@ impl ServerSubcommand {
             powershell.to_string_lossy(),
             args
         );
+        println!(
+            "Spawning child process: {} {:?}",
+            powershell.to_string_lossy(),
+            args
+        );
         let child = Command::new(powershell.into_os_string())
             .creation_flags(flags)
             .args(args)
