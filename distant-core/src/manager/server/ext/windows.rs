@@ -10,7 +10,7 @@ use std::{
 
 impl DistantManager {
     /// Start a new server at the specified address via `\\.\pipe\{name}` using the given codec
-    async fn start_local_named_pipe<N, C>(
+    pub async fn start_local_named_pipe<N, C>(
         config: DistantManagerConfig,
         name: N,
         codec: C,

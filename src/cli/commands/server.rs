@@ -116,6 +116,8 @@ impl ServerSubcommand {
             Self::Listen {
                 config,
                 key_from_stdin,
+                #[cfg(windows)]
+                no_console,
                 ..
             } => {
                 let addr = config
@@ -160,7 +162,7 @@ impl ServerSubcommand {
 
                 // Disassociate our server from stdin/stdout/stderr
                 #[cfg(windows)]
-                if self.no_console {
+                if no_console {
                     unsafe {
                         windows::Win32::System::Console::FreeConsole();
                     }
