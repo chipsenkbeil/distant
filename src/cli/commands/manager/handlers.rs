@@ -94,7 +94,7 @@ impl LaunchHandler for ManagerLaunchHandler {
         loop {
             match stdout.read_line(&mut line).await {
                 Ok(n) if n > 0 => {
-                    println!("checking {}", &line[..n]);
+                    println!("checking '{}'", &line[..n]);
                     if let Ok(destination) = line[..n].trim().parse::<Destination>() {
                         break Ok(destination);
                     }
