@@ -175,9 +175,11 @@ impl ClientSubcommand {
                         host,
                         new_destination.to_host_string()
                     );
+                    println!("BEFORE: {:?}", new_destination);
                     new_destination
                         .replace_host(host.as_str())
                         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+                    println!("AFTER: {:?}", new_destination);
                 } else {
                     trace!("Host {:?} is global", new_destination.to_host_string());
                 }
