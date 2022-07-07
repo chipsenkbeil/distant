@@ -31,7 +31,7 @@ a command to start a server and configure the local client to be able to
 talk to the server.
 
 - Asynchronous in nature, powered by [`tokio`](https://tokio.rs/)
-- Data is serialized to send across the wire via [`CBOR`](https://cbor.io/)
+- Data is serialized to send across the wire via [`msgpack`](https://msgpack.org/)
 - Encryption & authentication are handled via
   [XChaCha20Poly1305](https://tools.ietf.org/html/rfc8439) for an authenticated
   encryption scheme via

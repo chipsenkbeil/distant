@@ -171,12 +171,6 @@ macro_rules! router {
                             tokio::select! {
                                 $(
                                     Some(x) = [<$transport:snake _outbound_rx>].recv() => {
-                                        /* $crate::log::trace!(
-                                            "Writing to {} of {}: {:?}",
-                                            std::stringify!($transport),
-                                            std::stringify!($name),
-                                            x
-                                        ); */
                                         if let Err(x) = $crate::UntypedTransportWrite::write(
                                             &mut writer,
                                             x,
