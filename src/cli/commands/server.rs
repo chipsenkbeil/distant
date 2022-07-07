@@ -105,11 +105,11 @@ impl ServerSubcommand {
             args
         );
         let child = Command::new(powershell.into_os_string())
-            .creation_flags(flags)
+            // .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .spawn()?;
         println!("[distant server detached, pid = {}]", child.id());
         Ok(())
