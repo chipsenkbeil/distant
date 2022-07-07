@@ -89,7 +89,7 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
 
-        println!("Child {}", child.id());
+        println!("Child {:?}", child.id());
         let mut line = String::new();
         loop {
             match stdout.read_line(&mut line).await {
