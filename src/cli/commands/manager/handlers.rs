@@ -42,7 +42,13 @@ impl LaunchHandler for ManagerLaunchHandler {
         // Get the path to the distant binary, ensuring it exists and is executable
         let program = which::which(match config.distant.bin {
             Some(bin) => PathBuf::from(bin),
-            None => std::env::current_exe().unwrap_or_else(|_| PathBuf::from("distant")),
+            None => std::env::current_exe().unwrap_or_else(|_| {
+                PathBuf::from(if cfg!(windows) {
+                    "distant.exe"
+                } else {
+                    "distant"
+                })
+            }),
         })
         .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
 
@@ -83,10 +89,12 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
 
+        println!("Child {}", child.id());
         let mut line = String::new();
         loop {
             match stdout.read_line(&mut line).await {
                 Ok(n) if n > 0 => {
+                    println!("checking {}", &line[..n]);
                     if let Ok(destination) = line[..n].trim().parse::<Destination>() {
                         break Ok(destination);
                     }
