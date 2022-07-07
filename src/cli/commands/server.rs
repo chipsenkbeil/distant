@@ -113,6 +113,17 @@ impl ServerSubcommand {
             .stderr(Stdio::inherit())
             .output()?;
 
+        if !output.status.success() {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Program failed [{}]: {}",
+                    output.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ))?;
+        }
+
         /* __GENUS          : 2
         __CLASS          : __PARAMETERS
         __SUPERCLASS     :
@@ -138,7 +149,7 @@ impl ServerSubcommand {
                 }
             } else if line.starts_with("ReturnValue") {
                 if let Some((_, value)) = line.split_once(':') {
-                    return_value = value.parse::<i64>().ok();
+                    return_value = value.parse::<i32>().ok();
                 }
             }
         }
