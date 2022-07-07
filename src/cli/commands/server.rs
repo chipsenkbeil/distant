@@ -111,11 +111,6 @@ impl ServerSubcommand {
             powershell.to_string_lossy(),
             args
         );
-        println!(
-            "Spawning child process: {} {:?}",
-            powershell.to_string_lossy(),
-            args
-        );
         let output = Command::new(powershell.into_os_string())
             .creation_flags(flags)
             .args(args)
@@ -141,7 +136,6 @@ impl ServerSubcommand {
         let mut return_value = None;
         for line in stdout.lines().filter_map(|l| l.ok()) {
             let line = line.trim();
-            println!("Checking {}", line);
             if line.starts_with("ProcessId") {
                 if let Some((_, id)) = line.split_once(':') {
                     process_id = id.trim().parse::<u64>().ok();
