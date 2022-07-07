@@ -144,8 +144,6 @@ impl ServerSubcommand {
             Self::Listen {
                 config,
                 key_from_stdin,
-                #[cfg(windows)]
-                no_console,
                 ..
             } => {
                 let addr = config
