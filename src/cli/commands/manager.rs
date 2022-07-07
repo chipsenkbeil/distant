@@ -80,7 +80,7 @@ impl ManagerSubcommand {
                 // Register our handlers for different schemes
                 debug!("Registering handlers with manager");
                 manager_ref
-                    .register_launch_handler("local", handlers::LocalLaunchHandler)
+                    .register_launch_handler("manager", handlers::ManagerLaunchHandler)
                     .await?;
                 manager_ref
                     .register_launch_handler("ssh", handlers::SshLaunchHandler)

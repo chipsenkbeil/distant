@@ -26,11 +26,11 @@ fn invalid(label: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid {}", label))
 }
 
-/// Supports launching locally as defined by `local://...`
-pub struct LocalLaunchHandler;
+/// Supports launching locally through the manager as defined by `manager://...`
+pub struct ManagerLaunchHandler;
 
 #[async_trait]
-impl LaunchHandler for LocalLaunchHandler {
+impl LaunchHandler for ManagerLaunchHandler {
     async fn launch(
         &self,
         destination: &Destination,

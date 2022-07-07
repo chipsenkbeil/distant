@@ -49,11 +49,9 @@ impl ServerSubcommand {
     fn run_daemon(self) -> CliResult<()> {
         use std::{
             ffi::OsString,
-            iter,
             os::windows::process::CommandExt,
             process::{Command, Stdio},
         };
-        let mut args = std::env::args_os();
 
         // Remove --daemon argument to to ensure runs in foreground,
         // otherwise we would fork bomb ourselves
@@ -62,12 +60,11 @@ impl ServerSubcommand {
         // so it won't be killed later when a console is terminated
         let args: Vec<OsString> = vec![OsString::from("/C"), OsString::from("start")]
             .into_iter()
-            .chain(args.filter(|arg| {
+            .chain(std::env::args_os().filter(|arg| {
                 !arg.to_str()
                     .map(|s| s.trim().eq_ignore_ascii_case("--daemon"))
                     .unwrap_or_default()
             }))
-            // .chain(iter::once(OsString::from("--no-console")))
             .collect();
 
         const DETACHED_PROCESS: u32 = 0x00000008;
@@ -81,8 +78,8 @@ impl ServerSubcommand {
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()?;
         println!("[distant server detached, pid = {}]", child.id());
         Ok(())
