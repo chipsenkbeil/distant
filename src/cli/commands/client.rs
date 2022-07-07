@@ -40,6 +40,14 @@ pub enum ClientSubcommand {
         request: DistantRequestData,
     },
 
+    /// Requests that active manager connects to the server at the specified destination
+    Connect {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
+        destination: Box<Destination>,
+    },
+
     /// Launches the server-portion of the binary on a remote machine
     Launch {
         #[clap(flatten)]
@@ -140,6 +148,29 @@ impl ClientSubcommand {
 
                 debug!("Got response {:?}", response);
                 Formatter::new(Format::Shell).print(response)?;
+            }
+            Self::Connect {
+                format,
+                destination,
+            } => {
+                debug!("Connecting to manager: {:?}", config.network.as_os_str());
+                let mut client = {
+                    let client = match format {
+                        Format::Shell => Client::new(config.network),
+                        Format::Json => Client::new(config.network).using_msg_stdin_stdout(),
+                    };
+                    client.connect().await?
+                };
+
+                // Trigger our manager to connect to the launched server
+                debug!("Connecting to server at {}", destination);
+                let id = client.connect(*destination, Extra::new()).await?;
+
+                // Mark the server's id as the new default
+                debug!("Updating cached default connection id to {}", id);
+                let mut storage = Storage::read_or_default().await?;
+                storage.default_connection_id = id;
+                storage.write().await?;
             }
             Self::Launch {
                 config: launcher_config,
