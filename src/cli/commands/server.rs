@@ -111,8 +111,8 @@ impl ServerSubcommand {
             // .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .output()?;
 
         if !output.status.success() {
