@@ -170,9 +170,16 @@ impl ClientSubcommand {
                 // Update the new destination with our previously-used host if the
                 // new host is not globally-accessible
                 if !new_destination.is_host_global() {
+                    trace!(
+                        "Updating host to {:?} from non-global {:?}",
+                        host,
+                        new_destination.to_host_string()
+                    );
                     new_destination
                         .replace_host(host.as_str())
                         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+                } else {
+                    trace!("Host {:?} is global", new_destination.to_host_string());
                 }
 
                 // Trigger our manager to connect to the launched server
