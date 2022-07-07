@@ -105,7 +105,7 @@ pub struct ClientLaunchDistantConfig {
     /// Path to distant program on remote machine to execute via ssh;
     /// by default, this program needs to be available within PATH as
     /// specified when compiling ssh (not your login shell)
-    #[clap(long = "distant")]
+    #[clap(name = "distant", long)]
     pub bin: Option<String>,
 
     /// Control the IP address that the server binds to.
@@ -119,11 +119,11 @@ pub struct ClientLaunchDistantConfig {
     /// another tool that makes the SSH connection appear to come from localhost.
     ///
     /// With --bind-server=IP, the server will attempt to bind to the specified IP address.
-    #[clap(long = "distant-bind-server", value_name = "ssh|any|IP")]
+    #[clap(name = "distant-bind-server", long, value_name = "ssh|any|IP")]
     pub bind_server: Option<BindAddress>,
 
     /// Additional arguments to provide to the server
-    #[clap(long = "distant-args", allow_hyphen_values(true))]
+    #[clap(name = "distant-args", long, allow_hyphen_values(true))]
     pub args: Option<String>,
 
     /// If specified, will not launch distant using a login shell but instead execute it directly
@@ -134,29 +134,29 @@ pub struct ClientLaunchDistantConfig {
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
 pub struct ClientLaunchSshConfig {
     /// Path to ssh program on local machine to execute when using external ssh
-    #[clap(long = "ssh")]
+    #[clap(name = "ssh", long)]
     pub bin: Option<String>,
 
     /// If using native ssh integration, represents the backend
     #[cfg(any(feature = "libssh", feature = "ssh2"))]
-    #[clap(long = "ssh-backend")]
+    #[clap(name = "ssh-backend", long)]
     pub backend: Option<distant_ssh2::SshBackend>,
 
     /// If specified, will use the external ssh program to launch the server
     /// instead of the native integration; does nothing if the ssh2 feature is
     /// not enabled as there is no other option than external ssh
-    #[clap(long = "ssh-external")]
+    #[clap(name = "ssh-external", long)]
     pub external: bool,
 
     /// Username to use when sshing into remote machine
-    #[clap(short, long = "ssh-username")]
+    #[clap(name = "ssh-username", short = 'u', long)]
     pub username: Option<String>,
 
     /// Explicit identity file to use with ssh
-    #[clap(short, long = "ssh-identity-file")]
+    #[clap(name = "ssh-identity-file", short = 'i', long)]
     pub identity_file: Option<PathBuf>,
 
     /// Port to use for sshing into the remote machine
-    #[clap(short, long = "ssh-port")]
+    #[clap(name = "ssh-port", short = 'p', long)]
     pub port: Option<u16>,
 }
