@@ -32,6 +32,7 @@ pub enum ServerSubcommand {
 
         /// If specified, will send output to the specified named pipe
         #[cfg(windows)]
+        #[clap(long)]
         output_to_local_pipe: Option<OsString>,
     },
 }
