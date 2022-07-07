@@ -51,6 +51,7 @@ impl ServerSubcommand {
     fn run_daemon(self) -> CliResult<()> {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
+        use tokio::io::AsyncReadExt;
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let name = format!("distant_daemon_{}", rand::random::<usize>());
@@ -174,7 +175,7 @@ impl ServerSubcommand {
                 if let Some(name) = output_to_local_pipe {
                     use distant_core::net::WindowsPipeTransport;
                     use tokio::io::AsyncWriteExt;
-                    let transport = WindowsPipeTransport::connect_local(name).await?;
+                    let mut transport = WindowsPipeTransport::connect_local(name).await?;
                     transport
                         .write_all(credentials.to_string().as_bytes())
                         .await?;
