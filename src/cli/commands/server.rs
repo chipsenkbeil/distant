@@ -148,7 +148,7 @@ impl ServerSubcommand {
                 println!("[distant server detached, pid = {}]", pid);
                 Ok(())
             }
-            (Some(0), Some(pid)) => Err(io::Error::new(
+            (Some(0), None) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Program succeeded, but missing process pid",
             ))?,
