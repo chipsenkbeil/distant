@@ -69,6 +69,12 @@ impl ServerSubcommand {
             // Get the credentials and print them
             let mut s = String::new();
             let n = transport.read_to_string(&mut s).await?;
+            if n == 0 {
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "No credentials received from spawned server",
+                ))?;
+            }
             let credentials = s[..n]
                 .trim()
                 .parse::<DistantSingleKeyCredentials>()
