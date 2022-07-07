@@ -76,7 +76,7 @@ impl ServerSubcommand {
         let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
         // let flags = CREATE_NEW_PROCESS_GROUP;
 
-        debug!("Spawning child process: {} {:?}", program, args);
+        debug!("Spawning child process: cmd {:?}", args);
         let child = Command::new("cmd")
             .creation_flags(flags)
             .args(args)
