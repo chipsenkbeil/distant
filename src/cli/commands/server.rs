@@ -47,7 +47,7 @@ impl ServerSubcommand {
         }
     }
 
-    #[cfg(wincdows)]
+    #[cfg(windows)]
     fn run_daemon(self) -> CliResult<()> {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
