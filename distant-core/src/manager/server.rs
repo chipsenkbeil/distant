@@ -140,11 +140,20 @@ impl DistantManager {
             )
         })?;
 
-        let scheme = destination
-            .scheme()
-            .map(|scheme| scheme.as_str())
-            .unwrap_or(self.config.fallback_scheme.as_str())
-            .to_lowercase();
+        let scheme = match destination.scheme() {
+            Some(scheme) => {
+                trace!("Using scheme {}", scheme.as_str());
+                scheme.as_str()
+            }
+            None => {
+                trace!(
+                    "Using fallback scheme of {}",
+                    self.config.fallback_scheme.as_str()
+                );
+                self.config.fallback_scheme.as_str()
+            }
+        }
+        .to_lowercase();
 
         let credentials = {
             let lock = self.launch_handlers.read().await;
@@ -176,11 +185,20 @@ impl DistantManager {
             )
         })?;
 
-        let scheme = destination
-            .scheme()
-            .map(|scheme| scheme.as_str())
-            .unwrap_or(self.config.fallback_scheme.as_str())
-            .to_lowercase();
+        let scheme = match destination.scheme() {
+            Some(scheme) => {
+                trace!("Using scheme {}", scheme.as_str());
+                scheme.as_str()
+            }
+            None => {
+                trace!(
+                    "Using fallback scheme of {}",
+                    self.config.fallback_scheme.as_str()
+                );
+                self.config.fallback_scheme.as_str()
+            }
+        }
+        .to_lowercase();
 
         let (writer, reader) = {
             let lock = self.connect_handlers.read().await;
