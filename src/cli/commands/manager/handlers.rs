@@ -95,6 +95,7 @@ impl LaunchHandler for ManagerLaunchHandler {
                 Ok(n) if n > 0 => {
                     println!("checking {:?}", &line[..n]);
                     if let Ok(destination) = line[..n].trim().parse::<Destination>() {
+                        println!("Got destination: {:?}", destination);
                         break Ok(destination);
                     }
                 }
