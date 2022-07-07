@@ -65,6 +65,7 @@ impl ServerSubcommand {
         // Also, remove first argument (program) since we determined it above
         let cmd = {
             let mut cmd = OsString::new();
+            cmd.push("'");
             cmd.push(program.as_os_str());
 
             let it = std::env::args_os().skip(1).filter(|arg| {
@@ -77,6 +78,7 @@ impl ServerSubcommand {
                 cmd.push(&arg);
             }
 
+            cmd.push("'");
             cmd
         };
 
