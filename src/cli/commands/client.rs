@@ -45,7 +45,7 @@ pub enum ClientSubcommand {
         #[clap(flatten)]
         config: ClientLaunchConfig,
 
-        #[clap(short, long, value_enum)]
+        #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
         destination: Box<Destination>,
@@ -76,7 +76,7 @@ pub enum ClientSubcommand {
         connection: Option<ConnectionId>,
 
         /// Format used for input into and output from the repl
-        #[clap(short, long, value_enum)]
+        #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
         /// Represents the maximum time (in seconds) to wait for a network request before timing out

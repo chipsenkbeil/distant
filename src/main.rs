@@ -21,6 +21,7 @@ fn main() {
             if let Err(x) = cli.run() {
                 if !x.is_silent() {
                     error!("{}", x);
+                    eprintln!("{}", x);
                 }
                 logger.flush();
                 logger.shutdown();

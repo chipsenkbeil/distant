@@ -40,7 +40,7 @@ pub struct CommonConfig {
     #[clap(long, global = true, case_insensitive = true, value_enum)]
     pub log_level: Option<LogLevel>,
 
-    /// Log output to disk instead of stderr
+    /// Path to file to use for logging
     #[clap(long, global = true)]
     pub log_file: Option<PathBuf>,
 }
