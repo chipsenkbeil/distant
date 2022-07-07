@@ -101,7 +101,11 @@ impl ServerSubcommand {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
 
-        debug!("Spawning child process: {} {:?}", powershell, args);
+        debug!(
+            "Spawning child process: {} {:?}",
+            powershell.to_string_lossy(),
+            args
+        );
         let child = Command::new(powershell.into_os_string())
             .creation_flags(flags)
             .args(args)
