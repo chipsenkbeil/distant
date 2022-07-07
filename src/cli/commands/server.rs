@@ -95,7 +95,7 @@ impl ServerSubcommand {
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+        let flags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
 
         debug!(
             "Spawning child process: {} {:?}",
