@@ -108,7 +108,7 @@ impl ServerSubcommand {
             args
         );
         let output = Command::new(powershell.into_os_string())
-            // .creation_flags(flags)
+            .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -126,19 +126,6 @@ impl ServerSubcommand {
             ))?;
         }
 
-        /* __GENUS          : 2
-        __CLASS          : __PARAMETERS
-        __SUPERCLASS     :
-        __DYNASTY        : __PARAMETERS
-        __RELPATH        :
-        __PROPERTY_COUNT : 2
-        __DERIVATION     : {}
-        __SERVER         :
-        __NAMESPACE      :
-        __PATH           :
-        ProcessId        : 7016
-        ReturnValue      : 0
-        PSComputerName   : */
         let stdout = Cursor::new(output.stdout);
 
         let mut process_id = None;
