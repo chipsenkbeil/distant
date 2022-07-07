@@ -83,13 +83,22 @@ impl ServerSubcommand {
         };
 
         let args = vec![
+            OsString::from(r#"$startup=[wmiclass]"Win32_ProcessStartup""#),
+            OsString::from(";"),
+            OsString::from(r#"$startup.Properties['ShowWindow'].value=$False"#),
+            OsString::from(";"),
             OsString::from("Invoke-WmiMethod"),
             OsString::from("-Class"),
             OsString::from("Win32_Process"),
             OsString::from("-Name"),
             OsString::from("Create"),
             OsString::from("-ArgumentList"),
-            cmd,
+            {
+                let mut arg_list = OsString::new();
+                arg_list.push(&cmd);
+                arg_list.push(",$null,$startup");
+                arg_list
+            },
         ];
 
         const DETACHED_PROCESS: u32 = 0x00000008;
