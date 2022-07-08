@@ -1,5 +1,4 @@
 use derive_more::Display;
-use p256::EncodedPoint;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -25,9 +24,11 @@ pub enum Auth {
     #[serde(rename = "auth_handshake")]
     Handshake {
         /// Bytes of the public key
-        public_key: EncodedPoint,
+        #[serde(with = "serde_bytes")]
+        public_key: PublicKeyBytes,
 
         /// Randomly generated salt
+        #[serde(with = "serde_bytes")]
         salt: Salt,
     },
 
@@ -35,7 +36,10 @@ pub enum Auth {
     ///
     /// Underneath, will be one of either [`AuthRequest`] or [`AuthResponse`]
     #[serde(rename = "auth_msg")]
-    Msg { encrypted_payload: Vec<u8> },
+    Msg {
+        #[serde(with = "serde_bytes")]
+        encrypted_payload: Vec<u8>,
+    },
 }
 
 /// Represents authentication messages that act as initiators such as providing

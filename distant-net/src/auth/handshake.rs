@@ -1,7 +1,10 @@
-use p256::{ecdh::EphemeralSecret, EncodedPoint, PublicKey};
+use p256::{ecdh::EphemeralSecret, PublicKey};
 use rand::rngs::OsRng;
 use sha2::Sha256;
-use std::io;
+use std::{convert::TryFrom, io};
+
+mod pkb;
+pub use pkb::PublicKeyBytes;
 
 mod salt;
 pub use salt::Salt;
@@ -27,8 +30,8 @@ impl Default for Handshake {
 
 impl Handshake {
     // Return encoded bytes of public key
-    pub fn pk_bytes(&self) -> EncodedPoint {
-        EncodedPoint::from(self.secret.public_key())
+    pub fn pk_bytes(&self) -> PublicKeyBytes {
+        PublicKeyBytes::from(self.secret.public_key())
     }
 
     // Return the salt contained by this handshake
@@ -36,14 +39,9 @@ impl Handshake {
         &self.salt
     }
 
-    pub fn handshake(&self, public_key: EncodedPoint, salt: Salt) -> io::Result<SharedKey> {
+    pub fn handshake(&self, public_key: PublicKeyBytes, salt: Salt) -> io::Result<SharedKey> {
         // Decode the public key of the client
-        let decoded_public_key = match PublicKey::from_sec1_bytes(public_key.as_ref()) {
-            Ok(x) => x,
-            Err(x) => {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, x.to_string()));
-            }
-        };
+        let decoded_public_key = PublicKey::try_from(public_key)?;
 
         // Produce a salt that is consistent with what the other side will do
         let shared_salt = self.salt ^ salt;
@@ -52,7 +50,7 @@ impl Handshake {
         let shared_secret = self.secret.diffie_hellman(&decoded_public_key);
 
         // Extract entropy from the shared secret for use in producing a key
-        let hkdf = shared_secret.extract::<Sha256>(Some(shared_salt.as_slice()));
+        let hkdf = shared_secret.extract::<Sha256>(Some(shared_salt.as_ref()));
 
         // Derive a shared key (32 bytes)
         let mut shared_key = [0u8; 32];

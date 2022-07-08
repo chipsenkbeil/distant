@@ -811,6 +811,7 @@ dependencies = [
  "rand 0.8.5",
  "rmp-serde",
  "serde",
+ "serde_bytes",
  "sha2 0.10.2",
  "tempfile",
  "tokio",
@@ -861,7 +862,6 @@ dependencies = [
  "der",
  "elliptic-curve",
  "rfc6979",
- "serdect",
  "signature",
 ]
 
@@ -889,7 +889,6 @@ dependencies = [
  "pkcs8",
  "rand_core 0.6.3",
  "sec1",
- "serdect",
  "subtle",
  "zeroize",
 ]
@@ -1714,7 +1713,6 @@ checksum = "51f44edd08f51e2ade572f141051021c5af22677e42b7dd28a88155151c33594"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
- "serdect",
  "sha2 0.10.2",
 ]
 
@@ -2278,7 +2276,6 @@ dependencies = [
  "der",
  "generic-array",
  "pkcs8",
- "serdect",
  "subtle",
  "zeroize",
 ]
@@ -2317,6 +2314,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "212e73464ebcde48d723aa02eb270ba62eff38a9b732df31f33f1b4e145f3a54"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2335,16 +2341,6 @@ checksum = "9b7ce2b32a1aed03c558dc61a5cd328f15aff2dbc17daad8fb8af04d2100e15c"
 dependencies = [
  "itoa",
  "ryu",
- "serde",
-]
-
-[[package]]
-name = "serdect"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "038fce1bf4d74b9b30ea7dcd59df75ba8ec669a5dcb3cc64fbfcef7334ced32c"
-dependencies = [
- "base16ct",
  "serde",
 ]
 

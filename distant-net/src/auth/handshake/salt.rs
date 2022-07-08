@@ -1,5 +1,5 @@
 use rand::{rngs::OsRng, RngCore};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     convert::{TryFrom, TryInto},
     fmt, io,
@@ -7,20 +7,13 @@ use std::{
     str::FromStr,
 };
 
-/// 32-byte uniform random
+/// Friendly wrapper around a 32-byte array representing a salt
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(into = "String", try_from = "String")]
+#[serde(into = "Vec<u8>", try_from = "Vec<u8>")]
 pub struct Salt([u8; 32]);
 
 impl Salt {
-    pub fn as_slice(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-
-    pub fn to_vec(&self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-
+    /// Generates a salt via a uniform random
     pub fn random() -> Self {
         let mut salt = [0u8; 32];
         OsRng.fill_bytes(&mut salt);
@@ -31,6 +24,27 @@ impl Salt {
 impl fmt::Display for Salt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl serde_bytes::Serialize for Salt {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(self.as_ref())
+    }
+}
+
+impl<'de> serde_bytes::Deserialize<'de> for Salt {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = Deserialize::deserialize(deserializer).map(serde_bytes::ByteBuf::into_vec)?;
+        let bytes_len = bytes.len();
+        Salt::try_from(bytes)
+            .map_err(|_| serde::de::Error::invalid_length(bytes_len, &"expected 32-byte length"))
     }
 }
 
