@@ -1,10 +1,10 @@
 use p256::{ecdh::EphemeralSecret, EncodedPoint, PublicKey};
-use rand::{rngs::OsRng, RngCore};
+use rand::rngs::OsRng;
 use sha2::Sha256;
 use std::io;
 
-/// 32-byte uniform random
-pub type Salt = [u8; 32];
+mod salt;
+pub use salt::Salt;
 
 /// 32-byte key shared by handshake
 pub type SharedKey = [u8; 32];
@@ -19,9 +19,7 @@ impl Default for Handshake {
     // Create a new handshake instance with a secret and salt
     fn default() -> Self {
         let secret = EphemeralSecret::random(&mut OsRng);
-
-        let mut salt = [0u8; 32];
-        OsRng.fill_bytes(&mut salt);
+        let salt = Salt::random();
 
         Self { secret, salt }
     }
@@ -48,18 +46,13 @@ impl Handshake {
         };
 
         // Produce a salt that is consistent with what the other side will do
-        let shared_salt = self
-            .salt
-            .iter()
-            .zip(salt.iter())
-            .map(|(x, y)| x ^ y)
-            .collect::<Vec<u8>>();
+        let shared_salt = self.salt ^ salt;
 
         // Acquire the shared secret
         let shared_secret = self.secret.diffie_hellman(&decoded_public_key);
 
         // Extract entropy from the shared secret for use in producing a key
-        let hkdf = shared_secret.extract::<Sha256>(Some(&shared_salt));
+        let hkdf = shared_secret.extract::<Sha256>(Some(shared_salt.as_slice()));
 
         // Derive a shared key (32 bytes)
         let mut shared_key = [0u8; 32];
