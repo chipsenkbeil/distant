@@ -99,7 +99,13 @@ impl LaunchHandler for ManagerLaunchHandler {
         loop {
             match stdout.read_line(&mut line).await {
                 Ok(n) if n > 0 => {
+                    println!("checking line {:?}", line[..n].trim());
                     if let Ok(destination) = line[..n].trim().parse::<Destination>() {
+                        println!(
+                            "got destination {} :: port = {:?}",
+                            destination,
+                            destination.port()
+                        );
                         break Ok(destination);
                     }
                 }
