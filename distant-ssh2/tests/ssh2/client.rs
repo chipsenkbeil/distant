@@ -1205,7 +1205,7 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
         b"some stdout"
     );
     assert!(
-        proc.wait().await.unwrap().0,
+        proc.wait().await.unwrap().success,
         "Process should have completed successfully"
     );
 }
@@ -1239,7 +1239,7 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
         b"some stderr"
     );
     assert!(
-        proc.wait().await.unwrap().0,
+        proc.wait().await.unwrap().success,
         "Process should have completed successfully"
     );
 }
@@ -1284,8 +1284,8 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(#[future] client
     let _ = proc.kill().await.unwrap();
 
     // Verify killed, which should be success false
-    let (success, _) = proc.wait().await.unwrap();
-    assert!(!success, "Process succeeded when killed")
+    let status = proc.wait().await.unwrap();
+    assert!(!status.success, "Process succeeded when killed")
 }
 
 #[rstest]

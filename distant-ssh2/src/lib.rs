@@ -465,6 +465,8 @@ impl Ssh {
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote
     /// distant server that is spawned using the ssh client
     pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
+        trace!("ssh::launch_and_connect({:?})", opts);
+
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -525,6 +527,8 @@ impl Ssh {
     /// Consume [`Ssh`] and launch a distant server, returning a [`DistantSingleKeyCredentials`]
     /// tied to the launched server that includes credentials
     pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
+        trace!("ssh::launch({:?})", opts);
+
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -569,32 +573,24 @@ impl Ssh {
         // Spawn distant server and detach it so that we don't kill it when the
         // ssh client is closed
         debug!("Executing {}", cmd);
-        let mut proc = client
-            .spawn(cmd, true, None)
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-        let mut stdout = proc.stdout.take().unwrap();
-        let mut stderr = proc.stderr.take().unwrap();
-        let (success, code) = proc
-            .wait()
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))?;
+        let output = client.spawn(cmd, true, None).await?.output().await?;
+        debug!(
+            "Completed with success = {}, code = {:?}",
+            output.success, output.code
+        );
 
         // Close out ssh client by killing the internal server and client
         server.abort();
         client.abort();
         let _ = client.wait().await;
-        let mut output = Vec::new();
 
         // If successful, grab the client information and establish a connection
         // with the distant server
-        if success {
-            while let Ok(data) = stdout.read().await {
-                output.extend(&data);
-            }
-
+        if output.success {
             // Iterate over output as individual lines, looking for client info
+            trace!("Searching for credentials");
             let maybe_info = output
+                .stdout
                 .split(|&b| b == b'\n')
                 .map(String::from_utf8_lossy)
                 .find_map(|line| line.parse::<DistantSingleKeyCredentials>().ok());
@@ -609,17 +605,15 @@ impl Ssh {
                 )),
             }
         } else {
-            while let Ok(data) = stderr.read().await {
-                output.extend(&data);
-            }
-
             Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!(
                     "Spawning distant failed [{}]: {}",
-                    code.map(|x| x.to_string())
+                    output
+                        .code
+                        .map(|x| x.to_string())
                         .unwrap_or_else(|| String::from("???")),
-                    match String::from_utf8(output) {
+                    match String::from_utf8(output.stderr) {
                         Ok(output) => output,
                         Err(x) => x.to_string(),
                     }

@@ -674,7 +674,6 @@ impl DistantApi for SshDistantApi {
             "[Conn {}] Spawning {} {{persist: {}, pty: {:?}}}",
             ctx.connection_id, cmd, persist, pty
         );
-        debug!("[Ssh] Spawning {} (pty: {:?})", cmd, pty);
 
         let global_processes = Arc::downgrade(&self.processes);
         let local_processes = Arc::downgrade(&ctx.local_data.processes);
@@ -715,8 +714,8 @@ impl DistantApi for SshDistantApi {
         );
 
         debug!(
-            "[Ssh | Proc {}] Spawned successfully! Will enter post hook later",
-            id
+            "[Conn {}] Spawned process {} successfully!",
+            ctx.connection_id, id
         );
         Ok(id)
     }
@@ -732,7 +731,10 @@ impl DistantApi for SshDistantApi {
 
         Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("[Ssh | Proc {}] Unable to send kill signal to process", id),
+            format!(
+                "[Conn {}] Unable to send kill signal to process {}",
+                ctx.connection_id, id
+            ),
         ))
     }
 
@@ -755,7 +757,10 @@ impl DistantApi for SshDistantApi {
 
         Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("[Ssh | Proc {}] Unable to send stdin to process", id),
+            format!(
+                "[Conn {}] Unable to send stdin to process {}",
+                ctx.connection_id, id
+            ),
         ))
     }
 
@@ -778,7 +783,10 @@ impl DistantApi for SshDistantApi {
 
         Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("[Ssh | Proc {}] Unable to resize process", id),
+            format!(
+                "[Conn {}] Unable to resize process {}",
+                ctx.connection_id, id
+            ),
         ))
     }
 

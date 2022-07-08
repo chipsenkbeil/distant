@@ -81,13 +81,13 @@ impl Shell {
         );
 
         // Continually loop to check for terminal resize changes while the process is still running
-        let (success, exit_code) = proc.wait().await?;
+        let status = proc.wait().await?;
 
         // Shut down our link
         link.shutdown().await;
 
-        if !success {
-            if let Some(code) = exit_code {
+        if !status.success {
+            if let Some(code) = status.code {
                 return Err(CliError::from(code));
             } else {
                 return Err(CliError::from(1));

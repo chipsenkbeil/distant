@@ -1,5 +1,7 @@
 use crate::{
-    client::{RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteProcess, Watcher},
+    client::{
+        RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Watcher,
+    },
     data::{
         ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Error as Failure,
         Metadata, PtySize, SystemInfo,
@@ -98,6 +100,14 @@ pub trait DistantChannelExt {
         persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess>;
+
+    /// Spawns a process on the remote machine and wait for it to complete
+    fn output(
+        &mut self,
+        cmd: impl Into<String>,
+        persist: bool,
+        pty: Option<PtySize>,
+    ) -> AsyncReturn<'_, RemoteOutput>;
 
     /// Retrieves information about the remote system
     fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo>;
@@ -342,6 +352,24 @@ impl DistantChannelExt
                 .persist(persist)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
+                .await
+        })
+    }
+
+    fn output(
+        &mut self,
+        cmd: impl Into<String>,
+        persist: bool,
+        pty: Option<PtySize>,
+    ) -> AsyncReturn<'_, RemoteOutput> {
+        let cmd = cmd.into();
+        Box::pin(async move {
+            RemoteCommand::new()
+                .persist(persist)
+                .pty(pty)
+                .spawn(self.clone(), cmd)
+                .await?
+                .output()
                 .await
         })
     }

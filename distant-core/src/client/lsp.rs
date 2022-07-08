@@ -1,6 +1,7 @@
 use crate::{
     client::{
-        DistantChannel, RemoteCommand, RemoteProcess, RemoteStderr, RemoteStdin, RemoteStdout,
+        DistantChannel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin,
+        RemoteStdout,
     },
     data::PtySize,
 };
@@ -89,7 +90,7 @@ pub struct RemoteLspProcess {
 
 impl RemoteLspProcess {
     /// Waits for the process to terminate, returning the success status and an optional exit code
-    pub async fn wait(self) -> io::Result<(bool, Option<i32>)> {
+    pub async fn wait(self) -> io::Result<RemoteStatus> {
         self.inner.wait().await
     }
 }

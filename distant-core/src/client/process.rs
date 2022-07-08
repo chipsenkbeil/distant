@@ -19,7 +19,27 @@ use tokio::{
     task::JoinHandle,
 };
 
-type StatusResult = io::Result<(bool, Option<i32>)>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteOutput {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RemoteStatus {
+    pub success: bool,
+    pub code: Option<i32>,
+}
+
+impl From<(bool, Option<i32>)> for RemoteStatus {
+    fn from((success, code): (bool, Option<i32>)) -> Self {
+        Self { success, code }
+    }
+}
+
+type StatusResult = io::Result<RemoteStatus>;
 
 /// A [`RemoteProcess`] builder providing support to configure
 /// before spawning the process on a remote machine
@@ -142,7 +162,7 @@ impl RemoteCommand {
         let status_2 = Arc::clone(&status);
         let wait_task = tokio::spawn(async move {
             let res = match tokio::try_join!(req_task, res_task) {
-                Ok((_, res)) => res,
+                Ok((_, res)) => res.map(RemoteStatus::from),
                 Err(x) => Err(io::Error::new(io::ErrorKind::Interrupted, x)),
             };
             status_2.write().await.replace(res);
@@ -216,15 +236,18 @@ impl RemoteProcess {
     /// consuming the process itself. Note that this does not include join errors that can
     /// occur when aborting and instead converts any error to a status of false. To acquire
     /// the actual error, you must call `wait`
-    pub async fn status(&self) -> Option<(bool, Option<i32>)> {
+    pub async fn status(&self) -> Option<RemoteStatus> {
         self.status.read().await.as_ref().map(|x| match x {
-            Ok((success, exit_code)) => (*success, *exit_code),
-            Err(_) => (false, None),
+            Ok(status) => *status,
+            Err(_) => RemoteStatus {
+                success: false,
+                code: None,
+            },
         })
     }
 
     /// Waits for the process to terminate, returning the success status and an optional exit code
-    pub async fn wait(self) -> io::Result<(bool, Option<i32>)> {
+    pub async fn wait(self) -> io::Result<RemoteStatus> {
         // Wait for the process to complete before we try to get the status
         let _ = self.wait_task.await;
 
@@ -234,6 +257,36 @@ impl RemoteProcess {
             .await
             .take()
             .unwrap_or_else(|| Err(errors::unexpected_eof()))
+    }
+
+    /// Waits for the process to terminate, returning the success status, an optional exit code,
+    /// and any remaining stdout and stderr (if still attached to the process)
+    pub async fn output(mut self) -> io::Result<RemoteOutput> {
+        let maybe_stdout = self.stdout.take();
+        let maybe_stderr = self.stderr.take();
+
+        let status = self.wait().await?;
+
+        let mut stdout = Vec::new();
+        if let Some(mut reader) = maybe_stdout {
+            while let Ok(data) = reader.read().await {
+                stdout.extend(&data);
+            }
+        }
+
+        let mut stderr = Vec::new();
+        if let Some(mut reader) = maybe_stderr {
+            while let Ok(data) = reader.read().await {
+                stderr.extend(&data);
+            }
+        }
+
+        Ok(RemoteOutput {
+            success: status.success,
+            code: status.code,
+            stdout,
+            stderr,
+        })
     }
 
     /// Resizes the pty of the remote process if it is attached to one
@@ -904,7 +957,13 @@ mod tests {
         // Peek at the status to confirm the result
         let result = proc.status().await;
         match result {
-            Some((false, None)) => {}
+            Some(status) => {
+                assert!(!status.success, "Status unexpectedly reported success");
+                assert!(
+                    status.code.is_none(),
+                    "Status unexpectedly reported exit code"
+                );
+            }
             x => panic!("Unexpected result: {:?}", x),
         }
     }
@@ -954,7 +1013,13 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Finally, verify that we complete and get the expected results
-        assert_eq!(proc.status().await, Some((true, Some(123))));
+        assert_eq!(
+            proc.status().await,
+            Some(RemoteStatus {
+                success: true,
+                code: Some(123)
+            })
+        );
     }
 
     #[tokio::test]
@@ -1077,6 +1142,90 @@ mod tests {
             .unwrap();
 
         // Finally, verify that we complete and get the expected results
-        assert_eq!(proc_wait_task.await.unwrap().unwrap(), (false, Some(123)));
+        assert_eq!(
+            proc_wait_task.await.unwrap().unwrap(),
+            RemoteStatus {
+                success: false,
+                code: Some(123)
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn receiving_done_response_should_result_in_output_returning_exit_information() {
+        let (mut transport, session) = make_session();
+
+        // Create a task for process spawning as we need to handle the request and a response
+        // in a separate async block
+        let spawn_task = tokio::spawn(async move {
+            RemoteCommand::new()
+                .spawn(session.clone_channel(), String::from("cmd arg"))
+                .await
+        });
+
+        // Wait until we get the request from the session
+        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+
+        // Send back a response through the session
+        let id = 12345;
+        transport
+            .write(Response::new(
+                req.id.clone(),
+                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+            ))
+            .await
+            .unwrap();
+
+        // Receive the process and then spawn a task for it to complete
+        let proc = spawn_task.await.unwrap().unwrap();
+        let proc_output_task = tokio::spawn(proc.output());
+
+        // Send some stdout
+        transport
+            .write(Response::new(
+                req.id.clone(),
+                DistantMsg::Single(DistantResponseData::ProcStdout {
+                    id,
+                    data: b"some out".to_vec(),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        // Send some stderr
+        transport
+            .write(Response::new(
+                req.id.clone(),
+                DistantMsg::Single(DistantResponseData::ProcStderr {
+                    id,
+                    data: b"some err".to_vec(),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        // Send a process completion response to pass along exit status and conclude wait
+        transport
+            .write(Response::new(
+                req.id,
+                DistantMsg::Single(DistantResponseData::ProcDone {
+                    id,
+                    success: false,
+                    code: Some(123),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        // Finally, verify that we complete and get the expected results
+        assert_eq!(
+            proc_output_task.await.unwrap().unwrap(),
+            RemoteOutput {
+                success: false,
+                code: Some(123),
+                stdout: b"some out".to_vec(),
+                stderr: b"some err".to_vec(),
+            }
+        );
     }
 }
