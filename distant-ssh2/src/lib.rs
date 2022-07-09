@@ -573,7 +573,7 @@ impl Ssh {
         // Spawn distant server and detach it so that we don't kill it when the
         // ssh client is closed
         debug!("Executing {}", cmd);
-        let output = client.spawn(cmd, true, None).await?.output().await?;
+        let output = client.output(cmd, None).await?;
         debug!(
             "Completed with success = {}, code = {:?}",
             output.success, output.code

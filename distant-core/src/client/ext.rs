@@ -105,7 +105,6 @@ pub trait DistantChannelExt {
     fn output(
         &mut self,
         cmd: impl Into<String>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteOutput>;
 
@@ -359,13 +358,12 @@ impl DistantChannelExt
     fn output(
         &mut self,
         cmd: impl Into<String>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteOutput> {
         let cmd = cmd.into();
         Box::pin(async move {
             RemoteCommand::new()
-                .persist(persist)
+                .persist(false)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
                 .await?
