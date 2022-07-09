@@ -88,6 +88,7 @@ impl Spawner {
 
         debug!("Spawning background process: {}", cmd);
         let child = Command::new(cmd)
+            .envs(std::env::vars_os())
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -141,6 +142,7 @@ impl Spawner {
             args
         );
         let output = Command::new(powershell.into_os_string())
+            .envs(std::env::vars_os())
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())

@@ -135,7 +135,7 @@ impl ServerSubcommand {
                 let key = if key_from_stdin {
                     debug!("Reading secret key from stdin");
                     let mut buf = [0u8; 32];
-                    let _ = io::stdin().read_exact(&mut buf)?;
+                    io::stdin().read_exact(&mut buf)?;
                     SecretKey32::from(buf)
                 } else {
                     SecretKey32::default()
