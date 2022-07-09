@@ -88,7 +88,6 @@ impl Spawner {
 
         debug!("Spawning background process: {}", cmd);
         let child = Command::new(cmd)
-            .envs(std::env::vars_os())
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -112,10 +111,27 @@ impl Spawner {
         let powershell = which::which("powershell.exe")
             .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
 
+        // Pass along our environment variables
+        let env = {
+            let mut s = OsString::new();
+            s.push(r#"$startup.Properties['EnvironmentVariables'].value=@("#);
+            for (key, value) in std::env::vars_os() {
+                s.push("'");
+                s.push(key);
+                s.push("=");
+                s.push(value);
+                s.push("'");
+            }
+            s.push(")");
+            s
+        };
+
         let args = vec![
             OsString::from(r#"$startup=[wmiclass]"Win32_ProcessStartup""#),
             OsString::from(";"),
             OsString::from(r#"$startup.Properties['ShowWindow'].value=$False"#),
+            OsString::from(";"),
+            OsString::from(env),
             OsString::from(";"),
             OsString::from("Invoke-WmiMethod"),
             OsString::from("-Class"),
@@ -142,7 +158,6 @@ impl Spawner {
             args
         );
         let output = Command::new(powershell.into_os_string())
-            .envs(std::env::vars_os())
             .creation_flags(flags)
             .args(args)
             .stdin(Stdio::null())
