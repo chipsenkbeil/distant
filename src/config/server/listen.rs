@@ -132,8 +132,12 @@ impl BindAddress {
     pub fn resolve(self, use_ipv6: bool) -> io::Result<IpAddr> {
         match self {
             Self::Ssh => {
-                let ssh_connection = env::var("SSH_CONNECTION")
-                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                let ssh_connection = env::var("SSH_CONNECTION").map_err(|x| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Failed to read SSH_CONNECTION: {}", x),
+                    )
+                })?;
                 let ip_str = ssh_connection.split(' ').nth(2).ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::Other,
