@@ -1,4 +1,5 @@
 use crate::{AsAny, ServerState};
+use log::*;
 use std::{
     future::Future,
     io,
@@ -73,6 +74,14 @@ impl ServerRef for GenericServerRef {
 
     fn abort(&self) {
         self.task.abort();
+
+        let state = Arc::clone(&self.state);
+        tokio::spawn(async move {
+            for (id, connection) in state.connections.read().await.iter() {
+                debug!("Aborting connection {}", id);
+                connection.abort();
+            }
+        });
     }
 
     fn wait(self) -> Pin<Box<dyn Future<Output = io::Result<()>>>>

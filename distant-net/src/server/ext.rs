@@ -143,13 +143,7 @@ where
                     .insert(connection_id, connection);
             }
             Err(x) => {
-                error!("Server shutting down: {}", x);
-
-                for (id, connection) in state.connections.read().await.iter() {
-                    debug!("Aborting connection {}", id);
-                    connection.abort();
-                }
-
+                error!("Server no longer accepting connections: {}", x);
                 break;
             }
         }

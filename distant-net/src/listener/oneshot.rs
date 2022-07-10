@@ -30,12 +30,17 @@ impl<T: Send> OneshotListener<T> {
 impl<T: Send> Listener for OneshotListener<T> {
     type Output = T;
 
+    /// First call to accept will return listener tied to [`OneshotListener`] while future
+    /// calls will yield an error of `io::ErrorKind::ConnectionAborted`
     async fn accept(&mut self) -> io::Result<Self::Output> {
         match self.inner.take() {
             Some(rx) => rx
                 .await
                 .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x)),
-            None => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+            None => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "Oneshot listener has concluded",
+            )),
         }
     }
 }
@@ -51,7 +56,7 @@ mod tests {
         assert_eq!(listener.accept().await.unwrap(), "hello world");
         assert_eq!(
             listener.accept().await.unwrap_err().kind(),
-            io::ErrorKind::BrokenPipe
+            io::ErrorKind::ConnectionAborted
         );
     }
 
@@ -71,6 +76,9 @@ mod tests {
         let (result_1, result_2) = accept_task.await.unwrap();
 
         assert_eq!(result_1.unwrap(), "hello world");
-        assert_eq!(result_2.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+        assert_eq!(
+            result_2.unwrap_err().kind(),
+            io::ErrorKind::ConnectionAborted
+        );
     }
 }
