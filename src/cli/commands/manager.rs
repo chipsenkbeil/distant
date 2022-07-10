@@ -5,6 +5,7 @@ use crate::{
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 use log::*;
+use tabled::{Table, Tabled};
 
 mod handlers;
 
@@ -110,9 +111,33 @@ impl ManagerSubcommand {
                     .info(id)
                     .await?;
 
-                println!("id: {}", info.id);
-                println!("destination: {}", info.destination);
-                println!("extra: {}", info.extra);
+                #[derive(Tabled)]
+                struct InfoRow {
+                    id: ConnectionId,
+                    scheme: String,
+                    host: String,
+                    port: String,
+                    extra: String,
+                }
+
+                println!(
+                    "{}",
+                    Table::new(vec![InfoRow {
+                        id: info.id,
+                        scheme: info
+                            .destination
+                            .scheme()
+                            .map(ToString::to_string)
+                            .unwrap_or_default(),
+                        host: info.destination.to_host_string(),
+                        port: info
+                            .destination
+                            .port()
+                            .map(|x| x.to_string())
+                            .unwrap_or_default(),
+                        extra: info.extra.to_string()
+                    }])
+                );
 
                 Ok(())
             }
@@ -123,9 +148,31 @@ impl ManagerSubcommand {
                 );
                 let list = Client::new(config.network).connect().await?.list().await?;
 
-                for (id, destination) in list {
-                    println!("{}: {}", id, destination);
+                #[derive(Tabled)]
+                struct ListRow {
+                    id: ConnectionId,
+                    scheme: String,
+                    host: String,
+                    port: String,
                 }
+
+                println!(
+                    "{}",
+                    Table::new(list.into_iter().map(|(id, destination)| {
+                        ListRow {
+                            id,
+                            scheme: destination
+                                .scheme()
+                                .map(ToString::to_string)
+                                .unwrap_or_default(),
+                            host: destination.to_host_string(),
+                            port: destination
+                                .port()
+                                .map(|x| x.to_string())
+                                .unwrap_or_default(),
+                        }
+                    }))
+                );
 
                 Ok(())
             }
