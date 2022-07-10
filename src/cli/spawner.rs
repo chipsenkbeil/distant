@@ -157,6 +157,15 @@ impl Spawner {
             powershell.to_string_lossy(),
             args
         );
+        std::fs::write(
+            r"C:\Users\senkwich\output.log",
+            format!(
+                "Spawning background process: {} {:?}",
+                powershell.to_string_lossy(),
+                args
+            ),
+        )
+        .unwrap();
         let output = Command::new(powershell.into_os_string())
             .creation_flags(flags)
             .args(args)
