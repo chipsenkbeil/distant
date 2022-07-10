@@ -235,6 +235,8 @@ impl ClientSubcommand {
                 let mut storage = Storage::read_or_default().await?;
                 *storage.default_connection_id = id;
                 storage.write().await?;
+
+                println!("{}", id);
             }
             Self::Launch {
                 config: launcher_config,
@@ -286,6 +288,8 @@ impl ClientSubcommand {
                 let mut storage = Storage::read_or_default().await?;
                 *storage.default_connection_id = id;
                 storage.write().await?;
+
+                println!("{}", id);
             }
             Self::Lsp {
                 connection,
