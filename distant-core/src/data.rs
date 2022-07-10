@@ -325,6 +325,7 @@ pub enum DistantRequestData {
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
     ProcSpawn {
         /// The full command to run including arguments
+        #[cfg_attr(feature = "clap", clap(last = true))]
         cmd: String,
 
         /// Whether or not the process should be persistent, meaning that the process will not be
