@@ -353,6 +353,7 @@ pub enum DistantRequestData {
         id: ProcessId,
 
         /// Data to send to a process's stdin pipe
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
 
@@ -385,6 +386,7 @@ pub enum DistantResponseData {
     /// Response containing some arbitrary, binary data
     Blob {
         /// Binary data associated with the response
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
 
@@ -424,6 +426,7 @@ pub enum DistantResponseData {
         id: ProcessId,
 
         /// Data read from a process' stdout pipe
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
 
@@ -433,6 +436,7 @@ pub enum DistantResponseData {
         id: ProcessId,
 
         /// Data read from a process' stderr pipe
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
 

@@ -810,6 +810,7 @@ dependencies = [
  "rand 0.8.5",
  "rstest 0.13.0",
  "serde",
+ "serde_bytes",
  "serde_json",
  "shell-words",
  "strum",
