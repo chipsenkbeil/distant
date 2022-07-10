@@ -115,7 +115,14 @@ impl Spawner {
         let env = {
             let mut s = OsString::new();
             s.push(r#"$startup.Properties['EnvironmentVariables'].value=@("#);
+            let mut first = true;
             for (key, value) in std::env::vars_os() {
+                if !first {
+                    s.push(",");
+                } else {
+                    first = false;
+                }
+
                 s.push("'");
                 s.push(key);
                 s.push("=");
