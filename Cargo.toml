@@ -28,6 +28,7 @@ ssh2 = ["distant-ssh2/ssh2"]
 async-trait = "0.1.56"
 clap = { version = "3.2.5", features = ["derive"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
+dialoguer = { version = "0.10.1", default-features = false }
 distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap"] }
 directories = "4.0.1"
 flexi_logger = "0.18.1"

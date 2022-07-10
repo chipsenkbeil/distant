@@ -3,7 +3,7 @@ use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Index, IndexMut},
 };
 
 /// Represents a list of information about active connections
@@ -38,5 +38,21 @@ impl Deref for ConnectionList {
 impl DerefMut for ConnectionList {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl Index<u64> for ConnectionList {
+    type Output = Destination;
+
+    fn index(&self, connection_id: u64) -> &Self::Output {
+        &self.0[&connection_id]
+    }
+}
+
+impl IndexMut<u64> for ConnectionList {
+    fn index_mut(&mut self, connection_id: u64) -> &mut Self::Output {
+        self.0
+            .get_mut(&connection_id)
+            .expect("No connection with id")
     }
 }

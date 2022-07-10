@@ -6,6 +6,7 @@ use crate::{
     config::{ClientConfig, ClientLaunchConfig},
 };
 use clap::Subcommand;
+use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
     data::ChangeKindSet, net::Response, ConnectionId, Destination, DistantManagerClient,
     DistantMsg, DistantRequestData, DistantResponseData, Extra, RemoteCommand, Watcher,
@@ -92,6 +93,12 @@ pub enum ClientSubcommand {
         /// Represents the maximum time (in seconds) to wait for a network request before timing out
         #[clap(short, long)]
         timeout: Option<f32>,
+    },
+
+    /// Select the active connection
+    Select {
+        /// Connection to use, otherwise will prompt to select
+        connection: Option<ConnectionId>,
     },
 
     /// Specialized treatment of running a remote shell process
@@ -356,6 +363,75 @@ impl ClientSubcommand {
                         None => {
                             debug!("Shutting down repl");
                             break;
+                        }
+                    }
+                }
+            }
+            Self::Select { connection } => {
+                let mut storage = Storage::read_or_default().await?;
+                match connection {
+                    Some(id) => {
+                        *storage.default_connection_id = id;
+                        storage.write().await?;
+                    }
+                    None => {
+                        debug!("Connecting to manager: {:?}", config.network.as_os_str());
+                        let mut client = Client::new(config.network).connect().await?;
+                        let list = client.list().await?;
+
+                        if list.is_empty() {
+                            return Err(CliError::NoConnection);
+                        }
+
+                        trace!("Building selection prompt of {} choices", list.len());
+                        let selected = list
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, (id, _))| {
+                                if *storage.default_connection_id == *id {
+                                    Some(i)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_default();
+
+                        let items: Vec<String> = list
+                            .iter()
+                            .map(|(_, destination)| {
+                                format!(
+                                    "{}{}{}",
+                                    destination
+                                        .scheme()
+                                        .map(|x| format!(r"{}://", x))
+                                        .unwrap_or_default(),
+                                    destination.to_host_string(),
+                                    destination
+                                        .port()
+                                        .map(|x| format!(":{}", x))
+                                        .unwrap_or_default()
+                                )
+                            })
+                            .collect();
+
+                        trace!("Rendering prompt");
+                        let selected = Select::with_theme(&ColorfulTheme::default())
+                            .items(&items)
+                            .default(selected)
+                            .interact_on_opt(&Term::stderr())?;
+
+                        match selected {
+                            Some(index) => {
+                                trace!("Selected choice {}", index);
+                                if let Some((id, _)) = list.iter().nth(index) {
+                                    debug!("Updating cached default connection id to {}", id);
+                                    *storage.default_connection_id = *id;
+                                    storage.write().await?;
+                                }
+                            }
+                            None => {
+                                debug!("No change in selection of default connection id");
+                            }
                         }
                     }
                 }
