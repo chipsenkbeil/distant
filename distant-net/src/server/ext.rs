@@ -144,6 +144,12 @@ where
             }
             Err(x) => {
                 error!("Server shutting down: {}", x);
+
+                for (id, connection) in state.connections.read().await.iter() {
+                    debug!("Aborting connection {}", id);
+                    connection.abort();
+                }
+
                 break;
             }
         }
