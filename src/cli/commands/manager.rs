@@ -60,7 +60,7 @@ impl ManagerSubcommand {
             Self::Start { .. } => todo!(),
             Self::Stop => {
                 debug!("Stopping manager: {:?}", config.network.as_os_str());
-                let _ = Client::new(config.network)
+                Client::new(config.network)
                     .connect()
                     .await?
                     .shutdown()
@@ -135,7 +135,7 @@ impl ManagerSubcommand {
                     id,
                     config.network.as_os_str()
                 );
-                let _ = Client::new(config.network)
+                Client::new(config.network)
                     .connect()
                     .await?
                     .kill(id)

@@ -3,10 +3,13 @@ use distant_core::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::io;
 
+mod id;
+pub use id::StorageId;
+
 /// Provides quick access to cli-specific storage
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Storage {
-    pub default_connection_id: ConnectionId,
+    pub default_connection_id: StorageId<ConnectionId>,
 }
 
 impl Storage {

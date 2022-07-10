@@ -233,7 +233,7 @@ impl ClientSubcommand {
                 // Mark the server's id as the new default
                 debug!("Updating cached default connection id to {}", id);
                 let mut storage = Storage::read_or_default().await?;
-                storage.default_connection_id = id;
+                *storage.default_connection_id = id;
                 storage.write().await?;
             }
             Self::Launch {
@@ -284,7 +284,7 @@ impl ClientSubcommand {
                 // Mark the server's id as the new default
                 debug!("Updating cached default connection id to {}", id);
                 let mut storage = Storage::read_or_default().await?;
-                storage.default_connection_id = id;
+                *storage.default_connection_id = id;
                 storage.write().await?;
             }
             Self::Lsp {
@@ -401,7 +401,7 @@ async fn use_or_lookup_connection_id(
                     "Using cached connection id: {}",
                     storage.default_connection_id
                 );
-                Ok(storage.default_connection_id)
+                Ok(*storage.default_connection_id)
             } else if list.is_empty() {
                 trace!("Cached connection id is invalid as there are no connections");
                 Err(CliError::NoConnection)
@@ -410,13 +410,13 @@ async fn use_or_lookup_connection_id(
                 Err(CliError::NeedToPickConnection)
             } else {
                 trace!("Cached connection id is invalid");
-                storage.default_connection_id = *list.keys().next().unwrap();
+                *storage.default_connection_id = *list.keys().next().unwrap();
                 trace!(
                     "Detected singular connection id, so updating cache: {}",
                     storage.default_connection_id
                 );
                 storage.write().await?;
-                Ok(storage.default_connection_id)
+                Ok(*storage.default_connection_id)
             }
         }
     }
