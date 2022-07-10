@@ -7,7 +7,8 @@ use crate::{
 };
 use clap::Subcommand;
 use distant_core::{
-    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData, Extra,
+    data::ChangeKindSet, net::Response, ConnectionId, Destination, DistantManagerClient,
+    DistantMsg, DistantRequestData, DistantResponseData, Extra, RemoteCommand, Watcher,
 };
 use log::*;
 use std::{io, time::Duration};
@@ -21,6 +22,7 @@ mod stdin;
 
 pub use format::Format;
 use format::Formatter;
+use link::RemoteProcessLink;
 use lsp::Lsp;
 use shell::Shell;
 
@@ -136,18 +138,80 @@ impl ClientSubcommand {
                         None => "none".to_string(),
                     }
                 );
-                debug!("Sending request {:?}", request);
-                let response = channel
-                    .send_timeout(
-                        DistantMsg::Single(request),
-                        timeout
-                            .or(config.action.timeout)
-                            .map(Duration::from_secs_f32),
-                    )
-                    .await?;
 
-                debug!("Got response {:?}", response);
-                Formatter::new(Format::Shell).print(response)?;
+                let formatter = Formatter::shell();
+
+                debug!("Sending request {:?}", request);
+                match request {
+                    DistantRequestData::ProcSpawn { cmd, persist, pty } => {
+                        debug!("Special request spawning {:?}", cmd);
+                        let mut proc = RemoteCommand::new()
+                            .persist(persist)
+                            .pty(pty)
+                            .spawn(channel, cmd)
+                            .await?;
+
+                        // Now, map the remote process' stdin/stdout/stderr to our own process
+                        let link = RemoteProcessLink::from_remote_pipes(
+                            proc.stdin.take(),
+                            proc.stdout.take().unwrap(),
+                            proc.stderr.take().unwrap(),
+                        );
+
+                        let status = proc.wait().await?;
+
+                        // Shut down our link
+                        link.shutdown().await;
+
+                        if !status.success {
+                            if let Some(code) = status.code {
+                                return Err(CliError::from(code));
+                            } else {
+                                return Err(CliError::from(1));
+                            }
+                        }
+                    }
+                    DistantRequestData::Watch {
+                        path,
+                        recursive,
+                        only,
+                        except,
+                    } => {
+                        debug!("Special request creating watcher for {:?}", path);
+                        let mut watcher = Watcher::watch(
+                            channel,
+                            path,
+                            recursive,
+                            only.into_iter().collect::<ChangeKindSet>(),
+                            except.into_iter().collect::<ChangeKindSet>(),
+                        )
+                        .await?;
+
+                        // Continue to receive and process changes
+                        while let Some(change) = watcher.next().await {
+                            // TODO: Provide a cleaner way to print just a change
+                            let res = Response::new(
+                                "".to_string(),
+                                DistantMsg::Single(DistantResponseData::Changed(change)),
+                            );
+
+                            formatter.print(res)?;
+                        }
+                    }
+                    request => {
+                        let response = channel
+                            .send_timeout(
+                                DistantMsg::Single(request),
+                                timeout
+                                    .or(config.action.timeout)
+                                    .map(Duration::from_secs_f32),
+                            )
+                            .await?;
+
+                        debug!("Got response {:?}", response);
+                        formatter.print(response)?;
+                    }
+                }
             }
             Self::Connect {
                 format,

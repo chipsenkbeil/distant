@@ -34,6 +34,16 @@ impl Formatter {
         Self { format }
     }
 
+    /// Creates a new [`Formatter`] using [`Format`] of `Format::Json`
+    pub fn json() -> Self {
+        Self::new(Format::Json)
+    }
+
+    /// Creates a new [`Formatter`] using [`Format`] of `Format::Shell`
+    pub fn shell() -> Self {
+        Self::new(Format::Shell)
+    }
+
     /// Consumes the output message, printing it based on its configuration
     pub fn print(&self, res: Response<DistantMsg<DistantResponseData>>) -> io::Result<()> {
         let output = match self.format {
