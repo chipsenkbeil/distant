@@ -1,6 +1,12 @@
 use super::{Service, ServiceInstallCtx, ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx};
 use once_cell::sync::Lazy;
-use std::{io, path::PathBuf, process::Command};
+use std::{
+    fs::OpenOptions,
+    io::{self, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
+    process::Command,
+};
 
 static RC_SERVICE: &str = "rc-service";
 static RC_UPDATE: &str = "rc-update";
@@ -33,7 +39,22 @@ impl Service for OpenRcService {
                 None
             },
         );
-        std::fs::write(script_path.as_path(), script)?;
+
+        // Create our script and ensure it is executable; fail if a script
+        // exists at the location because we don't want to break something
+        // and because OpenOptionsExt's mode(...) won't overwrite the
+        // permissions of an existing file. We'd have to separately use
+        // PermissionsExt to update those permissions if we wanted to
+        // change an existing file's permissions
+        //
+        // NOTE: On Alpine Linux, /etc/init.d/{script} has permissions
+        //       of rwxr-xr-x (755)
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o755)
+            .open(script_path.as_path())?;
+        file.write_all(script.as_bytes())?;
 
         rc_update("add", &ctx.label)
     }
@@ -95,6 +116,7 @@ fn make_script(
 description="{description}"
 command="${{DISTANT_BINARY:-"{program}"}}"
 command_args="{}"
+pidfile="/run/${{RC_SVCNAME}}.pid"
 command_background=true
 {}
 

@@ -1,11 +1,19 @@
 use std::io;
 
 mod kind;
+
+#[cfg(target_os = "macos")]
 mod launchd;
+
+#[cfg(unix)]
 mod openrc;
 
 pub use kind::ServiceKind;
+
+#[cfg(target_os = "macos")]
 pub use launchd::LaunchdService;
+
+#[cfg(unix)]
 pub use openrc::OpenRcService;
 
 /// Interface for a service

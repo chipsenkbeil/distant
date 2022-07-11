@@ -2,8 +2,8 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[clap(rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ServiceKind {
     /// Use launchd to manage the service
     #[cfg(target_os = "macos")]
