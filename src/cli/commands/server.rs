@@ -93,7 +93,7 @@ impl ServerSubcommand {
 
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
         debug!("Forking process");
-        match daemon(false, true) {
+        match daemon(true, true) {
             Ok(Fork::Child) => {
                 let rt = tokio::runtime::Runtime::new()?;
                 rt.block_on(async { Self::async_run(self, true).await })?;

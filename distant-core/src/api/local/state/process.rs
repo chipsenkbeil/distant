@@ -1,5 +1,6 @@
 use crate::data::{DistantResponseData, ProcessId, PtySize};
 use distant_net::Reply;
+use log::*;
 use std::{collections::HashMap, io, ops::Deref};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -74,8 +75,7 @@ impl ProcessChannel {
         reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<ProcessId> {
         let (cb, rx) = oneshot::channel();
-        let _ = self
-            .tx
+        self.tx
             .send(InnerProcessMsg::Spawn {
                 cmd,
                 persist,
@@ -92,8 +92,7 @@ impl ProcessChannel {
     /// Resizes the pty of a running process
     pub async fn resize_pty(&self, id: ProcessId, size: PtySize) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
-        let _ = self
-            .tx
+        self.tx
             .send(InnerProcessMsg::Resize { id, size, cb })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
@@ -104,8 +103,7 @@ impl ProcessChannel {
     /// Send stdin to a running process
     pub async fn send_stdin(&self, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
-        let _ = self
-            .tx
+        self.tx
             .send(InnerProcessMsg::Stdin { id, data, cb })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
@@ -116,8 +114,7 @@ impl ProcessChannel {
     /// Kills a running process
     pub async fn kill(&self, id: ProcessId) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
-        let _ = self
-            .tx
+        self.tx
             .send(InnerProcessMsg::Kill { id, cb })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;

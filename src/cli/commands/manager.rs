@@ -5,6 +5,7 @@ use crate::{
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 use log::*;
+use std::io;
 use tabled::{Table, Tabled};
 
 mod handlers;
@@ -52,8 +53,44 @@ pub enum ManagerSubcommand {
 
 impl ManagerSubcommand {
     pub fn run(self, config: ManagerConfig) -> CliResult<()> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(Self::async_run(self, config))
+        match &self {
+            Self::Listen { daemon } if *daemon => Self::run_daemon(self, config),
+            _ => {
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(Self::async_run(self, config))
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn run_daemon(self, config: ManagerConfig) -> CliResult<()> {
+        use crate::cli::Spawner;
+        let pid = Spawner::spawn_running_background(Vec::new())?;
+        println!("[distant server detached, pid = {}]", pid);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn run_daemon(self, config: ManagerConfig) -> CliResult<()> {
+        use fork::{daemon, Fork};
+
+        debug!("Forking process");
+        match daemon(true, true) {
+            Ok(Fork::Child) => {
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(async { Self::async_run(self, config).await })?;
+                Ok(())
+            }
+            Ok(Fork::Parent(pid)) => {
+                println!("[distant manager detached, pid = {}]", pid);
+                if fork::close_fd().is_err() {
+                    Err(io::Error::new(io::ErrorKind::Other, "Fork failed to close fd").into())
+                } else {
+                    Ok(())
+                }
+            }
+            Err(_) => Err(io::Error::new(io::ErrorKind::Other, "Fork failed").into()),
+        }
     }
 
     async fn async_run(self, config: ManagerConfig) -> CliResult<()> {
