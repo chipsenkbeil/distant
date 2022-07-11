@@ -1,6 +1,12 @@
-use directories::ProjectDirs;
+use directories::{ProjectDirs, UserDirs};
 use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
+
+static USER_DIR: Lazy<UserDirs> =
+    Lazy::new(|| UserDirs::new().expect("Could not determine valid $HOME path"));
+
+/// Path to the home directory of the current user
+pub static HOME_DIR_PATH: Lazy<PathBuf> = Lazy::new(|| USER_DIR.home_dir().to_path_buf());
 
 /// Root project directory used to calculate other paths
 static PROJECT_DIR: Lazy<ProjectDirs> = Lazy::new(|| {

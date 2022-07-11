@@ -6,14 +6,12 @@ mod common;
 mod manager;
 mod network;
 mod server;
-mod service;
 
 pub use client::*;
 pub use common::*;
 pub use manager::*;
 pub use network::*;
 pub use server::*;
-pub use service::*;
 
 /// Represents configuration settings for all of distant
 #[derive(Debug, Default, Serialize, Deserialize)]

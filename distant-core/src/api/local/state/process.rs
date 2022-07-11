@@ -1,6 +1,5 @@
 use crate::data::{DistantResponseData, ProcessId, PtySize};
 use distant_net::Reply;
-use log::*;
 use std::{collections::HashMap, io, ops::Deref};
 use tokio::{
     sync::{mpsc, oneshot},

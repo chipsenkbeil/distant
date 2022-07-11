@@ -1,4 +1,5 @@
-use super::{CommonConfig, NetworkConfig, ServiceKind};
+use super::{CommonConfig, NetworkConfig};
+use crate::cli::ServiceKind;
 use clap::Args;
 use distant_core::Destination;
 use serde::{Deserialize, Serialize};

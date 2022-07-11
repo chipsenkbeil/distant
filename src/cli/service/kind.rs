@@ -5,10 +5,6 @@ use serde::{Deserialize, Serialize};
 #[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceKind {
-    /// Do not use a service manager and instead fork the process
-    #[cfg(unix)]
-    Fork,
-
     /// Use launchd to manage the service
     #[cfg(target_os = "macos")]
     Launchd,

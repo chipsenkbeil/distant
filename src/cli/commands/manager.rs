@@ -1,6 +1,9 @@
 use crate::{
-    cli::{CliResult, Client, Manager},
-    config::{ManagerConfig, ServiceKind},
+    cli::{
+        CliResult, Client, Manager, Service, ServiceInstallCtx, ServiceKind, ServiceStartCtx,
+        ServiceStopCtx, ServiceUninstallCtx,
+    },
+    config::ManagerConfig,
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
@@ -12,27 +15,8 @@ mod handlers;
 
 #[derive(Debug, Subcommand)]
 pub enum ManagerSubcommand {
-    /// Start the manager as a service
-    Start {
-        /// Type of service manager used to run this service
-        #[clap(value_enum)]
-        kind: ServiceKind,
-    },
-
-    /// Stop the manager as a service
-    Stop,
-
-    /// Install the manager as a service
-    Install {
-        #[clap(value_enum)]
-        kind: ServiceKind,
-    },
-
-    /// Uninstall the manager as a service
-    Uninstall {
-        #[clap(value_enum)]
-        kind: ServiceKind,
-    },
+    #[clap(subcommand)]
+    Service(ManagerServiceSubcommand),
 
     /// Listen for incoming requests as a manager
     Listen {
@@ -49,6 +33,46 @@ pub enum ManagerSubcommand {
 
     /// Kill a specific connection
     Kill { id: ConnectionId },
+
+    /// Send a shutdown request to the manager
+    Shutdown,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ManagerServiceSubcommand {
+    /// Start the manager as a service
+    Start {
+        /// Type of service manager used to run this service
+        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        kind: ServiceKind,
+    },
+
+    /// Stop the manager as a service
+    Stop {
+        /// Type of service manager used to run this service
+        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        kind: ServiceKind,
+    },
+
+    /// Install the manager as a service
+    Install {
+        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        kind: ServiceKind,
+
+        /// If specified, installs as a user-level service
+        #[clap(long)]
+        user: bool,
+    },
+
+    /// Uninstall the manager as a service
+    Uninstall {
+        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        kind: ServiceKind,
+
+        /// If specified, uninstalls a user-level service
+        #[clap(long)]
+        user: bool,
+    },
 }
 
 impl ManagerSubcommand {
@@ -66,7 +90,7 @@ impl ManagerSubcommand {
     fn run_daemon(self, config: ManagerConfig) -> CliResult<()> {
         use crate::cli::Spawner;
         let pid = Spawner::spawn_running_background(Vec::new())?;
-        println!("[distant server detached, pid = {}]", pid);
+        println!("[distant manager detached, pid = {}]", pid);
         Ok(())
     }
 
@@ -95,19 +119,51 @@ impl ManagerSubcommand {
 
     async fn async_run(self, config: ManagerConfig) -> CliResult<()> {
         match self {
-            Self::Start { .. } => todo!(),
-            Self::Stop => {
-                debug!("Stopping manager: {:?}", config.network.as_os_str());
-                Client::new(config.network)
-                    .connect()
-                    .await?
-                    .shutdown()
-                    .await?;
+            Self::Service(ManagerServiceSubcommand::Start { kind }) => {
+                debug!("Starting manager service via {:?}", kind);
+                let service = <dyn Service>::target(kind);
+                service.start(ServiceStartCtx {
+                    label: String::from("rocks.distant.manager"),
+                })?;
+                Ok(())
+            }
+            Self::Service(ManagerServiceSubcommand::Stop { kind }) => {
+                debug!("Stopping manager service via {:?}", kind);
+                let service = <dyn Service>::target(kind);
+                service.stop(ServiceStopCtx {
+                    label: String::from("rocks.distant.manager"),
+                })?;
                 Ok(())
             }
 
-            Self::Install { .. } => todo!(),
-            Self::Uninstall { .. } => todo!(),
+            Self::Service(ManagerServiceSubcommand::Install { kind, user }) => {
+                debug!("Installing manager service via {:?}", kind);
+                let service = <dyn Service>::target(kind);
+                service.install(ServiceInstallCtx {
+                    label: String::from("rocks.distant.manager"),
+                    user,
+
+                    // distant manager listen
+                    args: vec![
+                        std::env::current_exe()
+                            .ok()
+                            .and_then(|p| p.to_str().map(ToString::to_string))
+                            .unwrap_or_else(|| String::from("distant")),
+                        "manager".to_string(),
+                        "listen".to_string(),
+                    ],
+                })?;
+                Ok(())
+            }
+            Self::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
+                debug!("Uninstalling manager service via {:?}", kind);
+                let service = <dyn Service>::target(kind);
+                service.uninstall(ServiceUninstallCtx {
+                    label: String::from("rocks.distant.manager"),
+                    user,
+                })?;
+                Ok(())
+            }
 
             Self::Listen { .. } => {
                 debug!("Starting manager: {:?}", config.network.as_os_str());
@@ -223,6 +279,15 @@ impl ManagerSubcommand {
                     .connect()
                     .await?
                     .kill(id)
+                    .await?;
+                Ok(())
+            }
+            Self::Shutdown => {
+                debug!("Shutting down manager: {:?}", config.network.as_os_str());
+                Client::new(config.network)
+                    .connect()
+                    .await?
+                    .shutdown()
                     .await?;
                 Ok(())
             }
