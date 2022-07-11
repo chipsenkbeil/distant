@@ -43,20 +43,20 @@ pub enum ManagerServiceSubcommand {
     /// Start the manager as a service
     Start {
         /// Type of service manager used to run this service
-        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
         kind: ServiceKind,
     },
 
     /// Stop the manager as a service
     Stop {
         /// Type of service manager used to run this service
-        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
         kind: ServiceKind,
     },
 
     /// Install the manager as a service
     Install {
-        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
         kind: ServiceKind,
 
         /// If specified, installs as a user-level service
@@ -66,7 +66,7 @@ pub enum ManagerServiceSubcommand {
 
     /// Uninstall the manager as a service
     Uninstall {
-        #[clap(default_value_t = ServiceKind::default(), value_enum)]
+        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
         kind: ServiceKind,
 
         /// If specified, uninstalls a user-level service
@@ -144,14 +144,11 @@ impl ManagerSubcommand {
                     user,
 
                     // distant manager listen
-                    args: vec![
-                        std::env::current_exe()
-                            .ok()
-                            .and_then(|p| p.to_str().map(ToString::to_string))
-                            .unwrap_or_else(|| String::from("distant")),
-                        "manager".to_string(),
-                        "listen".to_string(),
-                    ],
+                    program: std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.to_str().map(ToString::to_string))
+                        .unwrap_or_else(|| String::from("distant")),
+                    args: vec!["manager".to_string(), "listen".to_string()],
                 })?;
                 Ok(())
             }

@@ -16,6 +16,12 @@ static USER_AGENT_DIR_PATH: Lazy<PathBuf> =
 pub struct LaunchdService;
 
 impl Service for LaunchdService {
+    fn available(&self) -> io::Result<bool> {
+        which::which(LAUNCHCTL)
+            .map(|_| true)
+            .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))
+    }
+
     fn install(&self, ctx: ServiceInstallCtx) -> io::Result<()> {
         let dir_path = if ctx.user {
             USER_AGENT_DIR_PATH.as_path()
@@ -26,7 +32,7 @@ impl Service for LaunchdService {
         std::fs::create_dir_all(dir_path)?;
 
         let plist_path = dir_path.join(format!("{}.plist", ctx.label));
-        let plist = make_plist(&ctx.label, ctx.args);
+        let plist = make_plist(&ctx.label, ctx.cmd_iter());
         std::fs::write(plist_path.as_path(), plist)?;
 
         launchctl("load", plist_path.to_string_lossy().as_ref())
@@ -62,15 +68,14 @@ fn launchctl(cmd: &str, label: &str) -> io::Result<()> {
         let msg = String::from_utf8(output.stderr)
             .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("Failed to {cmd}"));
+            .unwrap_or_else(|| format!("Failed to {cmd} for {label}"));
 
         Err(io::Error::new(io::ErrorKind::Other, msg))
     }
 }
 
-fn make_plist(label: &str, args: Vec<String>) -> String {
+fn make_plist<'a>(label: &str, args: impl Iterator<Item = &'a str>) -> String {
     let args = args
-        .into_iter()
         .map(|arg| format!("<string>{arg}</string>"))
         .collect::<Vec<String>>()
         .join("");
