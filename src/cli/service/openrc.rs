@@ -23,14 +23,14 @@ impl Service for OpenRcService {
 
     fn install(&self, ctx: ServiceInstallCtx) -> io::Result<()> {
         let dir_path = SERVICE_DIR_PATH.as_path();
-
         std::fs::create_dir_all(dir_path)?;
 
-        let script_path = dir_path.join(&ctx.label);
+        let script_name = ctx.label.to_script_name();
+        let script_path = dir_path.join(&script_name);
 
         let script = make_script(
-            &ctx.label,
-            &ctx.label,
+            &script_name,
+            &script_name,
             ctx.program.as_str(),
             ctx.args,
             if ctx.user {
@@ -56,19 +56,19 @@ impl Service for OpenRcService {
             .open(script_path.as_path())?;
         file.write_all(script.as_bytes())?;
 
-        rc_update("add", &ctx.label)
+        rc_update("add", &script_name)
     }
 
     fn uninstall(&self, ctx: ServiceUninstallCtx) -> io::Result<()> {
-        rc_update("delete", &ctx.label)
+        rc_update("delete", &ctx.label.to_script_name())
     }
 
     fn start(&self, ctx: ServiceStartCtx) -> io::Result<()> {
-        rc_service("start", &ctx.label)
+        rc_service("start", &ctx.label.to_script_name())
     }
 
     fn stop(&self, ctx: ServiceStopCtx) -> io::Result<()> {
-        rc_service("stop", &ctx.label)
+        rc_service("stop", &ctx.label.to_script_name())
     }
 }
 

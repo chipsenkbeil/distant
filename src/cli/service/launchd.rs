@@ -31,8 +31,9 @@ impl Service for LaunchdService {
 
         std::fs::create_dir_all(dir_path)?;
 
-        let plist_path = dir_path.join(format!("{}.plist", ctx.label));
-        let plist = make_plist(&ctx.label, ctx.cmd_iter());
+        let qualified_name = ctx.label.to_qualified_name();
+        let plist_path = dir_path.join(format!("{}.plist", qualified_name));
+        let plist = make_plist(&qualified_name, ctx.cmd_iter());
         std::fs::write(plist_path.as_path(), plist)?;
 
         launchctl("load", plist_path.to_string_lossy().as_ref())
@@ -44,18 +45,19 @@ impl Service for LaunchdService {
         } else {
             GLOBAL_DAEMON_DIR_PATH.as_path()
         };
-        let plist_path = dir_path.join(format!("{}.plist", ctx.label));
+        let qualified_name = ctx.label.to_qualified_name();
+        let plist_path = dir_path.join(format!("{}.plist", qualified_name));
 
         launchctl("unload", plist_path.to_string_lossy().as_ref())?;
         std::fs::remove_file(plist_path)
     }
 
     fn start(&self, ctx: ServiceStartCtx) -> io::Result<()> {
-        launchctl("start", &ctx.label)
+        launchctl("start", &ctx.label.to_qualified_name())
     }
 
     fn stop(&self, ctx: ServiceStopCtx) -> io::Result<()> {
-        launchctl("stop", &ctx.label)
+        launchctl("stop", &ctx.label.to_qualified_name())
     }
 }
 

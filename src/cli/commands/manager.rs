@@ -1,15 +1,23 @@
 use crate::{
     cli::{
-        CliResult, Client, Manager, Service, ServiceInstallCtx, ServiceKind, ServiceStartCtx,
-        ServiceStopCtx, ServiceUninstallCtx,
+        CliResult, Client, Manager, Service, ServiceInstallCtx, ServiceKind, ServiceLabel,
+        ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
     },
     config::ManagerConfig,
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 use log::*;
+use once_cell::sync::Lazy;
 use std::io;
 use tabled::{Table, Tabled};
+
+/// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
+static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
+    qualifier: String::from("rocks"),
+    organization: String::from("distant"),
+    application: String::from("manager"),
+});
 
 mod handlers;
 
@@ -122,7 +130,7 @@ impl ManagerSubcommand {
                 debug!("Starting manager service via {:?}", kind);
                 let service = <dyn Service>::target_or_native(kind)?;
                 service.start(ServiceStartCtx {
-                    label: String::from("rocks.distant.manager"),
+                    label: SERVICE_LABEL.clone(),
                 })?;
                 Ok(())
             }
@@ -130,7 +138,7 @@ impl ManagerSubcommand {
                 debug!("Stopping manager service via {:?}", kind);
                 let service = <dyn Service>::target_or_native(kind)?;
                 service.stop(ServiceStopCtx {
-                    label: String::from("rocks.distant.manager"),
+                    label: SERVICE_LABEL.clone(),
                 })?;
                 Ok(())
             }
@@ -138,7 +146,7 @@ impl ManagerSubcommand {
                 debug!("Installing manager service via {:?}", kind);
                 let service = <dyn Service>::target_or_native(kind)?;
                 service.install(ServiceInstallCtx {
-                    label: String::from("rocks.distant.manager"),
+                    label: SERVICE_LABEL.clone(),
                     user,
 
                     // distant manager listen
@@ -154,7 +162,7 @@ impl ManagerSubcommand {
                 debug!("Uninstalling manager service via {:?}", kind);
                 let service = <dyn Service>::target_or_native(kind)?;
                 service.uninstall(ServiceUninstallCtx {
-                    label: String::from("rocks.distant.manager"),
+                    label: SERVICE_LABEL.clone(),
                     user,
                 })?;
                 Ok(())

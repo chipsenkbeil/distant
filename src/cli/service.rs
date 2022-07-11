@@ -1,4 +1,4 @@
-use std::io;
+use std::{fmt, io, str::FromStr};
 
 mod kind;
 
@@ -110,11 +110,67 @@ impl dyn Service {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ServiceLabel {
+    pub qualifier: String,
+    pub organization: String,
+    pub application: String,
+}
+
+impl ServiceLabel {
+    /// Produces a fully qualified name in the form of `{qualifier}.{organization}.{application}`
+    pub fn to_qualified_name(&self) -> String {
+        format!(
+            "{}.{}.{}",
+            self.qualifier, self.organization, self.application
+        )
+    }
+
+    /// Produces a script name using the organization and application
+    /// in the form of `{organization}-{application}`
+    pub fn to_script_name(&self) -> String {
+        format!("{}-{}", self.organization, self.application)
+    }
+}
+
+impl fmt::Display for ServiceLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}.{}.{}",
+            self.qualifier, self.organization, self.application
+        )
+    }
+}
+
+impl FromStr for ServiceLabel {
+    type Err = io::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let tokens = s.split('.').collect::<Vec<&str>>();
+        if tokens.len() != 3 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                concat!(
+                    "Unexpected token count! ",
+                    "Expected 3 items in the form {qualifier}.{organization}.{application}"
+                ),
+            ));
+        }
+
+        Ok(Self {
+            qualifier: tokens[0].to_string(),
+            organization: tokens[1].to_string(),
+            application: tokens[2].to_string(),
+        })
+    }
+}
+
 pub struct ServiceInstallCtx {
     /// Label associated with the service
     ///
     /// E.g. `rocks.distant.manager`
-    pub label: String,
+    pub label: ServiceLabel,
 
     /// Whether or not this service is at the user-level
     pub user: bool,
@@ -146,7 +202,7 @@ pub struct ServiceUninstallCtx {
     /// Label associated with the service
     ///
     /// E.g. `rocks.distant.manager`
-    pub label: String,
+    pub label: ServiceLabel,
 
     /// Whether or not this service is at the user-level
     pub user: bool,
@@ -156,12 +212,12 @@ pub struct ServiceStartCtx {
     /// Label associated with the service
     ///
     /// E.g. `rocks.distant.manager`
-    pub label: String,
+    pub label: ServiceLabel,
 }
 
 pub struct ServiceStopCtx {
     /// Label associated with the service
     ///
     /// E.g. `rocks.distant.manager`
-    pub label: String,
+    pub label: ServiceLabel,
 }
