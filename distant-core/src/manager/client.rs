@@ -626,7 +626,7 @@ mod tests {
                 .unwrap();
         });
 
-        let _ = client.kill(123).await.unwrap();
+        client.kill(123).await.unwrap();
     }
 
     #[tokio::test]
@@ -695,6 +695,6 @@ mod tests {
                 .unwrap();
         });
 
-        let _ = client.shutdown().await.unwrap();
+        client.shutdown().await.unwrap();
     }
 }

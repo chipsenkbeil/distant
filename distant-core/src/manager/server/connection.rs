@@ -174,8 +174,7 @@ impl DistantManagerConnection {
         reply: ServerReply<ManagerResponse>,
     ) -> io::Result<DistantManagerChannel> {
         let channel_id = rand::random();
-        let _ = self
-            .tx
+        self.tx
             .send(StateMachine::Register {
                 id: channel_id,
                 reply,

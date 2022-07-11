@@ -1,7 +1,8 @@
 use crate::{
     config::{CommonConfig, Config},
-    constants::{
-        CLIENT_LOG_FILE_PATH, CONFIG_FILE_PATH, MANAGER_LOG_FILE_PATH, SERVER_LOG_FILE_PATH,
+    paths::{
+        global as global_paths, user as user_paths, CLIENT_LOG_FILE_PATH, CONFIG_FILE_PATH,
+        MANAGER_LOG_FILE_PATH, SERVER_LOG_FILE_PATH,
     },
 };
 use clap::Parser;
@@ -20,8 +21,10 @@ use commands::DistantSubcommand;
 pub use error::{CliError, CliResult};
 pub(crate) use manager::Manager;
 pub(crate) use service::*;
-pub(crate) use spawner::Spawner;
 pub(crate) use storage::Storage;
+
+#[cfg(windows)]
+pub(crate) use spawner::Spawner;
 
 /// Represents the primary CLI entrypoint
 pub struct Cli {

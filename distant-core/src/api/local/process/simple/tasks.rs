@@ -28,7 +28,7 @@ where
     loop {
         match reader.read(&mut buf).await {
             Ok(n) if n > 0 => {
-                let _ = channel.send(buf[..n].to_vec()).await.map_err(|_| {
+                channel.send(buf[..n].to_vec()).await.map_err(|_| {
                     io::Error::new(io::ErrorKind::BrokenPipe, "Output channel closed")
                 })?;
 
@@ -66,7 +66,7 @@ where
     W: AsyncWrite + Unpin,
 {
     while let Some(data) = channel.recv().await {
-        let _ = writer.write_all(&data).await?;
+        writer.write_all(&data).await?;
     }
     Ok(())
 }

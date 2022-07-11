@@ -78,7 +78,7 @@ impl PtyProcess {
             loop {
                 match stdout_reader.read(&mut buf) {
                     Ok(n) if n > 0 => {
-                        let _ = stdout_tx.blocking_send(buf[..n].to_vec()).map_err(|_| {
+                        stdout_tx.blocking_send(buf[..n].to_vec()).map_err(|_| {
                             io::Error::new(io::ErrorKind::BrokenPipe, "Output channel closed")
                         })?;
                     }

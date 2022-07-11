@@ -193,7 +193,7 @@ async fn write_file_text_should_send_ok_when_successful(#[future] launched_clien
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
 
-    let _ = client
+    client
         .write_file_text(file.path().to_path_buf(), "some text".to_string())
         .await
         .unwrap();
@@ -234,7 +234,7 @@ async fn append_file_should_create_file_if_missing(#[future] launched_client: Di
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
 
-    let _ = client
+    client
         .append_file(file.path().to_path_buf(), b"some extra contents".to_vec())
         .await
         .unwrap();
@@ -256,7 +256,7 @@ async fn append_file_should_send_ok_when_successful(#[future] launched_client: D
     let file = temp.child("test-file");
     file.write_str("some file contents").unwrap();
 
-    let _ = client
+    client
         .append_file(file.path().to_path_buf(), b"some extra contents".to_vec())
         .await
         .unwrap();
@@ -299,7 +299,7 @@ async fn append_file_text_should_create_file_if_missing(#[future] launched_clien
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
 
-    let _ = client
+    client
         .append_file_text(file.path().to_path_buf(), "some extra contents".to_string())
         .await
         .unwrap();
@@ -321,7 +321,7 @@ async fn append_file_text_should_send_ok_when_successful(#[future] launched_clie
     let file = temp.child("test-file");
     file.write_str("some file contents").unwrap();
 
-    let _ = client
+    client
         .append_file_text(file.path().to_path_buf(), "some extra contents".to_string())
         .await
         .unwrap();
@@ -592,7 +592,7 @@ async fn create_dir_should_send_ok_when_successful(#[future] launched_client: Di
     let root_dir = setup_dir().await;
     let path = root_dir.path().join("new-dir");
 
-    let _ = client
+    client
         .create_dir(path.to_path_buf(), /* all */ false)
         .await
         .unwrap();
@@ -610,7 +610,7 @@ async fn create_dir_should_support_creating_multiple_dir_components(
     let root_dir = setup_dir().await;
     let path = root_dir.path().join("nested").join("new-dir");
 
-    let _ = client
+    client
         .create_dir(path.to_path_buf(), /* all */ true)
         .await
         .unwrap();
@@ -643,7 +643,7 @@ async fn remove_should_support_deleting_a_directory(#[future] launched_client: D
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
 
-    let _ = client
+    client
         .remove(dir.path().to_path_buf(), /* false */ false)
         .await
         .unwrap();
@@ -663,7 +663,7 @@ async fn remove_should_delete_nonempty_directory_if_force_is_true(
     dir.create_dir_all().unwrap();
     dir.child("file").touch().unwrap();
 
-    let _ = client
+    client
         .remove(dir.path().to_path_buf(), /* false */ true)
         .await
         .unwrap();
@@ -680,7 +680,7 @@ async fn remove_should_support_deleting_a_single_file(#[future] launched_client:
     let file = temp.child("some-file");
     file.touch().unwrap();
 
-    let _ = client
+    client
         .remove(file.path().to_path_buf(), /* false */ false)
         .await
         .unwrap();
@@ -720,7 +720,7 @@ async fn copy_should_support_copying_an_entire_directory(#[future] launched_clie
     let dst = temp.child("dst");
     let dst_file = dst.child("file");
 
-    let _ = client
+    client
         .copy(src.path().to_path_buf(), dst.path().to_path_buf())
         .await
         .unwrap();
@@ -741,7 +741,7 @@ async fn copy_should_support_copying_an_empty_directory(#[future] launched_clien
     src.create_dir_all().unwrap();
     let dst = temp.child("dst");
 
-    let _ = client
+    client
         .copy(src.path().to_path_buf(), dst.path().to_path_buf())
         .await
         .unwrap();
@@ -767,7 +767,7 @@ async fn copy_should_support_copying_a_directory_that_only_contains_directories(
     let dst = temp.child("dst");
     let dst_dir = dst.child("dir");
 
-    let _ = client
+    client
         .copy(src.path().to_path_buf(), dst.path().to_path_buf())
         .await
         .unwrap();
@@ -788,7 +788,7 @@ async fn copy_should_support_copying_a_single_file(#[future] launched_client: Di
     src.write_str("some text").unwrap();
     let dst = temp.child("dst");
 
-    let _ = client
+    client
         .copy(src.path().to_path_buf(), dst.path().to_path_buf())
         .await
         .unwrap();
@@ -831,7 +831,7 @@ async fn rename_should_support_renaming_an_entire_directory(
     let dst = temp.child("dst");
     let dst_file = dst.child("file");
 
-    let _ = client
+    client
         .rename(src.path().to_path_buf(), dst.path().to_path_buf())
         .await
         .unwrap();
@@ -852,7 +852,7 @@ async fn rename_should_support_renaming_a_single_file(#[future] launched_client:
     src.write_str("some text").unwrap();
     let dst = temp.child("dst");
 
-    let _ = client
+    client
         .rename(src.path().to_path_buf(), dst.path().to_path_buf())
         .await
         .unwrap();
@@ -1315,7 +1315,7 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(
         .unwrap();
 
     // Send kill signal
-    let _ = proc.kill().await.unwrap();
+    proc.kill().await.unwrap();
 
     // Verify killed, which should be success false
     let status = proc.wait().await.unwrap();
@@ -1338,7 +1338,7 @@ async fn proc_kill_should_fail_if_process_not_running(#[future] launched_client:
         .unwrap();
 
     // Send kill signal
-    let _ = proc.kill().await.unwrap();
+    proc.kill().await.unwrap();
 
     // Wait for process to be dead
     let mut killer = proc.clone_killer();
@@ -1364,7 +1364,7 @@ async fn proc_stdin_should_fail_if_process_not_running(#[future] launched_client
         .unwrap();
 
     // Send kill signal
-    let _ = proc.kill().await.unwrap();
+    proc.kill().await.unwrap();
 
     // Wait for process to be dead
     let mut stdin = proc.stdin.take().unwrap();
@@ -1398,8 +1398,7 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] launched_client: Dist
         .unwrap();
 
     // Second, send stdin to the remote process
-    let _ = proc
-        .stdin
+    proc.stdin
         .as_mut()
         .unwrap()
         .write_str("hello world\n")

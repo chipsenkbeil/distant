@@ -686,7 +686,7 @@ mod tests {
         let id = connection.id;
         server.connections.write().await.insert(id, connection);
 
-        let _ = server.kill(id).await.unwrap();
+        server.kill(id).await.unwrap();
 
         let lock = server.connections.read().await;
         assert!(!lock.contains_key(&id), "Connection still exists");

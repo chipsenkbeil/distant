@@ -87,7 +87,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         .expect("Failed to get system information");
 
     // Test killing a connection
-    let _ = client.kill(id).await.expect("Failed to kill connection");
+    client.kill(id).await.expect("Failed to kill connection");
 
     // Test getting an error to ensure that serialization of that data works,
     // which we do by trying to access a connection that no longer exists

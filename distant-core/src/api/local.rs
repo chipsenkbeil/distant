@@ -654,8 +654,7 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        let _ = api
-            .write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
+        api.write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
             .await
             .unwrap_err();
 
@@ -672,8 +671,7 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let _ = api
-            .write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
+        api.write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
             .await
             .unwrap();
 
@@ -691,14 +689,13 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        let _ = api
-            .append_file(
-                ctx,
-                file.path().to_path_buf(),
-                b"some extra contents".to_vec(),
-            )
-            .await
-            .unwrap_err();
+        api.append_file(
+            ctx,
+            file.path().to_path_buf(),
+            b"some extra contents".to_vec(),
+        )
+        .await
+        .unwrap_err();
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
@@ -713,14 +710,13 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let _ = api
-            .append_file(
-                ctx,
-                file.path().to_path_buf(),
-                b"some extra contents".to_vec(),
-            )
-            .await
-            .unwrap();
+        api.append_file(
+            ctx,
+            file.path().to_path_buf(),
+            b"some extra contents".to_vec(),
+        )
+        .await
+        .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -738,14 +734,13 @@ mod tests {
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let _ = api
-            .append_file(
-                ctx,
-                file.path().to_path_buf(),
-                b"some extra contents".to_vec(),
-            )
-            .await
-            .unwrap();
+        api.append_file(
+            ctx,
+            file.path().to_path_buf(),
+            b"some extra contents".to_vec(),
+        )
+        .await
+        .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -785,14 +780,13 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        let _ = api
-            .append_file_text(
-                ctx,
-                file.path().to_path_buf(),
-                "some extra contents".to_string(),
-            )
-            .await
-            .unwrap();
+        api.append_file_text(
+            ctx,
+            file.path().to_path_buf(),
+            "some extra contents".to_string(),
+        )
+        .await
+        .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -810,14 +804,13 @@ mod tests {
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let _ = api
-            .append_file_text(
-                ctx,
-                file.path().to_path_buf(),
-                "some extra contents".to_string(),
-            )
-            .await
-            .unwrap();
+        api.append_file_text(
+            ctx,
+            file.path().to_path_buf(),
+            "some extra contents".to_string(),
+        )
+        .await
+        .unwrap();
 
         // Yield to allow chance to finish appending to file
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1072,8 +1065,7 @@ mod tests {
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("new-dir");
 
-        let _ = api
-            .create_dir(ctx, path.to_path_buf(), /* all */ false)
+        api.create_dir(ctx, path.to_path_buf(), /* all */ false)
             .await
             .unwrap();
 
@@ -1087,8 +1079,7 @@ mod tests {
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("nested").join("new-dir");
 
-        let _ = api
-            .create_dir(ctx, path.to_path_buf(), /* all */ true)
+        api.create_dir(ctx, path.to_path_buf(), /* all */ true)
             .await
             .unwrap();
 
@@ -1118,8 +1109,7 @@ mod tests {
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
 
-        let _ = api
-            .remove(ctx, dir.path().to_path_buf(), /* false */ false)
+        api.remove(ctx, dir.path().to_path_buf(), /* false */ false)
             .await
             .unwrap();
 
@@ -1135,8 +1125,7 @@ mod tests {
         dir.create_dir_all().unwrap();
         dir.child("file").touch().unwrap();
 
-        let _ = api
-            .remove(ctx, dir.path().to_path_buf(), /* false */ true)
+        api.remove(ctx, dir.path().to_path_buf(), /* false */ true)
             .await
             .unwrap();
 
@@ -1151,8 +1140,7 @@ mod tests {
         let file = temp.child("some-file");
         file.touch().unwrap();
 
-        let _ = api
-            .remove(ctx, file.path().to_path_buf(), /* false */ false)
+        api.remove(ctx, file.path().to_path_buf(), /* false */ false)
             .await
             .unwrap();
 
@@ -1189,8 +1177,7 @@ mod tests {
         let dst = temp.child("dst");
         let dst_file = dst.child("file");
 
-        let _ = api
-            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
             .unwrap();
 
@@ -1209,8 +1196,7 @@ mod tests {
         src.create_dir_all().unwrap();
         let dst = temp.child("dst");
 
-        let _ = api
-            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
             .unwrap();
 
@@ -1232,8 +1218,7 @@ mod tests {
         let dst = temp.child("dst");
         let dst_dir = dst.child("dir");
 
-        let _ = api
-            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
             .unwrap();
 
@@ -1252,8 +1237,7 @@ mod tests {
         src.write_str("some text").unwrap();
         let dst = temp.child("dst");
 
-        let _ = api
-            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
             .unwrap();
 
@@ -1291,8 +1275,7 @@ mod tests {
         let dst = temp.child("dst");
         let dst_file = dst.child("file");
 
-        let _ = api
-            .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+        api.rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
             .unwrap();
 
@@ -1311,8 +1294,7 @@ mod tests {
         src.write_str("some text").unwrap();
         let dst = temp.child("dst");
 
-        let _ = api
-            .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+        api.rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
             .await
             .unwrap();
 
@@ -1360,16 +1342,15 @@ mod tests {
         let file = temp.child("file");
         file.touch().unwrap();
 
-        let _ = api
-            .watch(
-                ctx,
-                file.path().to_path_buf(),
-                /* recursive */ false,
-                /* only */ Default::default(),
-                /* except */ Default::default(),
-            )
-            .await
-            .unwrap();
+        api.watch(
+            ctx,
+            file.path().to_path_buf(),
+            /* recursive */ false,
+            /* only */ Default::default(),
+            /* except */ Default::default(),
+        )
+        .await
+        .unwrap();
 
         // Update the file and verify we get a notification
         file.write_str("some text").unwrap();
@@ -1397,16 +1378,15 @@ mod tests {
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
 
-        let _ = api
-            .watch(
-                ctx,
-                file.path().to_path_buf(),
-                /* recursive */ true,
-                /* only */ Default::default(),
-                /* except */ Default::default(),
-            )
-            .await
-            .unwrap();
+        api.watch(
+            ctx,
+            file.path().to_path_buf(),
+            /* recursive */ true,
+            /* only */ Default::default(),
+            /* except */ Default::default(),
+        )
+        .await
+        .unwrap();
 
         // Update the file and verify we get a notification
         file.write_str("some text").unwrap();
@@ -1490,28 +1470,26 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Initialize watch on file 1
-        let _ = api
-            .watch(
-                ctx_1,
-                file_1.path().to_path_buf(),
-                /* recursive */ false,
-                /* only */ Default::default(),
-                /* except */ Default::default(),
-            )
-            .await
-            .unwrap();
+        api.watch(
+            ctx_1,
+            file_1.path().to_path_buf(),
+            /* recursive */ false,
+            /* only */ Default::default(),
+            /* except */ Default::default(),
+        )
+        .await
+        .unwrap();
 
         // Initialize watch on file 2
-        let _ = api
-            .watch(
-                ctx_2,
-                file_2.path().to_path_buf(),
-                /* recursive */ false,
-                /* only */ Default::default(),
-                /* except */ Default::default(),
-            )
-            .await
-            .unwrap();
+        api.watch(
+            ctx_2,
+            file_2.path().to_path_buf(),
+            /* recursive */ false,
+            /* only */ Default::default(),
+            /* except */ Default::default(),
+        )
+        .await
+        .unwrap();
 
         // Update the files and verify we get notifications from different origins
         file_1.write_str("some text").unwrap();
@@ -2029,7 +2007,7 @@ mod tests {
             .unwrap();
 
         // Send kill signal
-        let _ = api.proc_kill(ctx_2, proc_id).await.unwrap();
+        api.proc_kill(ctx_2, proc_id).await.unwrap();
 
         // Wait for the completion response to come in
         match rx.recv().await.unwrap() {
@@ -2094,8 +2072,7 @@ mod tests {
             .unwrap();
 
         // Second, send stdin to the remote process
-        let _ = api
-            .proc_stdin(ctx_2, id, b"hello world\n".to_vec())
+        api.proc_stdin(ctx_2, id, b"hello world\n".to_vec())
             .await
             .unwrap();
 

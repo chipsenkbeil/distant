@@ -169,7 +169,7 @@ impl Watcher {
     /// Unwatches the path being watched, closing out the watcher
     pub async fn unwatch(&mut self) -> io::Result<()> {
         trace!("Unwatching {:?}", self.path);
-        let _ = self.channel.unwatch(self.path.to_path_buf()).await?;
+        self.channel.unwatch(self.path.to_path_buf()).await?;
 
         // Kill our task that processes inbound changes if we have successfully unwatched the path
         self.task.abort();
@@ -469,7 +469,7 @@ mod tests {
             .unwrap();
 
         // Wait for the unwatch to complete
-        let _ = unwatch_task.await.unwrap().unwrap();
+        unwatch_task.await.unwrap().unwrap();
 
         transport
             .write(Response::new(

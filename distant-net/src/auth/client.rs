@@ -92,7 +92,7 @@ impl AuthClient {
         );
 
         // Perform JIT handshake if enabled
-        let _ = self.jit_handshake().await?;
+        self.jit_handshake().await?;
 
         let payload = AuthRequest::Challenge { questions, extra };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
@@ -121,7 +121,7 @@ impl AuthClient {
         trace!("AuthClient::verify(kind = {:?}, text = {:?})", kind, text);
 
         // Perform JIT handshake if enabled
-        let _ = self.jit_handshake().await?;
+        self.jit_handshake().await?;
 
         let payload = AuthRequest::Verify { kind, text };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
@@ -149,7 +149,7 @@ impl AuthClient {
         trace!("AuthClient::info(text = {:?})", text);
 
         // Perform JIT handshake if enabled
-        let _ = self.jit_handshake().await?;
+        self.jit_handshake().await?;
 
         let payload = AuthRequest::Info { text };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
@@ -161,7 +161,7 @@ impl AuthClient {
         trace!("AuthClient::error(kind = {:?}, text = {:?})", kind, text);
 
         // Perform JIT handshake if enabled
-        let _ = self.jit_handshake().await?;
+        self.jit_handshake().await?;
 
         let payload = AuthRequest::Error { kind, text };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;

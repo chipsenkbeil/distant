@@ -66,15 +66,13 @@ pub mod global {
             .join("distant")
     });
 
-    static ROOT_DIR: Lazy<PathBuf> = Lazy::new(|| {
-        #[config(windows)]
-        {
-            PROGRAM_DATA_DIR.join("distant")
-        }
-    });
+    #[cfg(windows)]
+    static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PROGRAM_DATA_DIR.join("distant"));
 
-    static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PathBuf::new());
-    static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| PathBuf::new());
+    #[cfg(unix)]
+    static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("/etc").join("distant"));
+
+    static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 
     /// Path to configuration settings for distant client/manager/server
     pub static CONFIG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CONFIG_DIR.join("config.toml"));

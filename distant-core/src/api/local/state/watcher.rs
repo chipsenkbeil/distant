@@ -118,8 +118,7 @@ impl WatcherChannel {
     /// Watch a path for a specific connection denoted by the id within the registered path
     pub async fn watch(&self, registered_path: RegisteredPath) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
-        let _ = self
-            .tx
+        self.tx
             .send(InnerWatcherMsg::Watch {
                 registered_path,
                 cb,
@@ -136,8 +135,7 @@ impl WatcherChannel {
         let path = tokio::fs::canonicalize(path.as_ref())
             .await
             .unwrap_or_else(|_| path.as_ref().to_path_buf());
-        let _ = self
-            .tx
+        self.tx
             .send(InnerWatcherMsg::Unwatch { id, path, cb })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal watcher task closed"))?;
