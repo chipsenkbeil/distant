@@ -5,6 +5,8 @@ mod launchd;
 mod openrc;
 
 pub use kind::ServiceKind;
+pub use launchd::LaunchdService;
+pub use openrc::OpenRcService;
 
 /// Interface for a service
 pub trait Service {
@@ -26,6 +28,15 @@ pub trait Service {
 }
 
 impl dyn Service {
+    /// Creates a new service using the specified type, falling back to selecting
+    /// based on native targeting for the current operating system if no type provided
+    pub fn target_or_native(kind: impl Into<Option<ServiceKind>>) -> io::Result<Box<dyn Service>> {
+        match kind.into() {
+            Some(kind) => Ok(<dyn Service>::target(kind)),
+            None => <dyn Service>::native_target(),
+        }
+    }
+
     /// Creates a new service targeting the specific service type
     pub fn target(kind: ServiceKind) -> Box<dyn Service> {
         match kind {
@@ -40,6 +51,54 @@ impl dyn Service {
             #[cfg(unix)]
             ServiceKind::Systemd => todo!(),
         }
+    }
+
+    /// Attempts to select a native target for the current operating system
+    ///
+    /// * For MacOS, this will use [`LaunchdService`]
+    /// * For Windows, this will use [`ScService`]
+    /// * For BSD variants, this will use [`RcService`]
+    /// * For Linux variants, this will use either [`SystemdService`] or [`OpenRc`]
+    pub fn native_target() -> io::Result<Box<dyn Service>> {
+        #[cfg(target_os = "macos")]
+        fn native_target_kind() -> io::Result<ServiceKind> {
+            Ok(ServiceKind::Launchd)
+        }
+
+        #[cfg(target_os = "windows")]
+        fn native_target_kind() -> io::Result<ServiceKind> {
+            Ok(ServiceKind::Sc)
+        }
+
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "dragonfly",
+            target_os = "openbsd",
+            target_os = "netbsd"
+        ))]
+        fn native_target_kind() -> io::Result<ServiceKind> {
+            Ok(ServiceKind::Rc)
+        }
+
+        #[cfg(target_os = "linux")]
+        fn native_target_kind() -> io::Result<ServiceKind> {
+            let service = <dyn Service>::target(ServiceKind::Systemd);
+            if let Ok(true) = service.available() {
+                return Ok(ServiceKind::Systemd);
+            }
+
+            let service = <dyn Service>::target(ServiceKind::OpenRc);
+            if let Ok(true) = service.available() {
+                return Ok(ServiceKind::OpenRc);
+            }
+
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Only systemd and openrc are supported on Linux",
+            ))
+        }
+
+        Ok(Self::target(native_target_kind()?))
     }
 }
 

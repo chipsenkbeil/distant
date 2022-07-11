@@ -25,30 +25,3 @@ pub enum ServiceKind {
     #[cfg(unix)]
     Systemd,
 }
-
-impl Default for ServiceKind {
-    #[cfg(target_os = "macos")]
-    fn default() -> Self {
-        Self::Launchd
-    }
-
-    #[cfg(target_os = "windows")]
-    fn default() -> Self {
-        Self::Sc
-    }
-
-    #[cfg(any(
-        target_os = "freebsd",
-        target_os = "dragonfly",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    ))]
-    fn default() -> Self {
-        Self::Rc
-    }
-
-    #[cfg(target_os = "linux")]
-    fn default() -> Self {
-        Self::Systemd
-    }
-}

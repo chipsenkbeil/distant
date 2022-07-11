@@ -42,22 +42,21 @@ pub enum ManagerSubcommand {
 pub enum ManagerServiceSubcommand {
     /// Start the manager as a service
     Start {
-        /// Type of service manager used to run this service
-        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
-        kind: ServiceKind,
+        /// Type of service manager used to run this service, defaulting to platform native
+        #[clap(long, value_enum)]
+        kind: Option<ServiceKind>,
     },
 
     /// Stop the manager as a service
     Stop {
-        /// Type of service manager used to run this service
-        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
-        kind: ServiceKind,
+        #[clap(long, value_enum)]
+        kind: Option<ServiceKind>,
     },
 
     /// Install the manager as a service
     Install {
-        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
-        kind: ServiceKind,
+        #[clap(long, value_enum)]
+        kind: Option<ServiceKind>,
 
         /// If specified, installs as a user-level service
         #[clap(long)]
@@ -66,8 +65,8 @@ pub enum ManagerServiceSubcommand {
 
     /// Uninstall the manager as a service
     Uninstall {
-        #[clap(long, default_value_t = ServiceKind::default(), value_enum)]
-        kind: ServiceKind,
+        #[clap(long, value_enum)]
+        kind: Option<ServiceKind>,
 
         /// If specified, uninstalls a user-level service
         #[clap(long)]
@@ -121,7 +120,7 @@ impl ManagerSubcommand {
         match self {
             Self::Service(ManagerServiceSubcommand::Start { kind }) => {
                 debug!("Starting manager service via {:?}", kind);
-                let service = <dyn Service>::target(kind);
+                let service = <dyn Service>::target_or_native(kind)?;
                 service.start(ServiceStartCtx {
                     label: String::from("rocks.distant.manager"),
                 })?;
@@ -129,16 +128,15 @@ impl ManagerSubcommand {
             }
             Self::Service(ManagerServiceSubcommand::Stop { kind }) => {
                 debug!("Stopping manager service via {:?}", kind);
-                let service = <dyn Service>::target(kind);
+                let service = <dyn Service>::target_or_native(kind)?;
                 service.stop(ServiceStopCtx {
                     label: String::from("rocks.distant.manager"),
                 })?;
                 Ok(())
             }
-
             Self::Service(ManagerServiceSubcommand::Install { kind, user }) => {
                 debug!("Installing manager service via {:?}", kind);
-                let service = <dyn Service>::target(kind);
+                let service = <dyn Service>::target_or_native(kind)?;
                 service.install(ServiceInstallCtx {
                     label: String::from("rocks.distant.manager"),
                     user,
@@ -154,14 +152,13 @@ impl ManagerSubcommand {
             }
             Self::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
                 debug!("Uninstalling manager service via {:?}", kind);
-                let service = <dyn Service>::target(kind);
+                let service = <dyn Service>::target_or_native(kind)?;
                 service.uninstall(ServiceUninstallCtx {
                     label: String::from("rocks.distant.manager"),
                     user,
                 })?;
                 Ok(())
             }
-
             Self::Listen { .. } => {
                 debug!("Starting manager: {:?}", config.network.as_os_str());
                 let manager_ref = Manager::new(DistantManagerConfig::default(), config.network)
