@@ -12,6 +12,7 @@ static RC_SERVICE: &str = "rc-service";
 static RC_UPDATE: &str = "rc-update";
 static SERVICE_DIR_PATH: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("/etc/init.d"));
 
+/// Implementation of [`Service`] for Linux's [OpenRC](https://en.wikipedia.org/wiki/OpenRC)
 pub struct OpenRcService;
 
 impl Service for OpenRcService {
@@ -22,23 +23,23 @@ impl Service for OpenRcService {
     }
 
     fn install(&self, ctx: ServiceInstallCtx) -> io::Result<()> {
+        // NOTE: OpenRC does not support user-level services
+        //
+        // For more discussion, see: https://github.com/OpenRC/openrc/issues/432
+        if ctx.user {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "User-level services not supported for OpenRC",
+            ));
+        }
+
         let dir_path = SERVICE_DIR_PATH.as_path();
         std::fs::create_dir_all(dir_path)?;
 
         let script_name = ctx.label.to_script_name();
         let script_path = dir_path.join(&script_name);
 
-        let script = make_script(
-            &script_name,
-            &script_name,
-            ctx.program.as_str(),
-            ctx.args,
-            if ctx.user {
-                Some(whoami::username())
-            } else {
-                None
-            },
-        );
+        let script = make_script(&script_name, &script_name, ctx.program.as_str(), ctx.args);
 
         // Create our script and ensure it is executable; fail if a script
         // exists at the location because we don't want to break something
@@ -102,13 +103,7 @@ fn rc_update(cmd: &str, service: &str) -> io::Result<()> {
     }
 }
 
-fn make_script(
-    description: &str,
-    provide: &str,
-    program: &str,
-    args: Vec<String>,
-    user: Option<String>,
-) -> String {
+fn make_script(description: &str, provide: &str, program: &str, args: Vec<String>) -> String {
     format!(
         r#"
 #!/sbin/openrc-run
@@ -118,15 +113,12 @@ command="${{DISTANT_BINARY:-"{program}"}}"
 command_args="{}"
 pidfile="/run/${{RC_SVCNAME}}.pid"
 command_background=true
-{}
 
 depend() {{
     provide {provide}
 }}
     "#,
         args.join(" "),
-        user.map(|user| format!(r#"command_user="{user}""#))
-            .unwrap_or_default()
     )
     .trim()
     .to_string()

@@ -1,5 +1,5 @@
 use super::{Service, ServiceInstallCtx, ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx};
-use crate::constants::HOME_DIR_PATH;
+use crate::paths::user::HOME_DIR_PATH;
 use once_cell::sync::Lazy;
 use std::{io, path::PathBuf, process::Command};
 
@@ -13,6 +13,7 @@ static GLOBAL_DAEMON_DIR_PATH: Lazy<PathBuf> =
 static USER_AGENT_DIR_PATH: Lazy<PathBuf> =
     Lazy::new(|| HOME_DIR_PATH.join("Library").join("LaunchAgents"));
 
+/// Implementation of [`Service`] for MacOS's [Launchd](https://en.wikipedia.org/wiki/Launchd)
 pub struct LaunchdService;
 
 impl Service for LaunchdService {

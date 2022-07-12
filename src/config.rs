@@ -28,10 +28,23 @@ impl Config {
         toml_edit::de::from_str(&text).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
     }
 
-    /// Blocking version of `load_from_file`
+    /// Loads the configuration from the specified file
     pub fn blocking_load_from_file(path: &Path) -> io::Result<Self> {
         let text = std::fs::read_to_string(path)?;
         toml_edit::de::from_str(&text).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+    }
+
+    /// Loads the configuration from the specified paths, ovewriting duplication
+    /// configuration settings in the order of `1 -> 2 -> 3`
+    pub fn load_from_files<'a>(paths: impl Iterator<Item = &'a Path>) -> io::Result<Self> {
+        use config::{Config, File};
+        let config = Config::builder()
+            .add_source(paths.map(File::from).collect::<Vec<_>>())
+            .build()
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        config
+            .try_deserialize()
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
     }
 
     /// Saves the configuration to the specified file

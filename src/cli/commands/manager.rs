@@ -156,6 +156,17 @@ impl ManagerSubcommand {
                         .unwrap_or_else(|| String::from("distant")),
                     args: vec!["manager".to_string(), "listen".to_string()],
                 })?;
+
+                // TODO: The cleanest way I can think of to support user-level installation
+                //       for platforms that support it (launchd, systemd) is to generate or
+                //       modify a user-level config file such that the client and manager
+                //       point to a user-specific socket like "/run/user/1001/distant.sock"
+                //       instead of "/run/distant.sock" or pipe name like "{user}.distant"
+                //       instead of "distant". That way, root-level managers will be accessed
+                //       by clients by default and only users that have configured user-level
+                //       managers will automatically connect to them
+                todo!("Generate or update config.toml at user level with custom socket/pipe");
+
                 Ok(())
             }
             Self::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
@@ -165,6 +176,12 @@ impl ManagerSubcommand {
                     label: SERVICE_LABEL.clone(),
                     user,
                 })?;
+
+                // TODO: It's unclear what to do here other than load up a user-level config
+                //       file if it exists and either remove or reset the socket and pipe
+                //       configuration such that it points to the global socket/pipe instead
+                todo!("Remove or reset socket/pipe configuration");
+
                 Ok(())
             }
             Self::Listen { .. } => {

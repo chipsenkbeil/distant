@@ -8,6 +8,9 @@ mod launchd;
 #[cfg(unix)]
 mod openrc;
 
+#[cfg(unix)]
+mod rc;
+
 pub use kind::ServiceKind;
 
 #[cfg(target_os = "macos")]
@@ -15,6 +18,9 @@ pub use launchd::LaunchdService;
 
 #[cfg(unix)]
 pub use openrc::OpenRcService;
+
+#[cfg(unix)]
+pub use rc::RcService;
 
 /// Interface for a service
 pub trait Service {
@@ -53,7 +59,7 @@ impl dyn Service {
             #[cfg(unix)]
             ServiceKind::OpenRc => Box::new(openrc::OpenRcService),
             #[cfg(unix)]
-            ServiceKind::Rc => todo!(),
+            ServiceKind::Rc => Box::new(rc::RcService),
             #[cfg(windows)]
             ServiceKind::Sc => todo!(),
             #[cfg(unix)]
