@@ -2,7 +2,24 @@ use directories::{ProjectDirs, UserDirs};
 use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
 
-/// User-oriented constants
+/// Contains collection of possible paths to a config file with the order being {user} -> {global}
+pub static CONFIG_FILE_PATHS: Lazy<Vec<&'static Path>> = Lazy::new(|| {
+    vec![
+        user::CONFIG_FILE_PATH.as_path(),
+        global::CONFIG_FILE_PATH.as_path(),
+    ]
+});
+
+/// Contains collection of possible paths to a unix socket with the order being {user} -> {global}
+#[cfg(unix)]
+pub static UNIX_SOCKET_PATHS: Lazy<Vec<&'static Path>> = Lazy::new(|| {
+    vec![
+        user::UNIX_SOCKET_PATH.as_path(),
+        global::UNIX_SOCKET_PATH.as_path(),
+    ]
+});
+
+/// User-oriented paths
 pub mod user {
     use super::*;
 
@@ -39,8 +56,9 @@ pub mod user {
 
     /// For Linux & BSD, this uses the runtime path. For Mac, this uses the tmp path
     ///
-    /// * `/run/user/1001/distant/distant.sock`
-    /// * `/tmp/{user}/distant.dock`
+    /// * `/run/{user}/1001/distant/distant.sock` on Linux
+    /// * `/var/run/{user}.distant.sock` on BSD
+    /// * `/tmp/{user}/distant.dock` on MacOS
     #[cfg(unix)]
     pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
         PROJECT_DIR
@@ -56,7 +74,7 @@ pub mod user {
         Lazy::new(|| format!("{}.distant", whoami::username()));
 }
 
-/// Global constants
+/// Global paths
 pub mod global {
     use super::*;
 
@@ -72,6 +90,7 @@ pub mod global {
     #[cfg(unix)]
     static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("/etc").join("distant"));
 
+    /// Path to global cache (e.g. `/tmp/distant`)
     static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 
     /// Path to configuration settings for distant client/manager/server
@@ -112,5 +131,5 @@ pub mod global {
 
     /// Name of the pipe used by Windows
     #[cfg(windows)]
-    pub const WINDOWS_PIPE_NAME: &str = "distant";
+    pub static WINDOWS_PIPE_NAME: Lazy<String> = Lazy::new(|| "distant".to_string());
 }
