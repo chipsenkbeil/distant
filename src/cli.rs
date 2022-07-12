@@ -1,9 +1,6 @@
 use crate::{
     config::{CommonConfig, Config},
-    paths::{
-        global as global_paths, user as user_paths, CLIENT_LOG_FILE_PATH, CONFIG_FILE_PATH,
-        MANAGER_LOG_FILE_PATH, SERVER_LOG_FILE_PATH,
-    },
+    paths,
 };
 use clap::Parser;
 use std::{io, path::PathBuf};
@@ -40,15 +37,9 @@ struct Opt {
     #[clap(flatten)]
     common: CommonConfig,
 
-    /// Configuration file to load
-    #[clap(
-        short = 'c',
-        long = "config",
-        global = true,
-        value_parser,
-        default_value_os_t = CONFIG_FILE_PATH.to_path_buf()
-    )]
-    config_path: PathBuf,
+    /// Configuration file to load instead of the default paths
+    #[clap(short = 'c', long = "config", global = true, value_parser)]
+    config_path: Option<PathBuf>,
 
     #[clap(subcommand)]
     command: DistantSubcommand,
@@ -64,11 +55,7 @@ impl Cli {
         } = Opt::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
         // Try to load a configuration file, defaulting if no config file is found
-        let config = match Config::blocking_load_from_file(config_path.as_path()) {
-            Ok(config) => config,
-            Err(x) if x.kind() == io::ErrorKind::NotFound => Config::default(),
-            Err(x) => return Err(x.into()),
-        };
+        let config = Config::load_multi(config_path)?;
 
         // Extract the common config from our config file
         let config_common = match &command {
@@ -83,10 +70,21 @@ impl Cli {
 
         // Assign the appropriate log file based on client/manager/server
         if common.log_file.is_none() {
+            // NOTE: We assume that any of these commands will log to the user-specific path
+            //       and that services that run manager will explicitly override the
+            //       log file path
             common.log_file = Some(match &command {
-                DistantSubcommand::Client(_) => CLIENT_LOG_FILE_PATH.to_path_buf(),
-                DistantSubcommand::Manager(_) => MANAGER_LOG_FILE_PATH.to_path_buf(),
-                DistantSubcommand::Server(_) => SERVER_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Client(_) => paths::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Server(_) => paths::user::SERVER_LOG_FILE_PATH.to_path_buf(),
+
+                // If we are listening as a manager, then we want to log to a manager-specific file
+                DistantSubcommand::Manager(cmd) if cmd.is_listen() => {
+                    paths::user::MANAGER_LOG_FILE_PATH.to_path_buf()
+                }
+
+                // Otherwise, if we are performing some operation as a client talking to the
+                // manager, then we want to log to the client file
+                DistantSubcommand::Manager(_) => paths::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
             });
         }
 

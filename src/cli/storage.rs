@@ -1,4 +1,4 @@
-use crate::constants::STORAGE_FILE_PATH;
+use crate::paths::user::STORAGE_FILE_PATH;
 use distant_core::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -6,7 +6,7 @@ use std::io;
 mod id;
 pub use id::StorageId;
 
-/// Provides quick access to cli-specific storage
+/// Provides quick access to cli-specific storage for a user
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Storage {
     pub default_connection_id: StorageId<ConnectionId>,

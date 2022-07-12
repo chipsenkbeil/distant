@@ -2,14 +2,6 @@ use directories::{ProjectDirs, UserDirs};
 use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
 
-/// Contains collection of possible paths to a config file with the order being {user} -> {global}
-pub static CONFIG_FILE_PATHS: Lazy<Vec<&'static Path>> = Lazy::new(|| {
-    vec![
-        user::CONFIG_FILE_PATH.as_path(),
-        global::CONFIG_FILE_PATH.as_path(),
-    ]
-});
-
 /// User-oriented paths
 pub mod user {
     use super::*;
