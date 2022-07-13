@@ -21,6 +21,18 @@ pub struct NetworkConfig {
 }
 
 impl NetworkConfig {
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            user: self.user || other.user,
+
+            #[cfg(unix)]
+            unix_socket: self.unix_socket.or(other.unix_socket),
+
+            #[cfg(windows)]
+            windows_pipe: self.windows_pipe.or(other.windows_pipe),
+        }
+    }
+
     /// Returns either the unix socket or windows pipe name as an [`OsStr`]
     pub fn as_os_str(&self) -> &OsStr {
         #[cfg(unix)]

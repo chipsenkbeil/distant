@@ -3,7 +3,7 @@ use crate::{
         CliResult, Client, Manager, Service, ServiceInstallCtx, ServiceKind, ServiceLabel,
         ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
     },
-    config::{Config, ManagerConfig},
+    config::{Config, ManagerConfig, NetworkConfig},
     paths::user::CONFIG_FILE_PATH,
 };
 use clap::Subcommand;
@@ -32,19 +32,36 @@ pub enum ManagerSubcommand {
         /// If specified, will fork the process to run as a standalone daemon
         #[clap(long)]
         daemon: bool,
+
+        #[clap(flatten)]
+        network: NetworkConfig,
     },
 
     /// Retrieve information about a specific connection
-    Info { id: ConnectionId },
+    Info {
+        id: ConnectionId,
+        #[clap(flatten)]
+        network: NetworkConfig,
+    },
 
     /// List information about all connections
-    List,
+    List {
+        #[clap(flatten)]
+        network: NetworkConfig,
+    },
 
     /// Kill a specific connection
-    Kill { id: ConnectionId },
+    Kill {
+        #[clap(flatten)]
+        network: NetworkConfig,
+        id: ConnectionId,
+    },
 
     /// Send a shutdown request to the manager
-    Shutdown,
+    Shutdown {
+        #[clap(flatten)]
+        network: NetworkConfig,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -91,7 +108,7 @@ impl ManagerSubcommand {
 
     pub fn run(self, config: ManagerConfig) -> CliResult<()> {
         match &self {
-            Self::Listen { daemon } if *daemon => Self::run_daemon(self, config),
+            Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self, config),
             _ => {
                 let rt = tokio::runtime::Runtime::new()?;
                 rt.block_on(Self::async_run(self, config))
@@ -247,9 +264,10 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::Listen { .. } => {
-                debug!("Starting manager: {:?}", config.network.as_os_str());
-                let manager_ref = Manager::new(DistantManagerConfig::default(), config.network)
+            Self::Listen { network, .. } => {
+                let network = network.merge(config.network);
+                debug!("Starting manager: {:?}", network.as_os_str());
+                let manager_ref = Manager::new(DistantManagerConfig::default(), network)
                     .listen()
                     .await?;
 
@@ -274,17 +292,14 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::Info { id } => {
+            Self::Info { network, id } => {
+                let network = network.merge(config.network);
                 debug!(
                     "Getting info about connection {} from manager: {:?}",
                     id,
-                    config.network.as_os_str()
+                    network.as_os_str()
                 );
-                let info = Client::new(config.network)
-                    .connect()
-                    .await?
-                    .info(id)
-                    .await?;
+                let info = Client::new(network).connect().await?.info(id).await?;
 
                 #[derive(Tabled)]
                 struct InfoRow {
@@ -316,12 +331,13 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::List => {
+            Self::List { network } => {
+                let network = network.merge(config.network);
                 debug!(
                     "Getting list of connections from manager: {:?}",
-                    config.network.as_os_str()
+                    network.as_os_str()
                 );
-                let list = Client::new(config.network).connect().await?.list().await?;
+                let list = Client::new(network).connect().await?.list().await?;
 
                 #[derive(Tabled)]
                 struct ListRow {
@@ -351,26 +367,20 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::Kill { id } => {
+            Self::Kill { network, id } => {
+                let network = network.merge(config.network);
                 debug!(
                     "Killing connection {} from manager: {:?}",
                     id,
-                    config.network.as_os_str()
+                    network.as_os_str()
                 );
-                Client::new(config.network)
-                    .connect()
-                    .await?
-                    .kill(id)
-                    .await?;
+                Client::new(network).connect().await?.kill(id).await?;
                 Ok(())
             }
-            Self::Shutdown => {
-                debug!("Shutting down manager: {:?}", config.network.as_os_str());
-                Client::new(config.network)
-                    .connect()
-                    .await?
-                    .shutdown()
-                    .await?;
+            Self::Shutdown { network } => {
+                let network = network.merge(config.network);
+                debug!("Shutting down manager: {:?}", network.as_os_str());
+                Client::new(network).connect().await?.shutdown().await?;
                 Ok(())
             }
         }

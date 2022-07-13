@@ -3,7 +3,8 @@ use crate::{
         client::{MsgReceiver, MsgSender},
         CliError, CliResult, Client, Storage,
     },
-    config::{ClientConfig, ClientLaunchConfig},
+    config::{ClientConfig, ClientLaunchConfig, NetworkConfig},
+    paths::user::STORAGE_FILE_PATH,
 };
 use clap::Subcommand;
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
@@ -35,6 +36,9 @@ pub enum ClientSubcommand {
         #[clap(long)]
         connection: Option<ConnectionId>,
 
+        #[clap(flatten)]
+        network: NetworkConfig,
+
         /// Represents the maximum time (in seconds) to wait for a network request before timing out
         #[clap(short, long)]
         timeout: Option<f32>,
@@ -45,6 +49,9 @@ pub enum ClientSubcommand {
 
     /// Requests that active manager connects to the server at the specified destination
     Connect {
+        #[clap(flatten)]
+        network: NetworkConfig,
+
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
@@ -55,6 +62,9 @@ pub enum ClientSubcommand {
     Launch {
         #[clap(flatten)]
         config: ClientLaunchConfig,
+
+        #[clap(flatten)]
+        network: NetworkConfig,
 
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
@@ -67,6 +77,9 @@ pub enum ClientSubcommand {
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkConfig,
 
         /// If provided, will run in persist mode, meaning that the process will not be killed if the
         /// client disconnects from the server
@@ -86,6 +99,9 @@ pub enum ClientSubcommand {
         #[clap(long)]
         connection: Option<ConnectionId>,
 
+        #[clap(flatten)]
+        network: NetworkConfig,
+
         /// Format used for input into and output from the repl
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
@@ -99,6 +115,9 @@ pub enum ClientSubcommand {
     Select {
         /// Connection to use, otherwise will prompt to select
         connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkConfig,
     },
 
     /// Specialized treatment of running a remote shell process
@@ -106,6 +125,9 @@ pub enum ClientSubcommand {
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkConfig,
 
         /// If provided, will run in persist mode, meaning that the process will not be killed if the
         /// client disconnects from the server
@@ -127,11 +149,13 @@ impl ClientSubcommand {
         match self {
             Self::Action {
                 connection,
+                network,
                 request,
                 timeout,
             } => {
-                debug!("Connecting to manager: {:?}", config.network.as_os_str());
-                let mut client = Client::new(config.network).connect().await?;
+                let network = network.merge(config.network);
+                debug!("Connecting to manager: {:?}", network.as_os_str());
+                let mut client = Client::new(network).connect().await?;
 
                 let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
 
@@ -221,14 +245,16 @@ impl ClientSubcommand {
                 }
             }
             Self::Connect {
+                network,
                 format,
                 destination,
             } => {
-                debug!("Connecting to manager: {:?}", config.network.as_os_str());
+                let network = network.merge(config.network);
+                debug!("Connecting to manager: {:?}", network.as_os_str());
                 let mut client = {
                     let client = match format {
-                        Format::Shell => Client::new(config.network),
-                        Format::Json => Client::new(config.network).using_msg_stdin_stdout(),
+                        Format::Shell => Client::new(network),
+                        Format::Json => Client::new(network).using_msg_stdin_stdout(),
                     };
                     client.connect().await?
                 };
@@ -247,14 +273,16 @@ impl ClientSubcommand {
             }
             Self::Launch {
                 config: launcher_config,
+                network,
                 format,
                 destination,
             } => {
-                debug!("Connecting to manager: {:?}", config.network.as_os_str());
+                let network = network.merge(config.network);
+                debug!("Connecting to manager: {:?}", network.as_os_str());
                 let mut client = {
                     let client = match format {
-                        Format::Shell => Client::new(config.network),
-                        Format::Json => Client::new(config.network).using_msg_stdin_stdout(),
+                        Format::Shell => Client::new(network),
+                        Format::Json => Client::new(network).using_msg_stdin_stdout(),
                     };
                     client.connect().await?
                 };
@@ -292,20 +320,23 @@ impl ClientSubcommand {
 
                 // Mark the server's id as the new default
                 debug!("Updating cached default connection id to {}", id);
-                let mut storage = Storage::read_or_default().await?;
-                *storage.default_connection_id = id;
-                storage.write().await?;
+                Storage::edit(STORAGE_FILE_PATH.as_path(), |storage| {
+                    *storage.default_connection_id = id;
+                })
+                .await?;
 
                 println!("{}", id);
             }
             Self::Lsp {
                 connection,
+                network,
                 persist,
                 pty,
                 cmd,
             } => {
-                debug!("Connecting to manager: {:?}", config.network.as_os_str());
-                let mut client = Client::new(config.network).connect().await?;
+                let network = network.merge(config.network);
+                debug!("Connecting to manager: {:?}", network.as_os_str());
+                let mut client = Client::new(network).connect().await?;
 
                 let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
 
@@ -320,11 +351,13 @@ impl ClientSubcommand {
             }
             Self::Repl {
                 connection,
+                network,
                 format,
                 timeout,
             } => {
-                debug!("Connecting to manager: {:?}", config.network.as_os_str());
-                let mut client = Client::new(config.network)
+                let network = network.merge(config.network);
+                debug!("Connecting to manager: {:?}", network.as_os_str());
+                let mut client = Client::new(network)
                     .using_msg_stdin_stdout()
                     .connect()
                     .await?;
@@ -367,7 +400,10 @@ impl ClientSubcommand {
                     }
                 }
             }
-            Self::Select { connection } => {
+            Self::Select {
+                connection,
+                network,
+            } => {
                 let mut storage = Storage::read_or_default().await?;
                 match connection {
                     Some(id) => {
@@ -375,8 +411,9 @@ impl ClientSubcommand {
                         storage.write().await?;
                     }
                     None => {
-                        debug!("Connecting to manager: {:?}", config.network.as_os_str());
-                        let mut client = Client::new(config.network).connect().await?;
+                        let network = network.merge(config.network);
+                        debug!("Connecting to manager: {:?}", network.as_os_str());
+                        let mut client = Client::new(network).connect().await?;
                         let list = client.list().await?;
 
                         if list.is_empty() {
@@ -438,11 +475,13 @@ impl ClientSubcommand {
             }
             Self::Shell {
                 connection,
+                network,
                 persist,
                 cmd,
             } => {
-                debug!("Connecting to manager: {:?}", config.network.as_os_str());
-                let mut client = Client::new(config.network).connect().await?;
+                let network = network.merge(config.network);
+                debug!("Connecting to manager: {:?}", network.as_os_str());
+                let mut client = Client::new(network).connect().await?;
 
                 let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
 

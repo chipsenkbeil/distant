@@ -73,23 +73,8 @@ pub mod global {
     #[cfg(unix)]
     static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("/etc").join("distant"));
 
-    /// Path to global cache (e.g. `/tmp/distant`)
-    static CACHE_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
-
     /// Path to configuration settings for distant client/manager/server
     pub static CONFIG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CONFIG_DIR.join("config.toml"));
-
-    /// Path to storage file used for arbitrary CLI data
-    pub static STORAGE_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CACHE_DIR.join("storage.toml"));
-
-    /// Path to log file for distant client
-    pub static CLIENT_LOG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CACHE_DIR.join("client.log"));
-
-    /// Path to log file for distant manager
-    pub static MANAGER_LOG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CACHE_DIR.join("manager.log"));
-
-    /// Path to log file for distant server
-    pub static SERVER_LOG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CACHE_DIR.join("server.log"));
 
     /// For Linux & BSD, this uses the runtime path. For Mac, this uses the tmp path
     ///

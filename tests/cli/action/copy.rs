@@ -5,12 +5,10 @@ use crate::cli::{
 use assert_cmd::Command;
 use assert_fs::prelude::*;
 use distant::ExitCode;
-use distant_core::{
-    data::{Error, ErrorKind},
-    Request, RequestData, Response, ResponseData,
-};
+use distant_core::data::{Error, ErrorKind};
 use predicates::prelude::*;
 use rstest::*;
+use serde_json::{json, Value};
 
 const FILE_CONTENTS: &str = r#"
 some text
@@ -92,26 +90,26 @@ fn should_support_json_copying_file(mut action_cmd: Command) {
 
     let dst = temp.child("file2");
 
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::Copy {
-            src: src.to_path_buf(),
-            dst: dst.to_path_buf(),
-        }],
-    };
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "src": src.to_path_buf(),
+            "dst": dst.to_path_buf(),
+        },
+    });
 
     // distant action --format json --interactive
     let cmd = action_cmd
         .args(&["--format", "json"])
         .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
+        .write_stdin(format!("{}\n", req))
         .assert()
         .success()
         .stderr("");
 
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(res.payload[0], ResponseData::Ok);
+    let res: Value = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
+    assert_eq!(res, json!({}));
 
     src.assert(predicate::path::exists());
     dst.assert(predicate::path::eq_file(src.path()));
