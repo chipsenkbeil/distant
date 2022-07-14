@@ -97,7 +97,10 @@ impl Repl {
             Some(timeout) => match tokio::time::timeout(timeout, self.stdin.send(line)).await {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(x)) => Err(io::Error::new(io::ErrorKind::BrokenPipe, x)),
-                Err(x) => Err(io::Error::new(io::ErrorKind::TimedOut, x)),
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    self.collect_stderr(),
+                )),
             },
             None => self
                 .stdin
@@ -132,7 +135,10 @@ impl Repl {
         match self.timeout {
             Some(timeout) => match tokio::time::timeout(timeout, self.stdout.recv()).await {
                 Ok(x) => Ok(x),
-                Err(x) => Err(io::Error::new(io::ErrorKind::TimedOut, x)),
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    self.collect_stderr(),
+                )),
             },
             None => Ok(self.stdout.recv().await),
         }
@@ -162,6 +168,30 @@ impl Repl {
             },
             None => Ok(self.stderr.recv().await),
         }
+    }
+
+    /// Tries to read a line from stderr, returning none if no stderr is available right now
+    ///
+    /// Will fail if no more stderr is available
+    pub fn try_read_line_from_stderr(&mut self) -> io::Result<Option<String>> {
+        match self.stderr.try_recv() {
+            Ok(line) => Ok(Some(line)),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+            }
+        }
+    }
+
+    /// Collects stderr into a singular string (failures will stop the collection)
+    pub fn collect_stderr(&mut self) -> String {
+        let mut stderr = String::new();
+
+        while let Ok(Some(line)) = self.try_read_line_from_stderr() {
+            stderr.push_str(&line);
+        }
+
+        stderr
     }
 
     /// Kills the repl by sending a signal to the process

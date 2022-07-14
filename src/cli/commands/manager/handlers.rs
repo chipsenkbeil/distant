@@ -86,6 +86,7 @@ impl LaunchHandler for ManagerLaunchHandler {
         }
 
         // Spawn it and wait to get the communicated destination
+        // NOTE: This will leave the server detached from the manager when the manager exits
         let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
