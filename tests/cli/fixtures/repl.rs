@@ -113,6 +113,19 @@ impl Repl {
         self.write_line_to_stdin(value.into().to_string()).await
     }
 
+    /// Tries to read a line from stdout, returning none if no stdout is available right now
+    ///
+    /// Will fail if no more stdout is available
+    pub fn try_read_line_from_stdout(&mut self) -> io::Result<Option<String>> {
+        match self.stdout.try_recv() {
+            Ok(line) => Ok(Some(line)),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+            }
+        }
+    }
+
     /// Reads a line from stdout, failing if exceeds timeout if set, returning none if the stdout
     /// channel has been closed
     pub async fn read_line_from_stdout(&mut self) -> io::Result<Option<String>> {

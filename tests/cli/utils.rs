@@ -1,10 +1,8 @@
-use crate::cli::fixtures::DistantServerCtx;
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use std::{
     env, io,
     path::PathBuf,
-    process::{Command, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -102,20 +100,6 @@ where
     });
 
     rx
-}
-
-/// Produces a new command for distant using the given subcommand
-pub fn distant_subcommand(ctx: &DistantServerCtx, subcommand: &str) -> Command {
-    let mut cmd = Command::new(cargo_bin(env!("CARGO_PKG_NAME")));
-    cmd.arg(subcommand)
-        .args(&["--session", "environment"])
-        .env("DISTANT_HOST", ctx.addr.ip().to_string())
-        .env("DISTANT_PORT", ctx.addr.port().to_string())
-        .env("DISTANT_KEY", ctx.key.as_str())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    cmd
 }
 
 /// Look up the path to a cargo-built binary within an integration test
