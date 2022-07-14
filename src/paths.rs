@@ -25,6 +25,9 @@ pub mod user {
     pub static CACHE_FILE_PATH: Lazy<PathBuf> =
         Lazy::new(|| PROJECT_DIR.cache_dir().join("cache.toml"));
 
+    pub static CACHE_FILE_PATH_STR: Lazy<String> =
+        Lazy::new(|| CACHE_FILE_PATH.to_string_lossy().to_string());
+
     /// Path to log file for distant client
     pub static CLIENT_LOG_FILE_PATH: Lazy<PathBuf> =
         Lazy::new(|| PROJECT_DIR.cache_dir().join("client.log"));

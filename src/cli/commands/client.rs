@@ -4,15 +4,20 @@ use crate::{
         Cache, CliError, CliResult, Client,
     },
     config::{ClientConfig, ClientLaunchConfig, NetworkConfig},
+    paths::user::CACHE_FILE_PATH_STR,
 };
-use clap::Subcommand;
+use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
     data::ChangeKindSet, net::Response, ConnectionId, Destination, DistantManagerClient,
     DistantMsg, DistantRequestData, DistantResponseData, Extra, RemoteCommand, Watcher,
 };
 use log::*;
-use std::{io, time::Duration};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 mod buf;
 mod format;
@@ -31,6 +36,15 @@ use shell::Shell;
 pub enum ClientSubcommand {
     /// Performs some action on a remote machine
     Action {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
@@ -48,6 +62,15 @@ pub enum ClientSubcommand {
 
     /// Requests that active manager connects to the server at the specified destination
     Connect {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         #[clap(flatten)]
         network: NetworkConfig,
 
@@ -59,6 +82,15 @@ pub enum ClientSubcommand {
 
     /// Launches the server-portion of the binary on a remote machine
     Launch {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         #[clap(flatten)]
         config: ClientLaunchConfig,
 
@@ -73,6 +105,15 @@ pub enum ClientSubcommand {
 
     /// Specialized treatment of running a remote LSP process
     Lsp {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
@@ -94,6 +135,15 @@ pub enum ClientSubcommand {
 
     /// Runs actions in a read-eval-print loop
     Repl {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
@@ -112,6 +162,15 @@ pub enum ClientSubcommand {
 
     /// Select the active connection
     Select {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         /// Connection to use, otherwise will prompt to select
         connection: Option<ConnectionId>,
 
@@ -121,6 +180,15 @@ pub enum ClientSubcommand {
 
     /// Specialized treatment of running a remote shell process
     Shell {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
@@ -144,8 +212,20 @@ impl ClientSubcommand {
         rt.block_on(Self::async_run(self, config))
     }
 
+    fn cache_path(&self) -> &Path {
+        match self {
+            Self::Action { cache, .. } => cache.as_path(),
+            Self::Connect { cache, .. } => cache.as_path(),
+            Self::Launch { cache, .. } => cache.as_path(),
+            Self::Lsp { cache, .. } => cache.as_path(),
+            Self::Repl { cache, .. } => cache.as_path(),
+            Self::Select { cache, .. } => cache.as_path(),
+            Self::Shell { cache, .. } => cache.as_path(),
+        }
+    }
+
     async fn async_run(self, config: ClientConfig) -> CliResult<()> {
-        let mut cache = Cache::read_from_disk_or_default(None).await?;
+        let mut cache = Cache::read_from_disk_or_default(self.cache_path().to_path_buf()).await?;
 
         match self {
             Self::Action {
@@ -153,6 +233,7 @@ impl ClientSubcommand {
                 network,
                 request,
                 timeout,
+                ..
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager: {:?}", network.as_os_str());
@@ -250,6 +331,7 @@ impl ClientSubcommand {
                 network,
                 format,
                 destination,
+                ..
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager: {:?}", network.as_os_str());
@@ -277,6 +359,7 @@ impl ClientSubcommand {
                 network,
                 format,
                 destination,
+                ..
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager: {:?}", network.as_os_str());
@@ -332,6 +415,7 @@ impl ClientSubcommand {
                 persist,
                 pty,
                 cmd,
+                ..
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager: {:?}", network.as_os_str());
@@ -354,6 +438,7 @@ impl ClientSubcommand {
                 network,
                 format,
                 timeout,
+                ..
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager: {:?}", network.as_os_str());
@@ -404,6 +489,7 @@ impl ClientSubcommand {
             Self::Select {
                 connection,
                 network,
+                ..
             } => match connection {
                 Some(id) => {
                     *cache.data.selected = id;
@@ -476,6 +562,7 @@ impl ClientSubcommand {
                 network,
                 persist,
                 cmd,
+                ..
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager: {:?}", network.as_os_str());
