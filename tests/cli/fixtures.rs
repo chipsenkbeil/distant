@@ -3,7 +3,6 @@ use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use rstest::*;
 use std::{
-    ffi::OsStr,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
     time::Duration,
@@ -16,11 +15,11 @@ static LOG_PATH: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("test.di
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Context for some listening distant server
-pub struct DistantServerCtx {
+pub struct DistantManagerCtx {
     manager: Child,
 }
 
-impl DistantServerCtx {
+impl DistantManagerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
         // Start the manager
@@ -52,21 +51,24 @@ impl DistantServerCtx {
 
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
-    pub fn new_assert_cmd(&self, subcommand: impl AsRef<OsStr>) -> Command {
+    pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
         let mut command = Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd");
-
-        command.arg(subcommand);
-
+        for cmd in subcommands {
+            command.arg(cmd);
+        }
         command
     }
 
     /// Configures some distant command with an environment that can talk to a
     /// remote distant server, spawning it as a child process
-    pub fn new_std_cmd(&self, subcommand: impl AsRef<OsStr>) -> StdCommand {
+    pub fn new_std_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> StdCommand {
         let mut cmd = StdCommand::new(bin_path());
 
-        cmd.arg(subcommand)
-            .stdin(Stdio::piped())
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -79,7 +81,7 @@ fn bin_path() -> PathBuf {
     assert_cmd::cargo::cargo_bin(env!("CARGO_PKG_NAME"))
 }
 
-impl Drop for DistantServerCtx {
+impl Drop for DistantManagerCtx {
     /// Kills manager upon drop
     fn drop(&mut self) {
         let _ = self.manager.kill();
@@ -87,31 +89,31 @@ impl Drop for DistantServerCtx {
 }
 
 #[fixture]
-pub fn ctx() -> &'static DistantServerCtx {
-    static CTX: OnceCell<DistantServerCtx> = OnceCell::new();
+pub fn ctx() -> &'static DistantManagerCtx {
+    static CTX: OnceCell<DistantManagerCtx> = OnceCell::new();
 
-    CTX.get_or_init(DistantServerCtx::start)
+    CTX.get_or_init(DistantManagerCtx::start)
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_assert_cmd("lsp")
+pub fn lsp_cmd(ctx: &'_ DistantManagerCtx) -> Command {
+    ctx.new_assert_cmd(vec!["client", "lsp"])
 }
 
 #[fixture]
-pub fn action_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_assert_cmd("action")
+pub fn action_cmd(ctx: &'_ DistantManagerCtx) -> Command {
+    ctx.new_assert_cmd(vec!["client", "action"])
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: &'_ DistantServerCtx) -> StdCommand {
-    ctx.new_std_cmd("action")
+pub fn action_std_cmd(ctx: &'_ DistantManagerCtx) -> StdCommand {
+    ctx.new_std_cmd(vec!["client", "action"])
 }
 
 #[fixture]
-pub fn json_repl(ctx: &'_ DistantServerCtx) -> Repl {
+pub fn json_repl(ctx: &'_ DistantManagerCtx) -> Repl {
     let child = ctx
-        .new_std_cmd("repl")
+        .new_std_cmd(vec!["client", "repl"])
         .arg("--format")
         .arg("json")
         .spawn()
