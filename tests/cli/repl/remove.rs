@@ -13,7 +13,7 @@ use predicates::prelude::*;
 use rstest::*;
 
 #[rstest]
-fn should_support_removing_file(mut action_cmd: Command) {
+fn should_support_removing_file(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
@@ -30,7 +30,7 @@ fn should_support_removing_file(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_removing_empty_directory(mut action_cmd: Command) {
+fn should_support_removing_empty_directory(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -49,7 +49,7 @@ fn should_support_removing_empty_directory(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_removing_nonempty_directory_if_force_specified(mut action_cmd: Command) {
+fn should_support_removing_nonempty_directory_if_force_specified(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -69,7 +69,7 @@ fn should_support_removing_nonempty_directory_if_force_specified(mut action_cmd:
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -90,7 +90,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_json_removing_file(mut action_cmd: Command) {
+fn should_support_json_removing_file(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -121,7 +121,7 @@ fn should_support_json_removing_file(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_json_removing_empty_directory(mut action_cmd: Command) {
+fn should_support_json_removing_empty_directory(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -153,7 +153,7 @@ fn should_support_json_removing_empty_directory(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_json_removing_nonempty_directory_if_force_specified(mut action_cmd: Command) {
+fn should_support_json_removing_nonempty_directory_if_force_specified(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -185,7 +185,7 @@ fn should_support_json_removing_nonempty_directory_if_force_specified(mut action
 }
 
 #[rstest]
-fn should_support_json_output_for_error(mut action_cmd: Command) {
+fn should_support_json_output_for_error(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory so we fail to remove it

@@ -5,7 +5,7 @@ use rstest::*;
 use std::env;
 
 #[rstest]
-fn should_output_system_info(mut action_cmd: Command) {
+fn should_output_system_info(mut json_repl: Repl) {
     // distant action system-info
     action_cmd
         .arg("system-info")
@@ -29,7 +29,7 @@ fn should_output_system_info(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_json_system_info(mut action_cmd: Command) {
+fn should_support_json_system_info(mut json_repl: Repl) {
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),

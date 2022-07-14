@@ -82,7 +82,7 @@ macro_rules! next_two_msgs {
 }
 
 #[rstest]
-fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
+fn should_execute_program_and_return_exit_status(mut json_repl: Repl) {
     // distant action proc-spawn -- {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -96,7 +96,7 @@ fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_capture_and_print_stdout(mut action_cmd: Command) {
+fn should_capture_and_print_stdout(mut json_repl: Repl) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -110,7 +110,7 @@ fn should_capture_and_print_stdout(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_capture_and_print_stderr(mut action_cmd: Command) {
+fn should_capture_and_print_stderr(mut json_repl: Repl) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -124,7 +124,7 @@ fn should_capture_and_print_stderr(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_forward_stdin_to_remote_process(mut action_cmd: Command) {
+fn should_forward_stdin_to_remote_process(mut json_repl: Repl) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -138,7 +138,7 @@ fn should_forward_stdin_to_remote_process(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
+fn reflect_the_exit_code_of_the_process(mut json_repl: Repl) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -152,7 +152,7 @@ fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut json_repl: Repl) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -164,7 +164,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_json_to_execute_program_and_return_exit_status(mut action_cmd: Command) {
+fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),
@@ -429,7 +429,7 @@ fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServer
 }
 
 #[rstest]
-fn should_support_json_output_for_error(mut action_cmd: Command) {
+fn should_support_json_output_for_error(mut json_repl: Repl) {
     let req = Request {
         id: rand::random(),
         tenant: random_tenant(),

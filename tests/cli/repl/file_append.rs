@@ -1,15 +1,7 @@
-use crate::cli::{
-    fixtures::*,
-    utils::{random_tenant, FAILURE_LINE},
-};
-use assert_cmd::Command;
+use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
-use distant::ExitCode;
-use distant_core::{
-    data::{Error, ErrorKind},
-    Request, RequestData, Response, ResponseData,
-};
 use rstest::*;
+use serde_json::json;
 
 const FILE_CONTENTS: &str = r#"
 some text
@@ -23,82 +15,30 @@ file contents
 "#;
 
 #[rstest]
-fn should_report_ok_when_done(mut action_cmd: Command) {
+#[tokio::test]
+async fn should_support_json_output(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
 
-    // distant action file-append {path} -- {contents}
-    action_cmd
-        .args(&[
-            "file-append",
-            file.to_str().unwrap(),
-            "--",
-            APPENDED_FILE_CONTENTS,
-        ])
-        .assert()
-        .success()
-        .stdout("")
-        .stderr("");
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "type": "file_append",
+            "path": file.to_path_buf(),
+            "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
+        },
+    });
 
-    // NOTE: We wait a little bit to give the OS time to fully write to file
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    // Because we're talking to a local server, we can verify locally
-    file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
-}
-
-#[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("missing-dir").child("missing-file");
-
-    // distant action file-append {path} -- {contents}
-    action_cmd
-        .args(&[
-            "file-append",
-            file.to_str().unwrap(),
-            "--",
-            APPENDED_FILE_CONTENTS,
-        ])
-        .assert()
-        .code(ExitCode::Software.to_i32())
-        .stdout("")
-        .stderr(FAILURE_LINE.clone());
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(predicates::path::missing());
-}
-
-#[rstest]
-fn should_support_json_output(mut action_cmd: Command) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-    file.write_str(FILE_CONTENTS).unwrap();
-
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::FileAppend {
-            path: file.to_path_buf(),
-            data: APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert!(
-        matches!(res.payload[0], ResponseData::Ok),
-        "Unexpected response: {:?}",
-        res.payload[0]
+    assert_eq!(res["origin_id"], id);
+    assert_eq!(
+        res["payload"],
+        json!({
+            "type": "ok"
+        })
     );
 
     // NOTE: We wait a little bit to give the OS time to fully write to file
@@ -109,40 +49,26 @@ fn should_support_json_output(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_json_output_for_error(mut action_cmd: Command) {
+#[tokio::test]
+async fn should_support_json_output_for_error(mut json_repl: Repl) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-dir").child("missing-file");
 
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::FileAppend {
-            path: file.to_path_buf(),
-            data: APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
-        }],
-    };
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "type": "file_append",
+            "path": file.to_path_buf(),
+            "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
+        },
+    });
 
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert!(
-        matches!(
-            res.payload[0],
-            ResponseData::Error(Error {
-                kind: ErrorKind::NotFound,
-                ..
-            })
-        ),
-        "Unexpected response: {:?}",
-        res.payload[0]
-    );
+    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["payload"]["type"], "error");
+    assert_eq!(res["payload"]["kind"], "not_found");
 
     // Because we're talking to a local server, we can verify locally
     file.assert(predicates::path::missing());
