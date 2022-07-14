@@ -46,19 +46,6 @@ static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(
     script
 });
 
-static EXIT_CODE_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("exit_code.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-            #!/usr/bin/env bash
-            exit "$1"
-        "#
-        ))
-        .unwrap();
-    script
-});
-
 static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
     Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
@@ -67,8 +54,8 @@ static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
 async fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
     let cmd = format!(
         "{} {}",
-        SCRIPT_RUNNER.to_string(),
-        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()
+        *SCRIPT_RUNNER,
+        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
     );
 
     let id = rand::random::<u64>().to_string();
@@ -93,8 +80,8 @@ async fn should_support_json_to_execute_program_and_return_exit_status(mut json_
 async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
     let cmd = format!(
         "{} {} some output",
-        SCRIPT_RUNNER.to_string(),
-        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
+        *SCRIPT_RUNNER,
+        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap(),
     );
 
     // Spawn the process
@@ -139,8 +126,8 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
 async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
     let cmd = format!(
         "{} {} some output",
-        SCRIPT_RUNNER.to_string(),
-        ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
+        *SCRIPT_RUNNER,
+        ECHO_ARGS_TO_STDERR_SH.to_str().unwrap(),
     );
 
     // Spawn the process
@@ -185,8 +172,8 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
 async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: Repl) {
     let cmd = format!(
         "{} {}",
-        SCRIPT_RUNNER.to_string(),
-        ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string(),
+        *SCRIPT_RUNNER,
+        ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap(),
     );
 
     // Spawn the process

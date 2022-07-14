@@ -230,12 +230,7 @@ async fn should_support_json_output_for_error(mut json_repl: Repl) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    // Pause a bit to ensure that the process started and processed our request
-    wait_even_longer().await;
-
-    // Ensure we got an acknowledgement of watching
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
-
+    // Ensure we got an acknowledgement of watching that failed
     assert_eq!(res["origin_id"], id);
     assert_eq!(res["payload"]["type"], "error");
     assert_eq!(res["payload"]["kind"], "not_found");

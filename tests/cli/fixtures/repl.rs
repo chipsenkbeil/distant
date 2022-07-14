@@ -20,11 +20,11 @@ pub struct Repl {
 impl Repl {
     /// Create a new [`Repl`] wrapping around a [`Child`]
     pub fn new(mut child: Child, timeout: impl Into<Option<Duration>>) -> Self {
-        let stdin = BufWriter::new(child.stdin.take().expect("Child missing stdin"));
-        let stdout = BufReader::new(child.stdout.take().expect("Child missing stdout"));
-        let stderr = BufReader::new(child.stderr.take().expect("Child missing stderr"));
+        let mut stdin = BufWriter::new(child.stdin.take().expect("Child missing stdin"));
+        let mut stdout = BufReader::new(child.stdout.take().expect("Child missing stdout"));
+        let mut stderr = BufReader::new(child.stderr.take().expect("Child missing stderr"));
 
-        let (stdin_tx, rx) = mpsc::channel::<String>(CHANNEL_BUFFER);
+        let (stdin_tx, mut rx) = mpsc::channel::<String>(CHANNEL_BUFFER);
         thread::spawn(move || {
             while let Some(data) = rx.blocking_recv() {
                 if stdin.write_all(data.as_bytes()).is_err() {
@@ -90,7 +90,7 @@ impl Repl {
     pub async fn write_line_to_stdin(&mut self, line: impl Into<String>) -> io::Result<()> {
         let mut line = line.into();
         if !line.ends_with('\n') {
-            line.push_str("\n");
+            line.push('\n');
         }
 
         match self.timeout {
@@ -153,6 +153,7 @@ impl Repl {
 
     /// Reads a line from stderr, failing if exceeds timeout if set, returning none if the stderr
     /// channel has been closed
+    #[allow(dead_code)]
     pub async fn read_line_from_stderr(&mut self) -> io::Result<Option<String>> {
         match self.timeout {
             Some(timeout) => match tokio::time::timeout(timeout, self.stderr.recv()).await {
@@ -163,20 +164,14 @@ impl Repl {
         }
     }
 
-    /// Consumes [`Repl`] and returns the [`Child`] and the stdin, stdout, and stderr respectively
-    pub fn into_parts(
-        self,
-    ) -> (
-        Child,
-        mpsc::Sender<String>,
-        mpsc::Receiver<String>,
-        mpsc::Receiver<String>,
-    ) {
-        (self.child, self.stdin, self.stdout, self.stderr)
-    }
-
     /// Kills the repl by sending a signal to the process
     pub fn kill(&mut self) -> io::Result<()> {
         self.child.kill()
+    }
+}
+
+impl Drop for Repl {
+    fn drop(&mut self) {
+        let _ = self.kill();
     }
 }

@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use rstest::*;
 use std::{
@@ -11,7 +12,7 @@ use std::{
 mod repl;
 pub use repl::Repl;
 
-const LOG_PATH: PathBuf = std::env::temp_dir().join("test.distant.server.log");
+static LOG_PATH: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("test.distant.server.log"));
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Context for some listening distant server
@@ -23,9 +24,11 @@ impl DistantServerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
         // Start the manager
-        let manager = StdCommand::new(bin_path())
+        let mut manager = StdCommand::new(bin_path())
             .arg("manager")
             .arg("listen")
+            .arg("--log-file")
+            .arg(LOG_PATH.as_path())
             .spawn()
             .expect("Failed to spawn manager");
 
@@ -50,7 +53,11 @@ impl DistantServerCtx {
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommand: impl AsRef<OsStr>) -> Command {
-        Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd")
+        let mut command = Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd");
+
+        command.arg(subcommand);
+
+        command
     }
 
     /// Configures some distant command with an environment that can talk to a
