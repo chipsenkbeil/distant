@@ -1,10 +1,9 @@
 use crate::{
     cli::{
         client::{MsgReceiver, MsgSender},
-        CliError, CliResult, Client, Storage,
+        Cache, CliError, CliResult, Client,
     },
     config::{ClientConfig, ClientLaunchConfig, NetworkConfig},
-    paths::user::STORAGE_FILE_PATH,
 };
 use clap::Subcommand;
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
@@ -146,6 +145,8 @@ impl ClientSubcommand {
     }
 
     async fn async_run(self, config: ClientConfig) -> CliResult<()> {
+        let mut cache = Cache::read_from_disk_or_default(None).await?;
+
         match self {
             Self::Action {
                 connection,
@@ -157,7 +158,8 @@ impl ClientSubcommand {
                 debug!("Connecting to manager: {:?}", network.as_os_str());
                 let mut client = Client::new(network).connect().await?;
 
-                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+                let connection_id =
+                    use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
                 let mut channel = client.open_channel(connection_id).await?;
@@ -265,9 +267,8 @@ impl ClientSubcommand {
 
                 // Mark the server's id as the new default
                 debug!("Updating cached default connection id to {}", id);
-                let mut storage = Storage::read_or_default().await?;
-                *storage.default_connection_id = id;
-                storage.write().await?;
+                *cache.data.selected = id;
+                cache.write_to_disk().await?;
 
                 println!("{}", id);
             }
@@ -320,10 +321,8 @@ impl ClientSubcommand {
 
                 // Mark the server's id as the new default
                 debug!("Updating cached default connection id to {}", id);
-                Storage::edit(STORAGE_FILE_PATH.as_path(), |storage| {
-                    *storage.default_connection_id = id;
-                })
-                .await?;
+                *cache.data.selected = id;
+                cache.write_to_disk().await?;
 
                 println!("{}", id);
             }
@@ -338,7 +337,8 @@ impl ClientSubcommand {
                 debug!("Connecting to manager: {:?}", network.as_os_str());
                 let mut client = Client::new(network).connect().await?;
 
-                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+                let connection_id =
+                    use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
                 let channel = client.open_channel(connection_id).await?;
@@ -362,7 +362,8 @@ impl ClientSubcommand {
                     .connect()
                     .await?;
 
-                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+                let connection_id =
+                    use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
                 let mut channel = client.open_channel(connection_id).await?;
@@ -403,76 +404,73 @@ impl ClientSubcommand {
             Self::Select {
                 connection,
                 network,
-            } => {
-                let mut storage = Storage::read_or_default().await?;
-                match connection {
-                    Some(id) => {
-                        *storage.default_connection_id = id;
-                        storage.write().await?;
+            } => match connection {
+                Some(id) => {
+                    *cache.data.selected = id;
+                    cache.write_to_disk().await?;
+                }
+                None => {
+                    let network = network.merge(config.network);
+                    debug!("Connecting to manager: {:?}", network.as_os_str());
+                    let mut client = Client::new(network).connect().await?;
+                    let list = client.list().await?;
+
+                    if list.is_empty() {
+                        return Err(CliError::NoConnection);
                     }
-                    None => {
-                        let network = network.merge(config.network);
-                        debug!("Connecting to manager: {:?}", network.as_os_str());
-                        let mut client = Client::new(network).connect().await?;
-                        let list = client.list().await?;
 
-                        if list.is_empty() {
-                            return Err(CliError::NoConnection);
+                    trace!("Building selection prompt of {} choices", list.len());
+                    let selected = list
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, (id, _))| {
+                            if *cache.data.selected == *id {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+
+                    let items: Vec<String> = list
+                        .iter()
+                        .map(|(_, destination)| {
+                            format!(
+                                "{}{}{}",
+                                destination
+                                    .scheme()
+                                    .map(|x| format!(r"{}://", x))
+                                    .unwrap_or_default(),
+                                destination.to_host_string(),
+                                destination
+                                    .port()
+                                    .map(|x| format!(":{}", x))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect();
+
+                    trace!("Rendering prompt");
+                    let selected = Select::with_theme(&ColorfulTheme::default())
+                        .items(&items)
+                        .default(selected)
+                        .interact_on_opt(&Term::stderr())?;
+
+                    match selected {
+                        Some(index) => {
+                            trace!("Selected choice {}", index);
+                            if let Some((id, _)) = list.iter().nth(index) {
+                                debug!("Updating cached default connection id to {}", id);
+                                *cache.data.selected = *id;
+                                cache.write_to_disk().await?;
+                            }
                         }
-
-                        trace!("Building selection prompt of {} choices", list.len());
-                        let selected = list
-                            .iter()
-                            .enumerate()
-                            .find_map(|(i, (id, _))| {
-                                if *storage.default_connection_id == *id {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_default();
-
-                        let items: Vec<String> = list
-                            .iter()
-                            .map(|(_, destination)| {
-                                format!(
-                                    "{}{}{}",
-                                    destination
-                                        .scheme()
-                                        .map(|x| format!(r"{}://", x))
-                                        .unwrap_or_default(),
-                                    destination.to_host_string(),
-                                    destination
-                                        .port()
-                                        .map(|x| format!(":{}", x))
-                                        .unwrap_or_default()
-                                )
-                            })
-                            .collect();
-
-                        trace!("Rendering prompt");
-                        let selected = Select::with_theme(&ColorfulTheme::default())
-                            .items(&items)
-                            .default(selected)
-                            .interact_on_opt(&Term::stderr())?;
-
-                        match selected {
-                            Some(index) => {
-                                trace!("Selected choice {}", index);
-                                if let Some((id, _)) = list.iter().nth(index) {
-                                    debug!("Updating cached default connection id to {}", id);
-                                    *storage.default_connection_id = *id;
-                                    storage.write().await?;
-                                }
-                            }
-                            None => {
-                                debug!("No change in selection of default connection id");
-                            }
+                        None => {
+                            debug!("No change in selection of default connection id");
                         }
                     }
                 }
-            }
+            },
             Self::Shell {
                 connection,
                 network,
@@ -483,7 +481,8 @@ impl ClientSubcommand {
                 debug!("Connecting to manager: {:?}", network.as_os_str());
                 let mut client = Client::new(network).connect().await?;
 
-                let connection_id = use_or_lookup_connection_id(connection, &mut client).await?;
+                let connection_id =
+                    use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
                 let channel = client.open_channel(connection_id).await?;
@@ -502,6 +501,7 @@ impl ClientSubcommand {
 }
 
 async fn use_or_lookup_connection_id(
+    cache: &mut Cache,
     connection: Option<ConnectionId>,
     client: &mut DistantManagerClient,
 ) -> CliResult<ConnectionId> {
@@ -512,15 +512,11 @@ async fn use_or_lookup_connection_id(
         }
         None => {
             trace!("Looking up connection id");
-            let mut storage = Storage::read_or_default().await?;
             let list = client.list().await?;
 
-            if list.contains_key(&storage.default_connection_id) {
-                trace!(
-                    "Using cached connection id: {}",
-                    storage.default_connection_id
-                );
-                Ok(*storage.default_connection_id)
+            if list.contains_key(&cache.data.selected) {
+                trace!("Using cached connection id: {}", cache.data.selected);
+                Ok(*cache.data.selected)
             } else if list.is_empty() {
                 trace!("Cached connection id is invalid as there are no connections");
                 Err(CliError::NoConnection)
@@ -529,13 +525,13 @@ async fn use_or_lookup_connection_id(
                 Err(CliError::NeedToPickConnection)
             } else {
                 trace!("Cached connection id is invalid");
-                *storage.default_connection_id = *list.keys().next().unwrap();
+                *cache.data.selected = *list.keys().next().unwrap();
                 trace!(
                     "Detected singular connection id, so updating cache: {}",
-                    storage.default_connection_id
+                    cache.data.selected
                 );
-                storage.write().await?;
-                Ok(*storage.default_connection_id)
+                cache.write_to_disk().await?;
+                Ok(*cache.data.selected)
             }
         }
     }

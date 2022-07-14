@@ -14,12 +14,12 @@ use std::{
 /// https://github.com/alexcrichton/toml-rs/issues/256
 #[derive(Copy, Clone, Debug, Default, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
-pub struct StorageId<T>(T)
+pub struct CacheId<T>(T)
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display;
 
-impl<T> StorageId<T>
+impl<T> CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -30,7 +30,7 @@ where
     }
 }
 
-impl<T> AsRef<T> for StorageId<T>
+impl<T> AsRef<T> for CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -40,7 +40,7 @@ where
     }
 }
 
-impl<T> AsMut<T> for StorageId<T>
+impl<T> AsMut<T> for CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -50,7 +50,7 @@ where
     }
 }
 
-impl<T> Deref for StorageId<T>
+impl<T> Deref for CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -62,7 +62,7 @@ where
     }
 }
 
-impl<T> DerefMut for StorageId<T>
+impl<T> DerefMut for CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -72,7 +72,7 @@ where
     }
 }
 
-impl<T> fmt::Display for StorageId<T>
+impl<T> fmt::Display for CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -82,17 +82,17 @@ where
     }
 }
 
-impl<T> From<StorageId<T>> for String
+impl<T> From<CacheId<T>> for String
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
 {
-    fn from(id: StorageId<T>) -> Self {
+    fn from(id: CacheId<T>) -> Self {
         id.to_string()
     }
 }
 
-impl<T> TryFrom<String> for StorageId<T>
+impl<T> TryFrom<String> for CacheId<T>
 where
     T: fmt::Display + FromStr + Clone,
     T::Err: fmt::Display,
@@ -100,6 +100,6 @@ where
     type Error = T::Err;
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
-        Ok(StorageId(s.parse()?))
+        Ok(CacheId(s.parse()?))
     }
 }

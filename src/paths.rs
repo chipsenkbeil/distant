@@ -21,9 +21,9 @@ pub mod user {
     pub static CONFIG_FILE_PATH: Lazy<PathBuf> =
         Lazy::new(|| PROJECT_DIR.config_dir().join("config.toml"));
 
-    /// Path to storage file used for arbitrary CLI data
-    pub static STORAGE_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.cache_dir().join("storage.toml"));
+    /// Path to cache file used for arbitrary CLI data
+    pub static CACHE_FILE_PATH: Lazy<PathBuf> =
+        Lazy::new(|| PROJECT_DIR.cache_dir().join("cache.toml"));
 
     /// Path to log file for distant client
     pub static CLIENT_LOG_FILE_PATH: Lazy<PathBuf> =
