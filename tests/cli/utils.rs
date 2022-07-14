@@ -9,6 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod reader;
+pub use reader::ThreadedReader;
+
 /// Predicate that checks for a single line that is a failure
 pub static FAILURE_LINE: Lazy<predicates::str::RegexPredicate> =
     Lazy::new(|| regex_pred(r"^Failed \(.*\): '.*'\.\n$"));

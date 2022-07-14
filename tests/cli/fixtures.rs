@@ -5,9 +5,14 @@ use std::{
     ffi::OsStr,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
+    time::Duration,
 };
 
+mod repl;
+pub use repl::Repl;
+
 const LOG_PATH: PathBuf = std::env::temp_dir().join("test.distant.server.log");
+const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Context for some listening distant server
 pub struct DistantServerCtx {
@@ -97,11 +102,12 @@ pub fn action_std_cmd(ctx: &'_ DistantServerCtx) -> StdCommand {
 }
 
 #[fixture]
-pub fn repl_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_assert_cmd("repl")
-}
-
-#[fixture]
-pub fn repl_std_cmd(ctx: &'_ DistantServerCtx) -> StdCommand {
-    ctx.new_std_cmd("repl")
+pub fn json_repl(ctx: &'_ DistantServerCtx) -> Repl {
+    let child = ctx
+        .new_std_cmd("repl")
+        .arg("--format")
+        .arg("json")
+        .spawn()
+        .expect("Failed to start distant repl with json format");
+    Repl::new(child, TIMEOUT)
 }
