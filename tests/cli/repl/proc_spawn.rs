@@ -1,17 +1,8 @@
-use crate::cli::{
-    fixtures::*,
-    utils::{distant_subcommand, friendly_recv_line, random_tenant, spawn_line_reader},
-};
-use assert_cmd::Command;
+use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
-use distant::ExitCode;
-use distant_core::{
-    data::{Error, ErrorKind},
-    Request, RequestData, Response, ResponseData,
-};
 use once_cell::sync::Lazy;
 use rstest::*;
-use std::{io::Write, time::Duration};
+use serde_json::json;
 
 static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> = Lazy::new(|| assert_fs::TempDir::new().unwrap());
 static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
@@ -71,395 +62,232 @@ static EXIT_CODE_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
 static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
     Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
-macro_rules! next_two_msgs {
-    ($rx:expr) => {{
-        let out = friendly_recv_line($rx, Duration::from_secs(1)).unwrap();
-        let res1: Response = serde_json::from_str(&out).unwrap();
-        let out = friendly_recv_line($rx, Duration::from_secs(1)).unwrap();
-        let res2: Response = serde_json::from_str(&out).unwrap();
-        (res1, res2)
-    }};
-}
-
 #[rstest]
-fn should_execute_program_and_return_exit_status(mut json_repl: Repl) {
-    // distant action proc-spawn -- {cmd} [args]
-    action_cmd
-        .args(&["proc-spawn", "--"])
-        .arg(SCRIPT_RUNNER.as_str())
-        .arg(EXIT_CODE_SH.to_str().unwrap())
-        .arg("0")
-        .assert()
-        .success()
-        .stdout("")
-        .stderr("");
-}
-
-#[rstest]
-fn should_capture_and_print_stdout(mut json_repl: Repl) {
-    // distant action proc-spawn {cmd} [args]
-    action_cmd
-        .args(&["proc-spawn", "--"])
-        .arg(SCRIPT_RUNNER.as_str())
-        .arg(ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap())
-        .arg("hello world")
-        .assert()
-        .success()
-        .stdout("hello world")
-        .stderr("");
-}
-
-#[rstest]
-fn should_capture_and_print_stderr(mut json_repl: Repl) {
-    // distant action proc-spawn {cmd} [args]
-    action_cmd
-        .args(&["proc-spawn", "--"])
-        .arg(SCRIPT_RUNNER.as_str())
-        .arg(ECHO_ARGS_TO_STDERR_SH.to_str().unwrap())
-        .arg("hello world")
-        .assert()
-        .success()
-        .stdout("")
-        .stderr("hello world");
-}
-
-#[rstest]
-fn should_forward_stdin_to_remote_process(mut json_repl: Repl) {
-    // distant action proc-spawn {cmd} [args]
-    action_cmd
-        .args(&["proc-spawn", "--"])
-        .arg(SCRIPT_RUNNER.as_str())
-        .arg(ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap())
-        .write_stdin("hello world\n")
-        .assert()
-        .success()
-        .stdout("hello world\n")
-        .stderr("");
-}
-
-#[rstest]
-fn reflect_the_exit_code_of_the_process(mut json_repl: Repl) {
-    // distant action proc-spawn {cmd} [args]
-    action_cmd
-        .args(&["proc-spawn", "--"])
-        .arg(SCRIPT_RUNNER.as_str())
-        .arg(EXIT_CODE_SH.to_str().unwrap())
-        .arg("99")
-        .assert()
-        .code(99)
-        .stdout("")
-        .stderr("");
-}
-
-#[rstest]
-fn yield_an_error_when_fails(mut json_repl: Repl) {
-    // distant action proc-spawn {cmd} [args]
-    action_cmd
-        .args(&["proc-spawn", "--"])
-        .arg(DOES_NOT_EXIST_BIN.to_str().unwrap())
-        .assert()
-        .code(ExitCode::IoError.to_i32())
-        .stdout("")
-        .stderr("");
-}
-
-#[rstest]
-fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcSpawn {
-            cmd: SCRIPT_RUNNER.to_string(),
-            args: vec![ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()],
-            persist: false,
-            pty: None,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert!(
-        matches!(res.payload[0], ResponseData::ProcSpawned { .. }),
-        "Unexpected response: {:?}",
-        res.payload[0],
+#[tokio::test]
+async fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
+    let cmd = format!(
+        "{} {}",
+        SCRIPT_RUNNER.to_string(),
+        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string()
     );
+
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "type": "proc_spawn",
+            "cmd": cmd,
+            "persist": false,
+            "pty": null,
+        },
+    });
+
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["payload"]["type"], "proc_spawned");
 }
 
 #[rstest]
-fn should_support_json_to_capture_and_print_stdout(ctx: &'_ DistantServerCtx) {
-    let output = String::from("some output");
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcSpawn {
-            cmd: SCRIPT_RUNNER.to_string(),
-            args: vec![
-                ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
-                output.to_string(),
-            ],
-            persist: false,
-            pty: None,
-        }],
-    };
+#[tokio::test]
+async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
+    let cmd = format!(
+        "{} {} some output",
+        SCRIPT_RUNNER.to_string(),
+        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap().to_string(),
+    );
 
-    // distant action --format json --interactive
-    let mut child = distant_subcommand(ctx, "action")
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .spawn()
+    // Spawn the process
+    let origin_id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": origin_id,
+        "payload": {
+            "type": "proc_spawn",
+            "cmd": cmd,
+            "persist": false,
+            "pty": null,
+        },
+    });
+
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_spawned");
+
+    // Wait for output to show up (for stderr)
+    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_stdout");
+    assert_eq!(
+        res["payload"]["data"]
+            .as_array()
+            .expect("data should be a byte array"),
+        b"some output"
+    );
+
+    // Now we wait for the process to complete
+    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_done");
+    assert_eq!(res["payload"]["success"], true);
+}
+
+#[rstest]
+#[tokio::test]
+async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
+    let cmd = format!(
+        "{} {} some output",
+        SCRIPT_RUNNER.to_string(),
+        ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
+    );
+
+    // Spawn the process
+    let origin_id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": origin_id,
+        "payload": {
+            "type": "proc_spawn",
+            "cmd": cmd,
+            "persist": false,
+            "pty": null,
+        },
+    });
+
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_spawned");
+
+    // Wait for output to show up (for stderr)
+    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_stderr");
+    assert_eq!(
+        res["payload"]["data"]
+            .as_array()
+            .expect("data should be a byte array"),
+        b"some output"
+    );
+
+    // Now we wait for the process to complete
+    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_done");
+    assert_eq!(res["payload"]["success"], true);
+}
+
+#[rstest]
+#[tokio::test]
+async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: Repl) {
+    let cmd = format!(
+        "{} {}",
+        SCRIPT_RUNNER.to_string(),
+        ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string(),
+    );
+
+    // Spawn the process
+    let origin_id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": origin_id,
+        "payload": {
+            "type": "proc_spawn",
+            "cmd": cmd,
+            "persist": false,
+            "pty": null,
+        },
+    });
+
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_spawned");
+
+    // Write output to stdin of process to trigger getting it back as stdout
+    let proc_id = res["payload"]["id"]
+        .as_u64()
+        .expect("Invalid proc id value");
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "type": "proc_stdin",
+            "id": proc_id,
+            "data": b"some output",
+        },
+    });
+
+    // We don't get a response to sending stdin (no ok), so this wait call will
+    // be waiting for the stdout we expect from it
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], origin_id);
+    assert_eq!(res["payload"]["type"], "proc_stdout");
+    assert_eq!(
+        res["payload"]["data"]
+            .as_array()
+            .expect("data should be a byte array"),
+        b"some output"
+    );
+
+    // Now kill the process and wait for it to complete
+    let id = rand::random::<u64>().to_string();
+    let res_1 = json_repl
+        .write_and_read_json(json!({
+            "id": id,
+            "payload": {
+                "type": "proc_kill",
+                "id": proc_id,
+            },
+
+        }))
+        .await
+        .unwrap()
         .unwrap();
+    let res_2 = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = spawn_line_reader(child.stdout.take().unwrap());
-    let stderr = spawn_line_reader(child.stderr.take().unwrap());
+    // The order of responses may be different (kill could come before ok), so we need
+    // to check that we get one of each type
+    let got_ok = res_1["payload"]["type"] == "ok" || res_2["payload"]["type"] == "ok";
+    let got_done =
+        res_1["payload"]["type"] == "proc_done" || res_2["payload"]["type"] == "proc_done";
 
-    // Send our request as json
-    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
-    stdin.write_all(req_string.as_bytes()).unwrap();
-    stdin.flush().unwrap();
+    if res_1["payload"]["type"] == "ok" {
+        assert_eq!(res_1["origin_id"], id);
+    } else {
+        assert_eq!(res_1["origin_id"], origin_id);
+    }
 
-    // Get the indicator of a process started (first line returned can take ~7 seconds due to the
-    // handshake cost)
-    let out =
-        friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    assert!(
-        matches!(res.payload[0], ResponseData::ProcSpawned { .. }),
-        "Unexpected response: {:?}",
-        res.payload[0]
-    );
+    if res_2["payload"]["type"] == "ok" {
+        assert_eq!(res_2["origin_id"], id);
+    } else {
+        assert_eq!(res_2["origin_id"], origin_id);
+    }
 
-    // Get stdout from process and verify it
-    let out =
-        friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stdout");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::ProcStdout { data, .. } => assert_eq!(data, output.as_bytes()),
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Get the indicator of a process completion
-    let out = friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc done");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::ProcDone { success, .. } => {
-            assert!(success, "Process failed unexpectedly");
-        }
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Verify that we received nothing on stderr channel
-    assert!(
-        stderr.try_recv().is_err(),
-        "Unexpectedly got result on stderr channel"
-    );
+    assert!(got_ok, "Did not receive ok from proc_kill");
+    assert!(got_done, "Did not receive proc_done from killed process");
 }
 
 #[rstest]
-fn should_support_json_to_capture_and_print_stderr(ctx: &'_ DistantServerCtx) {
-    let output = String::from("some output");
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcSpawn {
-            cmd: SCRIPT_RUNNER.to_string(),
-            args: vec![
-                ECHO_ARGS_TO_STDERR_SH.to_str().unwrap().to_string(),
-                output.to_string(),
-            ],
-            persist: false,
-            pty: None,
-        }],
-    };
+#[tokio::test]
+async fn should_support_json_output_for_error(mut json_repl: Repl) {
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "type": "proc_spawn",
+            "cmd": DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
+            "persist": false,
+            "pty": null,
+        },
+    });
 
-    // distant action --format json --interactive
-    let mut child = distant_subcommand(ctx, "action")
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .spawn()
-        .unwrap();
+    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = spawn_line_reader(child.stdout.take().unwrap());
-    let stderr = spawn_line_reader(child.stderr.take().unwrap());
-
-    // Send our request as json
-    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
-    stdin.write_all(req_string.as_bytes()).unwrap();
-    stdin.flush().unwrap();
-
-    // Get the indicator of a process started (first line returned can take ~7 seconds due to the
-    // handshake cost)
-    let out =
-        friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    assert!(
-        matches!(res.payload[0], ResponseData::ProcSpawned { .. }),
-        "Unexpected response: {:?}",
-        res.payload[0]
-    );
-
-    // Get stderr from process and verify it
-    let out =
-        friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc stderr");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::ProcStderr { data, .. } => assert_eq!(data, output.as_bytes()),
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Get the indicator of a process completion
-    let out = friendly_recv_line(&stdout, Duration::from_secs(1)).expect("Failed to get proc done");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    match &res.payload[0] {
-        ResponseData::ProcDone { success, .. } => {
-            assert!(success, "Process failed unexpectedly");
-        }
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Verify that we received nothing on stderr channel
-    assert!(
-        stderr.try_recv().is_err(),
-        "Unexpectedly got result on stderr channel"
-    );
-}
-
-#[rstest]
-fn should_support_json_to_forward_stdin_to_remote_process(ctx: &'_ DistantServerCtx) {
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcSpawn {
-            cmd: SCRIPT_RUNNER.to_string(),
-            args: vec![ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap().to_string()],
-            persist: false,
-            pty: None,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let mut child = distant_subcommand(ctx, "action")
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .spawn()
-        .unwrap();
-
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = spawn_line_reader(child.stdout.take().unwrap());
-    let stderr = spawn_line_reader(child.stderr.take().unwrap());
-
-    // Send our request as json
-    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
-    stdin.write_all(req_string.as_bytes()).unwrap();
-    stdin.flush().unwrap();
-
-    // Get the indicator of a process started (first line returned can take ~7 seconds due to the
-    // handshake cost)
-    let out =
-        friendly_recv_line(&stdout, Duration::from_secs(30)).expect("Failed to get proc start");
-    let res: Response = serde_json::from_str(&out).unwrap();
-    let id = match &res.payload[0] {
-        ResponseData::ProcSpawned { id } => *id,
-        x => panic!("Unexpected response: {:?}", x),
-    };
-
-    // Send stdin to remote process
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcStdin {
-            id,
-            data: b"hello world\n".to_vec(),
-        }],
-    };
-    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
-    stdin.write_all(req_string.as_bytes()).unwrap();
-    stdin.flush().unwrap();
-
-    // Should receive ok message & stdout message, although these may be in different order
-    let (res1, res2) = next_two_msgs!(&stdout);
-    match (&res1.payload[0], &res2.payload[0]) {
-        (ResponseData::Ok, ResponseData::ProcStdout { data, .. }) => {
-            assert_eq!(data, b"hello world\n")
-        }
-        (ResponseData::ProcStdout { data, .. }, ResponseData::Ok) => {
-            assert_eq!(data, b"hello world\n")
-        }
-        x => panic!("Unexpected responses: {:?}", x),
-    };
-
-    // Kill the remote process since it only terminates when stdin closes, but we
-    // want to verify that we get a proc done is some manner, which won't happen
-    // if stdin closes as our interactive process will also close
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcKill { id }],
-    };
-    let req_string = format!("{}\n", serde_json::to_string(&req).unwrap());
-    stdin.write_all(req_string.as_bytes()).unwrap();
-    stdin.flush().unwrap();
-
-    // Should receive ok message & process completion
-    let (res1, res2) = next_two_msgs!(&stdout);
-    match (&res1.payload[0], &res2.payload[0]) {
-        (ResponseData::Ok, ResponseData::ProcDone { success, .. }) => {
-            assert!(!success, "Process succeeded unexpectedly");
-        }
-        (ResponseData::ProcDone { success, .. }, ResponseData::Ok) => {
-            assert!(!success, "Process succeeded unexpectedly");
-        }
-        x => panic!("Unexpected responses: {:?}", x),
-    };
-
-    // Verify that we received nothing on stderr channel
-    assert!(
-        stderr.try_recv().is_err(),
-        "Unexpectedly got result on stderr channel"
-    );
-}
-
-#[rstest]
-fn should_support_json_output_for_error(mut json_repl: Repl) {
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::ProcSpawn {
-            cmd: DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
-            args: Vec::new(),
-            persist: false,
-            pty: None,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert!(
-        matches!(
-            res.payload[0],
-            ResponseData::Error(Error {
-                kind: ErrorKind::NotFound,
-                ..
-            })
-        ),
-        "Unexpected response: {:?}",
-        res.payload[0]
-    );
+    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["payload"]["type"], "error");
+    assert_eq!(res["payload"]["kind"], "not_found");
 }
