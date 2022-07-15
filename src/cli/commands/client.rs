@@ -325,7 +325,21 @@ impl ClientSubcommand {
                             .await?;
 
                         debug!("Got response {:?}", response);
-                        formatter.print(response)?;
+
+                        // NOTE: We expect a single response, and if that is an error then
+                        //       we want to pass that error up the stack
+                        let id = response.id;
+                        let origin_id = response.origin_id;
+                        match response.payload {
+                            DistantMsg::Single(DistantResponseData::Error(x)) => {
+                                return Err(io::Error::from(x).into());
+                            }
+                            payload => formatter.print(Response {
+                                id,
+                                origin_id,
+                                payload,
+                            })?,
+                        }
                     }
                 }
             }
