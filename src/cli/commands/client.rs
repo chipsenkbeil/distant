@@ -10,9 +10,9 @@ use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
     data::ChangeKindSet,
-    net::{Request, Response},
-    ConnectionId, Destination, DistantChannel, DistantManagerClient, DistantMsg,
-    DistantRequestData, DistantResponseData, Extra, RemoteCommand, Watcher,
+    net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
+    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
+    DistantResponseData, Extra, RemoteCommand, Watcher,
 };
 use log::*;
 use std::{
@@ -467,7 +467,7 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening raw channel to connection {}", connection_id);
-                let mut channel = client.open_raw_channel(connection_id).await?;
+                let channel = client.open_raw_channel(connection_id).await?;
 
                 debug!(
                     "Timeout configured to be {}",
@@ -487,37 +487,48 @@ impl ClientSubcommand {
                 }
 
                 debug!("Starting repl using format {:?}", format);
-                let tx = MsgSender::from_stdout();
-                let mut rx =
-                    MsgReceiver::from_stdin().into_rx::<Request<DistantMsg<DistantRequestData>>>();
+                let (mut writer, mut reader) = channel.transport.into_split();
+                let response_task = tokio::task::spawn(async move {
+                    let tx = MsgSender::from_stdout();
+                    while let Some(response) = reader.read().await? {
+                        debug!("Received response {:?}", response);
+                        tx.send_blocking(&response)?;
+                    }
+                    io::Result::Ok(())
+                });
 
-                // TODO: Replace loop with two tasks (split channel into writer and reader),
-                //       and have one task use the receiver to write requests and the other
-                //       task use the sender to print out responses
-                //
-                //       Have this join based on the spawned task futures of both tasks
-                loop {
-                    trace!("Repl waiting on next inbound request");
-                    match rx.recv().await {
-                        Some(Ok(request)) => {
-                            debug!("Sending request {:?}", request);
-                            let response = channel
-                                .send_timeout(
-                                    request,
-                                    timeout.or(config.repl.timeout).map(Duration::from_secs_f32),
-                                )
-                                .await?;
-
-                            debug!("Got response {:?}", response);
-                            tx.send_blocking(&response)?;
-                        }
-                        Some(Err(x)) => error!("{}", x),
-                        None => {
-                            debug!("Shutting down repl");
-                            break;
+                let request_task = tokio::spawn(async move {
+                    let mut rx = MsgReceiver::from_stdin()
+                        .into_rx::<Request<DistantMsg<DistantRequestData>>>();
+                    loop {
+                        match rx.recv().await {
+                            Some(Ok(request)) => {
+                                debug!("Sending request {:?}", request);
+                                writer.write(request).await?;
+                            }
+                            Some(Err(x)) => error!("{}", x),
+                            None => {
+                                debug!("Shutting down repl");
+                                break;
+                            }
                         }
                     }
+                    io::Result::Ok(())
+                });
+
+                let (r1, r2) = tokio::join!(request_task, response_task);
+                match r1 {
+                    Err(x) => error!("{}", x),
+                    Ok(Err(x)) => error!("{}", x),
+                    _ => (),
                 }
+                match r2 {
+                    Err(x) => error!("{}", x),
+                    Ok(Err(x)) => error!("{}", x),
+                    _ => (),
+                }
+
+                debug!("Shutting down repl");
             }
             Self::Select {
                 connection,
