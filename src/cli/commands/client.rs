@@ -9,8 +9,10 @@ use crate::{
 use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
-    data::ChangeKindSet, net::Response, ConnectionId, Destination, DistantManagerClient,
-    DistantMsg, DistantRequestData, DistantResponseData, Extra, RemoteCommand, Watcher,
+    data::ChangeKindSet,
+    net::{Request, Response},
+    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
+    DistantResponseData, Extra, RemoteCommand, Watcher,
 };
 use log::*;
 use std::{
@@ -463,14 +465,16 @@ impl ClientSubcommand {
 
                 debug!("Starting repl using format {:?}", format);
                 let tx = MsgSender::from_stdout();
-                let mut rx = MsgReceiver::from_stdin().into_rx();
+                let mut rx =
+                    MsgReceiver::from_stdin().into_rx::<Request<DistantMsg<DistantRequestData>>>();
                 loop {
+                    trace!("Repl waiting on next inbound request");
                     match rx.recv().await {
                         Some(Ok(request)) => {
                             debug!("Sending request {:?}", request);
                             let response = channel
                                 .send_timeout(
-                                    DistantMsg::Single(request),
+                                    request,
                                     timeout.or(config.repl.timeout).map(Duration::from_secs_f32),
                                 )
                                 .await?;

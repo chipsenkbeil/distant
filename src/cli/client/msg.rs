@@ -1,3 +1,4 @@
+use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     io::{self, Write},
@@ -116,9 +117,20 @@ impl MsgReceiver {
             // Attempt to parse current input as type, yielding it on success, continuing to read
             // more input if error is unexpected EOF (meaning we are partially reading json), and
             // failing if we get any other error
+            trace!(
+                "Parsing into {} for {:?}",
+                std::any::type_name::<T>(),
+                input,
+            );
             match serde_json::from_str(&input) {
                 Ok(data) => break data,
-                Err(x) if x.is_eof() => continue,
+                Err(x) if x.is_eof() => {
+                    trace!(
+                        "Not ready to parse as {}, so trying again with next update",
+                        std::any::type_name::<T>(),
+                    );
+                    continue;
+                }
                 Err(x) => return Err(x.into()),
             }
         };

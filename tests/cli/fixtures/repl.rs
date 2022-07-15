@@ -30,6 +30,12 @@ impl Repl {
                 if stdin.write_all(data.as_bytes()).is_err() {
                     break;
                 }
+
+                // NOTE: If we don't do this, the data doesn't appear to get sent even
+                //       with a newline at the end. At least in testing thus far!
+                if stdin.flush().is_err() {
+                    break;
+                }
             }
         });
 
