@@ -33,6 +33,18 @@ impl NetworkConfig {
         }
     }
 
+    /// Creates a string describing the active method (Unix Socket or Windows Pipe)
+    pub fn to_method_string(&self) -> String {
+        #[cfg(unix)]
+        {
+            format!("<Unix Socket {:?}>", self.unix_socket_path_or_default())
+        }
+        #[cfg(windows)]
+        {
+            format!("<Windows Pipe {:?}>", self.windows_pipe_name_or_default())
+        }
+    }
+
     /// Returns either the unix socket or windows pipe name as an [`OsStr`]
     pub fn as_os_str(&self) -> &OsStr {
         #[cfg(unix)]

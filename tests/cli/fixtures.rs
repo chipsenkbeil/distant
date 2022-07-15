@@ -1,6 +1,5 @@
 use assert_cmd::Command;
-use once_cell::sync::Lazy;
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
 use rstest::*;
 use std::{
     path::PathBuf,
@@ -11,8 +10,7 @@ use std::{
 mod repl;
 pub use repl::Repl;
 
-static LOG_PATH: Lazy<PathBuf> =
-    Lazy::new(|| std::env::temp_dir().join("test.distant.manager.log"));
+static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 const TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Context for some listening distant server
@@ -24,13 +22,17 @@ pub struct DistantManagerCtx {
 impl DistantManagerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
+        eprintln!("Logging to {:?}", ROOT_LOG_DIR.as_path());
+
         // Start the manager
         let mut manager_cmd = StdCommand::new(bin_path());
         manager_cmd
             .arg("manager")
             .arg("listen")
             .arg("--log-file")
-            .arg(LOG_PATH.as_path());
+            .arg(random_log_file("manager"))
+            .arg("--log-level")
+            .arg("trace");
 
         let socket_or_pipe = if cfg!(windows) {
             format!("distant_test_{}", rand::random::<usize>())
@@ -59,7 +61,13 @@ impl DistantManagerCtx {
 
         // Spawn a server locally by launching it through the manager
         let mut launch_cmd = StdCommand::new(bin_path());
-        launch_cmd.arg("client").arg("launch");
+        launch_cmd
+            .arg("client")
+            .arg("launch")
+            .arg("--log-file")
+            .arg(random_log_file("launch"))
+            .arg("--log-level")
+            .arg("trace");
 
         if cfg!(windows) {
             launch_cmd
@@ -90,22 +98,23 @@ impl DistantManagerCtx {
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
-        let mut command = Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd");
-        for cmd in subcommands {
-            command.arg(cmd);
+        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd");
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
         }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
 
         if cfg!(windows) {
-            command
-                .arg("--windows-pipe")
-                .arg(self.socket_or_pipe.as_str());
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
         } else {
-            command
-                .arg("--unix-socket")
-                .arg(self.socket_or_pipe.as_str());
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
         }
 
-        command
+        cmd
     }
 
     /// Configures some distant command with an environment that can talk to a
@@ -116,6 +125,11 @@ impl DistantManagerCtx {
         for subcommand in subcommands {
             cmd.arg(subcommand);
         }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
 
         if cfg!(windows) {
             cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
@@ -134,6 +148,10 @@ impl DistantManagerCtx {
 /// Path to distant binary
 fn bin_path() -> PathBuf {
     assert_cmd::cargo::cargo_bin(env!("CARGO_PKG_NAME"))
+}
+
+fn random_log_file(prefix: &str) -> PathBuf {
+    ROOT_LOG_DIR.join(format!("{}.{}.log", prefix, rand::random::<u16>()))
 }
 
 impl Drop for DistantManagerCtx {

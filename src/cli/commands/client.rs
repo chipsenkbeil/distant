@@ -236,7 +236,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {:?}", network.as_os_str());
+                debug!("Connecting to manager: {}", network.to_method_string());
                 let mut client = Client::new(network).connect().await?;
 
                 let connection_id =
@@ -334,7 +334,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {:?}", network.as_os_str());
+                debug!("Connecting to manager: {}", network.to_method_string());
                 let mut client = {
                     let client = match format {
                         Format::Shell => Client::new(network),
@@ -348,7 +348,7 @@ impl ClientSubcommand {
                 let id = client.connect(*destination, Extra::new()).await?;
 
                 // Mark the server's id as the new default
-                debug!("Updating cached default connection id to {}", id);
+                debug!("Updating selected connection id in cache to {}", id);
                 *cache.data.selected = id;
                 cache.write_to_disk().await?;
 
@@ -362,7 +362,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {:?}", network.as_os_str());
+                debug!("Connecting to manager: {}", network.to_method_string());
                 let mut client = {
                     let client = match format {
                         Format::Shell => Client::new(network),
@@ -403,7 +403,7 @@ impl ClientSubcommand {
                 let id = client.connect(new_destination, Extra::new()).await?;
 
                 // Mark the server's id as the new default
-                debug!("Updating cached default connection id to {}", id);
+                debug!("Updating selected connection id in cache to {}", id);
                 *cache.data.selected = id;
                 cache.write_to_disk().await?;
 
@@ -418,7 +418,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {:?}", network.as_os_str());
+                debug!("Connecting to manager: {}", network.to_method_string());
                 let mut client = Client::new(network).connect().await?;
 
                 let connection_id =
@@ -441,7 +441,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {:?}", network.as_os_str());
+                debug!("Connecting to manager: {}", network.to_method_string());
                 let mut client = Client::new(network)
                     .using_msg_stdin_stdout()
                     .connect()
@@ -497,7 +497,7 @@ impl ClientSubcommand {
                 }
                 None => {
                     let network = network.merge(config.network);
-                    debug!("Connecting to manager: {:?}", network.as_os_str());
+                    debug!("Connecting to manager: {}", network.to_method_string());
                     let mut client = Client::new(network).connect().await?;
                     let list = client.list().await?;
 
@@ -546,7 +546,7 @@ impl ClientSubcommand {
                         Some(index) => {
                             trace!("Selected choice {}", index);
                             if let Some((id, _)) = list.iter().nth(index) {
-                                debug!("Updating cached default connection id to {}", id);
+                                debug!("Updating selected connection id in cache to {}", id);
                                 *cache.data.selected = *id;
                                 cache.write_to_disk().await?;
                             }
@@ -565,7 +565,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {:?}", network.as_os_str());
+                debug!("Connecting to manager: {}", network.to_method_string());
                 let mut client = Client::new(network).connect().await?;
 
                 let connection_id =

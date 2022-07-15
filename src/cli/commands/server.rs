@@ -120,10 +120,9 @@ impl ServerSubcommand {
                 output_to_local_pipe,
                 ..
             } => {
-                let addr = config
-                    .host
-                    .unwrap_or(BindAddress::Any)
-                    .resolve(config.use_ipv6)?;
+                let host = config.host.unwrap_or(BindAddress::Any);
+                info!("Starting server using host '{}'", host);
+                let addr = host.resolve(config.use_ipv6)?;
 
                 // If specified, change the current working directory of this program
                 if let Some(path) = config.current_dir.as_ref() {

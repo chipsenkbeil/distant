@@ -266,7 +266,7 @@ impl ManagerSubcommand {
             }
             Self::Listen { network, .. } => {
                 let network = network.merge(config.network);
-                debug!("Starting manager: {:?}", network.as_os_str());
+                info!("Starting manager: {}", network.to_method_string());
                 let manager_ref = Manager::new(DistantManagerConfig::default(), network)
                     .listen()
                     .await?;
@@ -288,7 +288,7 @@ impl ManagerSubcommand {
 
                 // Let our server run to completion
                 manager_ref.wait().await?;
-                debug!("Manager is shutting down");
+                info!("Manager is shutting down");
 
                 Ok(())
             }
