@@ -18,6 +18,18 @@ pub enum Format {
     Shell,
 }
 
+impl Format {
+    /// Returns true if json format
+    pub fn is_json(self) -> bool {
+        matches!(self, Self::Json)
+    }
+
+    /// Returns true if shell format
+    pub fn is_shell(self) -> bool {
+        matches!(self, Self::Json)
+    }
+}
+
 impl Default for Format {
     fn default() -> Self {
         Self::Shell

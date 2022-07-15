@@ -11,8 +11,8 @@ use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
     data::ChangeKindSet,
     net::{Request, Response},
-    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
-    DistantResponseData, Extra, RemoteCommand, Watcher,
+    ConnectionId, Destination, DistantChannel, DistantManagerClient, DistantMsg,
+    DistantRequestData, DistantResponseData, Extra, RemoteCommand, Watcher,
 };
 use log::*;
 use std::{
@@ -466,8 +466,8 @@ impl ClientSubcommand {
                 let connection_id =
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
-                debug!("Opening channel to connection {}", connection_id);
-                let mut channel = client.open_channel(connection_id).await?;
+                debug!("Opening raw channel to connection {}", connection_id);
+                let mut channel = client.open_raw_channel(connection_id).await?;
 
                 debug!(
                     "Timeout configured to be {}",
@@ -477,10 +477,25 @@ impl ClientSubcommand {
                     }
                 );
 
+                // TODO: Support shell format?
+                if !format.is_json() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "Only JSON format is supported",
+                    )
+                    .into());
+                }
+
                 debug!("Starting repl using format {:?}", format);
                 let tx = MsgSender::from_stdout();
                 let mut rx =
                     MsgReceiver::from_stdin().into_rx::<Request<DistantMsg<DistantRequestData>>>();
+
+                // TODO: Replace loop with two tasks (split channel into writer and reader),
+                //       and have one task use the receiver to write requests and the other
+                //       task use the sender to print out responses
+                //
+                //       Have this join based on the spawned task futures of both tasks
                 loop {
                     trace!("Repl waiting on next inbound request");
                     match rx.recv().await {

@@ -207,9 +207,12 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
         },
     });
 
-    // We don't get a response to sending stdin (no ok), so this wait call will
-    // be waiting for the stdout we expect from it
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["payload"]["type"], "ok");
+
+    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id);
     assert_eq!(res["payload"]["type"], "proc_stdout");

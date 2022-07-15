@@ -77,7 +77,7 @@ impl RemoteCommand {
         self
     }
 
-    /// Spawns the specified process on the remote machine using the given
+    /// Spawns the specified process on the remote machine using the given `channel` and `cmd`
     pub async fn spawn(
         &mut self,
         mut channel: DistantChannel,
