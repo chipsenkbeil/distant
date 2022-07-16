@@ -203,7 +203,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
         "payload": {
             "type": "proc_stdin",
             "id": proc_id,
-            "data": b"some output",
+            "data": b"some output\n",
         },
     });
 
@@ -220,7 +220,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
         res["payload"]["data"]
             .as_array()
             .expect("data should be a byte array"),
-        b"some output"
+        b"some output\n"
     );
 
     // Now kill the process and wait for it to complete

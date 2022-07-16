@@ -11,6 +11,7 @@ mod repl;
 pub use repl::Repl;
 
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
+static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
 const TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Context for some listening distant server
@@ -67,7 +68,12 @@ impl DistantManagerCtx {
             .arg("--log-file")
             .arg(random_log_file("launch"))
             .arg("--log-level")
-            .arg("trace");
+            .arg("trace")
+            .arg("--distant-args")
+            .arg(format!(
+                "--log-file {} --log-level trace",
+                random_log_file("server").to_string_lossy()
+            ));
 
         if cfg!(windows) {
             launch_cmd
@@ -151,7 +157,12 @@ fn bin_path() -> PathBuf {
 }
 
 fn random_log_file(prefix: &str) -> PathBuf {
-    ROOT_LOG_DIR.join(format!("{}.{}.log", prefix, rand::random::<u16>()))
+    ROOT_LOG_DIR.join(format!(
+        "{}.{}.{}.log",
+        prefix,
+        *SESSION_RANDOM,
+        rand::random::<u16>()
+    ))
 }
 
 impl Drop for DistantManagerCtx {

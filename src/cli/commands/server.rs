@@ -27,7 +27,7 @@ pub enum ServerSubcommand {
         #[clap(long)]
         key_from_stdin: bool,
 
-        /// If specified, will send output to the specified named pipe
+        /// If specified, will send output to the specified named pipe (internal usage)
         #[cfg(windows)]
         #[clap(long, help = None, long_help = None)]
         output_to_local_pipe: Option<std::ffi::OsString>,
@@ -121,7 +121,7 @@ impl ServerSubcommand {
                 ..
             } => {
                 let host = config.host.unwrap_or(BindAddress::Any);
-                info!("Starting server using host '{}'", host);
+                trace!("Starting server using unresolved host '{}'", host);
                 let addr = host.resolve(config.use_ipv6)?;
 
                 // If specified, change the current working directory of this program
