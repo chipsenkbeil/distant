@@ -140,8 +140,8 @@ enum Output {
 fn format_shell(data: DistantResponseData) -> Output {
     match data {
         DistantResponseData::Ok => Output::None,
-        DistantResponseData::Error(Error { kind, description }) => {
-            Output::StderrLine(format!("Failed ({}): '{}'.", kind, description).into_bytes())
+        DistantResponseData::Error(Error { description, .. }) => {
+            Output::StderrLine(description.into_bytes())
         }
         DistantResponseData::Blob { data } => Output::StdoutLine(data),
         DistantResponseData::Text { data } => Output::StdoutLine(data.into_bytes()),

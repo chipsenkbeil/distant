@@ -1,4 +1,4 @@
-use crate::{ExitCode, ExitCodeError};
+use crate::{ExitCode, ExitCodeError, WrappedExitCodeError};
 use derive_more::{Display, Error, From};
 
 pub type CliResult<T> = Result<T, CliError>;
@@ -14,6 +14,9 @@ pub enum CliError {
 
     /// No information exists, just an exit code
     ExitCode(#[error(not(source))] ExitCode),
+
+    /// Explicit exit code tied to arbitrary error
+    WrappedExitCode(WrappedExitCodeError),
 
     /// When there is more than one connection being managed
     #[display(fmt = "Need to pick a connection as there are multiple choices")]
@@ -41,8 +44,8 @@ impl ExitCodeError for CliError {
             Self::Usage(_) => ExitCode::Usage,
             Self::Io(x) => x.to_exit_code(),
             Self::ExitCode(x) => *x,
-            Self::NeedToPickConnection => ExitCode::Unavailable,
-            Self::NoConnection => ExitCode::Unavailable,
+            Self::WrappedExitCode(x) => x.to_exit_code(),
+            Self::NeedToPickConnection | Self::NoConnection => ExitCode::Unavailable,
         }
     }
 }

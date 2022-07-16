@@ -6,4 +6,4 @@ mod paths;
 
 pub use self::config::Config;
 pub use cli::Cli;
-pub use error::{ExitCode, ExitCodeError};
+pub use error::{ExitCode, ExitCodeError, WrappedExitCodeError};

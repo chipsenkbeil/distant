@@ -5,6 +5,7 @@ use crate::{
     },
     config::{ClientConfig, ClientLaunchConfig, NetworkConfig},
     paths::user::CACHE_FILE_PATH_STR,
+    ExitCode,
 };
 use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
@@ -332,7 +333,7 @@ impl ClientSubcommand {
                         let origin_id = response.origin_id;
                         match response.payload {
                             DistantMsg::Single(DistantResponseData::Error(x)) => {
-                                return Err(io::Error::from(x).into());
+                                return Err(ExitCode::software_error(x).into());
                             }
                             payload => formatter.print(Response {
                                 id,

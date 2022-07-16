@@ -1,6 +1,6 @@
 use crate::{
     config::{CommonConfig, Config},
-    paths,
+    paths, ExitCode,
 };
 use clap::Parser;
 use std::path::PathBuf;
@@ -55,7 +55,7 @@ impl Cli {
         } = Opt::try_parse().map_err(CliError::Usage)?;
 
         // Try to load a configuration file, defaulting if no config file is found
-        let config = Config::load_multi(config_path)?;
+        let config = Config::load_multi(config_path).map_err(ExitCode::config_error)?;
 
         // Extract the common config from our config file
         let config_common = match &command {
