@@ -6,12 +6,20 @@ pub type CliResult<T> = Result<T, CliError>;
 /// Error encountered during operating the CLI
 #[derive(Debug, Display, Error, From)]
 pub enum CliError {
+    /// Arguments provided to CLI are incorrect
+    Usage(clap::Error),
+
+    /// General purpose IO error
     Io(std::io::Error),
+
+    /// No information exists, just an exit code
     ExitCode(#[error(not(source))] ExitCode),
 
+    /// When there is more than one connection being managed
     #[display(fmt = "Need to pick a connection as there are multiple choices")]
     NeedToPickConnection,
 
+    /// Whether there is no connection being managed
     #[display(fmt = "No active connection exists")]
     NoConnection,
 }
@@ -30,6 +38,7 @@ impl ExitCodeError for CliError {
 
     fn to_exit_code(&self) -> ExitCode {
         match self {
+            Self::Usage(_) => ExitCode::Usage,
             Self::Io(x) => x.to_exit_code(),
             Self::ExitCode(x) => *x,
             Self::NeedToPickConnection => ExitCode::Unavailable,

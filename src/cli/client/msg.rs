@@ -31,8 +31,8 @@ impl MsgSender {
     pub fn from_stdout() -> Self {
         let mut writer = std::io::stdout();
         Self::from(Box::new(move |output: &'_ [u8]| {
-            let _ = writer.write_all(output)?;
-            let _ = writer.flush()?;
+            writer.write_all(output)?;
+            writer.flush()?;
             Ok(())
         }))
     }
@@ -112,7 +112,7 @@ impl MsgReceiver {
         // is a partial match
         let data: T = loop {
             // Read in another line of input
-            let _ = self.recv.lock().unwrap()(&mut input)?;
+            self.recv.lock().unwrap()(&mut input)?;
 
             // Attempt to parse current input as type, yielding it on success, continuing to read
             // more input if error is unexpected EOF (meaning we are partially reading json), and

@@ -3,7 +3,7 @@ use crate::{
     paths,
 };
 use clap::Parser;
-use std::{io, path::PathBuf};
+use std::path::PathBuf;
 
 mod cache;
 mod client;
@@ -52,7 +52,7 @@ impl Cli {
             mut common,
             config_path,
             command,
-        } = Opt::try_parse().map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
+        } = Opt::try_parse().map_err(CliError::Usage)?;
 
         // Try to load a configuration file, defaulting if no config file is found
         let config = Config::load_multi(config_path)?;

@@ -43,7 +43,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
     }
 
     // Close out the process and collect the output
-    let _ = child.kill().expect("Failed to terminate process");
+    child.kill().expect("Failed to terminate process");
     let output = child.wait_with_output().expect("Failed to wait for output");
     let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -97,7 +97,7 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
     }
 
     // Close out the process and collect the output
-    let _ = child.kill().expect("Failed to terminate process");
+    child.kill().expect("Failed to terminate process");
     let output = child.wait_with_output().expect("Failed to wait for output");
     let stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
 
