@@ -10,7 +10,7 @@ use crate::{
 use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
-    data::ChangeKindSet,
+    data::{ChangeKindSet, Environment},
     net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
     ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
     DistantResponseData, Extra, RemoteCommand, Watcher,
@@ -199,6 +199,10 @@ pub enum ClientSubcommand {
         #[clap(flatten)]
         network: NetworkConfig,
 
+        /// Environment variables to provide to the shell
+        #[clap(long, default_value_t = Environment::default())]
+        environment: Environment,
+
         /// If provided, will run in persist mode, meaning that the process will not be killed if the
         /// client disconnects from the server
         #[clap(long)]
@@ -260,9 +264,15 @@ impl ClientSubcommand {
 
                 debug!("Sending request {:?}", request);
                 match request {
-                    DistantRequestData::ProcSpawn { cmd, persist, pty } => {
+                    DistantRequestData::ProcSpawn {
+                        cmd,
+                        environment,
+                        persist,
+                        pty,
+                    } => {
                         debug!("Special request spawning {:?}", cmd);
                         let mut proc = RemoteCommand::new()
+                            .environment(environment)
                             .persist(persist)
                             .pty(pty)
                             .spawn(channel, cmd)
@@ -605,6 +615,7 @@ impl ClientSubcommand {
             Self::Shell {
                 connection,
                 network,
+                environment,
                 persist,
                 cmd,
                 ..
@@ -620,11 +631,12 @@ impl ClientSubcommand {
                 let channel = client.open_channel(connection_id).await?;
 
                 debug!(
-                    "Spawning shell (persist = {}): {}",
+                    "Spawning shell (environment = {:?}, persist = {}): {}",
+                    environment,
                     persist,
                     cmd.as_deref().unwrap_or(r"$SHELL")
                 );
-                Shell::new(channel).spawn(cmd, persist).await?;
+                Shell::new(channel).spawn(cmd, environment, persist).await?;
             }
         }
 

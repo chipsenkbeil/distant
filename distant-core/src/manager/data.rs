@@ -18,5 +18,3 @@ pub use request::*;
 
 mod response;
 pub use response::*;
-
-pub(crate) mod serde;

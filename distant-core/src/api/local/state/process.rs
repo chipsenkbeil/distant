@@ -1,4 +1,4 @@
-use crate::data::{DistantResponseData, ProcessId, PtySize};
+use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
 use distant_net::Reply;
 use std::{collections::HashMap, io, ops::Deref};
 use tokio::{
@@ -69,6 +69,7 @@ impl ProcessChannel {
     pub async fn spawn(
         &self,
         cmd: String,
+        environment: Environment,
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
@@ -77,6 +78,7 @@ impl ProcessChannel {
         self.tx
             .send(InnerProcessMsg::Spawn {
                 cmd,
+                environment,
                 persist,
                 pty,
                 reply,
@@ -126,6 +128,7 @@ impl ProcessChannel {
 enum InnerProcessMsg {
     Spawn {
         cmd: String,
+        environment: Environment,
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
@@ -157,27 +160,30 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
         match msg {
             InnerProcessMsg::Spawn {
                 cmd,
+                environment,
                 persist,
                 pty,
                 reply,
                 cb,
             } => {
-                let _ = cb.send(match ProcessInstance::spawn(cmd, persist, pty, reply) {
-                    Ok(mut process) => {
-                        let id = process.id;
+                let _ = cb.send(
+                    match ProcessInstance::spawn(cmd, environment, persist, pty, reply) {
+                        Ok(mut process) => {
+                            let id = process.id;
 
-                        // Attach a callback for when the process is finished where
-                        // we will remove it from our above list
-                        let tx = tx.clone();
-                        process.on_done(move |_| async move {
-                            let _ = tx.send(InnerProcessMsg::InternalRemove { id }).await;
-                        });
+                            // Attach a callback for when the process is finished where
+                            // we will remove it from our above list
+                            let tx = tx.clone();
+                            process.on_done(move |_| async move {
+                                let _ = tx.send(InnerProcessMsg::InternalRemove { id }).await;
+                            });
 
-                        processes.insert(id, process);
-                        Ok(id)
-                    }
-                    Err(x) => Err(x),
-                });
+                            processes.insert(id, process);
+                            Ok(id)
+                        }
+                        Err(x) => Err(x),
+                    },
+                );
             }
             InnerProcessMsg::Resize { id, size, cb } => {
                 let _ = cb.send(match processes.get(&id) {

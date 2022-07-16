@@ -18,6 +18,9 @@ pub use error::*;
 mod filesystem;
 pub use filesystem::*;
 
+mod map;
+pub use map::Map;
+
 mod metadata;
 pub use metadata::*;
 
@@ -32,6 +35,9 @@ pub(crate) use utils::*;
 
 /// Id for a remote process
 pub type ProcessId = u32;
+
+/// Mapping of environment variables
+pub type Environment = Map;
 
 /// Type alias for a vec of bytes
 ///
@@ -327,6 +333,10 @@ pub enum DistantRequestData {
         /// The full command to run including arguments
         #[cfg_attr(feature = "clap", clap(raw = true))]
         cmd: String,
+
+        #[serde(default)]
+        #[cfg_attr(feature = "clap", clap(long))]
+        environment: Environment,
 
         /// Whether or not the process should be persistent, meaning that the process will not be
         /// killed when the associated client disconnects

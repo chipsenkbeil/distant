@@ -1,6 +1,7 @@
 use crate::{
     data::{
-        ChangeKind, ChangeKindSet, DirEntry, FileType, Metadata, ProcessId, PtySize, SystemInfo,
+        ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize,
+        SystemInfo,
     },
     DistantApi, DistantCtx,
 };
@@ -417,14 +418,18 @@ impl DistantApi for LocalDistantApi {
         &self,
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
+        environment: Environment,
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         debug!(
-            "[Conn {}] Spawning {} {{persist: {}, pty: {:?}}}",
-            ctx.connection_id, cmd, persist, pty
+            "[Conn {}] Spawning {} {{enviroment: {:?}, persist: {}, pty: {:?}}}",
+            ctx.connection_id, cmd, environment, persist, pty
         );
-        self.state.process.spawn(cmd, persist, pty, ctx.reply).await
+        self.state
+            .process
+            .spawn(cmd, environment, persist, pty, ctx.reply)
+            .await
     }
 
     async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
@@ -1793,6 +1798,7 @@ mod tests {
             .proc_spawn(
                 ctx,
                 /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
+                /* environment */ Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1816,6 +1822,7 @@ mod tests {
                     *SCRIPT_RUNNER,
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
                 ),
+                /* environment */ Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1840,6 +1847,7 @@ mod tests {
                     *SCRIPT_RUNNER,
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
                 ),
+                /* environment */ Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1903,6 +1911,7 @@ mod tests {
                     *SCRIPT_RUNNER,
                     ECHO_ARGS_TO_STDERR_SH.to_str().unwrap()
                 ),
+                /* environment */ Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1962,6 +1971,7 @@ mod tests {
                 ctx,
                 /* cmd */
                 format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+                /* environment */ Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -2000,6 +2010,7 @@ mod tests {
                 ctx_1,
                 /* cmd */
                 format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+                /* environment */ Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -2065,6 +2076,7 @@ mod tests {
                     *SCRIPT_RUNNER,
                     ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap()
                 ),
+                Environment::new(),
                 /* persist */ false,
                 /* pty */ None,
             )

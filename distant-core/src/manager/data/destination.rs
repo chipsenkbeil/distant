@@ -1,4 +1,4 @@
-use super::serde::{deserialize_from_str, serialize_to_str};
+use crate::serde_str::{deserialize_from_str, serialize_to_str};
 use derive_more::{Display, Error, From};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{convert::TryFrom, fmt, hash::Hash, str::FromStr};

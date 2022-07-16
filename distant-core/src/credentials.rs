@@ -1,5 +1,7 @@
-use super::serde::{deserialize_from_str, serialize_to_str};
-use crate::Destination;
+use crate::{
+    serde_str::{deserialize_from_str, serialize_to_str},
+    Destination,
+};
 use distant_net::SecretKey32;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{

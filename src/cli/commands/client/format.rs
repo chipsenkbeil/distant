@@ -4,8 +4,8 @@ use distant_core::{
     net::Response,
 };
 use log::*;
-use std::io;
-use std::io::Write;
+use std::io::{self, Write};
+use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 #[clap(rename_all = "snake_case")]
@@ -145,30 +145,31 @@ fn format_shell(data: DistantResponseData) -> Output {
         }
         DistantResponseData::Blob { data } => Output::StdoutLine(data),
         DistantResponseData::Text { data } => Output::StdoutLine(data.into_bytes()),
-        DistantResponseData::DirEntries { entries, .. } => Output::StdoutLine(
-            entries
-                .into_iter()
-                .map(|entry| {
-                    format!(
-                        "{}{}",
-                        entry.path.as_os_str().to_string_lossy(),
-                        if entry.file_type.is_dir() {
-                            // NOTE: This can be different from the server if
-                            //       the server OS is unix and the client is
-                            //       not or vice versa; for now, this doesn't
-                            //       matter as we only support unix-based
-                            //       operating systems, but something to keep
-                            //       in mind
-                            std::path::MAIN_SEPARATOR.to_string()
-                        } else {
-                            String::new()
-                        },
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join("\n")
-                .into_bytes(),
-        ),
+        DistantResponseData::DirEntries { entries, .. } => {
+            #[derive(Tabled)]
+            struct EntryRow {
+                ty: String,
+                path: String,
+            }
+
+            let table = Table::new(entries.into_iter().map(|entry| EntryRow {
+                ty: if entry.file_type.is_dir() {
+                    if cfg!(windows) {
+                        String::from("<DIR>")
+                    } else {
+                        String::from("d")
+                    }
+                } else {
+                    String::new()
+                },
+                path: entry.path.to_string_lossy().to_string(),
+            }))
+            .with(Style::blank())
+            .with(Disable::Row(..1))
+            .with(Modify::new(Rows::new(..)).with(Alignment::left()));
+
+            Output::StdoutLine(table.to_string().into_bytes())
+        }
         DistantResponseData::Changed(change) => Output::StdoutLine(
             format!(
                 "{}{}",

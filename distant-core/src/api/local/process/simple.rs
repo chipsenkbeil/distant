@@ -2,6 +2,7 @@ use super::{
     wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process, ProcessId,
     ProcessKiller, WaitRx,
 };
+use crate::data::Environment;
 use std::{ffi::OsStr, process::Stdio};
 use tokio::{io, process::Command, sync::mpsc, task::JoinHandle};
 
@@ -22,13 +23,14 @@ pub struct SimpleProcess {
 
 impl SimpleProcess {
     /// Spawns a new simple process
-    pub fn spawn<S, I, S2>(program: S, args: I) -> io::Result<Self>
+    pub fn spawn<S, I, S2>(program: S, args: I, environment: Environment) -> io::Result<Self>
     where
         S: AsRef<OsStr>,
         I: IntoIterator<Item = S2>,
         S2: AsRef<OsStr>,
     {
         let mut child = Command::new(program)
+            .envs(environment)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

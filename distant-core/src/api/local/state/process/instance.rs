@@ -2,7 +2,7 @@ use crate::{
     api::local::process::{
         InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
     },
-    data::{DistantResponseData, ProcessId, PtySize},
+    data::{DistantResponseData, Environment, ProcessId, PtySize},
 };
 use distant_net::Reply;
 use log::*;
@@ -61,6 +61,7 @@ impl Drop for ProcessInstance {
 impl ProcessInstance {
     pub fn spawn(
         cmd: String,
+        environment: Environment,
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
@@ -76,8 +77,17 @@ impl ProcessInstance {
         };
 
         let mut child: Box<dyn Process> = match pty {
-            Some(size) => Box::new(PtyProcess::spawn(cmd.clone(), args.clone(), size)?),
-            None => Box::new(SimpleProcess::spawn(cmd.clone(), args.clone())?),
+            Some(size) => Box::new(PtyProcess::spawn(
+                cmd.clone(),
+                args.clone(),
+                environment,
+                size,
+            )?),
+            None => Box::new(SimpleProcess::spawn(
+                cmd.clone(),
+                args.clone(),
+                environment,
+            )?),
         };
 
         let id = child.id();

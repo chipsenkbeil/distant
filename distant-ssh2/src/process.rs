@@ -1,6 +1,6 @@
 use async_compat::CompatExt;
 use distant_core::{
-    data::{DistantResponseData, ProcessId, PtySize},
+    data::{DistantResponseData, Environment, ProcessId, PtySize},
     net::Reply,
 };
 use log::*;
@@ -31,6 +31,7 @@ pub struct SpawnResult {
 pub async fn spawn_simple<F, R>(
     session: &Session,
     cmd: &str,
+    environment: Environment,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
@@ -44,7 +45,14 @@ where
         mut stderr,
         mut child,
     } = session
-        .exec(cmd, None)
+        .exec(
+            cmd,
+            if environment.is_empty() {
+                None
+            } else {
+                Some(environment.into_map())
+            },
+        )
         .compat()
         .await
         .map_err(to_other_error)?;
@@ -99,6 +107,7 @@ where
 pub async fn spawn_pty<F, R>(
     session: &Session,
     cmd: &str,
+    environment: Environment,
     size: PtySize,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
     cleanup: F,
@@ -107,9 +116,21 @@ where
     F: FnOnce(ProcessId) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
 {
-    // TODO: Do we need to support other terminal types for TERM?
+    let term = environment
+        .get("TERM")
+        .map(ToString::to_string)
+        .unwrap_or_else(|| String::from("xterm-256color"));
     let (pty, mut child) = session
-        .request_pty("xterm-256color", to_portable_size(size), Some(cmd), None)
+        .request_pty(
+            &term,
+            to_portable_size(size),
+            Some(cmd),
+            if environment.is_empty() {
+                None
+            } else {
+                Some(environment.into_map())
+            },
+        )
         .compat()
         .await
         .map_err(to_other_error)?;

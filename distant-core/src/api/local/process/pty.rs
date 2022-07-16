@@ -2,7 +2,10 @@ use super::{
     wait, ExitStatus, FutureReturn, InputChannel, OutputChannel, Process, ProcessId, ProcessKiller,
     ProcessPty, PtySize, WaitRx,
 };
-use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS};
+use crate::{
+    constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
+    data::Environment,
+};
 use portable_pty::{CommandBuilder, MasterPty, PtySize as PortablePtySize};
 use std::{
     ffi::OsStr,
@@ -25,7 +28,12 @@ pub struct PtyProcess {
 
 impl PtyProcess {
     /// Spawns a new simple process
-    pub fn spawn<S, I, S2>(program: S, args: I, size: PtySize) -> io::Result<Self>
+    pub fn spawn<S, I, S2>(
+        program: S,
+        args: I,
+        environment: Environment,
+        size: PtySize,
+    ) -> io::Result<Self>
     where
         S: AsRef<OsStr>,
         I: IntoIterator<Item = S2>,
@@ -47,6 +55,9 @@ impl PtyProcess {
         // Spawn our process within the pty
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
+        for (key, value) in environment {
+            cmd.env(key, value);
+        }
         let mut child = pty_slave
             .spawn_command(cmd)
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;

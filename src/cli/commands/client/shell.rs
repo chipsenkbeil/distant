@@ -1,6 +1,9 @@
 use super::link::RemoteProcessLink;
 use crate::cli::{CliError, CliResult};
-use distant_core::{data::PtySize, DistantChannel, RemoteCommand};
+use distant_core::{
+    data::{Environment, PtySize},
+    DistantChannel, RemoteCommand,
+};
 use log::*;
 use std::{io, time::Duration};
 use terminal_size::{terminal_size, Height, Width};
@@ -18,9 +21,20 @@ impl Shell {
         Self(channel)
     }
 
-    pub async fn spawn(self, cmd: impl Into<Option<String>>, persist: bool) -> CliResult<()> {
+    pub async fn spawn(
+        self,
+        cmd: impl Into<Option<String>>,
+        mut environment: Environment,
+        persist: bool,
+    ) -> CliResult<()> {
+        // Automatically add TERM=xterm-256color if not specified
+        if !environment.contains_key("TERM") {
+            environment.insert("TERM".to_string(), "xterm-256color".to_string());
+        }
+
         let mut proc = RemoteCommand::new()
             .persist(persist)
+            .environment(environment)
             .pty(
                 terminal_size()
                     .map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),

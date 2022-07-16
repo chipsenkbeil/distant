@@ -2,7 +2,9 @@ use crate::process::{spawn_pty, spawn_simple, SpawnResult};
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::{
-    data::{DirEntry, FileType, Metadata, ProcessId, PtySize, SystemInfo, UnixMetadata},
+    data::{
+        DirEntry, Environment, FileType, Metadata, ProcessId, PtySize, SystemInfo, UnixMetadata,
+    },
     DistantApi, DistantCtx,
 };
 use log::*;
@@ -667,12 +669,13 @@ impl DistantApi for SshDistantApi {
         &self,
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
+        environment: Environment,
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         debug!(
-            "[Conn {}] Spawning {} {{persist: {}, pty: {:?}}}",
-            ctx.connection_id, cmd, persist, pty
+            "[Conn {}] Spawning {} {{environment: {:?}, persist: {}, pty: {:?}}}",
+            ctx.connection_id, cmd, environment, persist, pty
         );
 
         let global_processes = Arc::downgrade(&self.processes);
@@ -692,9 +695,26 @@ impl DistantApi for SshDistantApi {
             killer,
             resizer,
         } = match pty {
-            None => spawn_simple(&self.session, &cmd, ctx.reply.clone_reply(), cleanup).await?,
+            None => {
+                spawn_simple(
+                    &self.session,
+                    &cmd,
+                    environment,
+                    ctx.reply.clone_reply(),
+                    cleanup,
+                )
+                .await?
+            }
             Some(size) => {
-                spawn_pty(&self.session, &cmd, size, ctx.reply.clone_reply(), cleanup).await?
+                spawn_pty(
+                    &self.session,
+                    &cmd,
+                    environment,
+                    size,
+                    ctx.reply.clone_reply(),
+                    cleanup,
+                )
+                .await?
             }
         };
 

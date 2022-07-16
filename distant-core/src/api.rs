@@ -1,5 +1,5 @@
 use crate::{
-    data::{ChangeKind, DirEntry, Error, Metadata, ProcessId, PtySize, SystemInfo},
+    data::{ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize, SystemInfo},
     ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
@@ -314,6 +314,7 @@ pub trait DistantApi {
         &self,
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
+        environment: Environment,
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
@@ -582,9 +583,14 @@ where
             .await
             .map(DistantResponseData::Metadata)
             .unwrap_or_else(DistantResponseData::from),
-        DistantRequestData::ProcSpawn { cmd, persist, pty } => server
+        DistantRequestData::ProcSpawn {
+            cmd,
+            environment,
+            persist,
+            pty,
+        } => server
             .api
-            .proc_spawn(ctx, cmd, persist, pty)
+            .proc_spawn(ctx, cmd, environment, persist, pty)
             .await
             .map(|id| DistantResponseData::ProcSpawned { id })
             .unwrap_or_else(DistantResponseData::from),

@@ -1,7 +1,7 @@
 use crate::{
     client::DistantChannel,
     constants::CLIENT_PIPE_CAPACITY,
-    data::{DistantRequestData, DistantResponseData, ProcessId, PtySize},
+    data::{DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize},
     DistantMsg,
 };
 use distant_net::{Mailbox, Request, Response};
@@ -46,6 +46,7 @@ type StatusResult = io::Result<RemoteStatus>;
 pub struct RemoteCommand {
     persist: bool,
     pty: Option<PtySize>,
+    environment: Environment,
 }
 
 impl Default for RemoteCommand {
@@ -60,6 +61,7 @@ impl RemoteCommand {
         Self {
             persist: false,
             pty: None,
+            environment: Environment::new(),
         }
     }
 
@@ -74,6 +76,12 @@ impl RemoteCommand {
     /// Configures the process to leverage a PTY with the specified size
     pub fn pty(&mut self, pty: Option<PtySize>) -> &mut Self {
         self.pty = pty;
+        self
+    }
+
+    /// Replaces the existing environment variables with the given collection
+    pub fn environment(&mut self, environment: Environment) -> &mut Self {
+        self.environment = environment;
         self
     }
 
@@ -92,6 +100,7 @@ impl RemoteCommand {
                     cmd,
                     persist: self.persist,
                     pty: self.pty,
+                    environment: self.environment.clone(),
                 },
             )))
             .await?;
