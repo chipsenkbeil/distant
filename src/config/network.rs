@@ -9,12 +9,12 @@ pub struct NetworkConfig {
     #[clap(long)]
     pub user: bool,
 
-    /// Unix socket to listen on
+    /// Path to Unix socket
     #[cfg(unix)]
     #[clap(long)]
     pub unix_socket: Option<std::path::PathBuf>,
 
-    /// Windows pipe to listen on
+    /// Name of local Windows pipe
     #[cfg(windows)]
     #[clap(long)]
     pub windows_pipe: Option<String>,
