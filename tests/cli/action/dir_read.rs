@@ -1,8 +1,12 @@
-use crate::cli::{fixtures::*, utils::FAILURE_LINE};
+use crate::cli::{
+    fixtures::*,
+    utils::{regex_pred, FAILURE_LINE},
+};
 use assert_cmd::Command;
 use assert_fs::prelude::*;
 use distant::ExitCode;
 use rstest::*;
+use std::path::Path;
 
 /// Creates a directory in the form
 ///
@@ -68,16 +72,39 @@ fn make_directory() -> assert_fs::TempDir {
     temp
 }
 
+fn regex_stdout<'a>(lines: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let mut s = String::new();
+
+    s.push('^');
+    for (ty, path) in lines {
+        s.push_str(&regex_line(ty, path));
+    }
+    s.push('$');
+
+    s
+}
+
+fn regex_line(ty: &str, path: &str) -> String {
+    format!(r"\s*{ty}\s+{path}\s*\n")
+}
+
 #[rstest]
 fn should_print_immediate_files_and_directories_by_default(mut action_cmd: Command) {
     let temp = make_directory();
+
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", "dir1"),
+        ("<DIR>", "dir2"),
+        ("", "file1"),
+        ("", "file2"),
+    ]));
 
     // distant action dir-read {path}
     action_cmd
         .args(&["dir-read", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(concat!("dir1/\n", "dir2/\n", "file1\n", "file2\n"))
+        .stdout(expected)
         .stderr("");
 }
 
@@ -89,21 +116,19 @@ fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
     //       provided is our canonicalized root path prepended
     let root_path = temp.to_path_buf().canonicalize().unwrap();
 
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", root_path.join("dir1").to_str().unwrap()),
+        ("<DIR>", root_path.join("dir2").to_str().unwrap()),
+        ("", root_path.join("file1").to_str().unwrap()),
+        ("", root_path.join("file2").to_str().unwrap()),
+    ]));
+
     // distant action dir-read --absolute {path}
     action_cmd
         .args(&["dir-read", "--absolute", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(format!(
-            "{}\n",
-            vec![
-                format!("{}/{}", root_path.to_str().unwrap(), "dir1/"),
-                format!("{}/{}", root_path.to_str().unwrap(), "dir2/"),
-                format!("{}/{}", root_path.to_str().unwrap(), "file1"),
-                format!("{}/{}", root_path.to_str().unwrap(), "file2"),
-            ]
-            .join("\n")
-        ))
+        .stdout(expected)
         .stderr("");
 }
 
@@ -111,27 +136,43 @@ fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
 fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: Command) {
     let temp = make_directory();
 
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", Path::new("dir1").to_str().unwrap()),
+        ("<DIR>", Path::new("dir1").join("dira").to_str().unwrap()),
+        ("<DIR>", Path::new("dir1").join("dirb").to_str().unwrap()),
+        (
+            "",
+            Path::new("dir1")
+                .join("dirb")
+                .join("file1")
+                .to_str()
+                .unwrap(),
+        ),
+        ("", Path::new("dir1").join("file1").to_str().unwrap()),
+        ("", Path::new("dir1").join("file2").to_str().unwrap()),
+        ("<DIR>", Path::new("dir2").to_str().unwrap()),
+        ("<DIR>", Path::new("dir2").join("dira").to_str().unwrap()),
+        ("<DIR>", Path::new("dir2").join("dirb").to_str().unwrap()),
+        (
+            "",
+            Path::new("dir2")
+                .join("dirb")
+                .join("file1")
+                .to_str()
+                .unwrap(),
+        ),
+        ("", Path::new("dir2").join("file1").to_str().unwrap()),
+        ("", Path::new("dir2").join("file2").to_str().unwrap()),
+        ("", Path::new("file1").to_str().unwrap()),
+        ("", Path::new("file2").to_str().unwrap()),
+    ]));
+
     // distant action dir-read --depth 0 {path}
     action_cmd
         .args(&["dir-read", "--depth", "0", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(concat!(
-            "dir1/\n",
-            "dir1/dira/\n",
-            "dir1/dirb/\n",
-            "dir1/dirb/file1\n",
-            "dir1/file1\n",
-            "dir1/file2\n",
-            "dir2/\n",
-            "dir2/dira/\n",
-            "dir2/dirb/\n",
-            "dir2/dirb/file1\n",
-            "dir2/file1\n",
-            "dir2/file2\n",
-            "file1\n",
-            "file2\n",
-        ))
+        .stdout(expected)
         .stderr("");
 }
 
@@ -143,16 +184,20 @@ fn should_include_root_directory_if_specified(mut action_cmd: Command) {
     //       is the canonicalized version
     let root_path = temp.to_path_buf().canonicalize().unwrap();
 
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", root_path.to_str().unwrap()),
+        ("<DIR>", "dir1"),
+        ("<DIR>", "dir2"),
+        ("", "file1"),
+        ("", "file2"),
+    ]));
+
     // distant action dir-read --include-root {path}
     action_cmd
         .args(&["dir-read", "--include-root", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(format!(
-            "{}/\n{}",
-            root_path.to_str().unwrap(),
-            concat!("dir1/\n", "dir2/\n", "file1\n", "file2\n")
-        ))
+        .stdout(expected)
         .stderr("");
 }
 

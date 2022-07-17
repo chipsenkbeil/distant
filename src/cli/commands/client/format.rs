@@ -1,6 +1,6 @@
 use clap::ValueEnum;
 use distant_core::{
-    data::{ChangeKind, DistantMsg, DistantResponseData, Error, Metadata, SystemInfo},
+    data::{ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata, SystemInfo},
     net::Response,
 };
 use log::*;
@@ -153,22 +153,18 @@ fn format_shell(data: DistantResponseData) -> Output {
             }
 
             let table = Table::new(entries.into_iter().map(|entry| EntryRow {
-                ty: if entry.file_type.is_dir() {
-                    if cfg!(windows) {
-                        String::from("<DIR>")
-                    } else {
-                        String::from("d")
-                    }
-                } else {
-                    String::new()
-                },
+                ty: String::from(match entry.file_type {
+                    FileType::Dir => "<DIR>",
+                    FileType::File => "",
+                    FileType::Symlink => "<SYMLINK>",
+                }),
                 path: entry.path.to_string_lossy().to_string(),
             }))
             .with(Style::blank())
             .with(Disable::Row(..1))
             .with(Modify::new(Rows::new(..)).with(Alignment::left()));
 
-            Output::StdoutLine(table.to_string().into_bytes())
+            Output::Stdout(table.to_string().into_bytes())
         }
         DistantResponseData::Changed(change) => Output::StdoutLine(
             format!(
