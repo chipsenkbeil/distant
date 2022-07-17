@@ -335,7 +335,7 @@ pub enum DistantRequestData {
         cmd: String,
 
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
+        #[cfg_attr(feature = "clap", clap(long, default_value_t = Environment::default()))]
         environment: Environment,
 
         /// Whether or not the process should be persistent, meaning that the process will not be
