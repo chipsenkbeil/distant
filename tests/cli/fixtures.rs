@@ -174,6 +174,10 @@ impl Drop for DistantManagerCtx {
     }
 }
 
+// NOTE: This is a process leak as we never kill the manager or the associated server as drop
+//       is never invoked for [`DistantManagerCtx`]. To fix this, we either need to spawn a
+//       context per test function so drop can be triggered or write a custom test runner, which
+//       is not possible with stable rust.
 #[fixture]
 pub fn ctx() -> &'static DistantManagerCtx {
     static CTX: OnceCell<DistantManagerCtx> = OnceCell::new();
