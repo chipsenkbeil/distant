@@ -9,6 +9,9 @@ use strum::VariantNames;
 mod change;
 pub use change::*;
 
+mod cmd;
+pub use cmd::*;
+
 #[cfg(feature = "clap")]
 mod clap_impl;
 
@@ -331,8 +334,8 @@ pub enum DistantRequestData {
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
     ProcSpawn {
         /// The full command to run including arguments
-        #[cfg_attr(feature = "clap", clap(raw = true))]
-        cmd: String,
+        #[cfg_attr(feature = "clap", clap(flatten))]
+        cmd: Cmd,
 
         #[serde(default)]
         #[cfg_attr(feature = "clap", clap(long, default_value_t = Environment::default()))]

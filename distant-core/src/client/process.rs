@@ -1,7 +1,7 @@
 use crate::{
     client::DistantChannel,
     constants::CLIENT_PIPE_CAPACITY,
-    data::{DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize},
+    data::{Cmd, DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize},
     DistantMsg,
 };
 use distant_net::{Mailbox, Request, Response};
@@ -97,7 +97,7 @@ impl RemoteCommand {
         let mut mailbox = channel
             .mail(Request::new(DistantMsg::Single(
                 DistantRequestData::ProcSpawn {
-                    cmd,
+                    cmd: Cmd::from(cmd),
                     persist: self.persist,
                     pty: self.pty,
                     environment: self.environment.clone(),

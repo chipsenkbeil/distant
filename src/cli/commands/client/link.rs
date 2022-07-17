@@ -3,6 +3,7 @@ use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use distant_core::{
     RemoteLspStderr, RemoteLspStdin, RemoteLspStdout, RemoteStderr, RemoteStdin, RemoteStdout,
 };
+use log::*;
 use std::{
     io::{self, Write},
     thread,
@@ -27,6 +28,7 @@ macro_rules! from_pipes {
             let task = tokio::spawn(async move {
                 loop {
                     if let Some(input) = rx.recv().await {
+                        trace!("Forwarding stdin: {:?}", String::from_utf8_lossy(&input));
                         if let Err(x) = stdin_handle.write(&*input).await {
                             break Err(x);
                         }

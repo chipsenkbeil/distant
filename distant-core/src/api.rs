@@ -590,7 +590,7 @@ where
             pty,
         } => server
             .api
-            .proc_spawn(ctx, cmd, environment, persist, pty)
+            .proc_spawn(ctx, cmd.into(), environment, persist, pty)
             .await
             .map(|id| DistantResponseData::ProcSpawned { id })
             .unwrap_or_else(DistantResponseData::from),
