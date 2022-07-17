@@ -196,12 +196,12 @@ pub enum DistantRequestData {
         /// depth and 1 indicating the most immediate children within the
         /// directory
         #[serde(default = "one")]
-        #[cfg_attr(feature = "clap", clap(short, long, default_value = "1"))]
+        #[cfg_attr(feature = "clap", clap(long, default_value = "1"))]
         depth: usize,
 
         /// Whether or not to return absolute or relative paths
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(short, long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         absolute: bool,
 
         /// Whether or not to canonicalize the resulting paths, meaning
@@ -211,7 +211,7 @@ pub enum DistantRequestData {
         /// Note that the flag absolute must be true to have absolute paths
         /// returned, even if canonicalize is flagged as true
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(short, long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         canonicalize: bool,
 
         /// Whether or not to include the root directory in the retrieved
@@ -232,7 +232,7 @@ pub enum DistantRequestData {
 
         /// Whether or not to create all parent directories
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(short, long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         all: bool,
     },
 
@@ -245,7 +245,7 @@ pub enum DistantRequestData {
         /// Whether or not to remove all contents within directory if is a directory.
         /// Does nothing different for files
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(short, long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         force: bool,
     },
 
@@ -277,14 +277,14 @@ pub enum DistantRequestData {
         /// If true, will recursively watch for changes within directories, othewise
         /// will only watch for changes immediately within directories
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(short, long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         recursive: bool,
 
         /// Filter to only report back specified changes
         #[serde(default)]
         #[cfg_attr(
             feature = "clap",
-            clap(short, long, possible_values = ChangeKind::VARIANTS)
+            clap(long, possible_values = ChangeKind::VARIANTS)
         )]
         only: Vec<ChangeKind>,
 
@@ -292,7 +292,7 @@ pub enum DistantRequestData {
         #[serde(default)]
         #[cfg_attr(
             feature = "clap", 
-            clap(short, long, possible_values = ChangeKind::VARIANTS)
+            clap(long, possible_values = ChangeKind::VARIANTS)
         )]
         except: Vec<ChangeKind>,
     },
@@ -318,7 +318,7 @@ pub enum DistantRequestData {
         /// returning the canonical, absolute form of a path with all
         /// intermediate components normalized and symbolic links resolved
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(short, long))]
+        #[cfg_attr(feature = "clap", clap(long))]
         canonicalize: bool,
 
         /// Whether or not to follow symlinks to determine absolute file type (dir/file)
