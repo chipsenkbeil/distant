@@ -2,14 +2,19 @@ use crate::cli::{fixtures::*, scripts::*};
 use rstest::*;
 use serde_json::json;
 
+fn make_cmd(args: Vec<&str>) -> String {
+    format!(
+        r#"{} {} {}"#,
+        *SCRIPT_RUNNER,
+        *SCRIPT_RUNNER_ARG,
+        args.join(" ")
+    )
+}
+
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
-    let cmd = format!(
-        "{} {}",
-        *SCRIPT_RUNNER,
-        ECHO_ARGS_TO_STDOUT.to_str().unwrap()
-    );
+    let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap()]);
 
     let id = rand::random::<u64>().to_string();
     let req = json!({
@@ -31,11 +36,7 @@ async fn should_support_json_to_execute_program_and_return_exit_status(mut json_
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
-    let cmd = format!(
-        "{} {} some output",
-        *SCRIPT_RUNNER,
-        ECHO_ARGS_TO_STDOUT.to_str().unwrap(),
-    );
+    let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap(), "some output"]);
 
     // Spawn the process
     let origin_id = rand::random::<u64>().to_string();
@@ -77,11 +78,7 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
-    let cmd = format!(
-        "{} {} some output",
-        *SCRIPT_RUNNER,
-        ECHO_ARGS_TO_STDERR.to_str().unwrap(),
-    );
+    let cmd = make_cmd(vec![ECHO_ARGS_TO_STDERR.to_str().unwrap(), "some output"]);
 
     // Spawn the process
     let origin_id = rand::random::<u64>().to_string();
@@ -123,11 +120,7 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: Repl) {
-    let cmd = format!(
-        "{} {}",
-        *SCRIPT_RUNNER,
-        ECHO_STDIN_TO_STDOUT.to_str().unwrap(),
-    );
+    let cmd = make_cmd(vec![ECHO_STDIN_TO_STDOUT.to_str().unwrap()]);
 
     // Spawn the process
     let origin_id = rand::random::<u64>().to_string();

@@ -6,6 +6,9 @@ static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> = Lazy::new(|| assert_fs::TempD
 pub static SCRIPT_RUNNER: Lazy<String> =
     Lazy::new(|| String::from(if cfg!(windows) { "cmd.exe" } else { "bash" }));
 
+pub static SCRIPT_RUNNER_ARG: Lazy<String> =
+    Lazy::new(|| String::from(if cfg!(windows) { "/c" } else { "" }));
+
 #[cfg(unix)]
 pub static ECHO_ARGS_TO_STDOUT: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
     let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");

@@ -10,6 +10,7 @@ fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
     action_cmd
         .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
+        .arg(SCRIPT_RUNNER_ARG.as_str())
         .arg(EXIT_CODE.to_str().unwrap())
         .arg("0")
         .assert()
@@ -24,6 +25,7 @@ fn should_capture_and_print_stdout(mut action_cmd: Command) {
     action_cmd
         .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
+        .arg(SCRIPT_RUNNER_ARG.as_str())
         .arg(ECHO_ARGS_TO_STDOUT.to_str().unwrap())
         .arg("hello world")
         .assert()
@@ -38,6 +40,7 @@ fn should_capture_and_print_stderr(mut action_cmd: Command) {
     action_cmd
         .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
+        .arg(SCRIPT_RUNNER_ARG.as_str())
         .arg(ECHO_ARGS_TO_STDERR.to_str().unwrap())
         .arg("hello world")
         .assert()
@@ -58,6 +61,7 @@ fn should_forward_stdin_to_remote_process(mut action_std_cmd: StdCommand) {
     let mut child = action_std_cmd
         .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
+        .arg(SCRIPT_RUNNER_ARG.as_str())
         .arg(ECHO_STDIN_TO_STDOUT.to_str().unwrap())
         .spawn()
         .expect("Failed to spawn process");
@@ -83,6 +87,7 @@ fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
     action_cmd
         .args(&["proc-spawn", "--"])
         .arg(SCRIPT_RUNNER.as_str())
+        .arg(SCRIPT_RUNNER_ARG.as_str())
         .arg(EXIT_CODE.to_str().unwrap())
         .arg("99")
         .assert()
