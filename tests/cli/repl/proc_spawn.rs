@@ -1,53 +1,6 @@
-use crate::cli::fixtures::*;
-use assert_fs::prelude::*;
-use once_cell::sync::Lazy;
+use crate::cli::{fixtures::*, scripts::*};
 use rstest::*;
 use serde_json::json;
-
-static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> = Lazy::new(|| assert_fs::TempDir::new().unwrap());
-static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
-
-static ECHO_ARGS_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-            #/usr/bin/env bash
-            printf "%s" "$*"
-        "#
-        ))
-        .unwrap();
-    script
-});
-
-static ECHO_ARGS_TO_STDERR_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("echo_args_to_stderr.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-            #/usr/bin/env bash
-            printf "%s" "$*" 1>&2
-        "#
-        ))
-        .unwrap();
-    script
-});
-
-static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("echo_stdin_to_stdout.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-            #/usr/bin/env bash
-            while IFS= read; do echo "$REPLY"; done
-        "#
-        ))
-        .unwrap();
-    script
-});
-
-static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
-    Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
 #[rstest]
 #[tokio::test]
@@ -55,7 +8,7 @@ async fn should_support_json_to_execute_program_and_return_exit_status(mut json_
     let cmd = format!(
         "{} {}",
         *SCRIPT_RUNNER,
-        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
+        ECHO_ARGS_TO_STDOUT.to_str().unwrap()
     );
 
     let id = rand::random::<u64>().to_string();
@@ -81,7 +34,7 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
     let cmd = format!(
         "{} {} some output",
         *SCRIPT_RUNNER,
-        ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap(),
+        ECHO_ARGS_TO_STDOUT.to_str().unwrap(),
     );
 
     // Spawn the process
@@ -127,7 +80,7 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
     let cmd = format!(
         "{} {} some output",
         *SCRIPT_RUNNER,
-        ECHO_ARGS_TO_STDERR_SH.to_str().unwrap(),
+        ECHO_ARGS_TO_STDERR.to_str().unwrap(),
     );
 
     // Spawn the process
@@ -173,7 +126,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
     let cmd = format!(
         "{} {}",
         *SCRIPT_RUNNER,
-        ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap(),
+        ECHO_STDIN_TO_STDOUT.to_str().unwrap(),
     );
 
     // Spawn the process
