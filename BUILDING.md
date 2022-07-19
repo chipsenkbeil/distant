@@ -5,6 +5,11 @@
 * `make` - needed to build openssl via vendor feature
 * `perl` - needed to build openssl via vendor feature
 
+### FreeBSD
+
+* `gmake` - needed to build openssl via vender feature (`pkg install gmake`)
+
+
 ## Using Cargo
 
 A debug build is straightforward:
