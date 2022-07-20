@@ -3,8 +3,7 @@ use crate::{
         CliResult, Client, Manager, Service, ServiceInstallCtx, ServiceKind, ServiceLabel,
         ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
     },
-    config::{Config, ManagerConfig, NetworkConfig},
-    paths::user::CONFIG_FILE_PATH,
+    config::{ManagerConfig, NetworkConfig},
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
@@ -180,60 +179,6 @@ impl ManagerSubcommand {
                     args: vec!["manager".to_string(), "listen".to_string()],
                 })?;
 
-                // Create the configuration file for the user if it does not exist
-                Config::default()
-                    .save_if_not_found(CONFIG_FILE_PATH.as_path())
-                    .await?;
-
-                // Edit the user field of client & manager network to be true
-                Config::edit(CONFIG_FILE_PATH.as_path(), |document| {
-                    use toml_edit::{value, Item, Table};
-                    document
-                        .entry("client")
-                        .or_insert_with(|| Item::Table(Table::new()))
-                        .as_table_like_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Expected client to be a table",
-                            )
-                        })?
-                        .entry("network")
-                        .or_insert_with(|| Item::Table(Table::new()))
-                        .as_table_like_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Expected network to be a table",
-                            )
-                        })?
-                        .insert("user", value(true));
-
-                    document
-                        .entry("manager")
-                        .or_insert_with(|| Item::Table(Table::new()))
-                        .as_table_like_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Expected client to be a table",
-                            )
-                        })?
-                        .entry("network")
-                        .or_insert_with(|| Item::Table(Table::new()))
-                        .as_table_like_mut()
-                        .ok_or_else(|| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Expected network to be a table",
-                            )
-                        })?
-                        .insert("user", value(true));
-
-                    Ok(())
-                })
-                .await?;
-
                 Ok(())
             }
             Self::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
@@ -243,24 +188,6 @@ impl ManagerSubcommand {
                     label: SERVICE_LABEL.clone(),
                     user,
                 })?;
-
-                // Remove the user field of client & manager network
-                Config::edit_if_exists(CONFIG_FILE_PATH.as_path(), |document| {
-                    use toml_edit::Item;
-                    document
-                        .get_mut("client")
-                        .and_then(|x: &mut Item| x.get_mut("network"))
-                        .and_then(|x: &mut Item| x.as_table_like_mut())
-                        .and_then(|x| x.remove("user"));
-                    document
-                        .get_mut("manager")
-                        .and_then(|x: &mut Item| x.get_mut("network"))
-                        .and_then(|x: &mut Item| x.as_table_like_mut())
-                        .and_then(|x| x.remove("user"));
-
-                    Ok(())
-                })
-                .await?;
 
                 Ok(())
             }
