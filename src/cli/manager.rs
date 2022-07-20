@@ -1,4 +1,7 @@
-use crate::{config::NetworkConfig, paths::global};
+use crate::{
+    config::NetworkConfig,
+    paths::{global as global_paths, user as user_paths},
+};
 use distant_core::{net::PlainCodec, DistantManager, DistantManagerConfig, DistantManagerRef};
 use log::*;
 use std::io;
@@ -15,13 +18,17 @@ impl Manager {
 
     /// Begin listening on the network interface specified within [`NetworkConfig`]
     pub async fn listen(self) -> io::Result<DistantManagerRef> {
+        let user = self.config.user;
+
         #[cfg(unix)]
         {
-            let socket_path = self
-                .network
-                .unix_socket
-                .as_deref()
-                .unwrap_or_else(|| global::UNIX_SOCKET_PATH.as_path());
+            let socket_path = self.network.unix_socket.as_deref().unwrap_or({
+                if user {
+                    user_paths::UNIX_SOCKET_PATH.as_path()
+                } else {
+                    global_paths::UNIX_SOCKET_PATH.as_path()
+                }
+            });
             let boxed_ref = DistantManager::start_unix_socket(self.config, socket_path, PlainCodec)
                 .await?
                 .into_inner()
@@ -34,11 +41,11 @@ impl Manager {
 
         #[cfg(windows)]
         {
-            let pipe_name = self
-                .network
-                .windows_pipe
-                .as_deref()
-                .unwrap_or_else(|| global::WINDOWS_PIPE_NAME.as_str());
+            let pipe_name = self.network.windows_pipe.as_deref().unwrap_or(if user {
+                user_paths::WINDOWS_PIPE_NAME.as_str()
+            } else {
+                global_paths::WINDOWS_PIPE_NAME.as_str()
+            });
             let boxed_ref =
                 DistantManager::start_local_named_pipe(self.config, pipe_name, PlainCodec)
                     .await?

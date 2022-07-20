@@ -8,6 +8,9 @@ pub struct DistantManagerConfig {
     /// Buffer size for queue of incoming connections before blocking
     pub connection_buffer_size: usize,
 
+    /// If listening as local user
+    pub user: bool,
+
     /// Handlers to use for launch requests
     pub launch_handlers: HashMap<String, BoxedLaunchHandler>,
 
@@ -20,6 +23,7 @@ impl Default for DistantManagerConfig {
         Self {
             fallback_scheme: "distant".to_string(),
             connection_buffer_size: 100,
+            user: false,
             launch_handlers: HashMap::new(),
             connect_handlers: HashMap::new(),
         }

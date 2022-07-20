@@ -4,7 +4,6 @@ use crate::{
         ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
     },
     config::{ManagerConfig, NetworkConfig},
-    paths::user as user_paths,
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
@@ -32,6 +31,10 @@ pub enum ManagerSubcommand {
         /// If specified, will fork the process to run as a standalone daemon
         #[clap(long)]
         daemon: bool,
+
+        /// If specified, will listen on a user-local unix socket or local windows named pipe
+        #[clap(long)]
+        user: bool,
 
         #[clap(flatten)]
         network: NetworkConfig,
@@ -170,19 +173,8 @@ impl ManagerSubcommand {
                 let service = <dyn Service>::target_or_native(kind)?;
                 let mut args = vec!["manager".to_string(), "listen".to_string()];
 
-                // Add pointer to user-specific path for unix socket or name for windows named pipe
                 if user {
-                    #[cfg(unix)]
-                    {
-                        args.push("--unix-socket".to_string());
-                        args.push(format!("{:?}", user_paths::UNIX_SOCKET_PATH));
-                    }
-
-                    #[cfg(windows)]
-                    {
-                        args.push("--windows-pipe".to_string());
-                        args.push(user_paths::WINDOWS_PIPE_NAME.to_string());
-                    }
+                    args.push("--user".to_string());
                 }
 
                 service.install(ServiceInstallCtx {
@@ -209,12 +201,28 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::Listen { network, .. } => {
+            Self::Listen { network, user, .. } => {
                 let network = network.merge(config.network);
-                info!("Starting manager");
-                let manager_ref = Manager::new(DistantManagerConfig::default(), network)
-                    .listen()
-                    .await?;
+
+                info!(
+                    "Starting manager (network = {})",
+                    if network.as_opt().is_some() {
+                        "custom"
+                    } else if user {
+                        "user"
+                    } else {
+                        "global"
+                    }
+                );
+                let manager_ref = Manager::new(
+                    DistantManagerConfig {
+                        user,
+                        ..Default::default()
+                    },
+                    network,
+                )
+                .listen()
+                .await?;
 
                 // Register our handlers for different schemes
                 debug!("Registering handlers with manager");

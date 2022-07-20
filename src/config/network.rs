@@ -26,6 +26,18 @@ impl NetworkConfig {
         }
     }
 
+    /// Returns option containing reference to unix path if configured
+    #[cfg(unix)]
+    pub fn as_opt(&self) -> Option<&std::path::Path> {
+        self.unix_socket.as_deref()
+    }
+
+    /// Returns option containing reference to windows pipe name if configured
+    #[cfg(windows)]
+    pub fn as_opt(&self) -> Option<&str> {
+        self.windows_pipe.as_deref()
+    }
+
     /// Returns a collection of candidate unix socket paths, which will either be
     /// the config-provided unix socket path or the default user and global socket paths
     #[cfg(unix)]
