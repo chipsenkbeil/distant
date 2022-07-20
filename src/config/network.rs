@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 /// Represents common networking configuration
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NetworkConfig {
-    /// Path to Unix socket
+    /// Override the path to the Unix socket used by the manager
     #[cfg(unix)]
     #[clap(long)]
     pub unix_socket: Option<std::path::PathBuf>,
 
-    /// Name of local Windows pipe
+    /// Override the name of the local named Windows pipe used by the manager
     #[cfg(windows)]
     #[clap(long)]
     pub windows_pipe: Option<String>,
