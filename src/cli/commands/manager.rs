@@ -4,6 +4,7 @@ use crate::{
         ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
     },
     config::{ManagerConfig, NetworkConfig},
+    paths::user as user_paths,
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
@@ -167,6 +168,23 @@ impl ManagerSubcommand {
             Self::Service(ManagerServiceSubcommand::Install { kind, user }) => {
                 debug!("Installing manager service via {:?}", kind);
                 let service = <dyn Service>::target_or_native(kind)?;
+                let mut args = vec!["manager".to_string(), "listen".to_string()];
+
+                // Add pointer to user-specific path for unix socket or name for windows named pipe
+                if user {
+                    #[cfg(unix)]
+                    {
+                        args.push("--unix-socket".to_string());
+                        args.push(format!("{:?}", user_paths::UNIX_SOCKET_PATH));
+                    }
+
+                    #[cfg(windows)]
+                    {
+                        args.push("--windows-pipe".to_string());
+                        args.push(user_paths::WINDOWS_PIPE_NAME.to_string());
+                    }
+                }
+
                 service.install(ServiceInstallCtx {
                     label: SERVICE_LABEL.clone(),
                     user,
@@ -176,7 +194,7 @@ impl ManagerSubcommand {
                         .ok()
                         .and_then(|p| p.to_str().map(ToString::to_string))
                         .unwrap_or_else(|| String::from("distant")),
-                    args: vec!["manager".to_string(), "listen".to_string()],
+                    args,
                 })?;
 
                 Ok(())
