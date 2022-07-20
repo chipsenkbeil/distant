@@ -115,10 +115,12 @@ impl Client {
         #[cfg(unix)]
         let transport = {
             use distant_core::net::UnixSocketTransport;
-            FramedTransport::new(
-                UnixSocketTransport::connect(self.network.unix_socket_path_or_default()).await?,
-                PlainCodec,
-            )
+            // TODO: Try multiple, collect errors, and then fail
+            for path in self.network.to_unix_socket_path_candidates() {
+                let transport = UnixSocketTransport::connect(path).await?;
+                FramedTransport::new(, PlainCodec)
+            }
+
         };
 
         #[cfg(windows)]
