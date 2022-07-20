@@ -1,4 +1,4 @@
-use crate::config::NetworkConfig;
+use crate::{config::NetworkConfig, error::ErrorBundle};
 use distant_core::{
     net::{AuthRequest, AuthResponse, FramedTransport, PlainCodec},
     DistantManagerClient, DistantManagerClientConfig,
@@ -115,22 +115,41 @@ impl Client {
         #[cfg(unix)]
         let transport = {
             use distant_core::net::UnixSocketTransport;
-            // TODO: Try multiple, collect errors, and then fail
+            let mut maybe_transport = None;
+            let mut bundle = ErrorBundle::new("Failed to connect to unix socket");
             for path in self.network.to_unix_socket_path_candidates() {
-                let transport = UnixSocketTransport::connect(path).await?;
-                FramedTransport::new(, PlainCodec)
+                match UnixSocketTransport::connect(path).await {
+                    Ok(transport) => {
+                        info!("Connected to unix socket @ {:?}", path);
+                        maybe_transport = Some(FramedTransport::new(transport, PlainCodec));
+                        break;
+                    }
+                    Err(x) => bundle.push(format!("<Unix Socket {:?}>", path), x),
+                }
             }
 
+            maybe_transport
+                .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, bundle))?
         };
 
         #[cfg(windows)]
         let transport = {
             use distant_core::net::WindowsPipeTransport;
-            FramedTransport::new(
-                WindowsPipeTransport::connect_local(self.network.windows_pipe_name_or_default())
-                    .await?,
-                PlainCodec,
-            )
+            let mut maybe_transport = None;
+            let mut bundle = ErrorBundle::new("Failed to connect to named windows pipe");
+            for name in self.network.to_windows_pipe_name_candidates() {
+                match WindowsPipeTransport::connect_local(name).await {
+                    Ok(transport) => {
+                        info!("Connected to named windows socket @ {:?}", name);
+                        maybe_transport = Some(FramedTransport::new(transport, PlainCodec));
+                        break;
+                    }
+                    Err(x) => bundle.push(format!("<Windows Pipe {:?}>", name), x),
+                }
+            }
+
+            maybe_transport
+                .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, bundle))?
         };
 
         DistantManagerClient::new(self.config, transport)

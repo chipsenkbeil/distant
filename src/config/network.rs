@@ -1,6 +1,5 @@
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 
 /// Represents common networking configuration
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
@@ -27,19 +26,8 @@ impl NetworkConfig {
         }
     }
 
-    /// Creates a string describing the active method (Unix Socket or Windows Pipe)
-    pub fn to_method_string(&self) -> String {
-        #[cfg(unix)]
-        {
-            format!("<Unix Socket {:?}>", self.unix_socket_path_or_default())
-        }
-        #[cfg(windows)]
-        {
-            format!("<Windows Pipe {:?}>", self.windows_pipe_name_or_default())
-        }
-    }
-
-    /// Returns a collection of candidate unix socket paths
+    /// Returns a collection of candidate unix socket paths, which will either be
+    /// the config-provided unix socket path or the default user and global socket paths
     #[cfg(unix)]
     pub fn to_unix_socket_path_candidates(&self) -> Vec<&std::path::Path> {
         match self.unix_socket.as_deref() {
@@ -51,7 +39,8 @@ impl NetworkConfig {
         }
     }
 
-    /// Returns a collection of candidate windows pipe names
+    /// Returns a collection of candidate windows pipe names, which will either be
+    /// the config-provided windows pipe name or the default user and global pipe names
     #[cfg(windows)]
     pub fn to_windows_pipe_name_candidates(&self) -> Vec<&str> {
         match self.windows_pipe.as_deref() {

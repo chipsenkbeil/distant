@@ -1,5 +1,6 @@
-use crate::config::NetworkConfig;
+use crate::{config::NetworkConfig, paths::global};
 use distant_core::{net::PlainCodec, DistantManager, DistantManagerConfig, DistantManagerRef};
+use log::*;
 use std::io;
 
 pub struct Manager {
@@ -16,31 +17,36 @@ impl Manager {
     pub async fn listen(self) -> io::Result<DistantManagerRef> {
         #[cfg(unix)]
         {
-            let boxed_ref = DistantManager::start_unix_socket(
-                self.config,
-                self.network.unix_socket_path_or_default(),
-                PlainCodec,
-            )
-            .await?
-            .into_inner()
-            .into_boxed_server_ref()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
+            let socket_path = self
+                .network
+                .unix_socket
+                .as_deref()
+                .unwrap_or_else(|| global::UNIX_SOCKET_PATH.as_path());
+            let boxed_ref = DistantManager::start_unix_socket(self.config, socket_path, PlainCodec)
+                .await?
+                .into_inner()
+                .into_boxed_server_ref()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
 
+            info!("Manager listening using unix socket @ {:?}", socket_path);
             Ok(*boxed_ref)
         }
 
         #[cfg(windows)]
         {
-            let boxed_ref = DistantManager::start_local_named_pipe(
-                self.config,
-                self.network.windows_pipe_name_or_default(),
-                PlainCodec,
-            )
-            .await?
-            .into_inner()
-            .into_boxed_server_ref()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
+            let pipe_name = self
+                .network
+                .windows_pipe
+                .as_deref()
+                .unwrap_or_else(|| global::WINDOWS_PIPE_NAME.as_str());
+            let boxed_ref =
+                DistantManager::start_local_named_pipe(self.config, pipe_name, PlainCodec)
+                    .await?
+                    .into_inner()
+                    .into_boxed_server_ref()
+                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
 
+            info!("Manager listening using local named pipe @ {:?}", pipe_name);
             Ok(*boxed_ref)
         }
     }

@@ -266,7 +266,7 @@ impl ManagerSubcommand {
             }
             Self::Listen { network, .. } => {
                 let network = network.merge(config.network);
-                info!("Starting manager: {}", network.to_method_string());
+                info!("Starting manager");
                 let manager_ref = Manager::new(DistantManagerConfig::default(), network)
                     .listen()
                     .await?;
@@ -294,11 +294,7 @@ impl ManagerSubcommand {
             }
             Self::Info { network, id } => {
                 let network = network.merge(config.network);
-                debug!(
-                    "Getting info about connection {} from manager: {:?}",
-                    id,
-                    network.as_os_str()
-                );
+                debug!("Getting info about connection {}", id);
                 let info = Client::new(network).connect().await?.info(id).await?;
 
                 #[derive(Tabled)]
@@ -333,10 +329,7 @@ impl ManagerSubcommand {
             }
             Self::List { network } => {
                 let network = network.merge(config.network);
-                debug!(
-                    "Getting list of connections from manager: {:?}",
-                    network.as_os_str()
-                );
+                debug!("Getting list of connections");
                 let list = Client::new(network).connect().await?.list().await?;
 
                 #[derive(Tabled)]
@@ -369,17 +362,13 @@ impl ManagerSubcommand {
             }
             Self::Kill { network, id } => {
                 let network = network.merge(config.network);
-                debug!(
-                    "Killing connection {} from manager: {:?}",
-                    id,
-                    network.as_os_str()
-                );
+                debug!("Killing connection {}", id);
                 Client::new(network).connect().await?.kill(id).await?;
                 Ok(())
             }
             Self::Shutdown { network } => {
                 let network = network.merge(config.network);
-                debug!("Shutting down manager: {:?}", network.as_os_str());
+                debug!("Shutting down manager");
                 Client::new(network).connect().await?.shutdown().await?;
                 Ok(())
             }

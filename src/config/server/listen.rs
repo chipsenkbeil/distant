@@ -1,6 +1,6 @@
 use clap::Args;
 use derive_more::Display;
-use distant_core::{net::PortRange, Extra};
+use distant_core::{net::PortRange, Map};
 use serde::{Deserialize, Serialize};
 use std::{
     env, io,
@@ -52,30 +52,28 @@ pub struct ServerListenConfig {
     pub current_dir: Option<PathBuf>,
 }
 
-impl From<Extra> for ServerListenConfig {
-    fn from(mut extra: Extra) -> Self {
+impl From<Map> for ServerListenConfig {
+    fn from(mut map: Map) -> Self {
         Self {
-            host: extra
+            host: map
                 .remove("host")
                 .and_then(|x| x.parse::<BindAddress>().ok()),
-            port: extra
-                .remove("port")
-                .and_then(|x| x.parse::<PortRange>().ok()),
-            use_ipv6: extra
+            port: map.remove("port").and_then(|x| x.parse::<PortRange>().ok()),
+            use_ipv6: map
                 .remove("use_ipv6")
                 .and_then(|x| x.parse::<bool>().ok())
                 .unwrap_or_default(),
-            shutdown_after: extra
+            shutdown_after: map
                 .remove("shutdown_after")
                 .and_then(|x| x.parse::<f32>().ok()),
-            current_dir: extra
+            current_dir: map
                 .remove("current_dir")
                 .and_then(|x| x.parse::<PathBuf>().ok()),
         }
     }
 }
 
-impl From<ServerListenConfig> for Extra {
+impl From<ServerListenConfig> for Map {
     fn from(config: ServerListenConfig) -> Self {
         let mut this = Self::new();
 

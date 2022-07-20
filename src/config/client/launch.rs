@@ -1,6 +1,6 @@
 use crate::config::BindAddress;
 use clap::Args;
-use distant_core::Extra;
+use distant_core::Map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -15,41 +15,41 @@ pub struct ClientLaunchConfig {
     pub ssh: ClientLaunchSshConfig,
 }
 
-impl From<Extra> for ClientLaunchConfig {
-    fn from(mut extra: Extra) -> Self {
+impl From<Map> for ClientLaunchConfig {
+    fn from(mut map: Map) -> Self {
         Self {
             distant: ClientLaunchDistantConfig {
-                bin: extra.remove("distant.bin"),
-                bind_server: extra
+                bin: map.remove("distant.bin"),
+                bind_server: map
                     .remove("distant.bind_server")
                     .and_then(|x| x.parse::<BindAddress>().ok()),
-                args: extra.remove("distant.args"),
-                no_shell: extra
+                args: map.remove("distant.args"),
+                no_shell: map
                     .remove("distant.no_shell")
                     .and_then(|x| x.parse::<bool>().ok())
                     .unwrap_or_default(),
             },
             ssh: ClientLaunchSshConfig {
-                bin: extra.remove("ssh.bind"),
+                bin: map.remove("ssh.bind"),
                 #[cfg(any(feature = "libssh", feature = "ssh2"))]
-                backend: extra
+                backend: map
                     .remove("ssh.backend")
                     .and_then(|x| x.parse::<distant_ssh2::SshBackend>().ok()),
-                external: extra
+                external: map
                     .remove("ssh.external")
                     .and_then(|x| x.parse::<bool>().ok())
                     .unwrap_or_default(),
-                username: extra.remove("ssh.username"),
-                identity_file: extra
+                username: map.remove("ssh.username"),
+                identity_file: map
                     .remove("ssh.identity_file")
                     .and_then(|x| x.parse::<PathBuf>().ok()),
-                port: extra.remove("ssh.port").and_then(|x| x.parse::<u16>().ok()),
+                port: map.remove("ssh.port").and_then(|x| x.parse::<u16>().ok()),
             },
         }
     }
 }
 
-impl From<ClientLaunchConfig> for Extra {
+impl From<ClientLaunchConfig> for Map {
     fn from(config: ClientLaunchConfig) -> Self {
         let mut this = Self::new();
 

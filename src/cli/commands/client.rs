@@ -200,7 +200,7 @@ pub enum ClientSubcommand {
         network: NetworkConfig,
 
         /// Environment variables to provide to the shell
-        #[clap(long, default_value_t = Environment::default())]
+        #[clap(long, default_value_t)]
         environment: Environment,
 
         /// If provided, will run in persist mode, meaning that the process will not be killed if the
@@ -243,7 +243,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {}", network.to_method_string());
+                debug!("Connecting to manager");
                 let mut client = Client::new(network).connect().await?;
 
                 let connection_id =
@@ -361,7 +361,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {}", network.to_method_string());
+                debug!("Connecting to manager");
                 let mut client = {
                     let client = match format {
                         Format::Shell => Client::new(network),
@@ -389,7 +389,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {}", network.to_method_string());
+                debug!("Connecting to manager");
                 let mut client = {
                     let client = match format {
                         Format::Shell => Client::new(network),
@@ -445,7 +445,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {}", network.to_method_string());
+                debug!("Connecting to manager");
                 let mut client = Client::new(network).connect().await?;
 
                 let connection_id =
@@ -468,7 +468,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {}", network.to_method_string());
+                debug!("Connecting to manager");
                 let mut client = Client::new(network)
                     .using_msg_stdin_stdout()
                     .connect()
@@ -552,7 +552,7 @@ impl ClientSubcommand {
                 }
                 None => {
                     let network = network.merge(config.network);
-                    debug!("Connecting to manager: {}", network.to_method_string());
+                    debug!("Connecting to manager");
                     let mut client = Client::new(network).connect().await?;
                     let list = client.list().await?;
 
@@ -621,7 +621,7 @@ impl ClientSubcommand {
                 ..
             } => {
                 let network = network.merge(config.network);
-                debug!("Connecting to manager: {}", network.to_method_string());
+                debug!("Connecting to manager");
                 let mut client = Client::new(network).connect().await?;
 
                 let connection_id =
