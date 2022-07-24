@@ -2,6 +2,7 @@ use crate::{Listener, UnixSocketTransport};
 use async_trait::async_trait;
 use std::{
     fmt, io,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 use tokio::net::{UnixListener, UnixStream};
@@ -13,9 +14,16 @@ pub struct UnixSocketListener {
 }
 
 impl UnixSocketListener {
-    /// Creates a new listener by binding to the specified path, failing
-    /// if the path already exists
+    /// Creates a new listener by binding to the specified path, failing if the path already
+    /// exists. Sets permission of unix socket to `0o600` where only the owner can read from and
+    /// write to the socket.
     pub async fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::bind_with_permissions(path, 0o600).await
+    }
+
+    /// Creates a new listener by binding to the specified path, failing if the path already
+    /// exists. Sets the unix socket file permissions to `mode`.
+    pub async fn bind_with_permissions(path: impl AsRef<Path>, mode: u32) -> io::Result<Self> {
         // Attempt to bind to the path, and if we fail, we see if we can connect
         // to the path -- if not, we can try to delete the path and start again
         let listener = match UnixListener::bind(path.as_ref()) {
@@ -32,6 +40,16 @@ impl UnixSocketListener {
                 UnixListener::bind(path.as_ref())?
             }
         };
+
+        // TODO: We should be setting this permission during bind, but neither std library nor
+        //       tokio have support for this. We would need to create our own raw socket and
+        //       use libc to change the permissions via the raw file descriptor
+        //
+        // See https://github.com/chipsenkbeil/distant/issues/111
+        let mut permissions = tokio::fs::metadata(path.as_ref()).await?.permissions();
+        permissions.set_mode(mode);
+        tokio::fs::set_permissions(path.as_ref(), permissions).await?;
+
         Ok(Self {
             path: path.as_ref().to_path_buf(),
             inner: listener,

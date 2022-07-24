@@ -2,6 +2,7 @@ use directories::ProjectDirs;
 use once_cell::sync::Lazy;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 const SOCKET_FILE_STR: &str = "distant.sock";
 
 /// User-oriented paths
@@ -65,10 +66,10 @@ pub mod user {
 pub mod global {
     use super::*;
 
+    /// Windows ProgramData directory from from the %ProgramData% environment variable
     #[cfg(windows)]
     static PROGRAM_DATA_DIR: Lazy<PathBuf> = Lazy::new(|| {
         PathBuf::from(std::env::var("ProgramData").expect("Could not determine %ProgramData%"))
-            .join("distant")
     });
 
     #[cfg(windows)]
