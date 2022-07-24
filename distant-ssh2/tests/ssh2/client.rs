@@ -1,7 +1,7 @@
 use crate::sshd::*;
 use assert_fs::{prelude::*, TempDir};
 use distant_core::{
-    data::{ChangeKindSet, FileType, Metadata},
+    data::{ChangeKindSet, Environment, FileType, Metadata},
     DistantChannelExt, DistantClient,
 };
 use once_cell::sync::Lazy;
@@ -1148,6 +1148,8 @@ async fn proc_spawn_should_not_fail_even_if_process_not_found(#[future] client: 
     let _ = client
         .spawn(
             /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1168,6 +1170,8 @@ async fn proc_spawn_should_return_id_of_spawned_process(#[future] client: Distan
                 *SCRIPT_RUNNER,
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
             ),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1194,6 +1198,8 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
                 *SCRIPT_RUNNER,
                 ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
             ),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1228,6 +1234,8 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
                 *SCRIPT_RUNNER,
                 ECHO_ARGS_TO_STDERR_SH.to_str().unwrap()
             ),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1256,6 +1264,8 @@ async fn proc_spawn_should_send_done_signal_when_completed(#[future] client: Dis
         .spawn(
             /* cmd */
             format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1274,6 +1284,8 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(#[future] client
         .spawn(
             /* cmd */
             format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1297,6 +1309,8 @@ async fn proc_kill_should_fail_if_process_not_running(#[future] client: DistantC
         .spawn(
             /* cmd */
             format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1323,6 +1337,8 @@ async fn proc_stdin_should_fail_if_process_not_running(#[future] client: Distant
         .spawn(
             /* cmd */
             format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )
@@ -1357,6 +1373,8 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] client: DistantClient
                 *SCRIPT_RUNNER,
                 ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap()
             ),
+            /* environment */ Environment::new(),
+            /* current_dir */ None,
             /* persist */ false,
             /* pty */ None,
         )

@@ -3,8 +3,8 @@ use crate::{
         RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Watcher,
     },
     data::{
-        ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Error as Failure,
-        Metadata, PtySize, SystemInfo,
+        ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Environment,
+        Error as Failure, Metadata, PtySize, SystemInfo,
     },
     DistantMsg,
 };
@@ -89,6 +89,8 @@ pub trait DistantChannelExt {
     fn spawn(
         &mut self,
         cmd: impl Into<String>,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess>;
@@ -97,6 +99,8 @@ pub trait DistantChannelExt {
     fn spawn_lsp(
         &mut self,
         cmd: impl Into<String>,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess>;
@@ -105,6 +109,8 @@ pub trait DistantChannelExt {
     fn output(
         &mut self,
         cmd: impl Into<String>,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteOutput>;
 
@@ -326,12 +332,16 @@ impl DistantChannelExt
     fn spawn(
         &mut self,
         cmd: impl Into<String>,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess> {
         let cmd = cmd.into();
         Box::pin(async move {
             RemoteCommand::new()
+                .environment(environment)
+                .current_dir(current_dir)
                 .persist(persist)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
@@ -342,12 +352,16 @@ impl DistantChannelExt
     fn spawn_lsp(
         &mut self,
         cmd: impl Into<String>,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess> {
         let cmd = cmd.into();
         Box::pin(async move {
             RemoteLspCommand::new()
+                .environment(environment)
+                .current_dir(current_dir)
                 .persist(persist)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
@@ -358,11 +372,15 @@ impl DistantChannelExt
     fn output(
         &mut self,
         cmd: impl Into<String>,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteOutput> {
         let cmd = cmd.into();
         Box::pin(async move {
             RemoteCommand::new()
+                .environment(environment)
+                .current_dir(current_dir)
                 .persist(false)
                 .pty(pty)
                 .spawn(self.clone(), cmd)

@@ -4,6 +4,7 @@ compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this c
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::{
+    data::Environment,
     net::{
         FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
         XChaCha20Poly1305Codec,
@@ -573,7 +574,7 @@ impl Ssh {
         // Spawn distant server and detach it so that we don't kill it when the
         // ssh client is closed
         debug!("Executing {}", cmd);
-        let output = client.output(cmd, None).await?;
+        let output = client.output(cmd, Environment::new(), None, None).await?;
         debug!(
             "Completed with success = {}, code = {:?}",
             output.success, output.code

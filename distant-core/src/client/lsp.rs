@@ -3,12 +3,13 @@ use crate::{
         DistantChannel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin,
         RemoteStdout,
     },
-    data::PtySize,
+    data::{Environment, PtySize},
 };
 use futures::stream::{Stream, StreamExt};
 use std::{
     io::{self, Cursor, Read},
     ops::{Deref, DerefMut},
+    path::PathBuf,
 };
 use tokio::{
     sync::mpsc::{self, error::TryRecvError},
@@ -23,6 +24,8 @@ pub use msg::*;
 pub struct RemoteLspCommand {
     persist: bool,
     pty: Option<PtySize>,
+    environment: Environment,
+    current_dir: Option<PathBuf>,
 }
 
 impl Default for RemoteLspCommand {
@@ -37,6 +40,8 @@ impl RemoteLspCommand {
         Self {
             persist: false,
             pty: None,
+            environment: Environment::new(),
+            current_dir: None,
         }
     }
 
@@ -54,6 +59,18 @@ impl RemoteLspCommand {
         self
     }
 
+    /// Replaces the existing environment variables with the given collection
+    pub fn environment(&mut self, environment: Environment) -> &mut Self {
+        self.environment = environment;
+        self
+    }
+
+    /// Configures the process with an alternative current directory
+    pub fn current_dir(&mut self, current_dir: Option<PathBuf>) -> &mut Self {
+        self.current_dir = current_dir;
+        self
+    }
+
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
     pub async fn spawn(
@@ -62,6 +79,8 @@ impl RemoteLspCommand {
         cmd: impl Into<String>,
     ) -> io::Result<RemoteLspProcess> {
         let mut command = RemoteCommand::new();
+        command.environment(self.environment.clone());
+        command.current_dir(self.current_dir.clone());
         command.persist(self.persist);
         command.pty(self.pty);
 
