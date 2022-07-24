@@ -137,7 +137,7 @@ impl Cli {
 
     #[cfg(windows)]
     pub fn is_manager_listen_command(&self) -> bool {
-        match self.command {
+        match &self.command {
             DistantSubcommand::Manager(cmd) => cmd.is_listen(),
             _ => false,
         }
