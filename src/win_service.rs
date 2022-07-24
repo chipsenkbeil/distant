@@ -1,6 +1,13 @@
-use super::{ExitCode, ExitCodeError};
+use super::{Cli, ExitCode, ExitCodeError};
 use log::*;
-use std::{ffi::OsString, io, sync::mpsc, thread, time::Duration};
+use std::{
+    ffi::{OsStr, OsString},
+    io,
+    path::Path,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 use windows_service::{
     define_windows_service,
     service::{
@@ -67,9 +74,7 @@ pub fn run() -> Result<(), ServiceError> {
     // Attempt to run as a service, deleting our config when completed
     // regardless of success
     let result = service_dispatcher::start(SERVICE_NAME, ffi_service_main);
-    let config_result = config
-        .delete()
-        .map_err(ServiceError::FailedToDeleteServiceConfig);
+    let config_result = Config::delete().map_err(ServiceError::FailedToDeleteServiceConfig);
 
     // Swallow the config error if we have a service error, otherwise display
     // the config error
