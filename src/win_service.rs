@@ -8,7 +8,7 @@ use windows_service::{
         ServiceType,
     },
     service_control_handler::{self, ServiceControlHandlerResult},
-    service_dispatcher, Result,
+    service_dispatcher,
 };
 
 const SERVICE_NAME: &str = "distant_manager";
@@ -116,7 +116,7 @@ fn service_main(_arguments: Vec<OsString>) {
     }
 }
 
-fn run_service() -> Result<()> {
+fn run_service() -> windows_service::Result<()> {
     debug!("Starting windows service for {SERVICE_NAME}");
 
     // Create a channel to be able to poll a stop event from the service worker loop.
