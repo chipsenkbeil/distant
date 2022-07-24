@@ -39,10 +39,7 @@ impl Manager {
                 self.config,
                 socket_path,
                 PlainCodec,
-                self.network
-                    .unix_socket_permissions
-                    .unwrap_or_default()
-                    .into_mode(),
+                self.network.access.unwrap_or_default().into_mode(),
             )
             .await?
             .into_inner()

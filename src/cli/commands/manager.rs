@@ -1,8 +1,9 @@
 use crate::{
-    cli::{CliResult, Client, Manager},
+    cli::{Cache, CliResult, Client, Manager},
     config::{ManagerConfig, NetworkConfig},
+    paths::user::CACHE_FILE_PATH_STR,
 };
-use clap::Subcommand;
+use clap::{Subcommand, ValueHint};
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 use log::*;
 use once_cell::sync::Lazy;
@@ -53,6 +54,15 @@ pub enum ManagerSubcommand {
     List {
         #[clap(flatten)]
         network: NetworkConfig,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
     },
 
     /// Kill a specific connection
@@ -301,13 +311,17 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::List { network } => {
+            Self::List { network, cache } => {
                 let network = network.merge(config.network);
                 debug!("Getting list of connections");
                 let list = Client::new(network).connect().await?.list().await?;
 
+                debug!("Looking up selected connection");
+                let selected = Cache::read_from_disk_or_default(cache).await?.data.selected;
+
                 #[derive(Tabled)]
                 struct ListRow {
+                    selected: bool,
                     id: ConnectionId,
                     scheme: String,
                     host: String,
@@ -318,6 +332,7 @@ impl ManagerSubcommand {
                     "{}",
                     Table::new(list.into_iter().map(|(id, destination)| {
                         ListRow {
+                            selected: *selected == id,
                             id,
                             scheme: destination
                                 .scheme()

@@ -1,12 +1,11 @@
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-/// Permissions to apply to a Unix socket
-#[cfg(unix)]
+/// Level of access control to the unix socket or windows pipe
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
-pub enum UnixSocketPermissions {
+pub enum AccessControl {
     /// Equates to `0o600` on Unix (read & write for owner)
     Owner,
 
@@ -17,8 +16,7 @@ pub enum UnixSocketPermissions {
     Anyone,
 }
 
-#[cfg(unix)]
-impl UnixSocketPermissions {
+impl AccessControl {
     /// Converts into a Unix file permission octal
     pub fn into_mode(self) -> u32 {
         match self {
@@ -29,8 +27,7 @@ impl UnixSocketPermissions {
     }
 }
 
-#[cfg(unix)]
-impl Default for UnixSocketPermissions {
+impl Default for AccessControl {
     /// Defaults to owner-only permissions
     fn default() -> Self {
         Self::Owner
@@ -40,15 +37,14 @@ impl Default for UnixSocketPermissions {
 /// Represents common networking configuration
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NetworkConfig {
+    /// Type of access to apply to created unix socket or windows pipe
+    #[clap(long, value_enum)]
+    pub access: Option<AccessControl>,
+
     /// Override the path to the Unix socket used by the manager
     #[cfg(unix)]
     #[clap(long)]
     pub unix_socket: Option<std::path::PathBuf>,
-
-    /// Type of permissioning to apply to created unix socket during listen
-    #[cfg(unix)]
-    #[clap(long, value_enum)]
-    pub unix_socket_permissions: Option<UnixSocketPermissions>,
 
     /// Override the name of the local named Windows pipe used by the manager
     #[cfg(windows)]
@@ -59,13 +55,10 @@ pub struct NetworkConfig {
 impl NetworkConfig {
     pub fn merge(self, other: Self) -> Self {
         Self {
-            #[cfg(unix)]
-            unix_socket: self.unix_socket.or(other.unix_socket),
+            access: self.access.or(other.access),
 
             #[cfg(unix)]
-            unix_socket_permissions: self
-                .unix_socket_permissions
-                .or(other.unix_socket_permissions),
+            unix_socket: self.unix_socket.or(other.unix_socket),
 
             #[cfg(windows)]
             windows_pipe: self.windows_pipe.or(other.windows_pipe),
