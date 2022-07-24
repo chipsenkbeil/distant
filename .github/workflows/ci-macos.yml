@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
+      - name: Run net tests (default features)
+        run: cargo test --release --verbose -p distant-net
       - name: Run core tests (default features)
         run: cargo test --release --verbose -p distant-core
       - name: Run core tests (all features)
