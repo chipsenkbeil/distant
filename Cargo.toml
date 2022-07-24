@@ -42,7 +42,6 @@ serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
 shell-words = "1.0"
 service-manager = { version = "0.1.2", features = ["clap", "serde"] }
-sysinfo = "0.23.13"
 tabled = "0.7.0"
 tokio = { version = "1.19.0", features = ["full"] }
 toml_edit = { version = "0.14.4", features = ["serde"] }
@@ -59,7 +58,8 @@ distant-ssh2 = { version = "=0.17.0", path = "distant-ssh2", default-features = 
 fork = "0.1.19"
 
 [target.'cfg(windows)'.dependencies]
-windows-service = "0.4.0"
+sysinfo = "0.24.7"
+windows-service = "0.5"
 
 [dev-dependencies]
 assert_cmd = "2.0.4"

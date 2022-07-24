@@ -3,7 +3,7 @@ use crate::{
     paths, ExitCode,
 };
 use clap::Parser;
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 mod cache;
 mod client;
@@ -46,11 +46,20 @@ struct Opt {
 impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
     pub fn initialize() -> CliResult<Self> {
+        Self::initialize_from(std::env::args_os())
+    }
+
+    /// Creates a new CLI instance by parsing providing arguments
+    pub fn initialize_from<I, T>(args: I) -> CliResult<Self>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
         let Opt {
             mut common,
             config_path,
             command,
-        } = Opt::try_parse().map_err(CliError::Usage)?;
+        } = Opt::try_parse_from(args).map_err(CliError::Usage)?;
 
         // Try to load a configuration file, defaulting if no config file is found
         let config = Config::load_multi(config_path).map_err(ExitCode::config_error)?;
@@ -124,6 +133,14 @@ impl Cli {
         );
 
         logger.start().expect("Failed to initialize logger")
+    }
+
+    #[cfg(windows)]
+    pub fn is_manager_listen_command(&self) -> bool {
+        match self.command {
+            DistantSubcommand::Manager(cmd) => cmd.is_listen(),
+            _ => false,
+        }
     }
 
     /// Runs the CLI
