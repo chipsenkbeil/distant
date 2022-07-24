@@ -1,15 +1,16 @@
 use crate::{
-    cli::{
-        CliResult, Client, Manager, Service, ServiceInstallCtx, ServiceKind, ServiceLabel,
-        ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
-    },
+    cli::{CliResult, Client, Manager},
     config::{ManagerConfig, NetworkConfig},
 };
 use clap::Subcommand;
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 use log::*;
 use once_cell::sync::Lazy;
-use std::io;
+use service_manager::{
+    ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceManagerKind,
+    ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
+};
+use std::{ffi::OsString, io, path::PathBuf};
 use tabled::{Table, Tabled};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
@@ -73,19 +74,27 @@ pub enum ManagerServiceSubcommand {
     Start {
         /// Type of service manager used to run this service, defaulting to platform native
         #[clap(long, value_enum)]
-        kind: Option<ServiceKind>,
+        kind: Option<ServiceManagerKind>,
+
+        /// If specified, starts as a user-level service
+        #[clap(long)]
+        user: bool,
     },
 
     /// Stop the manager as a service
     Stop {
         #[clap(long, value_enum)]
-        kind: Option<ServiceKind>,
+        kind: Option<ServiceManagerKind>,
+
+        /// If specified, stops a user-level service
+        #[clap(long)]
+        user: bool,
     },
 
     /// Install the manager as a service
     Install {
         #[clap(long, value_enum)]
-        kind: Option<ServiceKind>,
+        kind: Option<ServiceManagerKind>,
 
         /// If specified, installs as a user-level service
         #[clap(long)]
@@ -95,7 +104,7 @@ pub enum ManagerServiceSubcommand {
     /// Uninstall the manager as a service
     Uninstall {
         #[clap(long, value_enum)]
-        kind: Option<ServiceKind>,
+        kind: Option<ServiceManagerKind>,
 
         /// If specified, uninstalls a user-level service
         #[clap(long)]
@@ -152,40 +161,49 @@ impl ManagerSubcommand {
 
     async fn async_run(self, config: ManagerConfig) -> CliResult<()> {
         match self {
-            Self::Service(ManagerServiceSubcommand::Start { kind }) => {
+            Self::Service(ManagerServiceSubcommand::Start { kind, user }) => {
                 debug!("Starting manager service via {:?}", kind);
-                let service = <dyn Service>::target_or_native(kind)?;
-                service.start(ServiceStartCtx {
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+
+                if user {
+                    manager.set_level(ServiceLevel::User)?;
+                }
+
+                manager.start(ServiceStartCtx {
                     label: SERVICE_LABEL.clone(),
                 })?;
                 Ok(())
             }
-            Self::Service(ManagerServiceSubcommand::Stop { kind }) => {
+            Self::Service(ManagerServiceSubcommand::Stop { kind, user }) => {
                 debug!("Stopping manager service via {:?}", kind);
-                let service = <dyn Service>::target_or_native(kind)?;
-                service.stop(ServiceStopCtx {
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+
+                if user {
+                    manager.set_level(ServiceLevel::User)?;
+                }
+
+                manager.stop(ServiceStopCtx {
                     label: SERVICE_LABEL.clone(),
                 })?;
                 Ok(())
             }
             Self::Service(ManagerServiceSubcommand::Install { kind, user }) => {
                 debug!("Installing manager service via {:?}", kind);
-                let service = <dyn Service>::target_or_native(kind)?;
-                let mut args = vec!["manager".to_string(), "listen".to_string()];
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+                let mut args = vec![OsString::from("manager"), OsString::from("listen")];
 
                 if user {
-                    args.push("--user".to_string());
+                    args.push(OsString::from("--user"));
+                    manager.set_level(ServiceLevel::User)?;
                 }
 
-                service.install(ServiceInstallCtx {
+                manager.install(ServiceInstallCtx {
                     label: SERVICE_LABEL.clone(),
-                    user,
 
                     // distant manager listen
                     program: std::env::current_exe()
                         .ok()
-                        .and_then(|p| p.to_str().map(ToString::to_string))
-                        .unwrap_or_else(|| String::from("distant")),
+                        .unwrap_or_else(|| PathBuf::from("distant")),
                     args,
                 })?;
 
@@ -193,10 +211,12 @@ impl ManagerSubcommand {
             }
             Self::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
                 debug!("Uninstalling manager service via {:?}", kind);
-                let service = <dyn Service>::target_or_native(kind)?;
-                service.uninstall(ServiceUninstallCtx {
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+                if user {
+                    manager.set_level(ServiceLevel::User)?;
+                }
+                manager.uninstall(ServiceUninstallCtx {
                     label: SERVICE_LABEL.clone(),
-                    user,
                 })?;
 
                 Ok(())

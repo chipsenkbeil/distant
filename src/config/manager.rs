@@ -1,8 +1,8 @@
 use super::{CommonConfig, NetworkConfig};
-use crate::cli::ServiceKind;
 use clap::Args;
 use distant_core::Destination;
 use serde::{Deserialize, Serialize};
+use service_manager::ServiceManagerKind;
 
 /// Represents configuration settings for the distant manager
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub struct ManagerConfig {
     pub network: NetworkConfig,
 
     #[clap(value_enum)]
-    pub service: Option<ServiceKind>,
+    pub service: Option<ServiceManagerKind>,
 }
 
 /// Represents configuration for some managed connection

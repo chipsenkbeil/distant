@@ -731,6 +731,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca3aa72a6f96ea37bbc5aa912f6788242832f75369bdfdadcb0e38423f100059"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -787,6 +796,7 @@ dependencies = [
  "rstest 0.11.0",
  "serde",
  "serde_json",
+ "service-manager",
  "shell-words",
  "sysinfo",
  "tabled",
@@ -2456,6 +2466,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "service-manager"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2e5a1853e0e9ea3ba33836006f799b250f7fb4782cc32bf92526d482fd88c22"
+dependencies = [
+ "clap",
+ "dirs 4.0.0",
+ "serde",
+ "which",
+]
+
+[[package]]
 name = "sha2"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2733,7 +2755,7 @@ version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76971977e6121664ec1b960d1313aacfa75642adc93b9d4d53b247bd4cb1747e"
 dependencies = [
- "dirs",
+ "dirs 2.0.2",
  "fnv",
  "nom 5.1.2",
  "phf",

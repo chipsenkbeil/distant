@@ -10,7 +10,6 @@ mod client;
 mod commands;
 mod error;
 mod manager;
-mod service;
 mod spawner;
 
 pub(crate) use cache::Cache;
@@ -18,7 +17,6 @@ pub(crate) use client::Client;
 use commands::DistantSubcommand;
 pub use error::{CliError, CliResult};
 pub(crate) use manager::Manager;
-pub(crate) use service::*;
 
 #[cfg(windows)]
 pub(crate) use spawner::Spawner;
