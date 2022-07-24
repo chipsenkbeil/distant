@@ -36,13 +36,29 @@ jobs:
         run: cargo test --release --verbose --all-features -p distant-core
       - name: Ensure /run/sshd exists on Unix
         run: mkdir -p /run/sshd
-      - name: Run ssh2 tests (default features)
-        run: cargo test --release --verbose -p distant-ssh2
-      - name: Run ssh2 tests (all features)
-        run: cargo test --release --verbose --all-features -p distant-ssh2
+      - name: Run ssh2 client tests (default features)
+        run: cargo test --release --verbose -p distant-ssh2 ssh2::client
+      - name: Run ssh2 client tests (all features)
+        run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::client
       - name: Run CLI tests
         run: cargo test --release --verbose
         shell: bash
       - name: Run CLI tests (no default features)
         run: cargo test --release --verbose --no-default-features
         shell: bash
+  ssh-launch-tests:
+    name: "Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rust: stable, os: ubuntu-latest }
+          - { rust: 1.59.0, os: ubuntu-latest }
+    steps:
+      - name: Install distant cli for use in system tests
+        run: cargo install --path .
+      - name: Run ssh2 launch tests (default features)
+        run: cargo test --release --verbose -p distant-ssh2 ssh2::launched
+      - name: Run ssh2 launch tests (all features)
+        run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::launched

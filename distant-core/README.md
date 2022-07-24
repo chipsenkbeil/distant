@@ -1,13 +1,13 @@
 # distant core
 
-[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![Rustc 1.51.0][distant_rustc_img]][distant_rustc_lnk]
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![Rustc 1.59.0][distant_rustc_img]][distant_rustc_lnk]
 
 [distant_crates_img]: https://img.shields.io/crates/v/distant-core.svg
 [distant_crates_lnk]: https://crates.io/crates/distant-core
 [distant_doc_img]: https://docs.rs/distant-core/badge.svg
 [distant_doc_lnk]: https://docs.rs/distant-core
-[distant_rustc_img]: https://img.shields.io/badge/distant_core-rustc_1.51+-lightgray.svg
-[distant_rustc_lnk]: https://blog.rust-lang.org/2021/03/25/Rust-1.51.0.html
+[distant_rustc_img]: https://img.shields.io/badge/distant_core-rustc_1.59+-lightgray.svg
+[distant_rustc_lnk]: https://blog.rust-lang.org/2022/02/24/Rust-1.59.0.html
 
 Library that powers the [`distant`](https://github.com/chipsenkbeil/distant)
 binary.
@@ -20,7 +20,7 @@ The `distant-core` library supplies a mixture of functionality and data to run
 servers that operate on remote machines and clients that talk to them.
 
 - Asynchronous in nature, powered by [`tokio`](https://tokio.rs/)
-- Data is serialized to send across the wire via [`CBOR`](https://cbor.io/)
+- Data is serialized to send across the wire via [`msgpack`](https://msgpack.org/)
 - Encryption & authentication are handled via
   [XChaCha20Poly1305](https://tools.ietf.org/html/rfc8439) for an authenticated
   encryption scheme via
@@ -46,26 +46,27 @@ By default, no features are enabled on the library.
 
 ## Examples
 
-Below is an example of connecting to a distant server over TCP:
+Below is an example of connecting to a distant server over TCP without any
+encryption or authentication:
 
 ```rust
-use distant_core::{Session, SessionChannelExt, SecretKey32, XChaCha20Poly1305Codec};
-use std::net::SocketAddr;
+use distant_core::{
+  DistantClient,
+  DistantChannelExt,
+  net::{PlainCodec, TcpClientExt},
+};
+use std::{net::SocketAddr, path::Path};
 
-// 32-byte secret key paresd from hex, used for a specific codec
-let key: SecretKey32 = "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF".parse().unwrap();
-let codec = XChaCha20Poly1305Codec::from(key);
-
+// Connect to a server located at example.com on port 8080 that is using
+// no encryption or authentication (PlainCodec)
 let addr: SocketAddr = "example.com:8080".parse().unwrap();
-let mut session = Session::tcp_connect(addr, codec).await.unwrap();
+let mut client = DistantClient::connect(addr, PlainCodec).await
+  .expect("Failed to connect");
 
-// Append text to a file, representing request as <tenant>
-// NOTE: This method comes from SessionChannelExt
-session.append_file_text(
-    "<tenant>", 
-    "path/to/file.txt".to_string(), 
-    "new contents"
-).await.expect("Failed to append to file");
+// Append text to a file
+// NOTE: This method comes from DistantChannelExt
+client.append_file_text(Path::new("path/to/file.txt"), "new contents").await
+  .expect("Failed to append to file");
 ```
 
 ## License
