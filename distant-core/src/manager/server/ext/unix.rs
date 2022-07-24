@@ -5,7 +5,8 @@ use distant_net::{
 use std::{io, path::Path};
 
 impl DistantManager {
-    /// Start a new server using the specified path as a unix socket
+    /// Start a new server using the specified path as a unix socket using default unix socket file
+    /// permissions
     pub async fn start_unix_socket<P, C>(
         config: DistantManagerConfig,
         path: P,
@@ -15,7 +16,28 @@ impl DistantManager {
         P: AsRef<Path> + Send,
         C: Codec + Send + Sync + 'static,
     {
-        let listener = UnixSocketListener::bind(path).await?;
+        Self::start_unix_socket_with_permissions(
+            config,
+            path,
+            codec,
+            UnixSocketListener::default_unix_socket_file_permissions(),
+        )
+        .await
+    }
+
+    /// Start a new server using the specified path as a unix socket and `mode` as the unix socket
+    /// file permissions
+    pub async fn start_unix_socket_with_permissions<P, C>(
+        config: DistantManagerConfig,
+        path: P,
+        codec: C,
+        mode: u32,
+    ) -> io::Result<UnixSocketServerRef>
+    where
+        P: AsRef<Path> + Send,
+        C: Codec + Send + Sync + 'static,
+    {
+        let listener = UnixSocketListener::bind_with_permissions(path, mode).await?;
         let path = listener.path().to_path_buf();
 
         let listener = MappedListener::new(listener, move |transport| {

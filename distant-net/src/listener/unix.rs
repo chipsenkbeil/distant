@@ -18,7 +18,7 @@ impl UnixSocketListener {
     /// exists. Sets permission of unix socket to `0o600` where only the owner can read from and
     /// write to the socket.
     pub async fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
-        Self::bind_with_permissions(path, 0o600).await
+        Self::bind_with_permissions(path, Self::default_unix_socket_file_permissions()).await
     }
 
     /// Creates a new listener by binding to the specified path, failing if the path already
@@ -59,6 +59,11 @@ impl UnixSocketListener {
     /// Returns the path to the socket
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Returns the default unix socket file permissions as an octal (e.g. `0o600`)
+    pub const fn default_unix_socket_file_permissions() -> u32 {
+        0o600
     }
 }
 

@@ -1,6 +1,42 @@
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
+/// Permissions to apply to a Unix socket
+#[cfg(unix)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[clap(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum UnixSocketPermissions {
+    /// Equates to `0o600` on Unix (read & write for owner)
+    Owner,
+
+    /// Equates to `0o660` on Unix (read & write for owner and group)
+    Group,
+
+    /// Equates to `0o666` on Unix (read & write for owner, group, and other)
+    Anyone,
+}
+
+#[cfg(unix)]
+impl UnixSocketPermissions {
+    /// Converts into a Unix file permission octal
+    pub fn into_mode(self) -> u32 {
+        match self {
+            Self::Owner => 0o600,
+            Self::Group => 0o660,
+            Self::Anyone => 0o666,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Default for UnixSocketPermissions {
+    /// Defaults to owner-only permissions
+    fn default() -> Self {
+        Self::Owner
+    }
+}
+
 /// Represents common networking configuration
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NetworkConfig {
@@ -8,6 +44,11 @@ pub struct NetworkConfig {
     #[cfg(unix)]
     #[clap(long)]
     pub unix_socket: Option<std::path::PathBuf>,
+
+    /// Type of permissioning to apply to created unix socket during listen
+    #[cfg(unix)]
+    #[clap(long, value_enum)]
+    pub unix_socket_permissions: Option<UnixSocketPermissions>,
 
     /// Override the name of the local named Windows pipe used by the manager
     #[cfg(windows)]
@@ -20,6 +61,11 @@ impl NetworkConfig {
         Self {
             #[cfg(unix)]
             unix_socket: self.unix_socket.or(other.unix_socket),
+
+            #[cfg(unix)]
+            unix_socket_permissions: self
+                .unix_socket_permissions
+                .or(other.unix_socket_permissions),
 
             #[cfg(windows)]
             windows_pipe: self.windows_pipe.or(other.windows_pipe),

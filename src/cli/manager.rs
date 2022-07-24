@@ -29,11 +29,20 @@ impl Manager {
                     global_paths::UNIX_SOCKET_PATH.as_path()
                 }
             });
-            let boxed_ref = DistantManager::start_unix_socket(self.config, socket_path, PlainCodec)
-                .await?
-                .into_inner()
-                .into_boxed_server_ref()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
+
+            let boxed_ref = DistantManager::start_unix_socket_with_permissions(
+                self.config,
+                socket_path,
+                PlainCodec,
+                self.network
+                    .unix_socket_permissions
+                    .unwrap_or_default()
+                    .into_mode(),
+            )
+            .await?
+            .into_inner()
+            .into_boxed_server_ref()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
 
             info!("Manager listening using unix socket @ {:?}", socket_path);
             Ok(*boxed_ref)
