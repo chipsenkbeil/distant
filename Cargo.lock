@@ -2467,9 +2467,9 @@ dependencies = [
 
 [[package]]
 name = "service-manager"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2e5a1853e0e9ea3ba33836006f799b250f7fb4782cc32bf92526d482fd88c22"
+checksum = "82674abe3475bafd317b8a8be4e626fa2b5d16523dff069b0fe585c151e849eb"
 dependencies = [
  "clap",
  "dirs 4.0.0",
