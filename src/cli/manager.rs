@@ -30,6 +30,11 @@ impl Manager {
                 }
             });
 
+            // Ensure that the path to the socket exists
+            if let Some(parent) = socket_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+
             let boxed_ref = DistantManager::start_unix_socket_with_permissions(
                 self.config,
                 socket_path,
