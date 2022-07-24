@@ -7,9 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+
+- `distant manager` subcommand
+
 ### Changed
+
+- `distant launch` is now `distant client launch`
+- `distant action` is now `distant client action`
+- `distant shell` is now `distant client shell`
+- Minimum supported rust version (MSRV) has been bumped to `1.59.0`
+
 ### Fixed
+
+- Shell no longer has issues with fancier command prompts and other
+  terminal-oriented printing as `TERM=x256-color` is now set by default
+
 ### Removed
+
+- Networking directly from distant client to distant server. All connections
+  are now facilitated by the manager interface with client -> manager <- server
+- Environment variable output as part of launch is now gone as the connection
+  is now being managed, so there is no need to export session information
 
 ## [0.16.4] - 2022-06-01
 ### Added

@@ -17,7 +17,7 @@ jobs:
       matrix:
         include:
           - { rust: stable, os: ubuntu-latest }
-          - { rust: 1.51.0, os: ubuntu-latest }
+          - { rust: 1.59.0, os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust ${{ matrix.rust }}
