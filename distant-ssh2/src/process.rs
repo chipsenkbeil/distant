@@ -7,6 +7,7 @@ use log::*;
 use std::{
     future::Future,
     io::{self, Read, Write},
+    path::PathBuf,
     time::Duration,
 };
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -32,6 +33,7 @@ pub async fn spawn_simple<F, R>(
     session: &Session,
     cmd: &str,
     environment: Environment,
+    current_dir: Option<PathBuf>,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
@@ -39,6 +41,13 @@ where
     F: FnOnce(ProcessId) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
 {
+    if current_dir.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "current_dir is not supported",
+        ));
+    }
+
     let ExecResult {
         mut stdin,
         mut stdout,
@@ -108,6 +117,7 @@ pub async fn spawn_pty<F, R>(
     session: &Session,
     cmd: &str,
     environment: Environment,
+    current_dir: Option<PathBuf>,
     size: PtySize,
     reply: Box<dyn Reply<Data = DistantResponseData>>,
     cleanup: F,
@@ -116,6 +126,13 @@ where
     F: FnOnce(ProcessId) -> R + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
 {
+    if current_dir.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "current_dir is not supported",
+        ));
+    }
+
     let term = environment
         .get("TERM")
         .map(ToString::to_string)

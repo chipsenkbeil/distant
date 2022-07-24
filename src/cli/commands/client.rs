@@ -267,12 +267,14 @@ impl ClientSubcommand {
                     DistantRequestData::ProcSpawn {
                         cmd,
                         environment,
+                        current_dir,
                         persist,
                         pty,
                     } => {
                         debug!("Special request spawning {:?}", cmd);
                         let mut proc = RemoteCommand::new()
                             .environment(environment)
+                            .current_dir(current_dir)
                             .persist(persist)
                             .pty(pty)
                             .spawn(channel, cmd)

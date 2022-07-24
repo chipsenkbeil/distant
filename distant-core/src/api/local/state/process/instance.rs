@@ -6,7 +6,7 @@ use crate::{
 };
 use distant_net::Reply;
 use log::*;
-use std::{future::Future, io};
+use std::{future::Future, io, path::PathBuf};
 use tokio::task::JoinHandle;
 
 /// Holds information related to a spawned process on the server
@@ -62,6 +62,7 @@ impl ProcessInstance {
     pub fn spawn(
         cmd: String,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
@@ -81,12 +82,14 @@ impl ProcessInstance {
                 cmd.clone(),
                 args.clone(),
                 environment,
+                current_dir,
                 size,
             )?),
             None => Box::new(SimpleProcess::spawn(
                 cmd.clone(),
                 args.clone(),
                 environment,
+                current_dir,
             )?),
         };
 

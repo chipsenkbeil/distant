@@ -419,16 +419,17 @@ impl DistantApi for LocalDistantApi {
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         debug!(
-            "[Conn {}] Spawning {} {{enviroment: {:?}, persist: {}, pty: {:?}}}",
-            ctx.connection_id, cmd, environment, persist, pty
+            "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, persist: {}, pty: {:?}}}",
+            ctx.connection_id, cmd, environment, current_dir, persist, pty
         );
         self.state
             .process
-            .spawn(cmd, environment, persist, pty, ctx.reply)
+            .spawn(cmd, environment, current_dir, persist, pty, ctx.reply)
             .await
     }
 
@@ -1799,6 +1800,7 @@ mod tests {
                 ctx,
                 /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
                 /* environment */ Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1823,6 +1825,7 @@ mod tests {
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
                 ),
                 /* environment */ Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1848,6 +1851,7 @@ mod tests {
                     ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
                 ),
                 /* environment */ Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1912,6 +1916,7 @@ mod tests {
                     ECHO_ARGS_TO_STDERR_SH.to_str().unwrap()
                 ),
                 /* environment */ Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -1972,6 +1977,7 @@ mod tests {
                 /* cmd */
                 format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
                 /* environment */ Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -2011,6 +2017,7 @@ mod tests {
                 /* cmd */
                 format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
                 /* environment */ Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )
@@ -2077,6 +2084,7 @@ mod tests {
                     ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap()
                 ),
                 Environment::new(),
+                /* current_dir */ None,
                 /* persist */ false,
                 /* pty */ None,
             )

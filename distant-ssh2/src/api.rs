@@ -670,12 +670,13 @@ impl DistantApi for SshDistantApi {
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         debug!(
-            "[Conn {}] Spawning {} {{environment: {:?}, persist: {}, pty: {:?}}}",
-            ctx.connection_id, cmd, environment, persist, pty
+            "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, persist: {}, pty: {:?}}}",
+            ctx.connection_id, cmd, environment, current_dir, persist, pty
         );
 
         let global_processes = Arc::downgrade(&self.processes);
@@ -700,6 +701,7 @@ impl DistantApi for SshDistantApi {
                     &self.session,
                     &cmd,
                     environment,
+                    current_dir,
                     ctx.reply.clone_reply(),
                     cleanup,
                 )
@@ -710,6 +712,7 @@ impl DistantApi for SshDistantApi {
                     &self.session,
                     &cmd,
                     environment,
+                    current_dir,
                     size,
                     ctx.reply.clone_reply(),
                     cleanup,

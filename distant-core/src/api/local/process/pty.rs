@@ -10,6 +10,7 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize as PortablePtySize};
 use std::{
     ffi::OsStr,
     io::{self, Read, Write},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -32,6 +33,7 @@ impl PtyProcess {
         program: S,
         args: I,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         size: PtySize,
     ) -> io::Result<Self>
     where
@@ -55,6 +57,9 @@ impl PtyProcess {
         // Spawn our process within the pty
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
+        if let Some(path) = current_dir {
+            cmd.cwd(path);
+        }
         for (key, value) in environment {
             cmd.env(key, value);
         }

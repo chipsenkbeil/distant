@@ -6,7 +6,7 @@ use crate::{
 };
 use distant_net::{Mailbox, Request, Response};
 use log::*;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tokio::{
     io,
     sync::{
@@ -47,6 +47,7 @@ pub struct RemoteCommand {
     persist: bool,
     pty: Option<PtySize>,
     environment: Environment,
+    current_dir: Option<PathBuf>,
 }
 
 impl Default for RemoteCommand {
@@ -62,6 +63,7 @@ impl RemoteCommand {
             persist: false,
             pty: None,
             environment: Environment::new(),
+            current_dir: None,
         }
     }
 
@@ -85,6 +87,12 @@ impl RemoteCommand {
         self
     }
 
+    /// Configures the process with an alternative current directory
+    pub fn current_dir(&mut self, current_dir: Option<PathBuf>) -> &mut Self {
+        self.current_dir = current_dir;
+        self
+    }
+
     /// Spawns the specified process on the remote machine using the given `channel` and `cmd`
     pub async fn spawn(
         &mut self,
@@ -101,6 +109,7 @@ impl RemoteCommand {
                     persist: self.persist,
                     pty: self.pty,
                     environment: self.environment.clone(),
+                    current_dir: self.current_dir.clone(),
                 },
             )))
             .await?;

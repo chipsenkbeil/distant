@@ -337,9 +337,15 @@ pub enum DistantRequestData {
         #[cfg_attr(feature = "clap", clap(flatten))]
         cmd: Cmd,
 
+        /// Environment to provide to the remote process
         #[serde(default)]
         #[cfg_attr(feature = "clap", clap(long, default_value_t = Environment::default()))]
         environment: Environment,
+
+        /// Alternative current directory for the remote process
+        #[serde(default)]
+        #[cfg_attr(feature = "clap", clap(long))]
+        current_dir: Option<PathBuf>,
 
         /// Whether or not the process should be persistent, meaning that the process will not be
         /// killed when the associated client disconnects

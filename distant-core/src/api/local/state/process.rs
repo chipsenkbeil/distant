@@ -1,6 +1,6 @@
 use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
 use distant_net::Reply;
-use std::{collections::HashMap, io, ops::Deref};
+use std::{collections::HashMap, io, ops::Deref, path::PathBuf};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -70,6 +70,7 @@ impl ProcessChannel {
         &self,
         cmd: String,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
@@ -79,6 +80,7 @@ impl ProcessChannel {
             .send(InnerProcessMsg::Spawn {
                 cmd,
                 environment,
+                current_dir,
                 persist,
                 pty,
                 reply,
@@ -129,6 +131,7 @@ enum InnerProcessMsg {
     Spawn {
         cmd: String,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
@@ -161,13 +164,15 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
             InnerProcessMsg::Spawn {
                 cmd,
                 environment,
+                current_dir,
                 persist,
                 pty,
                 reply,
                 cb,
             } => {
                 let _ = cb.send(
-                    match ProcessInstance::spawn(cmd, environment, persist, pty, reply) {
+                    match ProcessInstance::spawn(cmd, environment, current_dir, persist, pty, reply)
+                    {
                         Ok(mut process) => {
                             let id = process.id;
 

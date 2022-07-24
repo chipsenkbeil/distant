@@ -304,6 +304,8 @@ pub trait DistantApi {
     /// Spawns a new process, returning its id.
     ///
     /// * `cmd` - the full command to run as a new process (including arguments)
+    /// * `environment` - the environment variables to associate with the process
+    /// * `current_dir` - the alternative current directory to use with the process
     /// * `persist` - if true, the process will continue running even after the connection that
     ///               spawned the process has terminated
     /// * `pty` - if provided, will run the process within a PTY of the given size
@@ -315,6 +317,7 @@ pub trait DistantApi {
         ctx: DistantCtx<Self::LocalData>,
         cmd: String,
         environment: Environment,
+        current_dir: Option<PathBuf>,
         persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
@@ -586,11 +589,12 @@ where
         DistantRequestData::ProcSpawn {
             cmd,
             environment,
+            current_dir,
             persist,
             pty,
         } => server
             .api
-            .proc_spawn(ctx, cmd.into(), environment, persist, pty)
+            .proc_spawn(ctx, cmd.into(), environment, current_dir, persist, pty)
             .await
             .map(|id| DistantResponseData::ProcSpawned { id })
             .unwrap_or_else(DistantResponseData::from),
@@ -606,7 +610,6 @@ where
             .await
             .map(|_| DistantResponseData::Ok)
             .unwrap_or_else(DistantResponseData::from),
-
         DistantRequestData::ProcResizePty { id, size } => server
             .api
             .proc_resize_pty(ctx, id, size)

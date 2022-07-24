@@ -3,7 +3,7 @@ use super::{
     ProcessKiller, WaitRx,
 };
 use crate::data::Environment;
-use std::{ffi::OsStr, process::Stdio};
+use std::{ffi::OsStr, path::PathBuf, process::Stdio};
 use tokio::{io, process::Command, sync::mpsc, task::JoinHandle};
 
 mod tasks;
@@ -23,19 +23,32 @@ pub struct SimpleProcess {
 
 impl SimpleProcess {
     /// Spawns a new simple process
-    pub fn spawn<S, I, S2>(program: S, args: I, environment: Environment) -> io::Result<Self>
+    pub fn spawn<S, I, S2>(
+        program: S,
+        args: I,
+        environment: Environment,
+        current_dir: Option<PathBuf>,
+    ) -> io::Result<Self>
     where
         S: AsRef<OsStr>,
         I: IntoIterator<Item = S2>,
         S2: AsRef<OsStr>,
     {
-        let mut child = Command::new(program)
-            .envs(environment)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut child = {
+            let mut command = Command::new(program);
+
+            if let Some(path) = current_dir {
+                command.current_dir(path);
+            }
+
+            command
+                .envs(environment)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?
+        };
 
         let stdout = child.stdout.take().unwrap();
         let (stdout_task, stdout_ch) = tasks::spawn_read_task(stdout, 1);
