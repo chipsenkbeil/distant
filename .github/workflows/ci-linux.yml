@@ -47,7 +47,7 @@ jobs:
         run: cargo test --release --verbose --no-default-features
         shell: bash
   ssh-launch-tests:
-    name: "Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
+    name: "TTest ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -56,6 +56,15 @@ jobs:
           - { rust: stable, os: ubuntu-latest }
           - { rust: 1.59.0, os: ubuntu-latest }
     steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust ${{ matrix.rust }}
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v1
+      - name: Check Cargo availability
+        run: cargo --version
       - name: Install distant cli for use in system tests
         run: cargo install --path .
       - name: Run ssh2 launch tests (default features)
