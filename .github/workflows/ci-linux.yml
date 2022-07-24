@@ -47,7 +47,7 @@ jobs:
         run: cargo test --release --verbose --no-default-features
         shell: bash
   ssh-launch-tests:
-    name: "TTest ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
+    name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
