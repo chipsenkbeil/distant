@@ -24,6 +24,7 @@ mod handlers;
 
 #[derive(Debug, Subcommand)]
 pub enum ManagerSubcommand {
+    /// Interact with a manager being run by a service management platform
     #[clap(subcommand)]
     Service(ManagerServiceSubcommand),
 
