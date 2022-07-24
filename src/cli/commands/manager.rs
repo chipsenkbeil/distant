@@ -261,14 +261,19 @@ impl ManagerSubcommand {
                     .register_launch_handler("manager", handlers::ManagerLaunchHandler)
                     .await?;
                 manager_ref
-                    .register_launch_handler("ssh", handlers::SshLaunchHandler)
-                    .await?;
-                manager_ref
                     .register_connect_handler("distant", handlers::DistantConnectHandler)
                     .await?;
-                manager_ref
-                    .register_connect_handler("ssh", handlers::SshConnectHandler)
-                    .await?;
+
+                #[cfg(any(feature = "libssh", feature = "ssh2"))]
+                // Register ssh-specific handlers if either feature flag is enabled
+                {
+                    manager_ref
+                        .register_launch_handler("ssh", handlers::SshLaunchHandler)
+                        .await?;
+                    manager_ref
+                        .register_connect_handler("ssh", handlers::SshConnectHandler)
+                        .await?;
+                }
 
                 // Let our server run to completion
                 manager_ref.wait().await?;

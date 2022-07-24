@@ -2,20 +2,18 @@ use crate::config::ClientLaunchConfig;
 use async_trait::async_trait;
 use distant_core::{
     net::{
-        AuthClient, AuthErrorKind, AuthQuestion, AuthVerifyKind, FramedTransport, IntoSplit,
-        SecretKey32, TcpTransport, XChaCha20Poly1305Codec,
+        AuthClient, AuthQuestion, FramedTransport, IntoSplit, SecretKey32, TcpTransport,
+        XChaCha20Poly1305Codec,
     },
     BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, ConnectHandler, Destination,
     Extra, LaunchHandler,
 };
 use log::*;
 use std::{
-    collections::HashMap,
     io,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     process::Stdio,
-    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -130,8 +128,10 @@ impl LaunchHandler for ManagerLaunchHandler {
 }
 
 /// Supports launching remotely via SSH as defined by `ssh://...`
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 pub struct SshLaunchHandler;
 
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 #[async_trait]
 impl LaunchHandler for SshLaunchHandler {
     async fn launch(
@@ -153,9 +153,9 @@ impl LaunchHandler for SshLaunchHandler {
                 args: config.distant.args.unwrap_or(opts.args),
                 use_login_shell: !config.distant.no_shell,
                 timeout: match extra.get("timeout") {
-                    Some(s) => {
-                        Duration::from_millis(s.parse::<u64>().map_err(|_| invalid("timeout"))?)
-                    }
+                    Some(s) => std::time::Duration::from_millis(
+                        s.parse::<u64>().map_err(|_| invalid("timeout"))?,
+                    ),
                     None => opts.timeout,
                 },
             }
@@ -249,8 +249,10 @@ impl ConnectHandler for DistantConnectHandler {
 }
 
 /// Supports connecting to a remote SSH server as defined by `ssh://...`
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 pub struct SshConnectHandler;
 
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 #[async_trait]
 impl ConnectHandler for SshConnectHandler {
     async fn connect(
@@ -274,9 +276,11 @@ impl<'a> AuthClientSshAuthHandler<'a> {
     }
 }
 
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 #[async_trait]
 impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     async fn on_authenticate(&self, event: distant_ssh2::SshAuthEvent) -> io::Result<Vec<String>> {
+        use std::collections::HashMap;
         let mut extra = HashMap::new();
         let mut questions = Vec::new();
 
@@ -296,6 +300,7 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+        use distant_core::net::AuthVerifyKind;
         self.0
             .lock()
             .await
@@ -310,6 +315,7 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 
     async fn on_error(&self, text: &str) {
+        use distant_core::net::AuthErrorKind;
         if let Err(x) = self
             .0
             .lock()
@@ -322,6 +328,7 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 }
 
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2::Ssh> {
     use distant_ssh2::{Ssh, SshOpts};
 
