@@ -57,7 +57,6 @@ fn main() {
                         logger.shutdown();
 
                         std::process::exit(distant::ExitCode::Config.to_i32());
-                        return;
                     }
 
                     // In this case, there was an error deleting the service config after
@@ -68,7 +67,8 @@ fn main() {
                         error!("Failed to delete service config: {x}");
                         logger.flush();
                         logger.shutdown();
-                        return;
+
+                        std::process::exit(distant::ExitCode::Config.to_i32());
                     }
                 }
             }
