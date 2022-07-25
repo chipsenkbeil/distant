@@ -895,6 +895,7 @@ dependencies = [
  "smol",
  "tokio",
  "wezterm-ssh",
+ "which",
  "whoami",
 ]
 

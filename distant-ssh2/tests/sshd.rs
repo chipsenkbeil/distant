@@ -7,7 +7,7 @@ use rstest::*;
 use std::{
     collections::HashMap,
     fmt, io,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command},
     sync::atomic::{AtomicU16, Ordering},
     thread,
@@ -17,13 +17,12 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-// NOTE: OpenSSH's sshd requires absolute path
-#[cfg(unix)]
-const BIN_PATH_STR: &str = "/usr/sbin/sshd";
-
-// NOTE: OpenSSH's sshd requires absolute path
-#[cfg(windows)]
-const BIN_PATH_STR: &str = r"C:\Windows\System32\OpenSSH\sshd.exe";
+// NOTE: Should find path
+//
+// Unix should be something like /usr/sbin/sshd
+// Windows should be something like C:\Windows\System32\OpenSSH\sshd.exe
+static BIN_PATH: Lazy<PathBuf> =
+    Lazy::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
 
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
@@ -327,8 +326,7 @@ impl Sshd {
                     break Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!(
-                            "{} failed [{}]: {}",
-                            BIN_PATH_STR,
+                            "{BIN_PATH:?} failed [{}]: {}",
                             code.map(|x| x.to_string())
                                 .unwrap_or_else(|| String::from("???")),
                             msg
@@ -350,7 +348,7 @@ impl Sshd {
         config_path: impl AsRef<Path>,
         log_path: impl AsRef<Path>,
     ) -> io::Result<Result<Child, (Option<i32>, String)>> {
-        let mut child = Command::new(BIN_PATH_STR)
+        let mut child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
             .arg(port.to_string())
