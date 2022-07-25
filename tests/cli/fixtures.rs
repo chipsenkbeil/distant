@@ -24,6 +24,7 @@ impl DistantManagerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
         eprintln!("Logging to {:?}", ROOT_LOG_DIR.as_path());
+        std::fs::create_dir_all(ROOT_LOG_DIR.as_path()).expect("Failed to create root log dir");
 
         // Start the manager
         let mut manager_cmd = StdCommand::new(bin_path());

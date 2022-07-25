@@ -85,16 +85,12 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         // Spawn it and wait to get the communicated destination
         // NOTE: This will leave the server detached from the manager when the manager exits
-        let mut command = Command::new(program);
-        command
+        let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        eprintln!("Preparing to execute {command:?}");
-        let res = command.spawn();
-        eprintln!("Result: {res:?}");
-        let mut child = res?;
+            .stderr(Stdio::piped())
+            .spawn()?;
 
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
 
