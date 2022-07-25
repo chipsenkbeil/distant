@@ -18,10 +18,6 @@ impl ErrorBundle {
     pub fn push(&mut self, label: impl Into<String>, error: impl Error) {
         self.errors.push((label.into(), error.to_string()));
     }
-
-    pub fn error_cnt(&self) -> usize {
-        self.errors.len()
-    }
 }
 
 impl fmt::Display for ErrorBundle {

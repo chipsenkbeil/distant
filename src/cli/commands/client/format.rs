@@ -23,11 +23,6 @@ impl Format {
     pub fn is_json(self) -> bool {
         matches!(self, Self::Json)
     }
-
-    /// Returns true if shell format
-    pub fn is_shell(self) -> bool {
-        matches!(self, Self::Json)
-    }
 }
 
 impl Default for Format {
@@ -44,11 +39,6 @@ impl Formatter {
     /// Create a new output message for the given response based on the specified format
     pub fn new(format: Format) -> Self {
         Self { format }
-    }
-
-    /// Creates a new [`Formatter`] using [`Format`] of `Format::Json`
-    pub fn json() -> Self {
-        Self::new(Format::Json)
     }
 
     /// Creates a new [`Formatter`] using [`Format`] of `Format::Shell`

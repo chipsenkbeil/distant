@@ -50,14 +50,6 @@ impl CacheFile {
         }
     }
 
-    pub async fn edit(&self, f: impl FnOnce(&mut CacheData)) -> io::Result<()> {
-        CacheData::edit(self.path.as_path(), f).await
-    }
-
-    pub async fn read(&self) -> io::Result<CacheData> {
-        CacheData::read(self.path.as_path()).await
-    }
-
     pub async fn read_or_default(&self) -> io::Result<CacheData> {
         CacheData::read_or_default(self.path.as_path()).await
     }
@@ -75,13 +67,6 @@ pub struct CacheData {
 }
 
 impl CacheData {
-    /// Loads (or creates) [`Cache`], modifies it, and writes it back to `path`
-    pub async fn edit(path: impl AsRef<Path>, f: impl FnOnce(&mut Self)) -> io::Result<()> {
-        let mut this = Self::read_or_default(path.as_ref()).await?;
-        f(&mut this);
-        this.write(path).await
-    }
-
     /// Reads the cache data from disk
     pub async fn read(path: impl AsRef<Path>) -> io::Result<Self> {
         let bytes = tokio::fs::read(path).await?;
