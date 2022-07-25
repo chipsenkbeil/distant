@@ -11,7 +11,7 @@ use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceManagerKind,
     ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
-use std::{ffi::OsString, io, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf};
 use tabled::{Table, Tabled};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
@@ -140,7 +140,7 @@ impl ManagerSubcommand {
     }
 
     #[cfg(windows)]
-    fn run_daemon(self, config: ManagerConfig) -> CliResult<()> {
+    fn run_daemon(self, _config: ManagerConfig) -> CliResult<()> {
         use crate::cli::Spawner;
         let pid = Spawner::spawn_running_background(Vec::new())?;
         println!("[distant manager detached, pid = {}]", pid);
@@ -150,6 +150,7 @@ impl ManagerSubcommand {
     #[cfg(unix)]
     fn run_daemon(self, config: ManagerConfig) -> CliResult<()> {
         use fork::{daemon, Fork};
+        use std::io;
 
         debug!("Forking process");
         match daemon(true, true) {

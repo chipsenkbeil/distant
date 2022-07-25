@@ -111,7 +111,7 @@ impl ServerSubcommand {
         }
     }
 
-    async fn async_run(self, is_forked: bool) -> CliResult<()> {
+    async fn async_run(self, _is_forked: bool) -> CliResult<()> {
         match self {
             Self::Listen {
                 config,
@@ -192,7 +192,7 @@ impl ServerSubcommand {
 
                 // For the child, we want to fully disconnect it from pipes, which we do now
                 #[cfg(unix)]
-                if is_forked && fork::close_fd().is_err() {
+                if _is_forked && fork::close_fd().is_err() {
                     return Err(
                         io::Error::new(io::ErrorKind::Other, "Fork failed to close fd").into(),
                     );

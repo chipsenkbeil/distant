@@ -1,6 +1,6 @@
 use directories::ProjectDirs;
 use once_cell::sync::Lazy;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[cfg(unix)]
 const SOCKET_FILE_STR: &str = "distant.sock";
@@ -51,7 +51,7 @@ pub mod user {
 
         PROJECT_DIR
             .runtime_dir()
-            .map(Path::to_path_buf)
+            .map(std::path::Path::to_path_buf)
             .unwrap_or_else(std::env::temp_dir)
             .join(file_name)
     });

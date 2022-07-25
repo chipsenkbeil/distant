@@ -1,4 +1,4 @@
-use super::{Cli, ExitCode, ExitCodeError};
+use super::{Cli, ExitCodeError};
 use log::*;
 use std::{
     ffi::{OsStr, OsString},

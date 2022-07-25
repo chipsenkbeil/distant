@@ -138,7 +138,7 @@ impl Spawner {
             OsString::from(";"),
             OsString::from(r#"$startup.Properties['ShowWindow'].value=$False"#),
             OsString::from(";"),
-            OsString::from(env),
+            env,
             OsString::from(";"),
             OsString::from("Invoke-WmiMethod"),
             OsString::from("-Class"),
