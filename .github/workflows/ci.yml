@@ -107,10 +107,8 @@ jobs:
         run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::client
       - name: Run CLI tests
         run: cargo test --release --verbose
-        shell: bash
       - name: Run CLI tests (no default features)
         run: cargo test --release --verbose --no-default-features
-        shell: bash
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}

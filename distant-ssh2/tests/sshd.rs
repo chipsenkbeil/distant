@@ -17,8 +17,13 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// NOTE: OpenSSH's sshd requires absolute path
+// NOTE: OpenSSH's sshd requires absolute path
+#[cfg(unix)]
 const BIN_PATH_STR: &str = "/usr/sbin/sshd";
+
+// NOTE: OpenSSH's sshd requires absolute path
+#[cfg(windows)]
+const BIN_PATH_STR: &str = r"C:\Windows\System32\OpenSSH\sshd.exe";
 
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
