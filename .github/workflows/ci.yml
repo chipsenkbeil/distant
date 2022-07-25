@@ -92,6 +92,12 @@ jobs:
         run: cargo --version
       - uses: Vampire/setup-wsl@v1
         if: matrix.os == 'windows-latest'
+      - name: Install OpenSSH on Windows
+        run: |
+          Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+          Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH*'
+        shell: pwsh
+        if: matrix.os == 'windows-latest'
       - name: Run net tests (default features)
         run: cargo test --release --verbose -p distant-net
       - name: Run core tests (default features)
