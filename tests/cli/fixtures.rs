@@ -54,6 +54,7 @@ impl DistantManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
+        eprintln!("Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         std::thread::sleep(Duration::from_millis(50));
         if let Ok(Some(status)) = manager.try_wait() {
@@ -85,10 +86,10 @@ impl DistantManagerCtx {
             launch_cmd.arg("--unix-socket").arg(socket_or_pipe.as_str());
         }
 
-        let output = launch_cmd
-            .arg("manager://localhost")
-            .output()
-            .expect("Failed to launch server");
+        launch_cmd.arg("manager://localhost");
+
+        eprintln!("Spawning launch cmd: {launch_cmd:?}");
+        let output = launch_cmd.output().expect("Failed to launch server");
         if !output.status.success() {
             let _ = manager.kill();
             panic!(

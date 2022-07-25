@@ -41,10 +41,10 @@ jobs:
       - name: Run ssh2 client tests (all features)
         run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::client
       - name: Run CLI tests
-        run: cargo test --release --verbose
+        run: cargo test --release --verbose -- --nocapture
         shell: bash
       - name: Run CLI tests (no default features)
-        run: cargo test --release --verbose --no-default-features
+        run: cargo test --release --verbose --no-default-features -- --nocapture
         shell: bash
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
