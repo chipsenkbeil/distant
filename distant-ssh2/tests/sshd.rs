@@ -1,7 +1,7 @@
 use assert_fs::{prelude::*, TempDir};
 use async_trait::async_trait;
 use distant_core::DistantClient;
-use distant_ssh2::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use once_cell::sync::{Lazy, OnceCell};
 use rstest::*;
 use std::{
@@ -467,8 +467,16 @@ pub async fn launched_client(
 
     ssh_client.authenticate(MockSshAuthHandler).await.unwrap();
 
+    let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
+    eprintln!("Setting path to distant binary as {binary}");
+
+    // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
+    // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
     ssh_client
-        .launch_and_connect(Default::default())
+        .launch_and_connect(DistantLaunchOpts {
+            binary,
+            ..Default::default()
+        })
         .await
         .unwrap()
 }
