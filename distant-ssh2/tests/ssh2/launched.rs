@@ -7,7 +7,7 @@ use distant_core::{
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use rstest::*;
-use std::{io, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
@@ -556,13 +556,13 @@ async fn dir_read_should_support_returning_canonicalized_paths(
     assert_eq!(entries[0].path, Path::new("file1"));
     assert_eq!(entries[0].depth, 1);
 
-    assert_eq!(entries[1].file_type, FileType::Dir);
-    assert_eq!(entries[1].path, Path::new("sub1"));
+    // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
+    assert_eq!(entries[1].file_type, FileType::Symlink);
+    assert_eq!(entries[1].path, Path::new("sub1").join("file2"));
     assert_eq!(entries[1].depth, 1);
 
-    // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
-    assert_eq!(entries[2].file_type, FileType::Symlink);
-    assert_eq!(entries[2].path, Path::new("sub1").join("file2"));
+    assert_eq!(entries[2].file_type, FileType::Dir);
+    assert_eq!(entries[2].path, Path::new("sub1"));
     assert_eq!(entries[2].depth, 1);
 }
 
@@ -864,7 +864,7 @@ async fn rename_should_support_renaming_a_single_file(#[future] launched_client:
 
 #[rstest]
 #[tokio::test]
-async fn watch_should_fail_as_unsupported(#[future] launched_client: DistantClient) {
+async fn watch_should_succeed(#[future] launched_client: DistantClient) {
     // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
     let mut client = launched_client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -872,7 +872,7 @@ async fn watch_should_fail_as_unsupported(#[future] launched_client: DistantClie
     let file = temp.child("file");
     file.touch().unwrap();
 
-    let err = client
+    let _ = client
         .watch(
             file.path().to_path_buf(),
             /* recursive */ false,
@@ -880,9 +880,7 @@ async fn watch_should_fail_as_unsupported(#[future] launched_client: DistantClie
             /* except */ ChangeKindSet::default(),
         )
         .await
-        .unwrap_err();
-
-    assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{:?}", err);
+        .unwrap();
 }
 
 #[rstest]
@@ -1169,12 +1167,9 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 
 #[rstest]
 #[tokio::test]
-async fn proc_spawn_should_not_fail_even_if_process_not_found(
-    #[future] launched_client: DistantClient,
-) {
+async fn proc_spawn_should_fail_if_process_not_found(#[future] launched_client: DistantClient) {
     let mut client = launched_client.await;
 
-    // NOTE: This is a distinction from standard distant and ssh distant
     let _ = client
         .spawn(
             /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
@@ -1184,7 +1179,7 @@ async fn proc_spawn_should_not_fail_even_if_process_not_found(
             /* pty */ None,
         )
         .await
-        .unwrap();
+        .unwrap_err();
 }
 
 #[rstest]
@@ -1439,7 +1434,7 @@ async fn system_info_should_return_system_info_based_on_binary(
 
     let system_info = client.system_info().await.unwrap();
     assert_eq!(system_info.family, std::env::consts::FAMILY.to_string());
-    assert_eq!(system_info.os, "");
-    assert_eq!(system_info.arch, "");
+    assert_eq!(system_info.os, std::env::consts::OS.to_string());
+    assert_eq!(system_info.arch, std::env::consts::ARCH.to_string());
     assert_eq!(system_info.main_separator, std::path::MAIN_SEPARATOR);
 }
