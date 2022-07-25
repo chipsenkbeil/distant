@@ -1,4 +1,4 @@
-name: CI (MacOS)
+name: CI
 
 on:
   push:
@@ -9,6 +9,55 @@ on:
       - master
 
 jobs:
+  clippy:
+    name: "Lint with clippy (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest }
+          - { os: ubuntu-latest }
+    env:
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (clippy)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v1
+      - name: Check Cargo availability
+        run: cargo --version
+      - name: distant-core (all features)
+        run: cargo clippy -p distant-core --all-targets --verbose --all-features
+      - name: distant-ssh2 (all features)
+        run: cargo clippy -p distant-ssh2 --all-targets --verbose --all-features
+      - name: distant (all features)
+        run: cargo clippy --all-targets --verbose --all-features
+  rustfmt:
+    name: "Verify code formatting (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest }
+          - { os: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (rustfmt)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v1
+      - name: Check Cargo availability
+        run: cargo --version
+      - run: cargo fmt --all -- --check
   tests:
     name: "Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
@@ -16,7 +65,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
           - { rust: stable, os: macos-latest }
+          - { rust: stable, os: ubuntu-latest }
+          - { rust: 1.59.0, os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust ${{ matrix.rust }}
@@ -24,15 +76,20 @@ jobs:
         with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
+      - uses: Vampire/setup-wsl@v1
+        if: matrix.os == 'windows-latest'
       - name: Run net tests (default features)
         run: cargo test --release --verbose -p distant-net
       - name: Run core tests (default features)
         run: cargo test --release --verbose -p distant-core
       - name: Run core tests (all features)
         run: cargo test --release --verbose --all-features -p distant-core
+      - name: Ensure /run/sshd exists on Unix
+        run: mkdir -p /run/sshd
       - name: Run ssh2 client tests (default features)
         run: cargo test --release --verbose -p distant-ssh2 ssh2::client
       - name: Run ssh2 client tests (all features)
@@ -51,6 +108,8 @@ jobs:
       matrix:
         include:
           - { rust: stable, os: macos-latest }
+          - { rust: stable, os: ubuntu-latest }
+          - { rust: 1.59.0, os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust ${{ matrix.rust }}
@@ -61,7 +120,7 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
-      - name: Install distant cli for use in system tests
+      - name: Install distant cli for use in launch tests
         run: |
           cargo install --path .
           echo "DISTANT_PATH=$HOME/.cargo/bin/distant" >> $GITHUB_ENV

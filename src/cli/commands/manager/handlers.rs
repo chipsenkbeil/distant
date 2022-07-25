@@ -44,21 +44,6 @@ impl LaunchHandler for ManagerLaunchHandler {
     ) -> io::Result<Destination> {
         let config = ClientLaunchConfig::from(extra.clone());
 
-        eprintln!(
-            "which({:?}) = {:?}",
-            config.distant.bin.as_ref(),
-            which::which(match config.distant.bin.as_ref() {
-                Some(bin) => PathBuf::from(bin),
-                None => std::env::current_exe().unwrap_or_else(|_| {
-                    PathBuf::from(if cfg!(windows) {
-                        "distant.exe"
-                    } else {
-                        "distant"
-                    })
-                }),
-            })
-        );
-
         // Get the path to the distant binary, ensuring it exists and is executable
         let program = which::which(match config.distant.bin {
             Some(bin) => PathBuf::from(bin),
