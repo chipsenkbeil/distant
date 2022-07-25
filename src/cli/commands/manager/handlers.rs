@@ -43,6 +43,14 @@ impl LaunchHandler for ManagerLaunchHandler {
         _auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
         let config = ClientLaunchConfig::from(extra.clone());
+        eprintln!("LAUNCH CONFIG: {config:?}");
+        if let Some(bin) = config.distant.bin.as_ref() {
+            if std::fs::metadata(bin).is_ok() {
+                eprintln!("Exists: {bin}");
+            } else {
+                eprintln!("Missing: {bin}");
+            }
+        }
 
         // Get the path to the distant binary, ensuring it exists and is executable
         let program = which::which(match config.distant.bin {
