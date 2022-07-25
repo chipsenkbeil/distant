@@ -69,6 +69,8 @@ impl DistantManagerCtx {
             .arg(random_log_file("launch"))
             .arg("--log-level")
             .arg("trace")
+            .arg("--distant")
+            .arg(bin_path())
             .arg("--distant-args")
             .arg(format!(
                 "--log-file {} --log-level trace",
