@@ -126,7 +126,6 @@ fn run_service() -> windows_service::Result<()> {
 
     // Define system service event handler that will be receiving service events.
     let event_handler = {
-        let shutdown_tx = shutdown_tx.clone();
         move |control_event| -> ServiceControlHandlerResult {
             match control_event {
                 // Notifies a service to report its current status information to the service
