@@ -23,7 +23,7 @@ fn main() -> MainResult {
     if cli.is_manager_listen_command() {
         match distant::win_service::run() {
             // Success! So we don't need to run again
-            Ok(_) => return Ok(()),
+            Ok(_) => return MainResult::OK,
 
             // In this case, we know there was a service error, and we're assuming it
             // means that we were trying to dispatch a service when we were not started
