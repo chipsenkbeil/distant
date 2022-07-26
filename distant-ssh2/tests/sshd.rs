@@ -1,3 +1,4 @@
+use anyhow::Context;
 use assert_fs::{prelude::*, TempDir};
 use async_trait::async_trait;
 use distant_core::DistantClient;
@@ -7,6 +8,7 @@ use rstest::*;
 use std::{
     collections::HashMap,
     fmt, io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::atomic::{AtomicU16, Ordering},
@@ -33,7 +35,10 @@ pub struct SshKeygen;
 
 impl SshKeygen {
     // ssh-keygen -t rsa -f $ROOT/id_rsa -N "" -q
-    pub fn generate_rsa(path: impl AsRef<Path>, passphrase: impl AsRef<str>) -> io::Result<bool> {
+    pub fn generate_rsa(
+        path: impl AsRef<Path>,
+        passphrase: impl AsRef<str>,
+    ) -> anyhow::Result<bool> {
         let res = Command::new("ssh-keygen")
             .args(&["-m", "PEM"])
             .args(&["-t", "rsa"])
@@ -43,15 +48,20 @@ impl SshKeygen {
             .arg(passphrase.as_ref())
             .arg("-q")
             .status()
-            .map(|status| status.success())?;
+            .map(|status| status.success())
+            .context("Failed to generate RSA key")?;
 
         #[cfg(unix)]
         if res {
             // chmod 600 id_rsa* -> ida_rsa + ida_rsa.pub
-            std::fs::metadata(path.as_ref().with_extension("pub"))?
+            std::fs::metadata(path.as_ref().with_extension("pub"))
+                .context("Failed to load metadata of RSA pub key")?
                 .permissions()
                 .set_mode(0o600);
-            std::fs::metadata(path)?.permissions().set_mode(0o600);
+            std::fs::metadata(path)
+                .context("Failed to load metadata of RSA key")?
+                .permissions()
+                .set_mode(0o600);
         }
 
         Ok(res)
@@ -61,10 +71,13 @@ impl SshKeygen {
 pub struct SshAgent;
 
 impl SshAgent {
-    pub fn generate_shell_env() -> io::Result<HashMap<String, String>> {
-        let output = Command::new("ssh-agent").arg("-s").output()?;
-        let stdout = String::from_utf8(output.stdout)
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+    pub fn generate_shell_env() -> anyhow::Result<HashMap<String, String>> {
+        let output = Command::new("ssh-agent")
+            .arg("-s")
+            .output()
+            .context("Failed to generate Bourne shell commands from ssh-agent")?;
+        let stdout =
+            String::from_utf8(output.stdout).context("Failed to parse stdout as utf8 string")?;
         Ok(stdout
             .split(';')
             .map(str::trim)
@@ -82,8 +95,9 @@ impl SshAgent {
             .collect::<HashMap<String, String>>())
     }
 
-    pub fn update_tests_with_shell_env() -> io::Result<()> {
-        let env_map = Self::generate_shell_env()?;
+    pub fn update_tests_with_shell_env() -> anyhow::Result<()> {
+        let env_map =
+            Self::generate_shell_env().context("Failed to generate ssh agent shell env")?;
         for (key, value) in env_map {
             std::env::set_var(key, value);
         }
@@ -263,16 +277,18 @@ pub struct Sshd {
 }
 
 impl Sshd {
-    pub fn spawn(mut config: SshdConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let tmp = TempDir::new()?;
+    pub fn spawn(mut config: SshdConfig) -> anyhow::Result<Self> {
+        let tmp = TempDir::new().context("Failed to create temporary directory")?;
 
         // Ensure that everything needed for interacting with ssh-agent is set
-        SshAgent::update_tests_with_shell_env()?;
+        SshAgent::update_tests_with_shell_env()
+            .context("Failed to update tests with ssh agent shell env")?;
 
         // ssh-keygen -t rsa -f $ROOT/id_rsa -N "" -q
         let id_rsa_file = tmp.child("id_rsa");
         assert!(
-            SshKeygen::generate_rsa(id_rsa_file.path(), "")?,
+            SshKeygen::generate_rsa(id_rsa_file.path(), "")
+                .context("Failed to generate RSA key for self")?,
             "Failed to ssh-keygen id_rsa"
         );
 
@@ -281,12 +297,14 @@ impl Sshd {
         std::fs::copy(
             id_rsa_file.path().with_extension("pub"),
             authorized_keys_file.path(),
-        )?;
+        )
+        .context("Failed to copy RSA pub key to authorized keys file")?;
 
         // ssh-keygen -t rsa -f $ROOT/ssh_host_rsa_key -N "" -q
         let ssh_host_rsa_key_file = tmp.child("ssh_host_rsa_key");
         assert!(
-            SshKeygen::generate_rsa(ssh_host_rsa_key_file.path(), "")?,
+            SshKeygen::generate_rsa(ssh_host_rsa_key_file.path(), "")
+                .context("Failed to generate RSA key for host")?,
             "Failed to ssh-keygen ssh_host_rsa_key"
         );
 
@@ -298,12 +316,14 @@ impl Sshd {
 
         // Generate $ROOT/sshd_config based on config
         let sshd_config_file = tmp.child("sshd_config");
-        sshd_config_file.write_str(&config.to_string())?;
+        sshd_config_file
+            .write_str(&config.to_string())
+            .context("Failed to write sshd config to file")?;
 
         let sshd_log_file = tmp.child("sshd.log");
 
         let (child, port) = Self::try_spawn_next(sshd_config_file.path(), sshd_log_file.path())
-            .expect("No open port available for sshd");
+            .context("Failed to find open port for sshd")?;
 
         Ok(Self { child, port, tmp })
     }
@@ -311,7 +331,7 @@ impl Sshd {
     fn try_spawn_next(
         config_path: impl AsRef<Path>,
         log_path: impl AsRef<Path>,
-    ) -> io::Result<(Child, u16)> {
+    ) -> anyhow::Result<(Child, u16)> {
         static PORT: AtomicU16 = AtomicU16::new(PORT_RANGE.0);
 
         loop {
@@ -319,23 +339,20 @@ impl Sshd {
 
             match Self::try_spawn(port, config_path.as_ref(), log_path.as_ref()) {
                 // If successful, return our spawned server child process
-                Ok(Ok(child)) => break Ok((child, port)),
+                Ok(Ok(child)) => return Ok((child, port)),
 
                 // If the server died when spawned and we reached the final port, we want to exit
                 Ok(Err((code, msg))) if port == PORT_RANGE.1 => {
-                    break Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "{BIN_PATH:?} failed [{}]: {}",
-                            code.map(|x| x.to_string())
-                                .unwrap_or_else(|| String::from("???")),
-                            msg
-                        ),
-                    ))
+                    anyhow::bail!(
+                        "{BIN_PATH:?} failed [{}]: {}",
+                        code.map(|x| x.to_string())
+                            .unwrap_or_else(|| String::from("???")),
+                        msg
+                    )
                 }
 
                 // If we've reached the final port in our range to try, we want to exit
-                Err(x) if port == PORT_RANGE.1 => break Err(x),
+                Err(x) if port == PORT_RANGE.1 => anyhow::bail!(x),
 
                 // Otherwise, try next port
                 Err(_) | Ok(Err(_)) => continue,
@@ -347,8 +364,24 @@ impl Sshd {
         port: u16,
         config_path: impl AsRef<Path>,
         log_path: impl AsRef<Path>,
-    ) -> io::Result<Result<Child, (Option<i32>, String)>> {
-        let mut child = Command::new(BIN_PATH.as_path())
+    ) -> anyhow::Result<Result<Child, (Option<i32>, String)>> {
+        fn check(mut child: Child) -> anyhow::Result<Result<Child, (Option<i32>, String)>> {
+            if let Some(exit_status) = child.try_wait().context("Failed to check status of sshd")? {
+                let output = child.wait_with_output().context("Failed to wait on sshd")?;
+                Ok(Err((
+                    exit_status.code(),
+                    format!(
+                        "{}\n{}",
+                        String::from_utf8(output.stdout).unwrap(),
+                        String::from_utf8(output.stderr).unwrap(),
+                    ),
+                )))
+            } else {
+                Ok(Ok(child))
+            }
+        }
+
+        let child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
             .arg(port.to_string())
@@ -356,24 +389,22 @@ impl Sshd {
             .arg(config_path.as_ref())
             .arg("-E")
             .arg(log_path.as_ref())
-            .spawn()?;
+            .spawn()
+            .with_context(|| format!("Failed to spawn {:?}", BIN_PATH.as_path()))?;
 
         // Pause for a little bit to make sure that the server didn't die due to an error
         thread::sleep(Duration::from_millis(100));
 
-        if let Some(exit_status) = child.try_wait()? {
-            let output = child.wait_with_output()?;
-            Ok(Err((
-                exit_status.code(),
-                format!(
-                    "{}\n{}",
-                    String::from_utf8(output.stdout).unwrap(),
-                    String::from_utf8(output.stderr).unwrap(),
-                ),
-            )))
-        } else {
-            Ok(Ok(child))
-        }
+        let child = match check(child).context("Sshd encountered problems (after 100ms)")? {
+            Ok(child) => child,
+            Err(x) => return Ok(Err(x)),
+        };
+
+        // Pause for a little bit to make sure that the server didn't die due to an error
+        thread::sleep(Duration::from_millis(100));
+
+        let result = check(child).context("Sshd encountered problems (after 200ms)")?;
+        Ok(result)
     }
 }
 
@@ -428,23 +459,45 @@ pub fn sshd() -> &'static Sshd {
 #[fixture]
 pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> DistantClient {
     let port = sshd.port;
+    let opts = SshOpts {
+        port: Some(port),
+        identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        ..Default::default()
+    };
 
-    let mut ssh_client = Ssh::connect(
-        "127.0.0.1",
-        SshOpts {
-            port: Some(port),
-            identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
-            identities_only: Some(true),
-            user: Some(USERNAME.to_string()),
-            user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let addrs = vec![
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(Ipv6Addr::LOCALHOST),
+    ];
+    let mut error = anyhow::anyhow!("Failed to connect to any of these hosts: {:?}", addrs);
 
-    ssh_client.authenticate(MockSshAuthHandler).await.unwrap();
+    for addr in addrs {
+        let addr_string = addr.to_string();
+        match Ssh::connect(&addr_string, opts.clone()) {
+            Ok(mut ssh_client) => {
+                ssh_client
+                    .authenticate(MockSshAuthHandler)
+                    .await
+                    .context("Failed to authenticate")
+                    .unwrap();
+                return ssh_client
+                    .into_distant_client()
+                    .await
+                    .context("Failed to convert into distant client")
+                    .unwrap();
+            }
+            Err(x) => {
+                error = error
+                    .context(x)
+                    .context(format!("Failed to connect to sshd @ {addr_string}"));
+            }
+        }
+    }
 
-    ssh_client.into_distant_client().await.unwrap()
+    panic!("error:?");
 }
 
 /// Fixture to establish a client to a launched server
