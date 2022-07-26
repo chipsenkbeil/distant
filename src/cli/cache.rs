@@ -91,6 +91,12 @@ impl CacheData {
     async fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
         let bytes = toml_edit::ser::to_vec(self)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+
+        // Ensure the parent directory of the cache exists
+        if let Some(parent) = path.as_ref().parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
         tokio::fs::write(path, bytes).await
     }
 }
