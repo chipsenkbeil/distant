@@ -1,11 +1,11 @@
-use super::link::RemoteProcessLink;
-use crate::cli::{CliError, CliResult};
+use super::{link::RemoteProcessLink, CliError, CliResult};
+use anyhow::Context;
 use distant_core::{
     data::{Environment, PtySize},
     DistantChannel, RemoteCommand,
 };
 use log::*;
-use std::{io, time::Duration};
+use std::time::Duration;
 use terminal_size::{terminal_size, Height, Width};
 use termwiz::{
     caps::Capabilities,
@@ -26,12 +26,13 @@ impl Shell {
         cmd: impl Into<Option<String>>,
         mut environment: Environment,
         persist: bool,
-    ) -> CliResult<()> {
+    ) -> CliResult {
         // Automatically add TERM=xterm-256color if not specified
         if !environment.contains_key("TERM") {
             environment.insert("TERM".to_string(), "xterm-256color".to_string());
         }
 
+        let cmd = cmd.into().unwrap_or_else(|| "/bin/sh".to_string());
         let mut proc = RemoteCommand::new()
             .persist(persist)
             .environment(environment)
@@ -39,17 +40,16 @@ impl Shell {
                 terminal_size()
                     .map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
             )
-            .spawn(self.0, cmd.into().unwrap_or_else(|| "/bin/sh".to_string()))
-            .await?;
+            .spawn(self.0, &cmd)
+            .await
+            .with_context(|| format!("Failed to spawn {cmd}"))?;
 
         // Create a new terminal in raw mode
         let mut terminal = new_terminal(
-            Capabilities::new_from_env().map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
+            Capabilities::new_from_env().context("Failed to load terminal capabilities")?,
         )
-        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-        terminal
-            .set_raw_mode()
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        .context("Failed to create terminal")?;
+        terminal.set_raw_mode().context("Failed to set raw mode")?;
 
         let mut stdin = proc.stdin.take().unwrap();
         let resizer = proc.clone_resizer();
@@ -95,16 +95,16 @@ impl Shell {
         );
 
         // Continually loop to check for terminal resize changes while the process is still running
-        let status = proc.wait().await?;
+        let status = proc.wait().await.context("Failed to wait for process")?;
 
         // Shut down our link
         link.shutdown().await;
 
         if !status.success {
             if let Some(code) = status.code {
-                return Err(CliError::from(code));
+                return Err(CliError::Exit(code as u8));
             } else {
-                return Err(CliError::from(1));
+                return Err(CliError::FAILURE);
             }
         }
 

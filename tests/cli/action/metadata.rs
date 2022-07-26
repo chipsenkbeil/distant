@@ -4,7 +4,6 @@ use crate::cli::{
 };
 use assert_cmd::Command;
 use assert_fs::prelude::*;
-use distant::ExitCode;
 use rstest::*;
 
 const FILE_CONTENTS: &str = r#"
@@ -126,7 +125,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
     action_cmd
         .args(&["metadata", file.to_str().unwrap()])
         .assert()
-        .code(ExitCode::Software.to_i32())
+        .code(1)
         .stdout("")
         .stderr(FAILURE_LINE.clone());
 }

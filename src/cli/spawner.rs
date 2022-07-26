@@ -2,7 +2,6 @@ use anyhow::Context;
 use log::*;
 use std::{
     ffi::{OsStr, OsString},
-    io,
     path::PathBuf,
     process::{Command, Stdio},
 };

@@ -1,4 +1,7 @@
-use crate::config::{BindAddress, ServerConfig, ServerListenConfig};
+use crate::{
+    config::{BindAddress, ServerConfig, ServerListenConfig},
+    CliError, CliResult,
+};
 use anyhow::Context;
 use clap::Subcommand;
 use distant_core::{
@@ -33,7 +36,7 @@ pub enum ServerSubcommand {
 }
 
 impl ServerSubcommand {
-    pub fn run(self, _config: ServerConfig) -> anyhow::Result<()> {
+    pub fn run(self, _config: ServerConfig) -> CliResult {
         match &self {
             Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self),
             Self::Listen { .. } => {
@@ -44,7 +47,7 @@ impl ServerSubcommand {
     }
 
     #[cfg(windows)]
-    fn run_daemon(self) -> anyhow::Result<()> {
+    fn run_daemon(self) -> CliResult {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
         use std::ffi::OsString;
@@ -92,7 +95,7 @@ impl ServerSubcommand {
     }
 
     #[cfg(unix)]
-    fn run_daemon(self) -> anyhow::Result<()> {
+    fn run_daemon(self) -> CliResult {
         use fork::{daemon, Fork};
 
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
@@ -106,16 +109,16 @@ impl ServerSubcommand {
             Ok(Fork::Parent(pid)) => {
                 println!("[distant server detached, pid = {}]", pid);
                 if fork::close_fd().is_err() {
-                    anyhow::bail!("Fork failed to close fd");
+                    Err(CliError::Error(anyhow::anyhow!("Fork failed to close fd")))
                 } else {
                     Ok(())
                 }
             }
-            Err(_) => anyhow::bail!("Fork failed"),
+            Err(_) => Err(CliError::Error(anyhow::anyhow!("Fork failed"))),
         }
     }
 
-    async fn async_run(self, _is_forked: bool) -> anyhow::Result<()> {
+    async fn async_run(self, _is_forked: bool) -> CliResult {
         match self {
             Self::Listen {
                 config,
@@ -131,7 +134,8 @@ impl ServerSubcommand {
                 // If specified, change the current working directory of this program
                 if let Some(path) = config.current_dir.as_ref() {
                     debug!("Setting current directory to {:?}", path);
-                    std::env::set_current_dir(path)?;
+                    std::env::set_current_dir(path)
+                        .context("Failed to set new current directory")?;
                 }
 
                 // Bind & start our server
@@ -204,7 +208,7 @@ impl ServerSubcommand {
                     transport
                         .write_all(credentials.to_string().as_bytes())
                         .await
-                        .conect("Failed to send credentials through pipe")?;
+                        .context("Failed to send credentials through pipe")?;
                 } else {
                     println!("\r");
                     println!("{}", credentials);
@@ -217,7 +221,7 @@ impl ServerSubcommand {
                 // For the child, we want to fully disconnect it from pipes, which we do now
                 #[cfg(unix)]
                 if _is_forked && fork::close_fd().is_err() {
-                    anyhow::bail!("Fork failed to close fd");
+                    return Err(CliError::Error(anyhow::anyhow!("Fork failed to close fd")));
                 }
 
                 // Let our server run to completion

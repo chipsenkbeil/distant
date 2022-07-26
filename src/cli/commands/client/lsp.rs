@@ -1,5 +1,5 @@
-use super::link::RemoteProcessLink;
-use crate::cli::{CliError, CliResult};
+use super::{link::RemoteProcessLink, CliError, CliResult};
+use anyhow::Context;
 use distant_core::{data::PtySize, DistantChannel, RemoteLspCommand};
 use terminal_size::{terminal_size, Height, Width};
 
@@ -11,7 +11,8 @@ impl Lsp {
         Self(channel)
     }
 
-    pub async fn spawn(self, cmd: impl Into<String>, persist: bool, pty: bool) -> CliResult<()> {
+    pub async fn spawn(self, cmd: impl Into<String>, persist: bool, pty: bool) -> CliResult {
+        let cmd = cmd.into();
         let mut proc = RemoteLspCommand::new()
             .persist(persist)
             .pty(if pty {
@@ -21,8 +22,9 @@ impl Lsp {
             } else {
                 None
             })
-            .spawn(self.0, cmd)
-            .await?;
+            .spawn(self.0, &cmd)
+            .await
+            .with_context(|| format!("Failed to spawn {cmd}"))?;
 
         // Now, map the remote LSP server's stdin/stdout/stderr to our own process
         let link = RemoteProcessLink::from_remote_lsp_pipes(
@@ -31,16 +33,16 @@ impl Lsp {
             proc.stderr.take().unwrap(),
         );
 
-        let status = proc.wait().await?;
+        let status = proc.wait().await.context("Failed to wait for process")?;
 
         // Shut down our link
         link.shutdown().await;
 
         if !status.success {
             if let Some(code) = status.code {
-                return Err(CliError::from(code));
+                return Err(CliError::Exit(code as u8));
             } else {
-                return Err(CliError::from(1));
+                return Err(CliError::FAILURE);
             }
         }
 

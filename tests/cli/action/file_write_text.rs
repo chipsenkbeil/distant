@@ -1,7 +1,6 @@
 use crate::cli::{fixtures::*, utils::FAILURE_LINE};
 use assert_cmd::Command;
 use assert_fs::prelude::*;
-use distant::ExitCode;
 use rstest::*;
 
 const FILE_CONTENTS: &str = r#"
@@ -49,7 +48,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
             FILE_CONTENTS,
         ])
         .assert()
-        .code(ExitCode::Software.to_i32())
+        .code(1)
         .stdout("")
         .stderr(FAILURE_LINE.clone());
 

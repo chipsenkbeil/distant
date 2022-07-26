@@ -1,18 +1,23 @@
 use anyhow::Context;
-use distant::{AppResult, Cli, ExitCodeError};
-use log::*;
+use distant::{Cli, MainResult};
 
 #[cfg(unix)]
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::initialize().context("Failed to initialize CLI")?;
-    let logger = cli.init_logger();
-    cli.run()
+fn main() -> MainResult {
+    let cli = match Cli::initialize().context("Failed to initialize CLI") {
+        Ok(cli) => cli,
+        Err(x) => return MainResult::from(x),
+    };
+    let _logger = cli.init_logger();
+    MainResult::from(cli.run())
 }
 
 #[cfg(windows)]
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::initialize().context("Failed to initialize CLI")?;
-    let logger = cli.init_logger();
+fn main() -> MainResult {
+    let cli = match Cli::initialize().context("Failed to initialize CLI") {
+        Ok(cli) => cli,
+        Err(x) => return MainResult::from(x),
+    };
+    let _logger = cli.init_logger();
 
     // If we are trying to listen as a manager, try as a service first
     if cli.is_manager_listen_command() {
@@ -26,10 +31,10 @@ fn main() -> anyhow::Result<()> {
             Err(distant::win_service::ServiceError::Service(_)) => (),
 
             // Otherwise, we got a raw error that we want to return
-            Err(distant::win_service::ServiceError::Anyhow(x)) => return Err(x),
+            Err(distant::win_service::ServiceError::Anyhow(x)) => return MainResult::from(x),
         }
     }
 
     // Otherwise, execute as a non-service CLI
-    cli.run()
+    MainResult::from(cli.run())
 }

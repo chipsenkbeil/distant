@@ -2,6 +2,7 @@ use crate::{
     cli::{Cache, Client, Manager},
     config::{ManagerConfig, NetworkConfig},
     paths::user::CACHE_FILE_PATH_STR,
+    CliError, CliResult,
 };
 use anyhow::Context;
 use clap::{Subcommand, ValueHint};
@@ -130,7 +131,7 @@ impl ManagerSubcommand {
         matches!(self, Self::Listen { .. })
     }
 
-    pub fn run(self, config: ManagerConfig) -> anyhow::Result<()> {
+    pub fn run(self, config: ManagerConfig) -> CliResult {
         match &self {
             Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self, config),
             _ => {
@@ -141,7 +142,7 @@ impl ManagerSubcommand {
     }
 
     #[cfg(windows)]
-    fn run_daemon(self, _config: ManagerConfig) -> anyhow::Result<()> {
+    fn run_daemon(self, _config: ManagerConfig) -> CliResult {
         use crate::cli::Spawner;
         let pid = Spawner::spawn_running_background(Vec::new())
             .context("Failed to spawn background process")?;
@@ -150,7 +151,7 @@ impl ManagerSubcommand {
     }
 
     #[cfg(unix)]
-    fn run_daemon(self, config: ManagerConfig) -> anyhow::Result<()> {
+    fn run_daemon(self, config: ManagerConfig) -> CliResult {
         use fork::{daemon, Fork};
 
         debug!("Forking process");
@@ -163,16 +164,16 @@ impl ManagerSubcommand {
             Ok(Fork::Parent(pid)) => {
                 println!("[distant manager detached, pid = {}]", pid);
                 if fork::close_fd().is_err() {
-                    anyhow::bail!("Fork failed to close fd");
+                    Err(CliError::Error(anyhow::anyhow!("Fork failed to close fd")))
                 } else {
                     Ok(())
                 }
             }
-            Err(_) => anyhow::bail!("Fork failed"),
+            Err(_) => Err(CliError::Error(anyhow::anyhow!("Fork failed"))),
         }
     }
 
-    async fn async_run(self, config: ManagerConfig) -> anyhow::Result<()> {
+    async fn async_run(self, config: ManagerConfig) -> CliResult {
         match self {
             Self::Service(ManagerServiceSubcommand::Start { kind, user }) => {
                 debug!("Starting manager service via {:?}", kind);
@@ -319,7 +320,8 @@ impl ManagerSubcommand {
                     .await
                     .context("Failed to connect to manager")?
                     .info(id)
-                    .await?;
+                    .await
+                    .context("Failed to get info about connection")?;
 
                 #[derive(Tabled)]
                 struct InfoRow {
@@ -359,7 +361,8 @@ impl ManagerSubcommand {
                     .await
                     .context("Failed to connect to manager")?
                     .list()
-                    .await?;
+                    .await
+                    .context("Failed to get list of connections")?;
 
                 debug!("Looking up selected connection");
                 let selected = Cache::read_from_disk_or_default(cache)

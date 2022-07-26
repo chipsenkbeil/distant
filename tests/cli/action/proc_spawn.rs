@@ -1,6 +1,5 @@
-use crate::cli::{fixtures::*, scripts::*, utils::FAILURE_LINE};
+use crate::cli::{fixtures::*, scripts::*, utils::regex_pred};
 use assert_cmd::Command;
-use distant::ExitCode;
 use rstest::*;
 use std::process::Command as StdCommand;
 
@@ -103,7 +102,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
         .args(&["proc-spawn", "--"])
         .arg(DOES_NOT_EXIST_BIN.to_str().unwrap())
         .assert()
-        .code(ExitCode::IoError.to_i32())
+        .code(1)
         .stdout("")
-        .stderr(FAILURE_LINE.clone());
+        .stderr(regex_pred(".+"));
 }

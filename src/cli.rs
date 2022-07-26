@@ -1,6 +1,6 @@
 use crate::{
     config::{CommonConfig, Config},
-    paths,
+    paths, CliResult,
 };
 use clap::Parser;
 use std::{ffi::OsString, path::PathBuf};
@@ -142,7 +142,7 @@ impl Cli {
     }
 
     /// Runs the CLI
-    pub fn run(self) -> anyhow::Result<()> {
+    pub fn run(self) -> CliResult {
         match self.command {
             DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
             DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),
