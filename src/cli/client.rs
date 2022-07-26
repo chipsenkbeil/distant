@@ -1,10 +1,10 @@
-use crate::{config::NetworkConfig, error::ErrorBundle};
+use crate::config::NetworkConfig;
+use anyhow::Context;
 use distant_core::{
     net::{AuthRequest, AuthResponse, FramedTransport, PlainCodec},
     DistantManagerClient, DistantManagerClientConfig,
 };
 use log::*;
-use std::io;
 
 mod msg;
 pub use msg::*;
@@ -111,12 +111,12 @@ impl Client {
     /// Connect to the manager listening on the socket or windows pipe based on
     /// the [`NetworkConfig`] provided to the client earlier. Will return a new instance
     /// of the [`DistantManagerClient`] upon successful connection
-    pub async fn connect(self) -> io::Result<DistantManagerClient> {
+    pub async fn connect(self) -> anyhow::Result<DistantManagerClient> {
         #[cfg(unix)]
         let transport = {
             use distant_core::net::UnixSocketTransport;
             let mut maybe_transport = None;
-            let mut bundle = ErrorBundle::new("Failed to connect to unix socket");
+            let mut error = anyhow::anyhow!("Failed to connect to unix socket");
             for path in self.network.to_unix_socket_path_candidates() {
                 match UnixSocketTransport::connect(path).await {
                     Ok(transport) => {
@@ -124,19 +124,23 @@ impl Client {
                         maybe_transport = Some(FramedTransport::new(transport, PlainCodec));
                         break;
                     }
-                    Err(x) => bundle.push(format!("<Unix Socket {:?}>", path), x),
+                    Err(x) => {
+                        error = error.context(
+                            anyhow::Error::new(x)
+                                .context(format!("Failed to connect to unix socket {:?}", path)),
+                        )
+                    }
                 }
             }
 
-            maybe_transport
-                .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, bundle))?
+            maybe_transport.ok_or(error)?
         };
 
         #[cfg(windows)]
         let transport = {
             use distant_core::net::WindowsPipeTransport;
             let mut maybe_transport = None;
-            let mut bundle = ErrorBundle::new("Failed to connect to named windows pipe");
+            let mut error = anyhow::anyhow!("Failed to connect to named windows pipe");
             for name in self.network.to_windows_pipe_name_candidates() {
                 match WindowsPipeTransport::connect_local(name).await {
                     Ok(transport) => {
@@ -144,14 +148,19 @@ impl Client {
                         maybe_transport = Some(FramedTransport::new(transport, PlainCodec));
                         break;
                     }
-                    Err(x) => bundle.push(format!("<Windows Pipe {:?}>", name), x),
+                    Err(x) => {
+                        error = error.context(
+                            anyhow::Error::new(x)
+                                .context(format!("Failed to connect to windows pipe {:?}", name)),
+                        )
+                    }
                 }
             }
 
-            maybe_transport
-                .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, bundle))?
+            maybe_transport.ok_or(error)?
         };
 
         DistantManagerClient::new(self.config, transport)
+            .context("Failed to create client for manager")
     }
 }

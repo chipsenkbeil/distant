@@ -1,6 +1,6 @@
 use crate::{
     config::{CommonConfig, Config},
-    paths, ExitCode,
+    paths,
 };
 use clap::Parser;
 use std::{ffi::OsString, path::PathBuf};
@@ -8,17 +8,15 @@ use std::{ffi::OsString, path::PathBuf};
 mod cache;
 mod client;
 mod commands;
-mod error;
 mod manager;
 mod spawner;
 
 pub(crate) use cache::Cache;
 pub(crate) use client::Client;
 use commands::DistantSubcommand;
-pub use error::{CliError, CliResult};
 pub(crate) use manager::Manager;
 
-#[cfg(windows)]
+#[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use spawner::Spawner;
 
 /// Represents the primary CLI entrypoint
@@ -45,12 +43,12 @@ struct Opt {
 
 impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
-    pub fn initialize() -> CliResult<Self> {
+    pub fn initialize() -> anyhow::Result<Self> {
         Self::initialize_from(std::env::args_os())
     }
 
     /// Creates a new CLI instance by parsing providing arguments
-    pub fn initialize_from<I, T>(args: I) -> CliResult<Self>
+    pub fn initialize_from<I, T>(args: I) -> anyhow::Result<Self>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
@@ -59,10 +57,10 @@ impl Cli {
             mut common,
             config_path,
             command,
-        } = Opt::try_parse_from(args).map_err(CliError::Usage)?;
+        } = Opt::try_parse_from(args)?;
 
         // Try to load a configuration file, defaulting if no config file is found
-        let config = Config::load_multi(config_path).map_err(ExitCode::config_error)?;
+        let config = Config::load_multi(config_path)?;
 
         // Extract the common config from our config file
         let config_common = match &command {
@@ -144,7 +142,7 @@ impl Cli {
     }
 
     /// Runs the CLI
-    pub fn run(self) -> CliResult<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         match self.command {
             DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
             DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),

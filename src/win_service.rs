@@ -1,4 +1,6 @@
 use super::{Cli, ExitCodeError};
+use anyhow::Context;
+use derive_more::From;
 use log::*;
 use std::{
     ffi::{OsStr, OsString},
@@ -27,20 +29,19 @@ struct Config {
 }
 
 impl Config {
-    pub fn save(&self) -> io::Result<()> {
+    pub fn save(&self) -> anyhow::Result<()> {
         let mut bytes = Vec::new();
-        serde_json::to_writer(&mut bytes, self)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-        std::fs::write(Self::config_file(), bytes)
+        serde_json::to_writer(&mut bytes, self).context("Could not convert config into json")?;
+        std::fs::write(Self::config_file(), bytes).context("Could not write config to file")
     }
 
-    pub fn load() -> io::Result<Self> {
-        let bytes = std::fs::read(Self::config_file())?;
-        serde_json::from_slice(&bytes).map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+    pub fn load() -> anyhow::Result<Self> {
+        let bytes = std::fs::read(Self::config_file()).context("Could not read config file")?;
+        serde_json::from_slice(&bytes).context("Could not convert json into config")
     }
 
-    pub fn delete() -> io::Result<()> {
-        std::fs::remove_file(Self::config_file())
+    pub fn delete() -> anyhow::Result<()> {
+        std::fs::remove_file(Self::config_file()).context("Could not delete config file")
     }
 
     /// Stored next to the service exe
@@ -51,14 +52,13 @@ impl Config {
     }
 }
 
+#[derive(From)]
 pub enum ServiceError {
-    /// Encountered when attempting to save the service config before starting the service
-    FailedToCreateServiceConfig(io::Error),
+    /// Any other error type
+    Anyhow(anyhow::Error),
 
-    /// Encountered when attempting to delete the service config after service completes
-    FailedToDeleteServiceConfig(io::Error),
-
-    /// Encountered when starting the service, which can mean that we aren't running as a service
+    /// Represents a service-specific error that we use to known that we are not running as a
+    /// service
     Service(windows_service::Error),
 }
 
@@ -67,14 +67,12 @@ pub fn run() -> Result<(), ServiceError> {
     let config = Config {
         args: std::env::args_os().collect(),
     };
-    config
-        .save()
-        .map_err(ServiceError::FailedToCreateServiceConfig)?;
+    config.save()?;
 
     // Attempt to run as a service, deleting our config when completed
     // regardless of success
     let result = service_dispatcher::start(SERVICE_NAME, ffi_service_main);
-    let config_result = Config::delete().map_err(ServiceError::FailedToDeleteServiceConfig);
+    let config_result = Config::delete();
 
     // Swallow the config error if we have a service error, otherwise display
     // the config error
@@ -138,7 +136,7 @@ fn run_service() -> windows_service::Result<()> {
 
                 // Handle stop
                 ServiceControl::Stop => {
-                    shutdown_tx.send(0).unwrap();
+                    shutdown_tx.send(true).unwrap();
                     ServiceControlHandlerResult::NoError
                 }
 
@@ -166,55 +164,45 @@ fn run_service() -> windows_service::Result<()> {
 
     // Kick off thread to run our cli
     debug!("Spawning CLI thread for {SERVICE_NAME}");
-    thread::spawn({
+    let handle = thread::spawn({
         move || {
             debug!("Loading CLI using args from disk for {SERVICE_NAME}");
-            let config = match Config::load() {
-                Ok(config) => config,
-                Err(x) => {
-                    error!("{x}");
-                    shutdown_tx.send(x.to_i32()).unwrap();
-                    return;
-                }
-            };
+            let config = Config::load()?;
 
             debug!("Parsing CLI args from disk for {SERVICE_NAME}");
-            let cli = match Cli::initialize_from(config.args) {
-                Ok(cli) => cli,
-                Err(x) => {
-                    error!("{x}");
-                    shutdown_tx.send(x.to_i32()).unwrap();
-                    return;
-                }
-            };
-
-            let logger = cli.init_logger();
+            let cli = Cli::initialize_from(config.args)?;
 
             debug!("Running CLI for {SERVICE_NAME}");
-            if let Err(x) = cli.run() {
-                if !x.is_silent() {
-                    error!("{}", x);
-                }
-                logger.flush();
-                logger.shutdown();
-
-                shutdown_tx.send(x.to_i32()).unwrap();
-            } else {
-                logger.flush();
-                logger.shutdown();
-                shutdown_tx.send(0).unwrap();
-            }
+            cli.run()
         }
     });
-    let code = loop {
-        match shutdown_rx.recv_timeout(Duration::from_millis(100)) {
-            // Break the loop either upon stop or channel disconnect
-            Ok(code) => break code,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break 0,
+
+    // Continually check for a shutdown trigger, catching completion of the thread
+    // running our CLI as well and reporting errors if they occurred
+    let success = loop {
+        if handle.is_finished() {
+            match handle.join() {
+                Ok(result) => match result {
+                    Ok(_) => break true,
+                    Err(x) => {
+                        error!("x:?");
+                        break false;
+                    }
+                },
+                Err(x) => {
+                    error!("{x}");
+                    break false;
+                }
+            }
+        }
+
+        match shutdown_rx.try_recv() {
+            // Break the loop either upon stop or channel disconnect as a success
+            Ok(_) | Err(mpsc::TryRecvError::Disconnected) => break true,
 
             // Continue work if no events were received within the timeout
-            Err(mpsc::RecvTimeoutError::Timeout) => (),
-        };
+            Err(mpsc::TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
+        }
     };
 
     // Tell the system that service has stopped.
@@ -223,10 +211,10 @@ fn run_service() -> windows_service::Result<()> {
         service_type: SERVICE_TYPE,
         current_state: ServiceState::Stopped,
         controls_accepted: ServiceControlAccept::empty(),
-        exit_code: if code == 0 {
+        exit_code: if success {
             ServiceExitCode::NO_ERROR
         } else {
-            ServiceExitCode::ServiceSpecific(code as u32)
+            ServiceExitCode::ServiceSpecific(1u32)
         },
         checkpoint: 0,
         wait_hint: Duration::default(),

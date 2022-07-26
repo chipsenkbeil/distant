@@ -2,9 +2,9 @@ use crate::{
     config::NetworkConfig,
     paths::{global as global_paths, user as user_paths},
 };
+use anyhow::Context;
 use distant_core::{net::PlainCodec, DistantManager, DistantManagerConfig, DistantManagerRef};
 use log::*;
-use std::io;
 
 pub struct Manager {
     config: DistantManagerConfig,
@@ -17,7 +17,7 @@ impl Manager {
     }
 
     /// Begin listening on the network interface specified within [`NetworkConfig`]
-    pub async fn listen(self) -> io::Result<DistantManagerRef> {
+    pub async fn listen(self) -> anyhow::Result<DistantManagerRef> {
         let user = self.config.user;
 
         #[cfg(unix)]
@@ -32,7 +32,9 @@ impl Manager {
 
             // Ensure that the path to the socket exists
             if let Some(parent) = socket_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .with_context(|| format!("Failed to create socket directory {parent:?}"))?;
             }
 
             let boxed_ref = DistantManager::start_unix_socket_with_permissions(
@@ -41,10 +43,11 @@ impl Manager {
                 PlainCodec,
                 self.network.access.unwrap_or_default().into_mode(),
             )
-            .await?
+            .await
+            .with_context(|| format!("Failed to start manager at socket {socket_path:?}"))?
             .into_inner()
             .into_boxed_server_ref()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
+            .map_err(|_| anyhow::anyhow!("Got wrong server ref"))?;
 
             info!("Manager listening using unix socket @ {:?}", socket_path);
             Ok(*boxed_ref)
@@ -59,10 +62,13 @@ impl Manager {
             });
             let boxed_ref =
                 DistantManager::start_local_named_pipe(self.config, pipe_name, PlainCodec)
-                    .await?
+                    .await
+                    .with_context(|| {
+                        format!("Failed to start manager with pipe named '{pipe_name}'")
+                    })?
                     .into_inner()
                     .into_boxed_server_ref()
-                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "Got wrong server ref"))?;
+                    .map_err(|_| anyhow::anyhow!("Got wrong server ref"))?;
 
             info!("Manager listening using local named pipe @ {:?}", pipe_name);
             Ok(*boxed_ref)

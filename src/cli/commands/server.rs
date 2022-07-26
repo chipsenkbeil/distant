@@ -1,7 +1,5 @@
-use crate::{
-    cli::CliResult,
-    config::{BindAddress, ServerConfig, ServerListenConfig},
-};
+use crate::config::{BindAddress, ServerConfig, ServerListenConfig};
+use anyhow::Context;
 use clap::Subcommand;
 use distant_core::{
     net::{SecretKey32, ServerRef, TcpServerExt, XChaCha20Poly1305Codec},
@@ -35,18 +33,18 @@ pub enum ServerSubcommand {
 }
 
 impl ServerSubcommand {
-    pub fn run(self, _config: ServerConfig) -> CliResult<()> {
+    pub fn run(self, _config: ServerConfig) -> anyhow::Result<()> {
         match &self {
             Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self),
             Self::Listen { .. } => {
-                let rt = tokio::runtime::Runtime::new()?;
+                let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
                 rt.block_on(Self::async_run(self, false))
             }
         }
     }
 
     #[cfg(windows)]
-    fn run_daemon(self) -> CliResult<()> {
+    fn run_daemon(self) -> anyhow::Result<()> {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
         use std::ffi::OsString;
@@ -54,64 +52,70 @@ impl ServerSubcommand {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let name = format!("distant_{}_{}", std::process::id(), rand::random::<u16>());
-            let mut listener = WindowsPipeListener::bind_local(name.as_str())?;
+            let mut listener = WindowsPipeListener::bind_local(name.as_str())
+                .with_context(|| "Failed to bind to local named pipe {name:?}")?;
 
             let pid = Spawner::spawn_running_background(vec![
                 OsString::from("--output-to-local-pipe"),
                 OsString::from(name),
-            ])?;
+            ])
+            .context("Failed to spawn background process")?;
             println!("[distant server detached, pid = {}]", pid);
 
             // Wait to receive a connection from the above process
-            let mut transport = listener.accept().await?;
+            let mut transport = listener.accept().await.context(
+                "Failed to receive connection from background process to send credentials",
+            )?;
 
             // Get the credentials and print them
             let mut s = String::new();
-            let n = transport.read_to_string(&mut s).await?;
+            let n = transport
+                .read_to_string(&mut s)
+                .await
+                .context("Failed to receive credentials")?;
             if n == 0 {
-                Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "No credentials received from spawned server",
-                ))?;
+                anyhow::bail!("No credentials received from spawned server");
             }
             let credentials = s[..n]
                 .trim()
                 .parse::<DistantSingleKeyCredentials>()
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+                .context("Failed to parse server credentials")?;
 
             println!("\r");
             println!("{}", credentials);
             println!("\r");
-            io::stdout().flush()?;
+            io::stdout()
+                .flush()
+                .context("Failed to print server credentials")?;
             Ok(())
         })
     }
 
     #[cfg(unix)]
-    fn run_daemon(self) -> CliResult<()> {
+    fn run_daemon(self) -> anyhow::Result<()> {
         use fork::{daemon, Fork};
 
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
         debug!("Forking process");
         match daemon(true, true) {
             Ok(Fork::Child) => {
-                let rt = tokio::runtime::Runtime::new()?;
+                let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
                 rt.block_on(async { Self::async_run(self, true).await })?;
                 Ok(())
             }
             Ok(Fork::Parent(pid)) => {
                 println!("[distant server detached, pid = {}]", pid);
                 if fork::close_fd().is_err() {
-                    Err(io::Error::new(io::ErrorKind::Other, "Fork failed to close fd").into())
+                    anyhow::bail!("Fork failed to close fd");
                 } else {
                     Ok(())
                 }
             }
-            Err(_) => Err(io::Error::new(io::ErrorKind::Other, "Fork failed").into()),
+            Err(_) => anyhow::bail!("Fork failed"),
         }
     }
 
-    async fn async_run(self, _is_forked: bool) -> CliResult<()> {
+    async fn async_run(self, _is_forked: bool) -> anyhow::Result<()> {
         match self {
             Self::Listen {
                 config,
@@ -134,7 +138,9 @@ impl ServerSubcommand {
                 let key = if key_from_stdin {
                     debug!("Reading secret key from stdin");
                     let mut buf = [0u8; 32];
-                    io::stdin().read_exact(&mut buf)?;
+                    io::stdin()
+                        .read_exact(&mut buf)
+                        .context("Failed to read secret key from stdin")?;
                     SecretKey32::from(buf)
                 } else {
                     SecretKey32::default()
@@ -150,9 +156,20 @@ impl ServerSubcommand {
                         None => "using an ephemeral port".to_string(),
                     }
                 );
-                let server = DistantApiServer::local()?
+                let server = DistantApiServer::local()
+                    .context("Failed to create local distant api")?
                     .start(addr, config.port.unwrap_or_else(|| 0.into()), codec)
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to start server @ {} with {}",
+                            addr,
+                            config
+                                .port
+                                .map(|p| format!("port in range {p}"))
+                                .unwrap_or_else(|| String::from("ephemeral port"))
+                        )
+                    })?;
 
                 let credentials = DistantSingleKeyCredentials {
                     host: addr.to_string(),
@@ -172,34 +189,39 @@ impl ServerSubcommand {
                     println!("\r");
                     println!("{}", credentials);
                     println!("\r");
-                    io::stdout().flush()?;
+                    io::stdout()
+                        .flush()
+                        .context("Failed to print credentials")?;
                 }
 
                 #[cfg(windows)]
                 if let Some(name) = output_to_local_pipe {
                     use distant_core::net::WindowsPipeTransport;
                     use tokio::io::AsyncWriteExt;
-                    let mut transport = WindowsPipeTransport::connect_local(name).await?;
+                    let mut transport = WindowsPipeTransport::connect_local(name)
+                        .await
+                        .with_context(|| format!("Failed to connect to local pipe named {name}"))?;
                     transport
                         .write_all(credentials.to_string().as_bytes())
-                        .await?;
+                        .await
+                        .conect("Failed to send credentials through pipe")?;
                 } else {
                     println!("\r");
                     println!("{}", credentials);
                     println!("\r");
-                    io::stdout().flush()?;
+                    io::stdout()
+                        .flush()
+                        .context("Failed to print credentials")?;
                 }
 
                 // For the child, we want to fully disconnect it from pipes, which we do now
                 #[cfg(unix)]
                 if _is_forked && fork::close_fd().is_err() {
-                    return Err(
-                        io::Error::new(io::ErrorKind::Other, "Fork failed to close fd").into(),
-                    );
+                    anyhow::bail!("Fork failed to close fd");
                 }
 
                 // Let our server run to completion
-                server.wait().await?;
+                server.wait().await.context("Failed to wait on server")?;
                 info!("Server is shutting down");
             }
         }

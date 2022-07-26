@@ -1,9 +1,10 @@
+use anyhow::Context;
 use clap::Args;
 use derive_more::Display;
 use distant_core::{net::PortRange, Map};
 use serde::{Deserialize, Serialize};
 use std::{
-    env, io,
+    env,
     net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr},
     path::PathBuf,
     str::FromStr,
@@ -127,24 +128,17 @@ impl FromStr for BindAddress {
 impl BindAddress {
     /// Resolves address into valid IP; in the case of "any", will leverage the
     /// `use_ipv6` flag to determine if binding should use ipv4 or ipv6
-    pub fn resolve(self, use_ipv6: bool) -> io::Result<IpAddr> {
+    pub fn resolve(self, use_ipv6: bool) -> anyhow::Result<IpAddr> {
         match self {
             Self::Ssh => {
-                let ssh_connection = env::var("SSH_CONNECTION").map_err(|x| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Failed to read SSH_CONNECTION: {}", x),
-                    )
-                })?;
+                let ssh_connection =
+                    env::var("SSH_CONNECTION").context("Failed to read SSH_CONNECTION")?;
                 let ip_str = ssh_connection.split(' ').nth(2).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        "SSH_CONNECTION missing 3rd argument (host ip)",
-                    )
+                    anyhow::anyhow!("SSH_CONNECTION missing 3rd argument (host ip)")
                 })?;
                 let ip = ip_str
                     .parse::<IpAddr>()
-                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                    .context("Failed to parse IP address")?;
                 Ok(ip)
             }
             Self::Any if use_ipv6 => Ok(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),

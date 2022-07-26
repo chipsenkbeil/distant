@@ -1,12 +1,12 @@
 use crate::{
     cli::{
         client::{MsgReceiver, MsgSender},
-        Cache, CliError, CliResult, Client,
+        Cache, Client,
     },
     config::{ClientConfig, ClientLaunchConfig, NetworkConfig},
     paths::user::CACHE_FILE_PATH_STR,
-    ExitCode,
 };
+use anyhow::Context;
 use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
@@ -214,8 +214,8 @@ pub enum ClientSubcommand {
 }
 
 impl ClientSubcommand {
-    pub fn run(self, config: ClientConfig) -> CliResult<()> {
-        let rt = tokio::runtime::Runtime::new()?;
+    pub fn run(self, config: ClientConfig) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
         rt.block_on(Self::async_run(self, config))
     }
 
@@ -231,7 +231,7 @@ impl ClientSubcommand {
         }
     }
 
-    async fn async_run(self, config: ClientConfig) -> CliResult<()> {
+    async fn async_run(self, config: ClientConfig) -> anyhow::Result<()> {
         let mut cache = Cache::read_from_disk_or_default(self.cache_path().to_path_buf()).await?;
 
         match self {
@@ -244,13 +244,18 @@ impl ClientSubcommand {
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
-                let mut client = Client::new(network).connect().await?;
+                let mut client = Client::new(network)
+                    .connect()
+                    .await
+                    .context("Failed to connect to manager")?;
 
                 let connection_id =
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let mut channel = client.open_channel(connection_id).await?;
+                let mut channel = client.open_channel(connection_id).await.with_context(|| {
+                    format!("Failed to open channel to connection {connection_id}")
+                })?;
 
                 debug!(
                     "Timeout configured to be {}",
@@ -277,8 +282,9 @@ impl ClientSubcommand {
                             .current_dir(current_dir)
                             .persist(persist)
                             .pty(pty)
-                            .spawn(channel, cmd)
-                            .await?;
+                            .spawn(channel, cmd.as_str())
+                            .await
+                            .with_context(|| format!("Failed to spawn {cmd}"))?;
 
                         // Now, map the remote process' stdin/stdout/stderr to our own process
                         let link = RemoteProcessLink::from_remote_pipes(
@@ -650,7 +656,7 @@ async fn use_or_lookup_connection_id(
     cache: &mut Cache,
     connection: Option<ConnectionId>,
     client: &mut DistantManagerClient,
-) -> CliResult<ConnectionId> {
+) -> anyhow::Result<ConnectionId> {
     match connection {
         Some(id) => {
             trace!("Using specified connection id: {}", id);
@@ -658,17 +664,22 @@ async fn use_or_lookup_connection_id(
         }
         None => {
             trace!("Looking up connection id");
-            let list = client.list().await?;
+            let list = client
+                .list()
+                .await
+                .context("Failed to retrieve list of available connections")?;
 
             if list.contains_key(&cache.data.selected) {
                 trace!("Using cached connection id: {}", cache.data.selected);
                 Ok(*cache.data.selected)
             } else if list.is_empty() {
                 trace!("Cached connection id is invalid as there are no connections");
-                Err(CliError::NoConnection)
+                anyhow::bail!("There are no connections being managed! You need to start one!");
             } else if list.len() > 1 {
                 trace!("Cached connection id is invalid and there are multiple connections");
-                Err(CliError::NeedToPickConnection)
+                anyhow::bail!(
+                    "There are multiple connections being managed! You need to pick one!"
+                );
             } else {
                 trace!("Cached connection id is invalid");
                 *cache.data.selected = *list.keys().next().unwrap();

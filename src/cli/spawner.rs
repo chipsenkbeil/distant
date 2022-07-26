@@ -1,3 +1,4 @@
+use anyhow::Context;
 use log::*;
 use std::{
     ffi::{OsStr, OsString},
@@ -14,7 +15,7 @@ pub struct Spawner;
 impl Spawner {
     /// Spawns a new instance of this running process without a `--daemon` flag,
     /// returning the id of the spawned process
-    pub fn spawn_running_background(extra_args: Vec<OsString>) -> io::Result<u32> {
+    pub fn spawn_running_background(extra_args: Vec<OsString>) -> anyhow::Result<u32> {
         let cmd = Self::make_current_cmd(extra_args, "--daemon")?;
 
         #[cfg(windows)]
@@ -30,7 +31,7 @@ impl Spawner {
     }
 
     #[inline]
-    fn make_current_cmd(extra_args: Vec<OsString>, exclude: &str) -> io::Result<OsString> {
+    fn make_current_cmd(extra_args: Vec<OsString>, exclude: &str) -> anyhow::Result<OsString> {
         // Get absolute path to our binary
         let program = which::which(std::env::current_exe().unwrap_or_else(|_| {
             PathBuf::from(if cfg!(windows) {
@@ -39,7 +40,7 @@ impl Spawner {
                 "distant"
             })
         }))
-        .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+        .context("Failed to locate distant binary")?;
 
         // Remove --daemon argument to to ensure runs in foreground,
         // otherwise we would fork bomb ourselves
@@ -70,18 +71,17 @@ impl Spawner {
 impl Spawner {
     /// Spawns a process on Unix that runs in the background and won't be terminated when the
     /// parent process exits
-    pub fn spawn_background(cmd: impl AsRef<OsStr>) -> io::Result<u32> {
+    pub fn spawn_background(cmd: impl AsRef<OsStr>) -> anyhow::Result<u32> {
         let cmd = cmd
             .as_ref()
             .to_str()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "cmd is not a UTF-8 str"))?;
+            .ok_or_else(|| anyhow::anyhow!("cmd is not a UTF-8 str"))?;
 
         // Build out the command and args from our string
         let (cmd, args) = match cmd.split_once(' ') {
             Some((cmd_str, args_str)) => (
                 cmd_str,
-                shell_words::split(args_str)
-                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+                shell_words::split(args_str).context("Failed to split process arguments")?,
             ),
             None => (cmd, Vec::new()),
         };
@@ -92,7 +92,8 @@ impl Spawner {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()?;
+            .spawn()
+            .context("Failed to spawn background process")?;
         Ok(child.id())
     }
 }
@@ -101,15 +102,14 @@ impl Spawner {
 impl Spawner {
     /// Spawns a process on Windows that runs in the background without a console and does not get
     /// terminated when the parent or other ancestors terminate (such as openssh session)
-    pub fn spawn_background(cmd: impl AsRef<OsStr>) -> io::Result<u32> {
+    pub fn spawn_background(cmd: impl AsRef<OsStr>) -> anyhow::Result<u32> {
         use std::{
             io::{BufRead, Cursor},
             os::windows::process::CommandExt,
         };
 
         // Get absolute path to powershell
-        let powershell = which::which("powershell.exe")
-            .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+        let powershell = which::which("powershell.exe").context("Failed to find powershell.exe")?;
 
         // Pass along our environment variables
         let env = {
@@ -170,17 +170,15 @@ impl Spawner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()?;
+            .output()
+            .context("Failed to spawn background process")?;
 
         if !output.status.success() {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Program failed [{}]: {}",
-                    output.status.code().unwrap_or(-1),
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ))?;
+            anyhow::bail!(
+                "Program failed [{}]: {}",
+                output.status.code().unwrap_or(1),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         let stdout = Cursor::new(output.stdout);
@@ -202,19 +200,13 @@ impl Spawner {
 
         match (return_value, process_id) {
             (Some(0), Some(pid)) => Ok(pid),
-            (Some(0), None) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Program succeeded, but missing process pid",
-            ))?,
-            (Some(code), _) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Program failed [{}]: {}",
-                    code,
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ))?,
-            (None, _) => Err(io::Error::new(io::ErrorKind::Other, "Missing return value"))?,
+            (Some(0), None) => anyhow::bail!("Program succeeded, but missing process pid"),
+            (Some(code), _) => anyhow::bail!(
+                "Program failed [{}]: {}",
+                code,
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            (None, _) => anyhow::bail!("Missing return value"),
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::paths;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::{
     io,
@@ -34,10 +35,11 @@ impl Config {
     ///    config files, merging together if they both exist
     /// 3. Otherwise if no `custom` path and none of the standard configuration paths exist,
     ///    then the default configuration is returned instead
-    pub fn load_multi(custom: Option<PathBuf>) -> io::Result<Self> {
+    pub fn load_multi(custom: Option<PathBuf>) -> anyhow::Result<Self> {
         match custom {
-            Some(path) => toml_edit::de::from_slice(&std::fs::read(path)?)
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x)),
+            Some(path) => {
+                toml_edit::de::from_slice(&std::fs::read(path)?).context("Failed to parse config")
+            }
             None => {
                 let paths = vec![
                     paths::global::CONFIG_FILE_PATH.as_path(),
@@ -52,10 +54,8 @@ impl Config {
                             .add_source(File::from(paths[0]).required(exists_1))
                             .add_source(File::from(paths[1]).required(exists_2))
                             .build()
-                            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-                        config
-                            .try_deserialize()
-                            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+                            .context("Failed to build config from paths")?;
+                        config.try_deserialize().context("Failed to parse config")
                     }
 
                     // None of our standard paths exist, so use the default value instead
@@ -66,9 +66,11 @@ impl Config {
     }
 
     /// Loads the specified `path` as a [`Config`]
-    pub async fn load(path: impl AsRef<Path>) -> io::Result<Self> {
-        let bytes = tokio::fs::read(path).await?;
-        toml_edit::de::from_slice(&bytes).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+    pub async fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let bytes = tokio::fs::read(path.as_ref())
+            .await
+            .with_context(|| format!("Failed to read config file {:?}", path.as_ref()))?;
+        toml_edit::de::from_slice(&bytes).context("Failed to parse config")
     }
 
     /// Like `edit` but will succeed without invoking `f` if the path is not found

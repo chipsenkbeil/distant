@@ -1,8 +1,9 @@
 use crate::{
-    cli::{Cache, CliResult, Client, Manager},
+    cli::{Cache, Client, Manager},
     config::{ManagerConfig, NetworkConfig},
     paths::user::CACHE_FILE_PATH_STR,
 };
+use anyhow::Context;
 use clap::{Subcommand, ValueHint};
 use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
 use log::*;
@@ -129,107 +130,127 @@ impl ManagerSubcommand {
         matches!(self, Self::Listen { .. })
     }
 
-    pub fn run(self, config: ManagerConfig) -> CliResult<()> {
+    pub fn run(self, config: ManagerConfig) -> anyhow::Result<()> {
         match &self {
             Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self, config),
             _ => {
-                let rt = tokio::runtime::Runtime::new()?;
+                let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
                 rt.block_on(Self::async_run(self, config))
             }
         }
     }
 
     #[cfg(windows)]
-    fn run_daemon(self, _config: ManagerConfig) -> CliResult<()> {
+    fn run_daemon(self, _config: ManagerConfig) -> anyhow::Result<()> {
         use crate::cli::Spawner;
-        let pid = Spawner::spawn_running_background(Vec::new())?;
+        let pid = Spawner::spawn_running_background(Vec::new())
+            .context("Failed to spawn background process")?;
         println!("[distant manager detached, pid = {}]", pid);
         Ok(())
     }
 
     #[cfg(unix)]
-    fn run_daemon(self, config: ManagerConfig) -> CliResult<()> {
+    fn run_daemon(self, config: ManagerConfig) -> anyhow::Result<()> {
         use fork::{daemon, Fork};
-        use std::io;
 
         debug!("Forking process");
         match daemon(true, true) {
             Ok(Fork::Child) => {
-                let rt = tokio::runtime::Runtime::new()?;
+                let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
                 rt.block_on(async { Self::async_run(self, config).await })?;
                 Ok(())
             }
             Ok(Fork::Parent(pid)) => {
                 println!("[distant manager detached, pid = {}]", pid);
                 if fork::close_fd().is_err() {
-                    Err(io::Error::new(io::ErrorKind::Other, "Fork failed to close fd").into())
+                    anyhow::bail!("Fork failed to close fd");
                 } else {
                     Ok(())
                 }
             }
-            Err(_) => Err(io::Error::new(io::ErrorKind::Other, "Fork failed").into()),
+            Err(_) => anyhow::bail!("Fork failed"),
         }
     }
 
-    async fn async_run(self, config: ManagerConfig) -> CliResult<()> {
+    async fn async_run(self, config: ManagerConfig) -> anyhow::Result<()> {
         match self {
             Self::Service(ManagerServiceSubcommand::Start { kind, user }) => {
                 debug!("Starting manager service via {:?}", kind);
-                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)
+                    .context("Failed to detect native service manager")?;
 
                 if user {
-                    manager.set_level(ServiceLevel::User)?;
+                    manager
+                        .set_level(ServiceLevel::User)
+                        .context("Failed to set service manager to user level")?;
                 }
 
-                manager.start(ServiceStartCtx {
-                    label: SERVICE_LABEL.clone(),
-                })?;
+                manager
+                    .start(ServiceStartCtx {
+                        label: SERVICE_LABEL.clone(),
+                    })
+                    .context("Failed to start service")?;
                 Ok(())
             }
             Self::Service(ManagerServiceSubcommand::Stop { kind, user }) => {
                 debug!("Stopping manager service via {:?}", kind);
-                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)
+                    .context("Failed to detect native service manager")?;
 
                 if user {
-                    manager.set_level(ServiceLevel::User)?;
+                    manager
+                        .set_level(ServiceLevel::User)
+                        .context("Failed to set service manager to user level")?;
                 }
 
-                manager.stop(ServiceStopCtx {
-                    label: SERVICE_LABEL.clone(),
-                })?;
+                manager
+                    .stop(ServiceStopCtx {
+                        label: SERVICE_LABEL.clone(),
+                    })
+                    .context("Failed to stop service")?;
                 Ok(())
             }
             Self::Service(ManagerServiceSubcommand::Install { kind, user }) => {
                 debug!("Installing manager service via {:?}", kind);
-                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)
+                    .context("Failed to detect native service manager")?;
                 let mut args = vec![OsString::from("manager"), OsString::from("listen")];
 
                 if user {
                     args.push(OsString::from("--user"));
-                    manager.set_level(ServiceLevel::User)?;
+                    manager
+                        .set_level(ServiceLevel::User)
+                        .context("Failed to set service manager to user level")?;
                 }
 
-                manager.install(ServiceInstallCtx {
-                    label: SERVICE_LABEL.clone(),
+                manager
+                    .install(ServiceInstallCtx {
+                        label: SERVICE_LABEL.clone(),
 
-                    // distant manager listen
-                    program: std::env::current_exe()
-                        .ok()
-                        .unwrap_or_else(|| PathBuf::from("distant")),
-                    args,
-                })?;
+                        // distant manager listen
+                        program: std::env::current_exe()
+                            .ok()
+                            .unwrap_or_else(|| PathBuf::from("distant")),
+                        args,
+                    })
+                    .context("Failed to install service")?;
 
                 Ok(())
             }
             Self::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
                 debug!("Uninstalling manager service via {:?}", kind);
-                let mut manager = <dyn ServiceManager>::target_or_native(kind)?;
+                let mut manager = <dyn ServiceManager>::target_or_native(kind)
+                    .context("Failed to detect native service manager")?;
                 if user {
-                    manager.set_level(ServiceLevel::User)?;
+                    manager
+                        .set_level(ServiceLevel::User)
+                        .context("Failed to set service manager to user level")?;
                 }
-                manager.uninstall(ServiceUninstallCtx {
-                    label: SERVICE_LABEL.clone(),
-                })?;
+                manager
+                    .uninstall(ServiceUninstallCtx {
+                        label: SERVICE_LABEL.clone(),
+                    })
+                    .context("Failed to uninstall service")?;
 
                 Ok(())
             }
@@ -254,30 +275,38 @@ impl ManagerSubcommand {
                     network,
                 )
                 .listen()
-                .await?;
+                .await
+                .context("Failed to start manager")?;
 
                 // Register our handlers for different schemes
                 debug!("Registering handlers with manager");
                 manager_ref
                     .register_launch_handler("manager", handlers::ManagerLaunchHandler)
-                    .await?;
+                    .await
+                    .context("Failed to register launch handler for \"manager://\"")?;
                 manager_ref
                     .register_connect_handler("distant", handlers::DistantConnectHandler)
-                    .await?;
+                    .await
+                    .context("Failed to register connect handler for \"distant://\"")?;
 
                 #[cfg(any(feature = "libssh", feature = "ssh2"))]
                 // Register ssh-specific handlers if either feature flag is enabled
                 {
                     manager_ref
                         .register_launch_handler("ssh", handlers::SshLaunchHandler)
-                        .await?;
+                        .await
+                        .context("Failed to register launch handler for \"ssh://\"")?;
                     manager_ref
                         .register_connect_handler("ssh", handlers::SshConnectHandler)
-                        .await?;
+                        .await
+                        .context("Failed to register connect handler for \"ssh://\"")?;
                 }
 
                 // Let our server run to completion
-                manager_ref.wait().await?;
+                manager_ref
+                    .wait()
+                    .await
+                    .context("Failed to wait on manager")?;
                 info!("Manager is shutting down");
 
                 Ok(())
@@ -285,7 +314,12 @@ impl ManagerSubcommand {
             Self::Info { network, id } => {
                 let network = network.merge(config.network);
                 debug!("Getting info about connection {}", id);
-                let info = Client::new(network).connect().await?.info(id).await?;
+                let info = Client::new(network)
+                    .connect()
+                    .await
+                    .context("Failed to connect to manager")?
+                    .info(id)
+                    .await?;
 
                 #[derive(Tabled)]
                 struct InfoRow {
@@ -320,10 +354,19 @@ impl ManagerSubcommand {
             Self::List { network, cache } => {
                 let network = network.merge(config.network);
                 debug!("Getting list of connections");
-                let list = Client::new(network).connect().await?.list().await?;
+                let list = Client::new(network)
+                    .connect()
+                    .await
+                    .context("Failed to connect to manager")?
+                    .list()
+                    .await?;
 
                 debug!("Looking up selected connection");
-                let selected = Cache::read_from_disk_or_default(cache).await?.data.selected;
+                let selected = Cache::read_from_disk_or_default(cache)
+                    .await
+                    .context("Failed to look up selected connection")?
+                    .data
+                    .selected;
 
                 #[derive(Tabled)]
                 struct ListRow {
@@ -358,13 +401,25 @@ impl ManagerSubcommand {
             Self::Kill { network, id } => {
                 let network = network.merge(config.network);
                 debug!("Killing connection {}", id);
-                Client::new(network).connect().await?.kill(id).await?;
+                Client::new(network)
+                    .connect()
+                    .await
+                    .context("Failed to connect to manager")?
+                    .kill(id)
+                    .await
+                    .with_context(|| format!("Failed to kill connection to server {id}"))?;
                 Ok(())
             }
             Self::Shutdown { network } => {
                 let network = network.merge(config.network);
                 debug!("Shutting down manager");
-                Client::new(network).connect().await?.shutdown().await?;
+                Client::new(network)
+                    .connect()
+                    .await
+                    .context("Failed to connect to manager")?
+                    .shutdown()
+                    .await
+                    .context("Failed to shutdown manager")?;
                 Ok(())
             }
         }

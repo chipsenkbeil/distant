@@ -1,4 +1,5 @@
 use crate::paths::user::CACHE_FILE_PATH;
+use anyhow::Context;
 use distant_core::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,14 +22,14 @@ impl Cache {
     /// constructing data from the default cache if not found
     pub async fn read_from_disk_or_default(
         custom_path: impl Into<Option<PathBuf>>,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         let file = CacheFile::new(custom_path);
         let data = file.read_or_default().await?;
         Ok(Self { file, data })
     }
 
     /// Writes the cache back to disk
-    pub async fn write_to_disk(&self) -> io::Result<()> {
+    pub async fn write_to_disk(&self) -> anyhow::Result<()> {
         self.file.write(&self.data).await
     }
 }
@@ -50,12 +51,16 @@ impl CacheFile {
         }
     }
 
-    pub async fn read_or_default(&self) -> io::Result<CacheData> {
-        CacheData::read_or_default(self.path.as_path()).await
+    async fn read_or_default(&self) -> anyhow::Result<CacheData> {
+        CacheData::read_or_default(self.path.as_path())
+            .await
+            .with_context(|| format!("Failed to read cache from {:?}", self.path.as_path()))
     }
 
-    pub async fn write(&self, data: &CacheData) -> io::Result<()> {
-        data.write(self.path.as_path()).await
+    async fn write(&self, data: &CacheData) -> anyhow::Result<()> {
+        data.write(self.path.as_path())
+            .await
+            .with_context(|| format!("Failed to write cache to {:?}", self.path.as_path()))
     }
 }
 
@@ -68,13 +73,13 @@ pub struct CacheData {
 
 impl CacheData {
     /// Reads the cache data from disk
-    pub async fn read(path: impl AsRef<Path>) -> io::Result<Self> {
+    async fn read(path: impl AsRef<Path>) -> io::Result<Self> {
         let bytes = tokio::fs::read(path).await?;
         toml_edit::de::from_slice(&bytes).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
     }
 
     /// Reads the cache data if the file exists, otherwise returning a default cache instance
-    pub async fn read_or_default(path: impl AsRef<Path>) -> io::Result<Self> {
+    async fn read_or_default(path: impl AsRef<Path>) -> io::Result<Self> {
         match Self::read(path).await {
             Ok(cache) => Ok(cache),
             Err(x) if x.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
@@ -83,7 +88,7 @@ impl CacheData {
     }
 
     /// Writes the cache data to disk
-    pub async fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
+    async fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
         let bytes = toml_edit::ser::to_vec(self)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
         tokio::fs::write(path, bytes).await
