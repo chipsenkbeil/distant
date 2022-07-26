@@ -458,6 +458,37 @@ pub fn sshd() -> &'static Sshd {
 /// Fixture to establish a client to an SSH server
 #[fixture]
 pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> DistantClient {
+    let ssh_client = load_ssh_client(sshd).await;
+    ssh_client
+        .into_distant_client()
+        .await
+        .context("Failed to convert into distant client")
+        .unwrap()
+}
+
+/// Fixture to establish a client to a launched server
+#[fixture]
+pub async fn launched_client(
+    sshd: &'_ Sshd,
+    _logger: &'_ flexi_logger::LoggerHandle,
+) -> DistantClient {
+    let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
+    eprintln!("Setting path to distant binary as {binary}");
+
+    // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
+    // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
+    let ssh_client = load_ssh_client(sshd).await;
+    ssh_client
+        .launch_and_connect(DistantLaunchOpts {
+            binary,
+            ..Default::default()
+        })
+        .await
+        .context("Failed to launch and connect to distant server")
+        .unwrap()
+}
+
+async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
     let port = sshd.port;
     let opts = SshOpts {
         port: Some(port),
@@ -483,11 +514,7 @@ pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> 
                     .await
                     .context("Failed to authenticate")
                     .unwrap();
-                return ssh_client
-                    .into_distant_client()
-                    .await
-                    .context("Failed to convert into distant client")
-                    .unwrap();
+                return ssh_client;
             }
             Err(x) => {
                 error = error
@@ -498,41 +525,4 @@ pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> 
     }
 
     panic!("error:?");
-}
-
-/// Fixture to establish a client to a launched server
-#[fixture]
-pub async fn launched_client(
-    sshd: &'_ Sshd,
-    _logger: &'_ flexi_logger::LoggerHandle,
-) -> DistantClient {
-    let port = sshd.port;
-
-    let mut ssh_client = Ssh::connect(
-        "127.0.0.1",
-        SshOpts {
-            port: Some(port),
-            identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
-            identities_only: Some(true),
-            user: Some(USERNAME.to_string()),
-            user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-
-    ssh_client.authenticate(MockSshAuthHandler).await.unwrap();
-
-    let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
-    eprintln!("Setting path to distant binary as {binary}");
-
-    // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
-    // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
-    ssh_client
-        .launch_and_connect(DistantLaunchOpts {
-            binary,
-            ..Default::default()
-        })
-        .await
-        .unwrap()
 }
