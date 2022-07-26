@@ -52,7 +52,7 @@ impl ServerSubcommand {
         use distant_core::net::{Listener, WindowsPipeListener};
         use std::ffi::OsString;
         use tokio::io::AsyncReadExt;
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
         rt.block_on(async {
             let name = format!("distant_{}_{}", std::process::id(), rand::random::<u16>());
             let mut listener = WindowsPipeListener::bind_local(name.as_str())
@@ -92,6 +92,7 @@ impl ServerSubcommand {
                 .context("Failed to print server credentials")?;
             Ok(())
         })
+        .map_err(CliError::Error)
     }
 
     #[cfg(unix)]
@@ -202,9 +203,11 @@ impl ServerSubcommand {
                 if let Some(name) = output_to_local_pipe {
                     use distant_core::net::WindowsPipeTransport;
                     use tokio::io::AsyncWriteExt;
-                    let mut transport = WindowsPipeTransport::connect_local(name)
+                    let mut transport = WindowsPipeTransport::connect_local(&name)
                         .await
-                        .with_context(|| format!("Failed to connect to local pipe named {name}"))?;
+                        .with_context(|| {
+                            format!("Failed to connect to local pipe named {name:?}")
+                        })?;
                     transport
                         .write_all(credentials.to_string().as_bytes())
                         .await

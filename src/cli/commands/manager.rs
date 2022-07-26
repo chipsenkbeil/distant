@@ -2,7 +2,7 @@ use crate::{
     cli::{Cache, Client, Manager},
     config::{ManagerConfig, NetworkConfig},
     paths::user::CACHE_FILE_PATH_STR,
-    CliError, CliResult,
+    CliResult,
 };
 use anyhow::Context;
 use clap::{Subcommand, ValueHint};
@@ -152,6 +152,7 @@ impl ManagerSubcommand {
 
     #[cfg(unix)]
     fn run_daemon(self, config: ManagerConfig) -> CliResult {
+        use crate::CliError;
         use fork::{daemon, Fork};
 
         debug!("Forking process");

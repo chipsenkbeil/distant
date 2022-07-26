@@ -1,10 +1,9 @@
-use super::{Cli, ExitCodeError};
+use super::Cli;
 use anyhow::Context;
 use derive_more::From;
 use log::*;
 use std::{
     ffi::{OsStr, OsString},
-    io,
     path::Path,
     sync::mpsc,
     thread,
@@ -79,7 +78,7 @@ pub fn run() -> Result<(), ServiceError> {
     match (result, config_result) {
         (Ok(_), Ok(_)) => Ok(()),
         (Err(x), _) => Err(ServiceError::Service(x)),
-        (_, Err(x)) => Err(x),
+        (_, Err(x)) => Err(ServiceError::Anyhow(x)),
     }
 }
 
@@ -190,7 +189,7 @@ fn run_service() -> windows_service::Result<()> {
                     }
                 },
                 Err(x) => {
-                    error!("{x}");
+                    error!("{x:?}");
                     break false;
                 }
             }
@@ -206,7 +205,7 @@ fn run_service() -> windows_service::Result<()> {
     };
 
     // Tell the system that service has stopped.
-    debug!("Setting service status as stopped w/ code {code} for {SERVICE_NAME}");
+    debug!("Setting service status as stopped for {SERVICE_NAME}");
     status_handle.set_service_status(ServiceStatus {
         service_type: SERVICE_TYPE,
         current_state: ServiceState::Stopped,

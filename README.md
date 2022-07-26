@@ -1,6 +1,6 @@
 # distant - remotely edit files and run programs
 
-[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![RustC 1.59+][distant_rustc_img]][distant_rustc_lnk] 
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![RustC 1.61+][distant_rustc_img]][distant_rustc_lnk] 
 
 | Operating System | Status                                                             |
 | ---------------- | ------------------------------------------------------------------ |
@@ -12,8 +12,8 @@
 [distant_crates_lnk]: https://crates.io/crates/distant
 [distant_doc_img]: https://docs.rs/distant/badge.svg
 [distant_doc_lnk]: https://docs.rs/distant
-[distant_rustc_img]: https://img.shields.io/badge/distant-rustc_1.59+-lightgray.svg
-[distant_rustc_lnk]: https://blog.rust-lang.org/2022/02/24/Rust-1.59.0.html
+[distant_rustc_img]: https://img.shields.io/badge/distant-rustc_1.61+-lightgray.svg
+[distant_rustc_lnk]: https://blog.rust-lang.org/2022/05/19/Rust-1.61.0.html
 
 [distant_ci_macos_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-macos.yml/badge.svg
 [distant_ci_macos_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci-macos.yml
