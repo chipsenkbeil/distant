@@ -184,7 +184,7 @@ fn run_service() -> windows_service::Result<()> {
                 Ok(result) => match result {
                     Ok(_) => break true,
                     Err(x) => {
-                        error!("x:?");
+                        error!("{x:?}");
                         break false;
                     }
                 },
