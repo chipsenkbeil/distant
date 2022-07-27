@@ -514,19 +514,25 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
                 match res {
                     Ok(_) => return ssh_client,
                     Err(x) => {
-                        error = error
-                            .context(x)
-                            .context(format!("Failed to authenticate with sshd @ {addr_string}"));
+                        error =
+                            error.context(anyhow::Error::new(x).context(format!(
+                                "Failed to authenticate with sshd @ {addr_string}"
+                            )))
                     }
                 }
             }
             Err(x) => {
-                error = error
-                    .context(x)
-                    .context(format!("Failed to connect to sshd @ {addr_string}"));
+                error = error.context(
+                    anyhow::Error::new(x)
+                        .context(format!("Failed to connect to sshd @ {addr_string}")),
+                )
             }
         }
     }
 
-    panic!("{:?}", error);
+    for err in error.chain().rev() {
+        eprintln!("{err:?}");
+    }
+
+    panic!();
 }

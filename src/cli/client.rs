@@ -116,7 +116,7 @@ impl Client {
         let transport = {
             use distant_core::net::UnixSocketTransport;
             let mut maybe_transport = None;
-            let mut error = anyhow::anyhow!("Failed to connect to unix socket");
+            let mut error: Option<anyhow::Error> = None;
             for path in self.network.to_unix_socket_path_candidates() {
                 match UnixSocketTransport::connect(path).await {
                     Ok(transport) => {
@@ -125,22 +125,27 @@ impl Client {
                         break;
                     }
                     Err(x) => {
-                        error = error.context(
-                            anyhow::Error::new(x)
-                                .context(format!("Failed to connect to unix socket {:?}", path)),
-                        )
+                        let err = anyhow::Error::new(x)
+                            .context(format!("Failed to connect to unix socket {:?}", path));
+                        if let Some(x) = error {
+                            error = Some(x.context(err));
+                        } else {
+                            error = Some(err);
+                        }
                     }
                 }
             }
 
-            maybe_transport.ok_or(error)?
+            maybe_transport.ok_or_else(|| {
+                error.unwrap_or_else(|| anyhow::anyhow!("No unix socket candidate available"))
+            })?
         };
 
         #[cfg(windows)]
         let transport = {
             use distant_core::net::WindowsPipeTransport;
             let mut maybe_transport = None;
-            let mut error = anyhow::anyhow!("Failed to connect to named windows pipe");
+            let mut error: Option<anyhow::Error> = None;
             for name in self.network.to_windows_pipe_name_candidates() {
                 match WindowsPipeTransport::connect_local(name).await {
                     Ok(transport) => {
@@ -149,15 +154,20 @@ impl Client {
                         break;
                     }
                     Err(x) => {
-                        error = error.context(
-                            anyhow::Error::new(x)
-                                .context(format!("Failed to connect to windows pipe {:?}", name)),
-                        )
+                        let err = anyhow::Error::new(x)
+                            .context(format!("Failed to connect to windows pipe {:?}", name));
+                        if let Some(x) = error {
+                            error = Some(x.context(err));
+                        } else {
+                            error = Some(err);
+                        }
                     }
                 }
             }
 
-            maybe_transport.ok_or(error)?
+            maybe_transport.ok_or_else(|| {
+                error.unwrap_or_else(|| anyhow::anyhow!("No windows pipe candidate available"))
+            })?
         };
 
         DistantManagerClient::new(self.config, transport)
