@@ -278,6 +278,9 @@ pub struct Sshd {
     /// Temporary directory used to hold resources for sshd such as its config, keys, and log
     pub tmp: TempDir,
 
+    /// Path to config file to print out when failures happen
+    pub config_file: PathBuf,
+
     /// Path to log file to print out when failures happen
     pub log_file: PathBuf,
 }
@@ -340,6 +343,7 @@ impl Sshd {
             child: Mutex::new(Some(child)),
             port,
             tmp,
+            config_file: sshd_config_file.to_path_buf(),
             log_file: sshd_log_file.to_path_buf(),
         })
     }
@@ -546,6 +550,19 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
         eprintln!("====================");
         eprintln!();
         eprintln!("{log}");
+        eprintln!();
+        eprintln!("====================");
+        eprintln!();
+    }
+
+    // We want to print out the config file from sshd in case it sheds clues on problem
+    if let Ok(contents) = std::fs::read_to_string(&sshd.config_file) {
+        eprintln!();
+        eprintln!("====================");
+        eprintln!("= SSHD CONFIG FILE     ");
+        eprintln!("====================");
+        eprintln!();
+        eprintln!("{contents}");
         eprintln!();
         eprintln!("====================");
         eprintln!();
