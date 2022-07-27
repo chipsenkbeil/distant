@@ -528,5 +528,5 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
         }
     }
 
-    panic!("error:?");
+    panic!("{:?}", error);
 }
