@@ -149,12 +149,16 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - name: Run ssh2 client tests (default features)
         run: cargo test --release --verbose -p distant-ssh2 ssh2::client
+        shell: cmd
       - name: Run ssh2 client tests (all features)
         run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::client
+        shell: cmd
       - name: Run CLI tests
         run: cargo test --release --verbose
+        shell: cmd
       - name: Run CLI tests (no default features)
         run: cargo test --release --verbose --no-default-features
+        shell: cmd
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}

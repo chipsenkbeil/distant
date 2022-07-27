@@ -576,7 +576,14 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
                 eprintln!("sshd is still alive, so something else is going on");
                 child_lock.replace(child);
             }
-            Ok(Err((code, msg))) => eprintln!("sshd died ({code:?}): {msg}"),
+            Ok(Err((code, msg))) => eprintln!(
+                "sshd died w/ exit code {}: {msg}",
+                if let Some(code) = code {
+                    code.to_string()
+                } else {
+                    "[missing]".to_string()
+                }
+            ),
             Err(x) => eprintln!("Failed to check status of sshd: {x}"),
         }
     } else {
