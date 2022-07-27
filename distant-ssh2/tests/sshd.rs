@@ -556,6 +556,7 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
     if let Some(child) = child_lock.take() {
         match check(child) {
             Ok(Ok(child)) => {
+                eprintln!("sshd is still alive, so something else is going on");
                 child_lock.replace(child);
             }
             Ok(Err((code, msg))) => eprintln!("sshd died ({code:?}): {msg}"),
