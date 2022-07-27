@@ -274,6 +274,9 @@ pub struct Sshd {
 
     /// Temporary directory used to hold resources for sshd such as its config, keys, and log
     pub tmp: TempDir,
+
+    /// Path to log file to print out when failures happen
+    pub log_file: PathBuf,
 }
 
 impl Sshd {
@@ -325,7 +328,12 @@ impl Sshd {
         let (child, port) = Self::try_spawn_next(sshd_config_file.path(), sshd_log_file.path())
             .context("Failed to find open port for sshd")?;
 
-        Ok(Self { child, port, tmp })
+        Ok(Self {
+            child,
+            port,
+            tmp,
+            log_file: sshd_log_file.to_path_buf(),
+        })
     }
 
     fn try_spawn_next(
@@ -503,7 +511,8 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         IpAddr::V6(Ipv6Addr::LOCALHOST),
     ];
-    let mut error = anyhow::anyhow!("Failed to connect to any of these hosts: {:?}", addrs);
+    let mut errors = Vec::new();
+    let msg = format!("Failed to connect to any of these hosts: {addrs:?}");
 
     for addr in addrs {
         let addr_string = addr.to_string();
@@ -514,25 +523,40 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
                 match res {
                     Ok(_) => return ssh_client,
                     Err(x) => {
-                        error =
-                            error.context(anyhow::Error::new(x).context(format!(
+                        errors.push(
+                            anyhow::Error::new(x).context(format!(
                                 "Failed to authenticate with sshd @ {addr_string}"
-                            )))
+                            )),
+                        );
                     }
                 }
             }
             Err(x) => {
-                error = error.context(
+                errors.push(
                     anyhow::Error::new(x)
                         .context(format!("Failed to connect to sshd @ {addr_string}")),
-                )
+                );
             }
         }
     }
 
-    for err in error.chain().rev() {
-        eprintln!("{err:?}");
+    // We want to print out the log file from sshd in case it sheds clues on problem
+    if let Ok(log) = std::fs::read_to_string(&sshd.log_file) {
+        eprintln!();
+        eprintln!("====================");
+        eprintln!("= SSHD LOG FILE     ");
+        eprintln!("====================");
+        eprintln!();
+        eprintln!("{log}");
+        eprintln!();
+        eprintln!("====================");
+        eprintln!();
     }
 
-    panic!();
+    let error = match errors.into_iter().reduce(|x, y| x.context(y)) {
+        Some(x) => x.context(msg),
+        None => anyhow::anyhow!(msg),
+    };
+
+    panic!("{error:?}");
 }
