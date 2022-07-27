@@ -509,12 +509,16 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
         let addr_string = addr.to_string();
         match Ssh::connect(&addr_string, opts.clone()) {
             Ok(mut ssh_client) => {
-                ssh_client
-                    .authenticate(MockSshAuthHandler)
-                    .await
-                    .context("Failed to authenticate")
-                    .unwrap();
-                return ssh_client;
+                let res = ssh_client.authenticate(MockSshAuthHandler).await;
+
+                match res {
+                    Ok(_) => return ssh_client,
+                    Err(x) => {
+                        error = error
+                            .context(x)
+                            .context(format!("Failed to authenticate with sshd @ {addr_string}"));
+                    }
+                }
             }
             Err(x) => {
                 error = error
