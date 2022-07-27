@@ -11,7 +11,10 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
     process::{Child, Command},
-    sync::atomic::{AtomicU16, Ordering},
+    sync::{
+        atomic::{AtomicU16, Ordering},
+        Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -267,7 +270,7 @@ impl fmt::Display for SshdConfig {
 
 /// Context for some sshd instance
 pub struct Sshd {
-    child: Child,
+    child: Mutex<Option<Child>>,
 
     /// Port that sshd is listening on
     pub port: u16,
@@ -280,6 +283,11 @@ pub struct Sshd {
 }
 
 impl Sshd {
+    /// Cached check if dead, does not actually do the check itself
+    pub fn is_dead(&self) -> bool {
+        self.child.lock().unwrap().is_none()
+    }
+
     pub fn spawn(mut config: SshdConfig) -> anyhow::Result<Self> {
         let tmp = TempDir::new().context("Failed to create temporary directory")?;
 
@@ -329,7 +337,7 @@ impl Sshd {
             .context("Failed to find open port for sshd")?;
 
         Ok(Self {
-            child,
+            child: Mutex::new(Some(child)),
             port,
             tmp,
             log_file: sshd_log_file.to_path_buf(),
@@ -373,22 +381,6 @@ impl Sshd {
         config_path: impl AsRef<Path>,
         log_path: impl AsRef<Path>,
     ) -> anyhow::Result<Result<Child, (Option<i32>, String)>> {
-        fn check(mut child: Child) -> anyhow::Result<Result<Child, (Option<i32>, String)>> {
-            if let Some(exit_status) = child.try_wait().context("Failed to check status of sshd")? {
-                let output = child.wait_with_output().context("Failed to wait on sshd")?;
-                Ok(Err((
-                    exit_status.code(),
-                    format!(
-                        "{}\n{}",
-                        String::from_utf8(output.stdout).unwrap(),
-                        String::from_utf8(output.stderr).unwrap(),
-                    ),
-                )))
-            } else {
-                Ok(Ok(child))
-            }
-        }
-
         let child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
@@ -419,7 +411,9 @@ impl Sshd {
 impl Drop for Sshd {
     /// Kills server upon drop
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        if let Some(mut child) = self.child.lock().unwrap().take() {
+            let _ = child.kill();
+        }
     }
 }
 
@@ -497,6 +491,10 @@ pub async fn launched_client(
 }
 
 async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
+    if sshd.is_dead() {
+        panic!("sshd is dead!");
+    }
+
     let port = sshd.port;
     let opts = SshOpts {
         port: Some(port),
@@ -553,10 +551,41 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
         eprintln!();
     }
 
+    // Check if our sshd process is still running, or if it died and we can report about it
+    let mut child_lock = sshd.child.lock().unwrap();
+    if let Some(child) = child_lock.take() {
+        match check(child) {
+            Ok(Ok(child)) => {
+                child_lock.replace(child);
+            }
+            Ok(Err((code, msg))) => eprintln!("sshd died ({code:?}): {msg}"),
+            Err(x) => eprintln!("Failed to check status of sshd: {x}"),
+        }
+    } else {
+        eprintln!("sshd is dead!");
+    }
+    drop(child_lock);
+
     let error = match errors.into_iter().reduce(|x, y| x.context(y)) {
         Some(x) => x.context(msg),
         None => anyhow::anyhow!(msg),
     };
 
     panic!("{error:?}");
+}
+
+fn check(mut child: Child) -> anyhow::Result<Result<Child, (Option<i32>, String)>> {
+    if let Some(exit_status) = child.try_wait().context("Failed to check status of sshd")? {
+        let output = child.wait_with_output().context("Failed to wait on sshd")?;
+        Ok(Err((
+            exit_status.code(),
+            format!(
+                "{}\n{}",
+                String::from_utf8(output.stdout).unwrap(),
+                String::from_utf8(output.stderr).unwrap(),
+            ),
+        )))
+    } else {
+        Ok(Ok(child))
+    }
 }
