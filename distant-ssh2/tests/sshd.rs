@@ -142,24 +142,33 @@ impl SshdConfig {
     }
 
     pub fn set_authorized_keys_file(&mut self, path: impl AsRef<Path>) {
-        self.0.insert(
-            "AuthorizedKeysFile".to_string(),
-            vec![path.as_ref().to_string_lossy().to_string()],
-        );
+        let path = if cfg!(windows) {
+            convert_path_to_unix_string(path.as_ref())
+        } else {
+            path.as_ref().to_string_lossy().to_string()
+        };
+
+        self.0.insert("AuthorizedKeysFile".to_string(), vec![path]);
     }
 
     pub fn set_host_key(&mut self, path: impl AsRef<Path>) {
-        self.0.insert(
-            "HostKey".to_string(),
-            vec![path.as_ref().to_string_lossy().to_string()],
-        );
+        let path = if cfg!(windows) {
+            convert_path_to_unix_string(path.as_ref())
+        } else {
+            path.as_ref().to_string_lossy().to_string()
+        };
+
+        self.0.insert("HostKey".to_string(), vec![path]);
     }
 
     pub fn set_pid_file(&mut self, path: impl AsRef<Path>) {
-        self.0.insert(
-            "PidFile".to_string(),
-            vec![path.as_ref().to_string_lossy().to_string()],
-        );
+        let path = if cfg!(windows) {
+            convert_path_to_unix_string(path.as_ref())
+        } else {
+            path.as_ref().to_string_lossy().to_string()
+        };
+
+        self.0.insert("PidFile".to_string(), vec![path]);
     }
 
     pub fn set_subsystem(&mut self, sftp: bool, internal_sftp: bool) {
@@ -613,4 +622,28 @@ fn check(mut child: Child) -> anyhow::Result<Result<Child, (Option<i32>, String)
     } else {
         Ok(Ok(child))
     }
+}
+
+fn convert_path_to_unix_string(path: &Path) -> String {
+    use std::path::{Component, Prefix};
+    let mut s = String::new();
+    for component in path.components() {
+        s.push('/');
+
+        match component {
+            Component::Prefix(x) => match x.kind() {
+                Prefix::Verbatim(x) => s.push_str(&x.to_string_lossy()),
+                Prefix::VerbatimUNC(_, _) => unimplemented!(),
+                Prefix::VerbatimDisk(x) => s.push(x as char),
+                Prefix::DeviceNS(_) => unimplemented!(),
+                Prefix::UNC(_, _) => unimplemented!(),
+                Prefix::Disk(x) => s.push(x as char),
+            },
+            Component::RootDir => continue,
+            Component::CurDir => s.push('.'),
+            Component::ParentDir => s.push_str(".."),
+            Component::Normal(x) => s.push_str(&x.to_string_lossy()),
+        }
+    }
+    s
 }
