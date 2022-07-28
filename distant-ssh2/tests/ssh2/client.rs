@@ -992,8 +992,8 @@ async fn metadata_should_not_include_windows_as_ssh_cannot_retrieve_that_informa
     match metadata {
         Metadata { unix, windows, .. } => {
             assert!(
-                windows.is_some(),
-                "Unexpectedly missing windows metadata on windows"
+                windows.is_none(),
+                "Unexpectedly got windows metadata on windows (support added?)"
             );
             assert!(unix.is_none(), "Unexpectedly got unix metadata on windows");
         }

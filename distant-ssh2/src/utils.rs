@@ -1,5 +1,9 @@
 use async_compat::CompatExt;
-use std::{fmt, io, time::Duration};
+use std::{
+    fmt, io,
+    path::{Component, Path, Prefix},
+    time::Duration,
+};
 use wezterm_ssh::{ExecResult, Session};
 
 const READER_PAUSE_MILLIS: u64 = 100;
@@ -79,6 +83,47 @@ pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutp
         stdout,
         stderr,
     })
+}
+
+/// Convert a path into a string representing a unix path
+///
+/// E.g. C:\Users\example\Documents\file.txt -> /C/Users/example/Documents/file.txt
+pub fn convert_path_to_unix_string(path: &Path) -> io::Result<String> {
+    let mut s = String::new();
+    for component in path.components() {
+        s.push('/');
+
+        match component {
+            Component::Prefix(x) => match x.kind() {
+                Prefix::Verbatim(x) => s.push_str(&x.to_string_lossy()),
+                Prefix::VerbatimUNC(_, _) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "Verbatim UNC not supported",
+                    ));
+                }
+                Prefix::VerbatimDisk(x) => s.push(x as char),
+                Prefix::DeviceNS(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "Device NS not supported",
+                    ));
+                }
+                Prefix::UNC(_, _) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "UNC not supported",
+                    ));
+                }
+                Prefix::Disk(x) => s.push(x as char),
+            },
+            Component::RootDir => continue,
+            Component::CurDir => s.push('.'),
+            Component::ParentDir => s.push_str(".."),
+            Component::Normal(x) => s.push_str(&x.to_string_lossy()),
+        }
+    }
+    Ok(s)
 }
 
 pub fn to_other_error<E>(err: E) -> io::Error

@@ -1,6 +1,6 @@
 use crate::{
     process::{spawn_pty, spawn_simple, SpawnResult},
-    utils::{execute_output, to_other_error},
+    utils::{convert_path_to_unix_string, execute_output, to_other_error},
 };
 use async_compat::CompatExt;
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use log::*;
 use std::{
     collections::{HashMap, HashSet},
     io,
-    path::PathBuf,
+    path::{Component, PathBuf},
     sync::{Arc, Weak},
 };
 use tokio::sync::{mpsc, RwLock};
@@ -244,6 +244,8 @@ impl DistantApi for SshDistantApi {
 
         let sftp = self.session.sftp();
 
+        eprintln!("PATH: {path:?}");
+
         // Canonicalize our provided path to ensure that it is exists, not a loop, and absolute
         let root_path = sftp
             .canonicalize(path)
@@ -252,7 +254,7 @@ impl DistantApi for SshDistantApi {
             .map_err(to_other_error)?
             .into_std_path_buf();
 
-        eprintln!("PATH: {root_path:?}");
+        eprintln!("PATH AFTER CANONICALIZE: {root_path:?}");
 
         // Build up our entry list
         let mut entries = Vec::new();
@@ -616,13 +618,35 @@ impl DistantApi for SshDistantApi {
 
         let sftp = self.session.sftp();
         let canonicalized_path = if canonicalize {
-            Some(
-                sftp.canonicalize(path.to_path_buf())
-                    .compat()
-                    .await
-                    .map_err(to_other_error)?
-                    .into_std_path_buf(),
-            )
+            // Try to canonicalize original path first
+            let result = sftp.canonicalize(path.to_path_buf()).compat().await;
+
+            // If result is a failure, we want to try again with a unix path in case we were using
+            // a windows path and sshd had a problem with canonicalizing it
+            let unix_path = if result.is_err()
+                && path.components().any(|c| matches!(c, Component::Prefix(_)))
+            {
+                convert_path_to_unix_string(&path).ok().map(PathBuf::from)
+            } else {
+                None
+            };
+
+            // 1. If we succeeded on first try, return that path
+            // 2. If we failed on first try and have a clear Windows path, try the unix version
+            //    but return our original error if we fail
+            // 3. If we failed and there is no valid unix path for a Windows path, return the
+            //    original error
+            match (result, unix_path) {
+                (Ok(path), _) => Some(path.into_std_path_buf()),
+                (Err(x), Some(path)) => Some(
+                    sftp.canonicalize(path.to_path_buf())
+                        .compat()
+                        .await
+                        .map_err(|_| to_other_error(x))?
+                        .into_std_path_buf(),
+                ),
+                (Err(x), None) => return Err(to_other_error(x)),
+            }
         } else {
             None
         };
