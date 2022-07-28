@@ -1,4 +1,3 @@
-use crate::utils::ci_path_to_string;
 use anyhow::Context;
 use assert_fs::{prelude::*, TempDir};
 use async_trait::async_trait;
@@ -19,6 +18,7 @@ use std::{
     thread,
     time::Duration,
 };
+use crate::utils::ci_path_to_string;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
