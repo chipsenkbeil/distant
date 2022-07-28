@@ -29,6 +29,9 @@ use std::os::unix::fs::PermissionsExt;
 static BIN_PATH: Lazy<PathBuf> =
     Lazy::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
 
+// Returns true if running test in Github CI
+static IS_CI: Lazy<bool> = Lazy::new(|| std::env::var("CI").as_deref() == Ok("true"));
+
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
 
@@ -37,14 +40,14 @@ static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 pub struct SshKeygen;
 
 impl SshKeygen {
-    // ssh-keygen -t rsa -f $ROOT/id_rsa -N "" -q
-    pub fn generate_rsa(
+    // ssh-keygen -t ed25519 -f $ROOT/id_ed25519 -N "" -q
+    pub fn generate_ed25519(
         path: impl AsRef<Path>,
         passphrase: impl AsRef<str>,
     ) -> anyhow::Result<bool> {
         let res = Command::new("ssh-keygen")
             .args(&["-m", "PEM"])
-            .args(&["-t", "rsa"])
+            .args(&["-t", "ed25519"])
             .arg("-f")
             .arg(path.as_ref())
             .arg("-N")
@@ -52,17 +55,17 @@ impl SshKeygen {
             .arg("-q")
             .status()
             .map(|status| status.success())
-            .context("Failed to generate RSA key")?;
+            .context("Failed to generate ed25519 key")?;
 
         #[cfg(unix)]
         if res {
-            // chmod 600 id_rsa* -> ida_rsa + ida_rsa.pub
+            // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
             std::fs::metadata(path.as_ref().with_extension("pub"))
-                .context("Failed to load metadata of RSA pub key")?
+                .context("Failed to load metadata of ed25519 pub key")?
                 .permissions()
                 .set_mode(0o600);
             std::fs::metadata(path)
-                .context("Failed to load metadata of RSA key")?
+                .context("Failed to load metadata of ed25519 key")?
                 .permissions()
                 .set_mode(0o600);
         }
@@ -142,7 +145,7 @@ impl SshdConfig {
     }
 
     pub fn set_authorized_keys_file(&mut self, path: impl AsRef<Path>) {
-        let path = if cfg!(windows) {
+        let path = if cfg!(windows) && *IS_CI {
             convert_path_to_unix_string(path.as_ref())
         } else {
             path.as_ref().to_string_lossy().to_string()
@@ -152,7 +155,7 @@ impl SshdConfig {
     }
 
     pub fn set_host_key(&mut self, path: impl AsRef<Path>) {
-        let path = if cfg!(windows) {
+        let path = if cfg!(windows) && *IS_CI {
             convert_path_to_unix_string(path.as_ref())
         } else {
             path.as_ref().to_string_lossy().to_string()
@@ -162,7 +165,7 @@ impl SshdConfig {
     }
 
     pub fn set_pid_file(&mut self, path: impl AsRef<Path>) {
-        let path = if cfg!(windows) {
+        let path = if cfg!(windows) && *IS_CI {
             convert_path_to_unix_string(path.as_ref())
         } else {
             path.as_ref().to_string_lossy().to_string()
@@ -307,32 +310,32 @@ impl Sshd {
         SshAgent::update_tests_with_shell_env()
             .context("Failed to update tests with ssh agent shell env")?;
 
-        // ssh-keygen -t rsa -f $ROOT/id_rsa -N "" -q
-        let id_rsa_file = tmp.child("id_rsa");
+        // ssh-keygen -t ed25519 -f $ROOT/id_ed25519 -N "" -q
+        let id_ed25519_file = tmp.child("id_ed25519");
         assert!(
-            SshKeygen::generate_rsa(id_rsa_file.path(), "")
-                .context("Failed to generate RSA key for self")?,
-            "Failed to ssh-keygen id_rsa"
+            SshKeygen::generate_ed25519(id_ed25519_file.path(), "")
+                .context("Failed to generate ed25519 key for self")?,
+            "Failed to ssh-keygen id_ed25519"
         );
 
-        // cp $ROOT/id_rsa.pub $ROOT/authorized_keys
+        // cp $ROOT/id_ed25519.pub $ROOT/authorized_keys
         let authorized_keys_file = tmp.child("authorized_keys");
         std::fs::copy(
-            id_rsa_file.path().with_extension("pub"),
+            id_ed25519_file.path().with_extension("pub"),
             authorized_keys_file.path(),
         )
-        .context("Failed to copy RSA pub key to authorized keys file")?;
+        .context("Failed to copy ed25519 pub key to authorized keys file")?;
 
-        // ssh-keygen -t rsa -f $ROOT/ssh_host_rsa_key -N "" -q
-        let ssh_host_rsa_key_file = tmp.child("ssh_host_rsa_key");
+        // ssh-keygen -t ed25519 -f $ROOT/ssh_host_ed25519_key -N "" -q
+        let ssh_host_ed25519_key_file = tmp.child("ssh_host_ed25519_key");
         assert!(
-            SshKeygen::generate_rsa(ssh_host_rsa_key_file.path(), "")
-                .context("Failed to generate RSA key for host")?,
-            "Failed to ssh-keygen ssh_host_rsa_key"
+            SshKeygen::generate_ed25519(ssh_host_ed25519_key_file.path(), "")
+                .context("Failed to generate ed25519 key for host")?,
+            "Failed to ssh-keygen ssh_host_ed25519_key"
         );
 
-        config.set_authorized_keys_file(id_rsa_file.path().with_extension("pub"));
-        config.set_host_key(ssh_host_rsa_key_file.path());
+        config.set_authorized_keys_file(id_ed25519_file.path().with_extension("pub"));
+        config.set_host_key(ssh_host_ed25519_key_file.path());
 
         let sshd_pid_file = tmp.child("sshd.pid");
         config.set_pid_file(sshd_pid_file.path());
@@ -511,7 +514,7 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
     let port = sshd.port;
     let opts = SshOpts {
         port: Some(port),
-        identity_files: vec![sshd.tmp.child("id_rsa").path().to_path_buf()],
+        identity_files: vec![sshd.tmp.child("id_ed25519").path().to_path_buf()],
         identities_only: Some(true),
         user: Some(USERNAME.to_string()),
         user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
