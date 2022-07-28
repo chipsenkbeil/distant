@@ -825,6 +825,7 @@ impl DistantApi for SshDistantApi {
         // Determine OS by printing OS variable (works with Windows 2000+)
         // If it matches Windows_NT, then we are on windows
         let output = execute_output(&self.session, "cmd.exe /C echo %OS%").await?;
+        eprintln!("CMD.EXE OUTPUT = {output:#?}");
 
         let is_windows =
             output.success && String::from_utf8_lossy(&output.stdout).trim() == "Windows_NT";

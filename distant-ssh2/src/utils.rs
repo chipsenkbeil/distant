@@ -1,13 +1,33 @@
 use async_compat::CompatExt;
-use std::{io, time::Duration};
+use std::{fmt, io, time::Duration};
 use wezterm_ssh::{ExecResult, Session};
 
 const READER_PAUSE_MILLIS: u64 = 100;
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct ExecOutput {
     pub success: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+}
+
+impl fmt::Debug for ExecOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let is_alternate = f.alternate();
+
+        let mut s = f.debug_struct("ExecOutput");
+        s.field("success", &self.success);
+
+        if is_alternate {
+            s.field("stdout", &String::from_utf8_lossy(&self.stdout))
+                .field("stderr", &String::from_utf8_lossy(&self.stderr));
+        } else {
+            s.field("stdout", &self.stdout)
+                .field("stderr", &self.stderr);
+        }
+
+        s.finish()
+    }
 }
 
 pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutput> {
