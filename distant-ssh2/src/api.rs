@@ -252,6 +252,8 @@ impl DistantApi for SshDistantApi {
             .map_err(to_other_error)?
             .into_std_path_buf();
 
+        eprintln!("PATH: {root_path:?}");
+
         // Build up our entry list
         let mut entries = Vec::new();
         let mut errors: Vec<io::Error> = Vec::new();
@@ -271,6 +273,8 @@ impl DistantApi for SshDistantApi {
             } else {
                 entry.path.to_path_buf()
             };
+
+            eprintln!("ENTRY: {path:?}");
 
             // Always include any non-root in our traverse list, but only include the
             // root directory if flagged to do so
@@ -300,6 +304,8 @@ impl DistantApi for SshDistantApi {
                 {
                     Ok(entries) => {
                         for (mut path, metadata) in entries {
+                            eprintln!("WITHIN -- RAW ENTRY: {path:?}");
+
                             // Canonicalize the path if specified, otherwise just return
                             // the path as is
                             path = if canonicalize {
@@ -313,6 +319,8 @@ impl DistantApi for SshDistantApi {
                             } else {
                                 path
                             };
+
+                            eprintln!("WITHIN -- ENTRY: {path:?}");
 
                             // Strip the path of its prefix based if not flagged as absolute
                             if !absolute {
@@ -604,6 +612,8 @@ impl DistantApi for SshDistantApi {
             ctx.connection_id, path, canonicalize, resolve_file_type
         );
 
+        eprintln!("PATH: {path:?}");
+
         let sftp = self.session.sftp();
         let canonicalized_path = if canonicalize {
             Some(
@@ -616,6 +626,8 @@ impl DistantApi for SshDistantApi {
         } else {
             None
         };
+
+        eprintln!("CANONICALIZED PATH: {canonicalized_path:?}");
 
         let metadata = if resolve_file_type {
             sftp.metadata(path).compat().await.map_err(to_other_error)?
