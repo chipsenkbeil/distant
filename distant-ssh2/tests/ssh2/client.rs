@@ -971,7 +971,7 @@ async fn metadata_should_include_unix_specific_metadata_on_unix_platform(
 #[cfg(windows)]
 #[rstest]
 #[tokio::test]
-async fn metadata_should_include_windows_specific_metadata_on_windows_platform(
+async fn metadata_should_not_include_windows_as_ssh_cannot_retrieve_that_information(
     #[future] client: DistantClient,
 ) {
     let mut client = client.await;

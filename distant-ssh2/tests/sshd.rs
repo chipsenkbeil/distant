@@ -1,3 +1,4 @@
+use crate::utils::ci_path_to_string;
 use anyhow::Context;
 use assert_fs::{prelude::*, TempDir};
 use async_trait::async_trait;
@@ -28,9 +29,6 @@ use std::os::unix::fs::PermissionsExt;
 // Windows should be something like C:\Windows\System32\OpenSSH\sshd.exe
 static BIN_PATH: Lazy<PathBuf> =
     Lazy::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
-
-// Returns true if running test in Github CI
-static IS_CI: Lazy<bool> = Lazy::new(|| std::env::var("CI").as_deref() == Ok("true"));
 
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
@@ -145,31 +143,19 @@ impl SshdConfig {
     }
 
     pub fn set_authorized_keys_file(&mut self, path: impl AsRef<Path>) {
-        let path = if cfg!(windows) && *IS_CI {
-            convert_path_to_unix_string(path.as_ref())
-        } else {
-            path.as_ref().to_string_lossy().to_string()
-        };
+        let path = ci_path_to_string(path.as_ref());
 
         self.0.insert("AuthorizedKeysFile".to_string(), vec![path]);
     }
 
     pub fn set_host_key(&mut self, path: impl AsRef<Path>) {
-        let path = if cfg!(windows) && *IS_CI {
-            convert_path_to_unix_string(path.as_ref())
-        } else {
-            path.as_ref().to_string_lossy().to_string()
-        };
+        let path = ci_path_to_string(path.as_ref());
 
         self.0.insert("HostKey".to_string(), vec![path]);
     }
 
     pub fn set_pid_file(&mut self, path: impl AsRef<Path>) {
-        let path = if cfg!(windows) && *IS_CI {
-            convert_path_to_unix_string(path.as_ref())
-        } else {
-            path.as_ref().to_string_lossy().to_string()
-        };
+        let path = ci_path_to_string(path.as_ref());
 
         self.0.insert("PidFile".to_string(), vec![path]);
     }
@@ -625,28 +611,4 @@ fn check(mut child: Child) -> anyhow::Result<Result<Child, (Option<i32>, String)
     } else {
         Ok(Ok(child))
     }
-}
-
-fn convert_path_to_unix_string(path: &Path) -> String {
-    use std::path::{Component, Prefix};
-    let mut s = String::new();
-    for component in path.components() {
-        s.push('/');
-
-        match component {
-            Component::Prefix(x) => match x.kind() {
-                Prefix::Verbatim(x) => s.push_str(&x.to_string_lossy()),
-                Prefix::VerbatimUNC(_, _) => unimplemented!(),
-                Prefix::VerbatimDisk(x) => s.push(x as char),
-                Prefix::DeviceNS(_) => unimplemented!(),
-                Prefix::UNC(_, _) => unimplemented!(),
-                Prefix::Disk(x) => s.push(x as char),
-            },
-            Component::RootDir => continue,
-            Component::CurDir => s.push('.'),
-            Component::ParentDir => s.push_str(".."),
-            Component::Normal(x) => s.push_str(&x.to_string_lossy()),
-        }
-    }
-    s
 }

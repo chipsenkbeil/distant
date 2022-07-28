@@ -67,12 +67,12 @@ pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutp
     let stdout_handle = spawn_reader!(stdout);
     let stderr_handle = spawn_reader!(stderr);
 
-    // Wait for process to conclude
-    let status = child.async_wait().compat().await.map_err(to_other_error)?;
-
     // Wait for our handles to conclude
     let stdout = stdout_handle.await.map_err(to_other_error)??;
     let stderr = stderr_handle.await.map_err(to_other_error)??;
+
+    // Wait for process to conclude
+    let status = child.async_wait().compat().await.map_err(to_other_error)?;
 
     Ok(ExecOutput {
         success: status.success(),
