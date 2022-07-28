@@ -1,4 +1,7 @@
-use crate::process::{spawn_pty, spawn_simple, SpawnResult};
+use crate::{
+    process::{spawn_pty, spawn_simple, SpawnResult},
+    utils::{execute_output, to_other_error},
+};
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::{
@@ -11,18 +14,11 @@ use log::*;
 use std::{
     collections::{HashMap, HashSet},
     io,
-    path::{Component, PathBuf},
+    path::PathBuf,
     sync::{Arc, Weak},
 };
 use tokio::sync::{mpsc, RwLock};
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
-
-fn to_other_error<E>(err: E) -> io::Error
-where
-    E: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    io::Error::new(io::ErrorKind::Other, err)
-}
 
 #[derive(Default)]
 pub struct ConnectionState {
@@ -815,6 +811,8 @@ impl DistantApi for SshDistantApi {
 
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
         debug!("[Conn {}] Reading system information", ctx.connection_id);
+
+        // Look up the current directory
         let current_dir = self
             .session
             .sftp()
@@ -824,10 +822,14 @@ impl DistantApi for SshDistantApi {
             .map_err(to_other_error)?
             .into_std_path_buf();
 
-        let first_component = current_dir.components().next();
+        // Determine OS by printing OS variable (works with Windows 2000+)
+        // If it matches Windows_NT, then we are on windows
+        let output = execute_output(&self.session, "cmd.exe /C echo %OS%").await?;
+
         let is_windows =
-            first_component.is_some() && matches!(first_component.unwrap(), Component::Prefix(_));
-        let is_unix = current_dir.as_os_str().to_string_lossy().starts_with('/');
+            output.success && String::from_utf8_lossy(&output.stdout).trim() == "Windows_NT";
+
+        let is_unix = !is_windows && current_dir.as_os_str().to_string_lossy().starts_with('/');
 
         let family = if is_windows {
             "windows"

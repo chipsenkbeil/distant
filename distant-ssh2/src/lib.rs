@@ -27,6 +27,7 @@ use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as We
 
 mod api;
 mod process;
+mod utils;
 
 use api::SshDistantApi;
 
