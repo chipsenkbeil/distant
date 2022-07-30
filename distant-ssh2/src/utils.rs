@@ -107,8 +107,6 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
         None
     };
 
-    eprintln!("UNIX PATH IS {unix_path:?} for {:?}", path.as_ref());
-
     // 1. If we succeeded on first try, return that path
     //     a. If the canonicalized path was for a Windows path, sftp may return something odd
     //        like C:\Users\example -> /c:/Users/example and we need to transform it back
@@ -139,13 +137,11 @@ fn to_unix_path(path: &Path) -> PathBuf {
     let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
     if !is_windows_path {
-        eprintln!("to_unix_path: NOT WINDOWS PATH");
         return path.to_path_buf();
     }
 
     let mut p = PathBuf::new();
     for component in path.components() {
-        eprintln!("to_unix_path: checking {component:?}");
         match component {
             Component::Prefix(x) => match x.kind() {
                 Prefix::Verbatim(path) => p.push(path),
@@ -184,7 +180,6 @@ fn to_windows_path(path: &Path) -> PathBuf {
     let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
     if is_windows_path {
-        eprintln!("to_windows_path: NOT UNIX PATH");
         return path.to_path_buf();
     }
 
@@ -212,8 +207,6 @@ fn to_windows_path(path: &Path) -> PathBuf {
         None
     };
 
-    eprintln!("to_windows_path: drive letter = {drive_letter:?}");
-
     let mut p = PathBuf::new();
 
     // Start with a drive prefix
@@ -224,7 +217,6 @@ fn to_windows_path(path: &Path) -> PathBuf {
     // If we start with a root portion of the regular path, we want to drop
     // it and the drive letter since we've added that separately
     if path.has_root() {
-        eprintln!("to_windows_path: pushing root");
         p.push(Component::RootDir);
         components.next();
 
@@ -234,7 +226,6 @@ fn to_windows_path(path: &Path) -> PathBuf {
     }
 
     for component in components {
-        eprintln!("to_windows_path: pushing {component:?}");
         p.push(component);
     }
 
