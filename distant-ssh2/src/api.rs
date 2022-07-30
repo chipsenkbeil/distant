@@ -321,6 +321,17 @@ impl DistantApi for SshDistantApi {
                                     .unwrap_or(path);
                             };
 
+                            // If we canonicalized the path, we also want to refresh our metadata
+                            // on windows since it doesn't reflect the real file type from read_dir
+                            let metadata = if canonicalize {
+                                sftp.metadata(path.to_path_buf())
+                                    .compat()
+                                    .await
+                                    .unwrap_or(metadata)
+                            } else {
+                                metadata
+                            };
+
                             let ft = metadata.ty;
                             to_traverse.push(DirEntry {
                                 path,
