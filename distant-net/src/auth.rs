@@ -76,11 +76,12 @@ pub enum AuthResponse {
 }
 
 /// Represents the type of verification being requested
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AuthVerifyKind {
     /// An ask to verify the host such as with SSH
+    #[display(fmt = "host")]
     Host,
 }
 

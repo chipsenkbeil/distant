@@ -1,4 +1,5 @@
 use distant_net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
+use log::*;
 use std::io;
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
@@ -26,6 +27,7 @@ impl DistantManagerClientConfig {
     {
         Self {
             on_challenge: Box::new(move |questions, _extra| {
+                trace!("[manager client] on_challenge({questions:?}, {_extra:?})");
                 let mut answers = Vec::new();
                 for question in questions.iter() {
                     // Contains all prompt lines including same line
@@ -47,18 +49,37 @@ impl DistantManagerClientConfig {
                 }
                 answers
             }),
-            on_verify: Box::new(move |kind, text| match kind {
-                AuthVerifyKind::Host => {
-                    eprintln!("{}", text);
-                    matches!(
-                        text_prompt("Enter [y/N]> ").as_deref(),
-                        Ok("y" | "Y" | "yes" | "YES")
-                    )
+            on_verify: Box::new(move |kind, text| {
+                trace!("[manager client] on_verify({kind}, {text})");
+                match kind {
+                    AuthVerifyKind::Host => {
+                        eprintln!("{}", text);
+
+                        match text_prompt("Enter [y/N]> ") {
+                            Ok(answer) => {
+                                trace!("Verify? Answer = '{answer}'");
+                                matches!(answer.trim(), "y" | "Y" | "yes" | "YES")
+                            }
+                            Err(x) => {
+                                error!("Failed verification: {x}");
+                                false
+                            }
+                        }
+                    }
+                    x => {
+                        error!("Unsupported verify kind: {x}");
+                        false
+                    }
                 }
-                _ => false,
             }),
-            on_info: Box::new(|text| println!("{}", text)),
-            on_error: Box::new(|kind, text| eprintln!("{}: {}", kind, text)),
+            on_info: Box::new(|text| {
+                trace!("[manager client] on_info({text})");
+                println!("{}", text);
+            }),
+            on_error: Box::new(|kind, text| {
+                trace!("[manager client] on_error({kind}, {text})");
+                eprintln!("{}: {}", kind, text);
+            }),
         }
     }
 }
