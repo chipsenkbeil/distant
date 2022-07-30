@@ -2,6 +2,7 @@ use crate::utils::ci_path_to_string;
 use anyhow::Context;
 use assert_fs::{prelude::*, TempDir};
 use async_trait::async_trait;
+use derive_more::Display;
 use distant_core::DistantClient;
 use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use once_cell::sync::{Lazy, OnceCell};
@@ -110,6 +111,30 @@ impl SshAgent {
     }
 }
 
+/// Log level for sshd config
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Hash)]
+pub enum SshdLogLevel {
+    #[display(fmt = "QUIET")]
+    Quiet,
+    #[display(fmt = "FATAL")]
+    Fatal,
+    #[display(fmt = "ERROR")]
+    Error,
+    #[display(fmt = "INFO")]
+    Info,
+    #[display(fmt = "VERBOSE")]
+    Verbose,
+    #[display(fmt = "DEBUG")]
+    Debug,
+    #[display(fmt = "DEBUG1")]
+    Debug1,
+    #[display(fmt = "DEBUG2")]
+    Debug2,
+    #[display(fmt = "DEBUG3")]
+    Debug3,
+}
+
 #[derive(Debug)]
 pub struct SshdConfig(HashMap<String, Vec<String>>);
 
@@ -128,6 +153,7 @@ impl Default for SshdConfig {
         config.set_allow_tcp_forwarding(true);
         config.set_max_startups(500, None);
         config.set_strict_modes(false);
+        config.set_log_level(SshdLogLevel::Debug3);
 
         config
     }
@@ -222,6 +248,11 @@ impl SshdConfig {
     pub fn set_strict_modes(&mut self, yes: bool) {
         self.0
             .insert("StrictModes".to_string(), Self::yes_value(yes));
+    }
+
+    pub fn set_log_level(&mut self, log_level: SshdLogLevel) {
+        self.0
+            .insert("LogLevel".to_string(), vec![log_level.to_string()]);
     }
 
     fn yes_value(yes: bool) -> Vec<String> {
