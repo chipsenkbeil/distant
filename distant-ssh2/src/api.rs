@@ -1,6 +1,6 @@
 use crate::{
     process::{spawn_pty, spawn_simple, SpawnResult},
-    utils::{self, execute_output, to_other_error},
+    utils::{self, to_other_error},
 };
 use async_compat::CompatExt;
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use log::*;
 use std::{
     collections::{HashMap, HashSet},
     io,
-    path::PathBuf,
+    path::{Component, PathBuf},
     sync::{Arc, Weak},
 };
 use tokio::sync::{mpsc, RwLock};
@@ -804,23 +804,23 @@ impl DistantApi for SshDistantApi {
         // Look up the current directory
         let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
 
-        // Determine OS by printing OS variable (works with Windows 2000+)
-        // If it matches Windows_NT, then we are on windows
-        let output = execute_output(&self.session, "cmd.exe /C echo %OS%").await?;
+        // let output = execute_output(&self.session, "cmd.exe /C echo %OS%").await?;
 
-        let is_windows =
-            output.success && String::from_utf8_lossy(&output.stdout).trim() == "Windows_NT";
+        // TODO: Ideally, we would determine the family using something like the following:
+        //
+        //      cmd.exe /C echo %OS%
+        //
+        //      Determine OS by printing OS variable (works with Windows 2000+)
+        //      If it matches Windows_NT, then we are on windows
+        //
+        // However, the above is not working for whatever reason (always has success == false); so,
+        // we're purely using a check if we have a drive letter on the canonicalized path to
+        // determine if on windows for now.
+        let is_windows = current_dir
+            .components()
+            .any(|c| matches!(c, Component::Prefix(_)));
 
-        let is_unix = !is_windows && current_dir.as_os_str().to_string_lossy().starts_with('/');
-
-        let family = if is_windows {
-            "windows"
-        } else if is_unix {
-            "unix"
-        } else {
-            ""
-        }
-        .to_string();
+        let family = if is_windows { "windows" } else { "unix" }.to_string();
 
         Ok(SystemInfo {
             family,

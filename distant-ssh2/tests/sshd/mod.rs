@@ -541,6 +541,7 @@ async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
         identities_only: Some(true),
         user: Some(USERNAME.to_string()),
         user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        // verbose: true,
         ..Default::default()
     };
 

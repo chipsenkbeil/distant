@@ -88,10 +88,19 @@ pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutp
 /// Performs canonicalization of the given path using SFTP with various handling of Windows paths
 pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<PathBuf> {
     // Determine if we are supplying a Windows path
-    let is_windows_path = path
+    let mut is_windows_path = path
         .as_ref()
         .components()
         .any(|c| matches!(c, Component::Prefix(_)));
+
+    // If we don't see the path initially as a Windows path, but we can find a drive letter,
+    // still treat it as a windows path
+    //
+    // NOTE: This is for situations where we are given a relative path like '.' where we cannot
+    //       infer the path is for Windows out of the box
+    if !is_windows_path {
+        is_windows_path = drive_letter(path.as_ref()).is_some();
+    }
 
     // Try to canonicalize original path first
     let result = sftp
@@ -133,7 +142,7 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
 /// Convert a path into unix-oriented path
 ///
 /// E.g. C:\Users\example\Documents\file.txt -> /c/Users/example/Documents/file.txt
-fn to_unix_path(path: &Path) -> PathBuf {
+pub fn to_unix_path(path: &Path) -> PathBuf {
     let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
     if !is_windows_path {
@@ -176,7 +185,7 @@ fn to_unix_path(path: &Path) -> PathBuf {
 /// Convert a path into windows-oriented path
 ///
 /// E.g. /c/Users/example/Documents/file.txt -> C:\Users\example\Documents\file.txt
-fn to_windows_path(path: &Path) -> PathBuf {
+pub fn to_windows_path(path: &Path) -> PathBuf {
     let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
     if is_windows_path {
@@ -184,28 +193,7 @@ fn to_windows_path(path: &Path) -> PathBuf {
     }
 
     // See if we have a drive letter at the beginning, otherwise default to C:\
-    let drive_letter = if path.has_root() {
-        path.components().nth(1).and_then(|c| match c {
-            Component::Normal(s) => s.to_str().and_then(|s| {
-                let mut chars = s.chars();
-                let first = chars.next();
-                let second = chars.next();
-                let has_more = chars.next().is_some();
-
-                if has_more {
-                    return None;
-                }
-
-                match (first, second) {
-                    (letter, Some(':') | None) => letter,
-                    _ => None,
-                }
-            }),
-            _ => None,
-        })
-    } else {
-        None
-    };
+    let drive_letter = drive_letter(path);
 
     let mut p = PathBuf::new();
 
@@ -230,6 +218,47 @@ fn to_windows_path(path: &Path) -> PathBuf {
     }
 
     p
+}
+
+/// Looks for a drive letter in the given path
+pub fn drive_letter(path: &Path) -> Option<char> {
+    // See if we are a windows path, and if so grab the letter from the components
+    let maybe_letter = path.components().find_map(|c| match c {
+        Component::Prefix(x) => match x.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => Some(letter as char),
+            _ => None,
+        },
+        _ => None,
+    });
+
+    if let Some(letter) = maybe_letter {
+        return Some(letter);
+    }
+
+    // If there was no drive letter and we are not a root, there is nothing left to find
+    if !path.has_root() {
+        return None;
+    }
+
+    // Otherwise, scan just after root for a drive letter
+    path.components().nth(1).and_then(|c| match c {
+        Component::Normal(s) => s.to_str().and_then(|s| {
+            let mut chars = s.chars();
+            let first = chars.next();
+            let second = chars.next();
+            let has_more = chars.next().is_some();
+
+            if has_more {
+                return None;
+            }
+
+            match (first, second) {
+                (letter, Some(':') | None) => letter,
+                _ => None,
+            }
+        }),
+        _ => None,
+    })
 }
 
 pub fn to_other_error<E>(err: E) -> io::Error
