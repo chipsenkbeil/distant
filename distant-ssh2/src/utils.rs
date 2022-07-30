@@ -87,6 +87,12 @@ pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutp
 
 /// Performs canonicalization of the given path using SFTP with various handling of Windows paths
 pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    // Determine if we are supplying a Windows path
+    let is_windows_path = path
+        .as_ref()
+        .components()
+        .any(|c| matches!(c, Component::Prefix(_)));
+
     // Try to canonicalize original path first
     let result = sftp
         .canonicalize(path.as_ref().to_path_buf())
@@ -95,12 +101,7 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
 
     // If result is a failure, we want to try again with a unix path in case we were using
     // a windows path and sshd had a problem with canonicalizing it
-    let unix_path = if result.is_err()
-        && path
-            .as_ref()
-            .components()
-            .any(|c| matches!(c, Component::Prefix(_)))
-    {
+    let unix_path = if result.is_err() && is_windows_path {
         Some(to_unix_path(path.as_ref()))
     } else {
         None
@@ -109,11 +110,15 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
     eprintln!("UNIX PATH IS {unix_path:?} for {:?}", path.as_ref());
 
     // 1. If we succeeded on first try, return that path
+    //     a. If the canonicalized path was for a Windows path, sftp may return something odd
+    //        like C:\Users\example -> /c:/Users/example and we need to transform it back
+    //     b. Otherwise, if the input path was a unix path, we return canonicalized as is
     // 2. If we failed on first try and have a clear Windows path, try the unix version
     //    and then convert result back to windows version, return our original error if we fail
     // 3. If we failed and there is no valid unix path for a Windows path, return the
     //    original error
     match (result, unix_path) {
+        (Ok(path), _) if is_windows_path => Ok(to_windows_path(path.as_std_path())),
         (Ok(path), _) => Ok(path.into_std_path_buf()),
         (Err(x), Some(path)) => Ok(to_windows_path(
             &sftp
