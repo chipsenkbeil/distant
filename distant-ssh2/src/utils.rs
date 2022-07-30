@@ -129,32 +129,37 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
 ///
 /// E.g. C:\Users\example\Documents\file.txt -> /c/Users/example/Documents/file.txt
 fn to_unix_path(path: &Path) -> PathBuf {
-    let mut p = PathBuf::new();
-    let mut has_prefix = false;
+    let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
+    if !is_windows_path {
+        return path.to_path_buf();
+    }
+
+    let mut p = PathBuf::new();
     for component in path.components() {
         match component {
-            Component::Prefix(x) => {
-                has_prefix = true;
-                match x.kind() {
-                    Prefix::Verbatim(path) => p.push(path),
-                    Prefix::VerbatimUNC(hostname, share) => {
-                        p.push(hostname);
-                        p.push(share);
-                    }
-                    Prefix::VerbatimDisk(letter) => p.push((letter as char).to_string()),
-                    Prefix::DeviceNS(device_name) => p.push(device_name),
-                    Prefix::UNC(hostname, share) => {
-                        p.push(hostname);
-                        p.push(share);
-                    }
-                    Prefix::Disk(letter) => p.push((letter as char).to_string()),
+            Component::Prefix(x) => match x.kind() {
+                Prefix::Verbatim(path) => p.push(path),
+                Prefix::VerbatimUNC(hostname, share) => {
+                    p.push(hostname);
+                    p.push(share);
                 }
-            }
+                Prefix::VerbatimDisk(letter) => {
+                    p.push(format!("/{}", letter as char));
+                }
+                Prefix::DeviceNS(device_name) => p.push(device_name),
+                Prefix::UNC(hostname, share) => {
+                    p.push(hostname);
+                    p.push(share);
+                }
+                Prefix::Disk(letter) => {
+                    p.push(format!("/{}", letter as char));
+                }
+            },
 
             // If we have a prefix, then we are dropping it and converting into
             // a root and normal component, so we will now skip this root
-            Component::RootDir if has_prefix => continue,
+            Component::RootDir => continue,
 
             x => p.push(x),
         }
