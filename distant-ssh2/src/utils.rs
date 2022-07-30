@@ -106,6 +106,8 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
         None
     };
 
+    eprintln!("UNIX PATH IS {unix_path:?} for {:?}", path.as_ref());
+
     // 1. If we succeeded on first try, return that path
     // 2. If we failed on first try and have a clear Windows path, try the unix version
     //    and then convert result back to windows version, return our original error if we fail
