@@ -212,7 +212,7 @@ fn to_windows_path(path: &Path) -> PathBuf {
     let mut p = PathBuf::new();
 
     // Start with a drive prefix
-    p.push(format!("{}:", drive_letter.unwrap_or('C')));
+    p.push(format!("{}:\\", drive_letter.unwrap_or('C')));
 
     let mut components = path.components();
 
