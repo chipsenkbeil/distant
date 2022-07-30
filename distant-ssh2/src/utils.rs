@@ -93,20 +93,22 @@ pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<Pat
         .components()
         .any(|c| matches!(c, Component::Prefix(_)));
 
-    // If we don't see the path initially as a Windows path, but we can find a drive letter,
-    // still treat it as a windows path
-    //
-    // NOTE: This is for situations where we are given a relative path like '.' where we cannot
-    //       infer the path is for Windows out of the box
-    if !is_windows_path {
-        is_windows_path = drive_letter(path.as_ref()).is_some();
-    }
-
     // Try to canonicalize original path first
     let result = sftp
         .canonicalize(path.as_ref().to_path_buf())
         .compat()
         .await;
+
+    // If we don't see the path initially as a Windows path, but we can find a drive letter after
+    // canonicalization, still treat it as a windows path
+    //
+    // NOTE: This is for situations where we are given a relative path like '.' where we cannot
+    //       infer the path is for Windows out of the box
+    if !is_windows_path {
+        if let Ok(path) = result.as_ref() {
+            is_windows_path = drive_letter(path.as_std_path()).is_some();
+        }
+    }
 
     // If result is a failure, we want to try again with a unix path in case we were using
     // a windows path and sshd had a problem with canonicalizing it

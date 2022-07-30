@@ -804,8 +804,6 @@ impl DistantApi for SshDistantApi {
         // Look up the current directory
         let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
 
-        // let output = execute_output(&self.session, "cmd.exe /C echo %OS%").await?;
-
         // TODO: Ideally, we would determine the family using something like the following:
         //
         //      cmd.exe /C echo %OS%
