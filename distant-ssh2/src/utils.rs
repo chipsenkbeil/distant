@@ -1,10 +1,10 @@
 use async_compat::CompatExt;
 use std::{
     fmt, io,
-    path::{Component, Path, Prefix},
+    path::{Component, Path, PathBuf, Prefix},
     time::Duration,
 };
-use wezterm_ssh::{ExecResult, Session};
+use wezterm_ssh::{ExecResult, Session, Sftp};
 
 const READER_PAUSE_MILLIS: u64 = 100;
 
@@ -85,45 +85,139 @@ pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutp
     })
 }
 
-/// Convert a path into a string representing a unix path
-///
-/// E.g. C:\Users\example\Documents\file.txt -> /C/Users/example/Documents/file.txt
-pub fn convert_path_to_unix_string(path: &Path) -> io::Result<String> {
-    let mut s = String::new();
-    for component in path.components() {
-        s.push('/');
+/// Performs canonicalization of the given path using SFTP with various handling of Windows paths
+pub async fn canonicalize(sftp: &Sftp, path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    // Try to canonicalize original path first
+    let result = sftp
+        .canonicalize(path.as_ref().to_path_buf())
+        .compat()
+        .await;
 
+    // If result is a failure, we want to try again with a unix path in case we were using
+    // a windows path and sshd had a problem with canonicalizing it
+    let unix_path = if result.is_err()
+        && path
+            .as_ref()
+            .components()
+            .any(|c| matches!(c, Component::Prefix(_)))
+    {
+        Some(to_unix_path(path.as_ref()))
+    } else {
+        None
+    };
+
+    // 1. If we succeeded on first try, return that path
+    // 2. If we failed on first try and have a clear Windows path, try the unix version
+    //    and then convert result back to windows version, return our original error if we fail
+    // 3. If we failed and there is no valid unix path for a Windows path, return the
+    //    original error
+    match (result, unix_path) {
+        (Ok(path), _) => Ok(path.into_std_path_buf()),
+        (Err(x), Some(path)) => Ok(to_windows_path(
+            &sftp
+                .canonicalize(path.to_path_buf())
+                .compat()
+                .await
+                .map_err(|_| to_other_error(x))?
+                .into_std_path_buf(),
+        )),
+        (Err(x), None) => Err(to_other_error(x)),
+    }
+}
+
+/// Convert a path into unix-oriented path
+///
+/// E.g. C:\Users\example\Documents\file.txt -> /c/Users/example/Documents/file.txt
+fn to_unix_path(path: &Path) -> PathBuf {
+    let mut p = PathBuf::new();
+    let mut has_prefix = false;
+
+    for component in path.components() {
         match component {
-            Component::Prefix(x) => match x.kind() {
-                Prefix::Verbatim(x) => s.push_str(&x.to_string_lossy()),
-                Prefix::VerbatimUNC(_, _) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "Verbatim UNC not supported",
-                    ));
+            Component::Prefix(x) => {
+                has_prefix = true;
+                match x.kind() {
+                    Prefix::Verbatim(path) => p.push(path),
+                    Prefix::VerbatimUNC(hostname, share) => {
+                        p.push(hostname);
+                        p.push(share);
+                    }
+                    Prefix::VerbatimDisk(letter) => p.push((letter as char).to_string()),
+                    Prefix::DeviceNS(device_name) => p.push(device_name),
+                    Prefix::UNC(hostname, share) => {
+                        p.push(hostname);
+                        p.push(share);
+                    }
+                    Prefix::Disk(letter) => p.push((letter as char).to_string()),
                 }
-                Prefix::VerbatimDisk(x) => s.push(x as char),
-                Prefix::DeviceNS(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "Device NS not supported",
-                    ));
-                }
-                Prefix::UNC(_, _) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "UNC not supported",
-                    ));
-                }
-                Prefix::Disk(x) => s.push(x as char),
-            },
-            Component::RootDir => continue,
-            Component::CurDir => s.push('.'),
-            Component::ParentDir => s.push_str(".."),
-            Component::Normal(x) => s.push_str(&x.to_string_lossy()),
+            }
+
+            // If we have a prefix, then we are dropping it and converting into
+            // a root and normal component, so we will now skip this root
+            Component::RootDir if has_prefix => continue,
+
+            x => p.push(x),
         }
     }
-    Ok(s)
+
+    p
+}
+
+/// Convert a path into windows-oriented path
+///
+/// E.g. /c/Users/example/Documents/file.txt -> C:\Users\example\Documents\file.txt
+fn to_windows_path(path: &Path) -> PathBuf {
+    let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
+
+    if is_windows_path {
+        return path.to_path_buf();
+    }
+
+    // See if we have a drive letter at the beginning, otherwise default to C:\
+    let drive_letter = if path.has_root() {
+        path.components().nth(1).and_then(|c| match c {
+            Component::Normal(s) => s.to_str().and_then(|s| {
+                let mut chars = s.chars();
+                let first = chars.next();
+                let second = chars.next();
+                let has_more = chars.next().is_some();
+
+                if has_more {
+                    return None;
+                }
+
+                match (first, second) {
+                    (letter, Some(':') | None) => letter,
+                    _ => None,
+                }
+            }),
+            _ => None,
+        })
+    } else {
+        None
+    };
+
+    let mut p = PathBuf::new();
+
+    // Start with a drive prefix
+    p.push(format!("{}:", drive_letter.unwrap_or('C')));
+
+    let mut components = path.components();
+
+    // If we start with a root portion of the regular path, we want to drop
+    // it and the drive letter since we've added that separately
+    if path.has_root() {
+        components.next();
+        if drive_letter.is_some() {
+            components.next();
+        }
+    }
+
+    for component in path.components() {
+        p.push(component);
+    }
+
+    p
 }
 
 pub fn to_other_error<E>(err: E) -> io::Error
