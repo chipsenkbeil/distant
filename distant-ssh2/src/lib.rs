@@ -2,6 +2,7 @@
 compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
 
 use async_compat::CompatExt;
+use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::{
     data::Environment,
@@ -23,7 +24,9 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
+use wezterm_ssh::{
+    Config as WezConfig, ExecResult, Session as WezSession, SessionEvent as WezSessionEvent,
+};
 
 mod api;
 mod process;
@@ -31,8 +34,20 @@ mod utils;
 
 use api::SshDistantApi;
 
+/// Represents the family of the remote machine connected over SSH
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum SshFamily {
+    /// Operating system belongs to unix family
+    Unix,
+
+    /// Operating system belongs to windows family
+    Windows,
+}
+
 /// Represents the backend to use for ssh operations
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum SshBackend {
@@ -464,6 +479,49 @@ impl Ssh {
         Ok(())
     }
 
+    /// Detects the family of operating system on the remote machine
+    pub async fn detect_family(&self) -> io::Result<SshFamily> {
+        static INSTANCE: OnceCell<SshFamily> = OnceCell::new();
+
+        // Exit early if not authenticated as this is a requirement
+        if !self.authenticated {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Not authenticated",
+            ));
+        }
+
+        INSTANCE
+            .get_or_try_init(async move {
+                use std::io::Read;
+                let ExecResult {
+                    mut child,
+                    mut stdout,
+                    ..
+                } = self
+                    .session
+                    .exec("cmd.exe /c echo %OS%", None)
+                    .compat()
+                    .await
+                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+                let status = child.async_wait().compat().await?;
+                if status.success() {
+                    let mut out = String::new();
+                    stdout.read_to_string(&mut out)?;
+                    if out.contains("Windows_NT") {
+                        Ok(SshFamily::Windows)
+                    } else {
+                        Ok(SshFamily::Unix)
+                    }
+                } else {
+                    Ok(SshFamily::Unix)
+                }
+            })
+            .await
+            .copied()
+    }
+
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote
     /// distant server that is spawned using the ssh client
     pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
@@ -553,6 +611,8 @@ impl Ssh {
             String::from("ssh"),
         ];
         args.extend(
+            // TODO: Split arguments based on unix/windows that we detect from a
+            // previously-executed command to detect the OS family
             shell_words::split(&opts.args)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         );

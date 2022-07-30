@@ -177,6 +177,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-once-cell"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f61305cacf1d0c5c9d3ee283d22f8f1f8c743a18ceb44a1b102bd53476c141de"
+
+[[package]]
 name = "async-process"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -878,6 +884,7 @@ dependencies = [
  "assert_cmd",
  "assert_fs",
  "async-compat",
+ "async-once-cell",
  "async-trait",
  "derive_more",
  "distant-core",

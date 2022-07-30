@@ -78,6 +78,8 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         // Add any extra arguments to the command
         if let Some(extra_args) = config.distant.args {
+            // TODO: Split arguments based on unix/windows since we can detect this at compile time
+            //       given this is being spawned local to the manager
             args.extend(
                 shell_words::split(&extra_args)
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,

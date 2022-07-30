@@ -71,6 +71,8 @@ impl ProcessInstance {
         let (cmd, args) = match cmd.split_once(' ') {
             Some((cmd_str, args_str)) => (
                 cmd_str.to_string(),
+                // TODO: Split arguments based on unix/windows since we can detect this at compile time
+                //       given this is being spawned local to the server
                 shell_words::split(args_str)
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
             ),

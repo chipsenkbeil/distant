@@ -492,6 +492,12 @@ pub async fn launched_client(
         .unwrap()
 }
 
+/// Access to raw [`Ssh`] client
+#[fixture]
+pub async fn ssh(sshd: &'_ Sshd) -> Ssh {
+    load_ssh_client(sshd).await
+}
+
 async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
     if sshd.is_dead() {
         panic!("sshd is dead!");

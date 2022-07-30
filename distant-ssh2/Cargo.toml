@@ -17,6 +17,7 @@ ssh2 = ["wezterm-ssh/ssh2", "wezterm-ssh/vendored-openssl-ssh2"]
 
 [dependencies]
 async-compat = "0.2.1"
+async-once-cell = "0.4.2"
 async-trait = "0.1.56"
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
 distant-core = { version = "=0.17.0", path = "../distant-core" }
