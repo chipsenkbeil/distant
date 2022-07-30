@@ -461,7 +461,10 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
 
     // NOTE: Root entry is always absolute, resolved path
     assert_eq!(entries[0].file_type, FileType::Dir);
-    assert_eq!(entries[0].path, root_dir.path().canonicalize().unwrap());
+    assert_eq!(
+        entries[0].path,
+        dunce::canonicalize(root_dir.path()).unwrap()
+    );
     assert_eq!(entries[0].depth, 0);
 
     assert_eq!(entries[1].file_type, FileType::File);
@@ -497,7 +500,7 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Dist
         .unwrap();
 
     assert_eq!(entries.len(), 3, "Wrong number of entries found");
-    let root_path = root_dir.path().canonicalize().unwrap();
+    let root_path = dunce::canonicalize(root_dir.path()).unwrap();
 
     assert_eq!(entries[0].file_type, FileType::File);
     assert_eq!(entries[0].path, root_path.join("file1"));
@@ -995,7 +998,12 @@ async fn metadata_should_not_include_windows_as_ssh_cannot_retrieve_that_informa
                 windows.is_none(),
                 "Unexpectedly got windows metadata on windows (support added?)"
             );
-            assert!(unix.is_none(), "Unexpectedly got unix metadata on windows");
+
+            // NOTE: Still includes unix metadata
+            assert!(
+                unix.is_some(),
+                "Unexpectedly missing unix metadata from sshd (even on windows)"
+            );
         }
     }
 }
@@ -1097,7 +1105,7 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(
             ..
         } => assert_eq!(
             path,
-            file.path().canonicalize().unwrap(),
+            dunce::canonicalize(file.path()).unwrap(),
             "Symlink canonicalized path does not match referenced file"
         ),
         x => panic!("Unexpected response: {:?}", x),
