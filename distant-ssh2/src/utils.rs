@@ -139,11 +139,13 @@ fn to_unix_path(path: &Path) -> PathBuf {
     let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
     if !is_windows_path {
+        eprintln!("to_unix_path: NOT WINDOWS PATH");
         return path.to_path_buf();
     }
 
     let mut p = PathBuf::new();
     for component in path.components() {
+        eprintln!("to_unix_path: checking {component:?}");
         match component {
             Component::Prefix(x) => match x.kind() {
                 Prefix::Verbatim(path) => p.push(path),
@@ -182,6 +184,7 @@ fn to_windows_path(path: &Path) -> PathBuf {
     let is_windows_path = path.components().any(|c| matches!(c, Component::Prefix(_)));
 
     if is_windows_path {
+        eprintln!("to_windows_path: NOT UNIX PATH");
         return path.to_path_buf();
     }
 
@@ -209,23 +212,29 @@ fn to_windows_path(path: &Path) -> PathBuf {
         None
     };
 
+    eprintln!("to_windows_path: drive letter = {drive_letter:?}");
+
     let mut p = PathBuf::new();
 
     // Start with a drive prefix
-    p.push(format!("{}:\\", drive_letter.unwrap_or('C')));
+    p.push(format!("{}:", drive_letter.unwrap_or('C')));
 
     let mut components = path.components();
 
     // If we start with a root portion of the regular path, we want to drop
     // it and the drive letter since we've added that separately
     if path.has_root() {
+        eprintln!("to_windows_path: pushing root");
+        p.push(Component::RootDir);
         components.next();
+
         if drive_letter.is_some() {
             components.next();
         }
     }
 
     for component in path.components() {
+        eprintln!("to_windows_path: pushing {component:?}");
         p.push(component);
     }
 
