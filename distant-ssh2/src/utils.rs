@@ -233,7 +233,7 @@ fn to_windows_path(path: &Path) -> PathBuf {
         }
     }
 
-    for component in path.components() {
+    for component in components {
         eprintln!("to_windows_path: pushing {component:?}");
         p.push(component);
     }
