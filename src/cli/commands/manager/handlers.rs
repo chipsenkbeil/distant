@@ -42,6 +42,7 @@ impl LaunchHandler for ManagerLaunchHandler {
         extra: &Extra,
         _auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
+        trace!("Handling launch of {destination} with {extra}");
         let config = ClientLaunchConfig::from(extra.clone());
 
         // Get the path to the distant binary, ensuring it exists and is executable
@@ -85,12 +86,15 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         // Spawn it and wait to get the communicated destination
         // NOTE: This will leave the server detached from the manager when the manager exits
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+
+        debug!("Launching local to manager by spawning command: {command:?}");
+        let mut child = command.spawn()?;
 
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
 
@@ -140,6 +144,7 @@ impl LaunchHandler for SshLaunchHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
+        trace!("Handling launch of {destination} with {extra}");
         let config = ClientLaunchConfig::from(extra.clone());
 
         use distant_ssh2::DistantLaunchOpts;
@@ -160,6 +165,8 @@ impl LaunchHandler for SshLaunchHandler {
                 },
             }
         };
+
+        debug!("Launching via ssh: {opts:?}");
         ssh.launch(opts).await?.try_to_destination()
     }
 }
@@ -193,6 +200,7 @@ impl ConnectHandler for DistantConnectHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
+        trace!("Handling connect of {destination} with {extra}");
         let host = destination.to_host_string();
         let port = destination.port().ok_or_else(|| missing("port"))?;
         let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", host, port))
@@ -261,6 +269,7 @@ impl ConnectHandler for SshConnectHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
+        trace!("Handling connect of {destination} with {extra}");
         let mut ssh = load_ssh(destination, extra)?;
         let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
