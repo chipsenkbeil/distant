@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use std::path::{Component, Path, Prefix};
 
 // Returns true if running test in Github CI
-static IS_CI: Lazy<bool> = Lazy::new(|| std::env::var("CI").as_deref() == Ok("true"));
+pub static IS_CI: Lazy<bool> = Lazy::new(|| std::env::var("CI").as_deref() == Ok("true"));
 
 pub fn ci_path_to_string(path: &Path) -> String {
     if cfg!(windows) && *IS_CI {
