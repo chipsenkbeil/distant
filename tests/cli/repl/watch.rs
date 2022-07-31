@@ -97,6 +97,23 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: Repl)
     // Make a change to some file
     file.write_str("some text").unwrap();
 
+    // Windows reports a directory change first
+    if cfg!(windows) {
+        // Pause a bit to ensure that the process detected the change and reported it
+        wait_even_longer().await;
+
+        // Get the response and verify the change
+        // NOTE: Don't bother checking the kind as it can vary by platform
+        let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+
+        assert_eq!(res["origin_id"], id);
+        assert_eq!(res["payload"]["type"], "changed");
+        assert_eq!(
+            res["payload"]["paths"],
+            json!([dir.to_path_buf().canonicalize().unwrap()])
+        );
+    }
+
     // Pause a bit to ensure that the process detected the change and reported it
     wait_even_longer().await;
 

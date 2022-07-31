@@ -58,7 +58,9 @@ fn should_output_metadata_for_directory(mut action_cmd: Command) {
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn should_support_including_a_canonicalized_path(mut action_cmd: Command) {
     let temp = assert_fs::TempDir::new().unwrap();
 

@@ -107,7 +107,9 @@ fn should_print_immediate_files_and_directories_by_default(mut action_cmd: Comma
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
     let temp = make_directory();
 
@@ -131,7 +133,9 @@ fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: Command) {
     let temp = make_directory();
 
@@ -175,7 +179,9 @@ fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: Command)
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn should_include_root_directory_if_specified(mut action_cmd: Command) {
     let temp = make_directory();
 
