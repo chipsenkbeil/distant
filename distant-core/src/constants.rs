@@ -1,6 +1,3 @@
-/// Capacity associated with a client mailboxes for receiving multiple responses to a request
-pub const CLIENT_MAILBOX_CAPACITY: usize = 10000;
-
 /// Capacity associated stdin, stdout, and stderr pipes receiving data from remote server
 pub const CLIENT_PIPE_CAPACITY: usize = 10000;
 
@@ -19,13 +16,3 @@ pub const MAX_PIPE_CHUNK_SIZE: usize = 16384;
 /// Duration in milliseconds to sleep between reading stdout/stderr chunks
 /// to avoid sending many small messages to clients
 pub const READ_PAUSE_MILLIS: u64 = 50;
-
-/// Maximum message capacity per connection for the distant server
-pub const MAX_MSG_CAPACITY: usize = 10000;
-
-/// Test-only constants
-#[cfg(test)]
-pub mod test {
-    pub const BUFFER_SIZE: usize = 100;
-    pub const TENANT: &str = "test-tenant";
-}
