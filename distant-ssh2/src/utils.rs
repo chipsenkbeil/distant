@@ -6,6 +6,7 @@ use std::{
 };
 use wezterm_ssh::{ExecResult, Session, Sftp};
 
+#[allow(dead_code)]
 const READER_PAUSE_MILLIS: u64 = 100;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -34,6 +35,7 @@ impl fmt::Debug for ExecOutput {
     }
 }
 
+#[allow(dead_code)]
 pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutput> {
     let ExecResult {
         mut child,
@@ -261,6 +263,26 @@ pub fn drive_letter(path: &Path) -> Option<char> {
         }),
         _ => None,
     })
+}
+
+/// Determines if using windows by checking the canonicalized path of '.'
+pub async fn is_windows(sftp: &Sftp) -> io::Result<bool> {
+    // Look up the current directory
+    let current_dir = canonicalize(sftp, ".").await?;
+
+    // TODO: Ideally, we would determine the family using something like the following:
+    //
+    //      cmd.exe /C echo %OS%
+    //
+    //      Determine OS by printing OS variable (works with Windows 2000+)
+    //      If it matches Windows_NT, then we are on windows
+    //
+    // However, the above is not working for whatever reason (always has success == false); so,
+    // we're purely using a check if we have a drive letter on the canonicalized path to
+    // determine if on windows for now. Some sort of failure with SIGPIPE
+    Ok(current_dir
+        .components()
+        .any(|c| matches!(c, Component::Prefix(_))))
 }
 
 pub fn to_other_error<E>(err: E) -> io::Error

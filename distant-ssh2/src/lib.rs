@@ -498,28 +498,13 @@ impl Ssh {
 
         INSTANCE
             .get_or_try_init(async move {
-                // Look up the current directory
-                let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
+                let is_windows = utils::is_windows(&self.session.sftp()).await?;
 
-                // TODO: Ideally, we would determine the family using something like the following:
-                //
-                //      cmd.exe /C echo %OS%
-                //
-                //      Determine OS by printing OS variable (works with Windows 2000+)
-                //      If it matches Windows_NT, then we are on windows
-                //
-                // However, the above is not working for whatever reason (always has success == false); so,
-                // we're purely using a check if we have a drive letter on the canonicalized path to
-                // determine if on windows for now. Some sort of failure with SIGPIPE
-                let is_windows = current_dir
-                    .components()
-                    .any(|c| matches!(c, Component::Prefix(_)));
-
-                if is_windows {
+                Ok(if is_windows {
                     SshFamily::Windows
                 } else {
                     SshFamily::Unix
-                }
+                })
             })
             .await
             .copied()

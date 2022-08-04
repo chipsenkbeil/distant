@@ -815,6 +815,7 @@ dependencies = [
  "which",
  "whoami",
  "windows-service",
+ "winsplit",
 ]
 
 [[package]]
