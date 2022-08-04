@@ -5,6 +5,12 @@ use std::process::Command as StdCommand;
 
 #[rstest]
 fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
+    // Windows prints out a message whereas unix prints nothing
+    #[cfg(windows)]
+    let stdout = regex_pred(".+");
+    #[cfg(unix)]
+    let stdout = "";
+
     // distant action proc-spawn -- {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -14,7 +20,7 @@ fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
         .arg("0")
         .assert()
         .success()
-        .stdout("")
+        .stdout(stdout)
         .stderr("");
 }
 
@@ -29,7 +35,11 @@ fn should_capture_and_print_stdout(mut action_cmd: Command) {
         .arg("hello world")
         .assert()
         .success()
-        .stdout("hello world")
+        .stdout(if cfg!(windows) {
+            "hello world\r\n"
+        } else {
+            "hello world"
+        })
         .stderr("");
 }
 
@@ -45,7 +55,11 @@ fn should_capture_and_print_stderr(mut action_cmd: Command) {
         .assert()
         .success()
         .stdout("")
-        .stderr("hello world");
+        .stderr(if cfg!(windows) {
+            "hello world \r\n"
+        } else {
+            "hello world"
+        });
 }
 
 // TODO: This used to work fine with the assert_cmd where stdin would close from our
@@ -69,19 +83,36 @@ fn should_forward_stdin_to_remote_process(mut action_std_cmd: StdCommand) {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"hello world\n")
+        .write_all(if cfg!(windows) {
+            b"hello world\r\n"
+        } else {
+            b"hello world\n"
+        })
         .expect("Failed to write to stdin of process");
 
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     stdout.read_line(&mut line).expect("Failed to read line");
-    assert_eq!(line, "hello world\n");
+    assert_eq!(
+        line,
+        if cfg!(windows) {
+            "hello world\r\n"
+        } else {
+            "hello world\n"
+        }
+    );
 
     child.kill().expect("Failed to kill spawned process");
 }
 
 #[rstest]
 fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
+    // Windows prints out a message whereas unix prints nothing
+    #[cfg(windows)]
+    let stdout = regex_pred(".+");
+    #[cfg(unix)]
+    let stdout = "";
+
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -91,7 +122,7 @@ fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
         .arg("99")
         .assert()
         .code(99)
-        .stdout("")
+        .stdout(stdout)
         .stderr("");
 }
 

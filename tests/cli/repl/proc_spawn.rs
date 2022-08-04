@@ -11,6 +11,63 @@ fn make_cmd(args: Vec<&str>) -> String {
     )
 }
 
+fn trim(arr: &Vec<serde_json::Value>) -> &[serde_json::Value] {
+    let arr = arr.as_slice();
+
+    if arr.is_empty() {
+        return arr;
+    }
+
+    let mut start = 0;
+    let mut end = arr.len() - 1;
+    let mut i = start;
+
+    fn is_whitespace(value: &serde_json::Value) -> bool {
+        value == b' ' || value == b'\t' || value == b'\r' || value == b'\n'
+    }
+
+    // Trim from front
+    while start < end {
+        if is_whitespace(&arr[i]) {
+            start = i + 1;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+
+    i = end;
+
+    // Trim from back
+    while end > start {
+        if is_whitespace(&arr[i]) {
+            end = i - 1;
+            i -= 1;
+        } else {
+            break;
+        }
+    }
+
+    &arr[start..=end]
+}
+
+// Trim and compare value to string
+fn check_value_as_str(value: &serde_json::Value, other: &str) {
+    let arr = trim(value.as_array().expect("value should be a byte array"));
+
+    if arr != other.as_bytes() {
+        let s = arr
+            .iter()
+            .map(|value| {
+                (value
+                    .as_u64()
+                    .expect("Invalid array value, expected number") as u8) as char
+            })
+            .collect::<String>();
+        panic!("Expected '{other}', but got '{s}'");
+    }
+}
+
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
@@ -60,12 +117,7 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
 
     assert_eq!(res["origin_id"], origin_id);
     assert_eq!(res["payload"]["type"], "proc_stdout");
-    assert_eq!(
-        res["payload"]["data"]
-            .as_array()
-            .expect("data should be a byte array"),
-        b"some output"
-    );
+    check_value_as_str(&res["payload"]["data"], "some output");
 
     // Now we wait for the process to complete
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
@@ -102,12 +154,7 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
 
     assert_eq!(res["origin_id"], origin_id);
     assert_eq!(res["payload"]["type"], "proc_stderr");
-    assert_eq!(
-        res["payload"]["data"]
-            .as_array()
-            .expect("data should be a byte array"),
-        b"some output"
-    );
+    check_value_as_str(&res["payload"]["data"], "some output");
 
     // Now we wait for the process to complete
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
@@ -162,12 +209,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
 
     assert_eq!(res["origin_id"], origin_id);
     assert_eq!(res["payload"]["type"], "proc_stdout");
-    assert_eq!(
-        res["payload"]["data"]
-            .as_array()
-            .expect("data should be a byte array"),
-        b"some output\n"
-    );
+    check_value_as_str(&res["payload"]["data"], "some output");
 
     // Now kill the process and wait for it to complete
     let id = rand::random::<u64>().to_string();
