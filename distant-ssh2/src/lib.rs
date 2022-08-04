@@ -484,67 +484,6 @@ impl Ssh {
         Ok(())
     }
 
-    /// Retrieves version string from the remote system by using `uname -a` or `ver`,
-    /// returning whichever succeeds first or failing if neither is available
-    pub async fn system_str(&self) -> io::Result<&str> {
-        static INSTANCE: OnceCell<String> = OnceCell::new();
-
-        async fn retrieve(session: &WezSession) -> io::Result<String> {
-            let cmd_1 = "uname -a";
-            let cmd_2 = "cmd.exe /c ver";
-            let (uname_res, ver_res) = tokio::join!(
-                utils::execute_output(session, cmd_1),
-                utils::execute_output(session, cmd_2)
-            );
-
-            match (uname_res, ver_res) {
-                // If Windows-specific version string succeeded, return it
-                (_, Ok(p)) if p.success => Ok(String::from_utf8_lossy(&p.stdout).to_string()),
-
-                // If uname version string succeeded, return it
-                (Ok(p), _) if p.success => Ok(String::from_utf8_lossy(&p.stdout).to_string()),
-
-                // If neither request to run was able to occur, fail with network error
-                (Err(_), Err(_)) => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Unable to detect version string! Is uname or cmd.exe available on the remote system?"
-                )),
-
-                // If only one of the requests ran and it failed, then fail with stderr
-                (Ok(p), Err(_)) => {
-                    let msg = String::from_utf8_lossy(&p.stderr);
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("{cmd_1} failed: {msg}").trim()
-                    ))
-                }
-                (Err(_), Ok(p)) => {
-                    let msg = String::from_utf8_lossy(&p.stderr);
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("{cmd_2} failed: {msg}").trim()
-                    ))
-                }
-
-                // Both requests ran and failed, so combine stderr and report failure
-                (Ok(p1), Ok(p2)) => {
-                    let msg_1 = format!("{cmd_1} failed: {}", String::from_utf8_lossy(&p1.stderr)); 
-                    let msg_2 = format!("{cmd_2} failed: {}", String::from_utf8_lossy(&p2.stderr));
-
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Unable to derive version string!\n{msg_1}\n{msg_2}")
-                    ))
-                }
-            }
-        }
-
-        INSTANCE
-            .get_or_try_init(retrieve(&self.session))
-            .await
-            .map(|s| s.as_str())
-    }
-
     /// Detects the family of operating system on the remote machine
     pub async fn detect_family(&self) -> io::Result<SshFamily> {
         static INSTANCE: OnceCell<SshFamily> = OnceCell::new();
@@ -559,17 +498,27 @@ impl Ssh {
 
         INSTANCE
             .get_or_try_init(async move {
-                let system = self.system_str().await?.to_lowercase();
-                if system.contains("microsoft windows")
-                    || system.contains("windows_nt")
-                    || system.contains("windowsnt")
-                    || system.contains("cygwin_nt")
-                    || system.contains("mingw")
-                    || system.contains("msys")
-                {
-                    Ok(SshFamily::Windows)
+                // Look up the current directory
+                let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
+
+                // TODO: Ideally, we would determine the family using something like the following:
+                //
+                //      cmd.exe /C echo %OS%
+                //
+                //      Determine OS by printing OS variable (works with Windows 2000+)
+                //      If it matches Windows_NT, then we are on windows
+                //
+                // However, the above is not working for whatever reason (always has success == false); so,
+                // we're purely using a check if we have a drive letter on the canonicalized path to
+                // determine if on windows for now. Some sort of failure with SIGPIPE
+                let is_windows = current_dir
+                    .components()
+                    .any(|c| matches!(c, Component::Prefix(_)));
+
+                if is_windows {
+                    SshFamily::Windows
                 } else {
-                    Ok(SshFamily::Unix)
+                    SshFamily::Unix
                 }
             })
             .await
@@ -651,6 +600,8 @@ impl Ssh {
             ));
         }
 
+        let family = self.detect_family().await?;
+
         let host = self.host().to_string();
 
         // Turn our ssh connection into a client/server pair so we can use it to spawn our server
@@ -664,12 +615,11 @@ impl Ssh {
             String::from("--host"),
             String::from("ssh"),
         ];
-        args.extend(
-            // TODO: Split arguments based on unix/windows that we detect from a
-            // previously-executed command to detect the OS family
-            shell_words::split(&opts.args)
+        args.extend(match family {
+            SshFamily::Windows => winsplit::split(&opts.args),
+            SshFamily::Unix => shell_words::split(&opts.args)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-        );
+        });
 
         // If we are using a login shell, we need to make the binary be sh
         // so we can appropriately pipe into the login shell

@@ -68,16 +68,22 @@ impl ProcessInstance {
         reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<Self> {
         // Build out the command and args from our string
-        let (cmd, args) = match cmd.split_once(' ') {
-            Some((cmd_str, args_str)) => (
-                cmd_str.to_string(),
-                // TODO: Split arguments based on unix/windows since we can detect this at compile time
-                //       given this is being spawned local to the server
-                shell_words::split(args_str)
-                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-            ),
-            None => (cmd, Vec::new()),
+        let mut cmd_and_args = if cfg!(windows) {
+            winsplit::split(&cmd)
+        } else {
+            shell_words::split(&cmd).map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?
         };
+
+        if cmd_and_args.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Command was empty",
+            ));
+        }
+
+        // Split command from arguments, where arguments could be empty
+        let args = cmd_and_args.split_off(1);
+        let cmd = cmd_and_args.into_iter().next().unwrap();
 
         let mut child: Box<dyn Process> = match pty {
             Some(size) => Box::new(PtyProcess::spawn(
