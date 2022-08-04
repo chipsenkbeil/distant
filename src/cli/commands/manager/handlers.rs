@@ -78,12 +78,13 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         // Add any extra arguments to the command
         if let Some(extra_args) = config.distant.args {
-            // TODO: Split arguments based on unix/windows since we can detect this at compile time
-            //       given this is being spawned local to the manager
-            args.extend(
+            // NOTE: Split arguments based on whether we are running on windows or unix
+            args.extend(if cfg!(windows) {
+                winsplit::split(&extra_args)
+            } else {
                 shell_words::split(&extra_args)
-                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-            );
+                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?
+            });
         }
 
         // Spawn it and wait to get the communicated destination

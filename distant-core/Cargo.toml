@@ -35,6 +35,7 @@ tokio = { version = "1.12.0", features = ["full"] }
 tokio-util = { version = "0.6.7", features = ["codec"] }
 uriparse = "0.6.4"
 walkdir = "2.3.2"
+winsplit = "0.1"
 
 # Optional dependencies based on features
 clap = { version = "3.2.5", features = ["derive"], optional = true }
