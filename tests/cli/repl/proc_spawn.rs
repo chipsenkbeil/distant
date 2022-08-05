@@ -235,13 +235,13 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
 
     if res_1["payload"]["type"] == "ok" {
         assert_eq!(res_1["origin_id"], id);
-    } else {
+    } else if res_1["payload"]["type"] == "proc_done" {
         assert_eq!(res_1["origin_id"], origin_id);
     }
 
     if res_2["payload"]["type"] == "ok" {
         assert_eq!(res_2["origin_id"], id);
-    } else {
+    } else if res_2["payload"]["type"] == "proc_done" {
         assert_eq!(res_2["origin_id"], origin_id);
     }
 
