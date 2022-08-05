@@ -159,7 +159,7 @@ jobs:
       - name: Run CLI tests
         run: cargo nextest run --release --verbose
       - name: Cleanup distant.exe (needed for next build)
-        run: taskkill /IM distant.exe
+        run: taskkill /F /IM distant.exe
         if: matrix.os == 'windows-latest'
       - name: Run CLI tests (no default features)
         run: cargo nextest run --release --verbose --no-default-features
