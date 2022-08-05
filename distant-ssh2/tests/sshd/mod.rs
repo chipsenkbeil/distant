@@ -3,6 +3,7 @@ use anyhow::Context;
 use assert_fs::{prelude::*, TempDir};
 use async_trait::async_trait;
 use derive_more::Display;
+use derive_more::{Deref, DerefMut};
 use distant_core::DistantClient;
 use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use once_cell::sync::{Lazy, OnceCell};
@@ -23,6 +24,15 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+#[derive(Deref, DerefMut)]
+pub struct Ctx<T> {
+    pub sshd: Sshd,
+
+    #[deref]
+    #[deref_mut]
+    pub value: T,
+}
 
 // NOTE: Should find path
 //
@@ -446,6 +456,7 @@ impl Drop for Sshd {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.lock().unwrap().take() {
             let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -484,52 +495,59 @@ impl SshAuthHandler for MockSshAuthHandler {
 }
 
 #[fixture]
-pub fn sshd() -> &'static Sshd {
-    static SSHD: OnceCell<Sshd> = OnceCell::new();
-
-    SSHD.get_or_init(|| Sshd::spawn(Default::default()).unwrap())
+pub fn sshd() -> Sshd {
+    Sshd::spawn(Default::default()).expect("Failed to spawn sshd")
 }
 
 /// Fixture to establish a client to an SSH server
 #[fixture]
-pub async fn client(sshd: &'_ Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> DistantClient {
-    let ssh_client = load_ssh_client(sshd).await;
-    ssh_client
+pub async fn client(sshd: Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> Ctx<DistantClient> {
+    let ssh_client = load_ssh_client(&sshd).await;
+    let client = ssh_client
         .into_distant_client()
         .await
         .context("Failed to convert into distant client")
-        .unwrap()
+        .unwrap();
+    Ctx {
+        sshd,
+        value: client,
+    }
 }
 
 /// Fixture to establish a client to a launched server
 #[fixture]
 pub async fn launched_client(
-    sshd: &'_ Sshd,
+    sshd: Sshd,
     _logger: &'_ flexi_logger::LoggerHandle,
-) -> DistantClient {
+) -> Ctx<DistantClient> {
     let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
     eprintln!("Setting path to distant binary as {binary}");
 
     // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
     // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
-    let ssh_client = load_ssh_client(sshd).await;
-    ssh_client
+    let ssh_client = load_ssh_client(&sshd).await;
+    let client = ssh_client
         .launch_and_connect(DistantLaunchOpts {
             binary,
             ..Default::default()
         })
         .await
         .context("Failed to launch and connect to distant server")
-        .unwrap()
+        .unwrap();
+    Ctx {
+        sshd,
+        value: client,
+    }
 }
 
 /// Access to raw [`Ssh`] client
 #[fixture]
-pub async fn ssh(sshd: &'_ Sshd) -> Ssh {
-    load_ssh_client(sshd).await
+pub async fn ssh(sshd: Sshd) -> Ctx<Ssh> {
+    let ssh = load_ssh_client(&sshd).await;
+    Ctx { sshd, value: ssh }
 }
 
-async fn load_ssh_client(sshd: &'_ Sshd) -> Ssh {
+async fn load_ssh_client(sshd: &Sshd) -> Ssh {
     if sshd.is_dead() {
         panic!("sshd is dead!");
     }

@@ -4,7 +4,7 @@ use rstest::*;
 
 #[rstest]
 #[tokio::test]
-async fn detect_family_should_return_windows_if_sshd_on_windows(#[future] ssh: Ssh) {
+async fn detect_family_should_return_windows_if_sshd_on_windows(#[future] ssh: Ctx<Ssh>) {
     let ssh = ssh.await;
     let family = ssh.detect_family().await.expect("Failed to detect family");
     assert_eq!(
