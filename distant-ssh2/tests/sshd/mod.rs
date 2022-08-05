@@ -534,6 +534,13 @@ pub async fn launched_client(
         .await
         .context("Failed to launch and connect to distant server")
         .unwrap();
+
+    // TODO: Wrapping in ctx does not fully clean up the test as the launched distant server
+    //       is not cleaned up during drop. We don't know what the server's pid is, so our
+    //       only option would be to look up all running distant servers and kill them on drop,
+    //       but that would cause other tests to fail.
+    //
+    //       Setting an expiration of 1s would clean up running servers and possibly be good enough
     Ctx {
         sshd,
         value: client,

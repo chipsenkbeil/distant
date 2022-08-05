@@ -156,9 +156,6 @@ jobs:
         run: cargo nextest run --profile ci --release --verbose --all-features -p distant-ssh2 ssh2::client
       - name: Run CLI tests
         run: cargo nextest run --profile ci --release --verbose
-      - name: Cleanup distant.exe (needed for next build)
-        run: taskkill /F /IM distant.exe
-        if: matrix.os == 'windows-latest'
       - name: Run CLI tests (no default features)
         run: cargo nextest run --profile ci --release --verbose --no-default-features
   ssh-launch-tests:
