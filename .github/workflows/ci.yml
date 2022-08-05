@@ -76,9 +76,11 @@ jobs:
       matrix:
         include:
           - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
-          # - { rust: stable, os: macos-latest }
-          # - { rust: stable, os: ubuntu-latest }
-          # - { rust: 1.61.0, os: ubuntu-latest }
+          - { rust: stable, os: macos-latest }
+          - { rust: stable, os: ubuntu-latest }
+          - { rust: 1.61.0, os: ubuntu-latest }
+    env:
+      NEXTEST_RETRIES: 2
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust ${{ matrix.rust }}
@@ -87,6 +89,9 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.rust }}
           target: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v1
+        with:
+          tool: cargo-nextest
       - uses: Swatinem/rust-cache@v1
       - name: Check Cargo availability
         run: cargo --version
@@ -138,48 +143,56 @@ jobs:
           }
         shell: pwsh
         if: matrix.os == 'windows-latest'
-      # - name: Run net tests (default features)
-      #   run: cargo test --release --verbose -p distant-net
-      # - name: Run core tests (default features)
-      #   run: cargo test --release --verbose -p distant-core
-      # - name: Run core tests (all features)
-      #   run: cargo test --release --verbose --all-features -p distant-core
-      # - name: Ensure /run/sshd exists on Unix
-      #   run: mkdir -p /run/sshd
-      #   if: matrix.os == 'ubuntu-latest'
+      - name: Run net tests (default features)
+        run: cargo nextest run --release --verbose -p distant-net
+      - name: Run core tests (default features)
+        run: cargo nextest run --release --verbose -p distant-core
+      - name: Run core tests (all features)
+        run: cargo nextest run --release --verbose --all-features -p distant-core
+      - name: Ensure /run/sshd exists on Unix
+        run: mkdir -p /run/sshd
+        if: matrix.os == 'ubuntu-latest'
       - name: Run ssh2 client tests (default features)
-        run: cargo test --release --verbose -p distant-ssh2 ssh2::client
+        run: cargo nextest run --release --verbose -p distant-ssh2 ssh2::client
       - name: Run ssh2 client tests (all features)
-        run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::client
+        run: cargo nextest run --release --verbose --all-features -p distant-ssh2 ssh2::client
       - name: Run CLI tests
-        run: cargo test --release --verbose
+        run: cargo nextest run --release --verbose
+      - name: Cleanup distant.exe (needed for next build)
+        run: taskkill /IM distant.exe
+        if: matrix.os == 'windows-latest'
       - name: Run CLI tests (no default features)
-        run: cargo test --release --verbose --no-default-features
-  # ssh-launch-tests:
-  #   name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
-  #   runs-on: ${{ matrix.os }}
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       include:
-  #         - { rust: stable, os: macos-latest }
-  #         - { rust: stable, os: ubuntu-latest }
-  #         - { rust: 1.61.0, os: ubuntu-latest }
-  #   steps:
-  #     - uses: actions/checkout@v2
-  #     - name: Install Rust ${{ matrix.rust }}
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         profile: minimal
-  #         toolchain: ${{ matrix.rust }}
-  #     - uses: Swatinem/rust-cache@v1
-  #     - name: Check Cargo availability
-  #       run: cargo --version
-  #     - name: Install distant cli for use in launch tests
-  #       run: |
-  #         cargo install --path .
-  #         echo "DISTANT_PATH=$HOME/.cargo/bin/distant" >> $GITHUB_ENV
-  #     - name: Run ssh2 launch tests (default features)
-  #       run: cargo test --release --verbose -p distant-ssh2 ssh2::launched
-  #     - name: Run ssh2 launch tests (all features)
-  #       run: cargo test --release --verbose --all-features -p distant-ssh2 ssh2::launched
+        run: cargo nextest run --release --verbose --no-default-features
+  ssh-launch-tests:
+    name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rust: stable, os: macos-latest }
+          - { rust: stable, os: ubuntu-latest }
+          - { rust: 1.61.0, os: ubuntu-latest }
+    env:
+      NEXTEST_RETRIES: 2
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust ${{ matrix.rust }}
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+      - uses: taiki-e/install-action@v1
+        with:
+          tool: cargo-nextest
+      - uses: Swatinem/rust-cache@v1
+      - name: Check Cargo availability
+        run: cargo --version
+      - name: Install distant cli for use in launch tests
+        run: |
+          cargo install --path .
+          echo "DISTANT_PATH=$HOME/.cargo/bin/distant" >> $GITHUB_ENV
+      - name: Run ssh2 launch tests (default features)
+        run: cargo nextest run --release --verbose -p distant-ssh2 ssh2::launched
+      - name: Run ssh2 launch tests (all features)
+        run: cargo nextest run --release --verbose --all-features -p distant-ssh2 ssh2::launched
