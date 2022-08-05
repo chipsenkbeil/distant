@@ -6,7 +6,7 @@ use serde_json::json;
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_output(mut json_repl: Repl) {
+async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
 
@@ -36,7 +36,9 @@ async fn should_support_json_output(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_creating_missing_parent_directories_if_specified(mut json_repl: Repl) {
+async fn should_support_json_creating_missing_parent_directories_if_specified(
+    mut json_repl: CtxCommand<Repl>,
+) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir1").child("dir2");
 
@@ -66,7 +68,7 @@ async fn should_support_json_creating_missing_parent_directories_if_specified(mu
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_output_for_error(mut json_repl: Repl) {
+async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("missing-dir").child("dir");
 

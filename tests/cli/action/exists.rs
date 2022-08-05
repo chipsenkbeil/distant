@@ -4,7 +4,7 @@ use assert_fs::prelude::*;
 use rstest::*;
 
 #[rstest]
-fn should_output_true_if_exists(mut action_cmd: Command) {
+fn should_output_true_if_exists(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create file
@@ -21,7 +21,7 @@ fn should_output_true_if_exists(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_output_false_if_not_exists(mut action_cmd: Command) {
+fn should_output_false_if_not_exists(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file

@@ -4,7 +4,7 @@ use rstest::*;
 use std::process::Command as StdCommand;
 
 #[rstest]
-fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
+fn should_execute_program_and_return_exit_status(mut action_cmd: CtxCommand<Command>) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
     let stdout = regex_pred(".+");
@@ -25,7 +25,7 @@ fn should_execute_program_and_return_exit_status(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_capture_and_print_stdout(mut action_cmd: Command) {
+fn should_capture_and_print_stdout(mut action_cmd: CtxCommand<Command>) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -44,7 +44,7 @@ fn should_capture_and_print_stdout(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_capture_and_print_stderr(mut action_cmd: Command) {
+fn should_capture_and_print_stderr(mut action_cmd: CtxCommand<Command>) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])
@@ -67,7 +67,7 @@ fn should_capture_and_print_stderr(mut action_cmd: Command) {
 //       and then the process exiting. This may be a bug we've introduced with the
 //       refactor and should be revisited some day.
 #[rstest]
-fn should_forward_stdin_to_remote_process(mut action_std_cmd: StdCommand) {
+fn should_forward_stdin_to_remote_process(mut action_std_cmd: CtxCommand<StdCommand>) {
     use std::io::{BufRead, BufReader, Write};
 
     // distant action proc-spawn {cmd} [args]
@@ -106,7 +106,7 @@ fn should_forward_stdin_to_remote_process(mut action_std_cmd: StdCommand) {
 }
 
 #[rstest]
-fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
+fn reflect_the_exit_code_of_the_process(mut action_cmd: CtxCommand<Command>) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
     let stdout = regex_pred(".+");
@@ -127,7 +127,7 @@ fn reflect_the_exit_code_of_the_process(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
         .args(&["proc-spawn", "--"])

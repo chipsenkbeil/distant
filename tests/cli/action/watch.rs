@@ -16,7 +16,7 @@ fn wait_millis(millis: u64) {
 }
 
 #[rstest]
-fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
+fn should_support_watching_a_single_file(mut action_std_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
@@ -66,7 +66,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) {
+fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -120,7 +120,7 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: Command) 
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_std_cmd: Command) {
+fn yield_an_error_when_fails(mut action_std_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let invalid_path = temp.to_path_buf().join("missing");
 

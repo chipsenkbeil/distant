@@ -5,7 +5,7 @@ use serde_json::json;
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_true_if_exists(mut json_repl: Repl) {
+async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create file
@@ -35,7 +35,7 @@ async fn should_support_json_true_if_exists(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_false_if_not_exists(mut json_repl: Repl) {
+async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file

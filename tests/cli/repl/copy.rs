@@ -12,7 +12,7 @@ that is a file's contents
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_copying_file(mut json_repl: Repl) {
+async fn should_support_json_copying_file(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("file");
@@ -46,7 +46,7 @@ async fn should_support_json_copying_file(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_copying_nonempty_directory(mut json_repl: Repl) {
+async fn should_support_json_copying_nonempty_directory(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -84,7 +84,7 @@ async fn should_support_json_copying_nonempty_directory(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_output_for_error(mut json_repl: Repl) {
+async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("dir");

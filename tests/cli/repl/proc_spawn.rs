@@ -70,7 +70,9 @@ fn check_value_as_str(value: &serde_json::Value, other: &str) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_to_execute_program_and_return_exit_status(mut json_repl: Repl) {
+async fn should_support_json_to_execute_program_and_return_exit_status(
+    mut json_repl: CtxCommand<Repl>,
+) {
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap()]);
 
     let id = rand::random::<u64>().to_string();
@@ -92,7 +94,7 @@ async fn should_support_json_to_execute_program_and_return_exit_status(mut json_
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
+async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxCommand<Repl>) {
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap(), "some output"]);
 
     // Spawn the process
@@ -129,7 +131,7 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
+async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxCommand<Repl>) {
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDERR.to_str().unwrap(), "some output"]);
 
     // Spawn the process
@@ -166,7 +168,7 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: Repl) {
+async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: CtxCommand<Repl>) {
     let cmd = make_cmd(vec![ECHO_STDIN_TO_STDOUT.to_str().unwrap()]);
 
     // Spawn the process
@@ -251,7 +253,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: R
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_output_for_error(mut json_repl: Repl) {
+async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let id = rand::random::<u64>().to_string();
     let req = json!({
         "id": id,

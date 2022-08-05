@@ -88,7 +88,7 @@ fn regex_line(ty: &str, path: &str) -> String {
 }
 
 #[rstest]
-fn should_print_immediate_files_and_directories_by_default(mut action_cmd: Command) {
+fn should_print_immediate_files_and_directories_by_default(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
     let expected = regex_pred(&regex_stdout(vec![
@@ -110,7 +110,7 @@ fn should_print_immediate_files_and_directories_by_default(mut action_cmd: Comma
 // NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[cfg_attr(windows, ignore)]
-fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
+fn should_use_absolute_paths_if_specified(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so the absolute path
@@ -136,7 +136,7 @@ fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
 // NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[cfg_attr(windows, ignore)]
-fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: Command) {
+fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
     let expected = regex_pred(&regex_stdout(vec![
@@ -182,7 +182,7 @@ fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: Command)
 // NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[cfg_attr(windows, ignore)]
-fn should_include_root_directory_if_specified(mut action_cmd: Command) {
+fn should_include_root_directory_if_specified(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so yielded entry
@@ -207,7 +207,7 @@ fn should_include_root_directory_if_specified(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
     let dir = temp.child("missing-dir");
 

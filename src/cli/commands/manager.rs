@@ -283,7 +283,7 @@ impl ManagerSubcommand {
                 // Register our handlers for different schemes
                 debug!("Registering handlers with manager");
                 manager_ref
-                    .register_launch_handler("manager", handlers::ManagerLaunchHandler)
+                    .register_launch_handler("manager", handlers::ManagerLaunchHandler::new())
                     .await
                     .context("Failed to register launch handler for \"manager://\"")?;
                 manager_ref

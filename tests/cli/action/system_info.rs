@@ -4,7 +4,7 @@ use rstest::*;
 use std::env;
 
 #[rstest]
-fn should_output_system_info(mut action_cmd: Command) {
+fn should_output_system_info(mut action_cmd: CtxCommand<Command>) {
     // distant action system-info
     action_cmd
         .arg("system-info")

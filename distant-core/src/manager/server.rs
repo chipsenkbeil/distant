@@ -382,6 +382,10 @@ impl Server for DistantManager {
                     error!("[Conn {}] {}", connection_id, x);
                 }
 
+                // Clear out handler state in order to trigger drops
+                self.launch_handlers.write().await.clear();
+                self.connect_handlers.write().await.clear();
+
                 // Shutdown the primary server task
                 self.task.abort();
 

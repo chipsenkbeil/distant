@@ -15,7 +15,7 @@ file contents
 "#;
 
 #[rstest]
-fn should_report_ok_when_done(mut action_cmd: Command) {
+fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
@@ -41,7 +41,7 @@ fn should_report_ok_when_done(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-dir").child("missing-file");
 

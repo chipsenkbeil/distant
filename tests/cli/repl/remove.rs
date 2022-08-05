@@ -6,7 +6,7 @@ use serde_json::json;
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_removing_file(mut json_repl: Repl) {
+async fn should_support_json_removing_file(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -37,7 +37,7 @@ async fn should_support_json_removing_file(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_removing_empty_directory(mut json_repl: Repl) {
+async fn should_support_json_removing_empty_directory(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -69,7 +69,9 @@ async fn should_support_json_removing_empty_directory(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_removing_nonempty_directory_if_force_specified(mut json_repl: Repl) {
+async fn should_support_json_removing_nonempty_directory_if_force_specified(
+    mut json_repl: CtxCommand<Repl>,
+) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -101,7 +103,7 @@ async fn should_support_json_removing_nonempty_directory_if_force_specified(mut 
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_output_for_error(mut json_repl: Repl) {
+async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory so we fail to remove it

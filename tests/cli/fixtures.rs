@@ -1,5 +1,6 @@
 use assert_cmd::Command;
-use once_cell::sync::{Lazy, OnceCell};
+use derive_more::{Deref, DerefMut};
+use once_cell::sync::Lazy;
 use rstest::*;
 use std::{
     path::PathBuf,
@@ -13,6 +14,15 @@ pub use repl::Repl;
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
 const TIMEOUT: Duration = Duration::from_secs(3);
+
+#[derive(Deref, DerefMut)]
+pub struct CtxCommand<T> {
+    pub ctx: DistantManagerCtx,
+
+    #[deref]
+    #[deref_mut]
+    pub cmd: T,
+}
 
 /// Context for some listening distant server
 pub struct DistantManagerCtx {
@@ -105,6 +115,37 @@ impl DistantManagerCtx {
         }
     }
 
+    pub fn shutdown(&self) {
+        // Send a shutdown request to the manager
+        let mut shutdown_cmd = StdCommand::new(bin_path());
+        shutdown_cmd
+            .arg("manager")
+            .arg("shutdown")
+            .arg("--log-file")
+            .arg(random_log_file("shutdown"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            shutdown_cmd
+                .arg("--windows-pipe")
+                .arg(self.socket_or_pipe.as_str());
+        } else {
+            shutdown_cmd
+                .arg("--unix-socket")
+                .arg(self.socket_or_pipe.as_str());
+        }
+
+        eprintln!("Spawning shutdown cmd: {shutdown_cmd:?}");
+        let output = shutdown_cmd.output().expect("Failed to shutdown server");
+        if !output.status.success() {
+            panic!(
+                "Failed to shutdown: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
@@ -171,46 +212,46 @@ fn random_log_file(prefix: &str) -> PathBuf {
 
 impl Drop for DistantManagerCtx {
     /// Kills manager upon drop
-    ///
-    /// NOTE: This is never triggered
     fn drop(&mut self) {
-        let _ = self.manager.kill();
+        // Attempt to shutdown gracefully, forcing a kill otherwise
+        if std::panic::catch_unwind(|| self.shutdown()).is_err() {
+            let _ = self.manager.kill();
+            let _ = self.manager.wait();
+        }
     }
 }
 
-// NOTE: This is a process leak as we never kill the manager or the associated server as drop
-//       is never invoked for [`DistantManagerCtx`]. To fix this, we either need to spawn a
-//       context per test function so drop can be triggered or write a custom test runner, which
-//       is not possible with stable rust.
 #[fixture]
-pub fn ctx() -> &'static DistantManagerCtx {
-    static CTX: OnceCell<DistantManagerCtx> = OnceCell::new();
-
-    CTX.get_or_init(DistantManagerCtx::start)
+pub fn ctx() -> DistantManagerCtx {
+    DistantManagerCtx::start()
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: &'_ DistantManagerCtx) -> Command {
-    ctx.new_assert_cmd(vec!["client", "lsp"])
+pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+    let cmd = ctx.new_assert_cmd(vec!["client", "lsp"]);
+    CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_cmd(ctx: &'_ DistantManagerCtx) -> Command {
-    ctx.new_assert_cmd(vec!["client", "action"])
+pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+    let cmd = ctx.new_assert_cmd(vec!["client", "action"]);
+    CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: &'_ DistantManagerCtx) -> StdCommand {
-    ctx.new_std_cmd(vec!["client", "action"])
+pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
+    let cmd = ctx.new_std_cmd(vec!["client", "action"]);
+    CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn json_repl(ctx: &'_ DistantManagerCtx) -> Repl {
+pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
     let child = ctx
         .new_std_cmd(vec!["client", "repl"])
         .arg("--format")
         .arg("json")
         .spawn()
         .expect("Failed to start distant repl with json format");
-    Repl::new(child, TIMEOUT)
+    let cmd = Repl::new(child, TIMEOUT);
+    CtxCommand { ctx, cmd }
 }

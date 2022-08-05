@@ -5,7 +5,7 @@ use std::env;
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_system_info(mut json_repl: Repl) {
+async fn should_support_json_system_info(mut json_repl: CtxCommand<Repl>) {
     let id = rand::random::<u64>().to_string();
     let req = json!({
         "id": id,

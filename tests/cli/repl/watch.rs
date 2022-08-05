@@ -18,7 +18,7 @@ async fn wait_millis(millis: u64) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_watching_single_file(mut json_repl: Repl) {
+async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -64,7 +64,7 @@ async fn should_support_json_watching_single_file(mut json_repl: Repl) {
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_watching_directory_recursively(mut json_repl: Repl) {
+async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -131,7 +131,9 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: Repl)
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_reporting_changes_using_correct_request_id(mut json_repl: Repl) {
+async fn should_support_json_reporting_changes_using_correct_request_id(
+    mut json_repl: CtxCommand<Repl>,
+) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file1 = temp.child("file1");
@@ -231,7 +233,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(mut json
 
 #[rstest]
 #[tokio::test]
-async fn should_support_json_output_for_error(mut json_repl: Repl) {
+async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let path = temp.to_path_buf().join("missing");
 

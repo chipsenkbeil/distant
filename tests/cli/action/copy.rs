@@ -11,7 +11,7 @@ that is a file's contents
 "#;
 
 #[rstest]
-fn should_support_copying_file(mut action_cmd: Command) {
+fn should_support_copying_file(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("file");
@@ -32,7 +32,7 @@ fn should_support_copying_file(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn should_support_copying_nonempty_directory(mut action_cmd: Command) {
+fn should_support_copying_nonempty_directory(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -57,7 +57,7 @@ fn should_support_copying_nonempty_directory(mut action_cmd: Command) {
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("dir");

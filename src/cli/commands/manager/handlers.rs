@@ -17,7 +17,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    process::Command,
+    process::{Child, Command},
     sync::Mutex,
 };
 
@@ -32,7 +32,17 @@ fn invalid(label: &str) -> io::Error {
 }
 
 /// Supports launching locally through the manager as defined by `manager://...`
-pub struct ManagerLaunchHandler;
+pub struct ManagerLaunchHandler {
+    servers: Mutex<Vec<Child>>,
+}
+
+impl ManagerLaunchHandler {
+    pub fn new() -> Self {
+        Self {
+            servers: Mutex::new(Vec::new()),
+        }
+    }
+}
 
 #[async_trait]
 impl LaunchHandler for ManagerLaunchHandler {
@@ -88,9 +98,10 @@ impl LaunchHandler for ManagerLaunchHandler {
         }
 
         // Spawn it and wait to get the communicated destination
-        // NOTE: This will leave the server detached from the manager when the manager exits
+        // NOTE: Server will persist until this handler is dropped
         let mut command = Command::new(program);
         command
+            .kill_on_drop(true)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -106,6 +117,10 @@ impl LaunchHandler for ManagerLaunchHandler {
             match stdout.read_line(&mut line).await {
                 Ok(n) if n > 0 => {
                     if let Ok(destination) = line[..n].trim().parse::<Destination>() {
+                        // Store a reference to the server so we can terminate them
+                        // when this handler is dropped
+                        self.servers.lock().await.push(child);
+
                         break Ok(destination);
                     } else {
                         line.clear();
@@ -114,10 +129,13 @@ impl LaunchHandler for ManagerLaunchHandler {
 
                 // If we reach the point of no more data, then fail with EOF
                 Ok(_) => {
+                    // Ensure that the server is terminated
+                    child.kill().await?;
+
                     break Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "Missing output destination",
-                    ))
+                    ));
                 }
 
                 // If we fail to read a line, we assume that the child has completed
