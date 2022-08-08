@@ -24,7 +24,6 @@ distant-core = { version = "=0.17.0", path = "../distant-core" }
 futures = "0.3.16"
 hex = "0.4.3"
 log = "0.4.14"
-openssl-src = "=300.0.7"
 rand = { version = "0.8.4", features = ["getrandom"] }
 rpassword = "6.0.1"
 shell-words = "1.0"
@@ -38,7 +37,6 @@ serde = { version = "1.0.126", features = ["derive"], optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.58"
-assert_cmd = "2.0.0"
 assert_fs = "1.0.4"
 dunce = "1.0.2"
 flexi_logger = "0.19.4"
