@@ -14,6 +14,7 @@ use strum::{EnumString, EnumVariantNames};
 
 /// Change to one or more paths on the filesystem
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Change {
     /// Label describing the kind of change
@@ -21,6 +22,13 @@ pub struct Change {
 
     /// Paths that were changed
     pub paths: Vec<PathBuf>,
+}
+
+#[cfg(feature = "schemars")]
+impl Change {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Change)
+    }
 }
 
 impl From<NotifyEvent> for Change {
@@ -47,6 +55,7 @@ impl From<NotifyEvent> for Change {
     Serialize,
     Deserialize,
 )]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -202,6 +211,13 @@ impl ChangeKind {
     }
 }
 
+#[cfg(feature = "schemars")]
+impl ChangeKind {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(ChangeKind)
+    }
+}
+
 impl BitOr for ChangeKind {
     type Output = ChangeKindSet;
 
@@ -276,6 +292,7 @@ impl From<NotifyEventKind> for ChangeKind {
 
 /// Represents a distinct set of different change kinds
 #[derive(Clone, Debug, Deref, DerefMut, IntoIterator, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct ChangeKindSet(HashSet<ChangeKind>);
 
 impl ChangeKindSet {
@@ -361,6 +378,13 @@ impl ChangeKindSet {
     /// Consumes set and returns a vec of the kinds of changes
     pub fn into_vec(self) -> Vec<ChangeKind> {
         self.0.into_iter().collect()
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl ChangeKindSet {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(ChangeKindSet)
     }
 }
 

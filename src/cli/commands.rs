@@ -1,6 +1,7 @@
 use clap::Subcommand;
 
 mod client;
+mod generate;
 mod manager;
 mod server;
 
@@ -17,4 +18,8 @@ pub enum DistantSubcommand {
     /// Perform server commands
     #[clap(subcommand)]
     Server(server::ServerSubcommand),
+
+    /// Perform generation commands
+    #[clap(subcommand)]
+    Generate(generate::GenerateSubcommand),
 }

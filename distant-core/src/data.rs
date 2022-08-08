@@ -55,6 +55,7 @@ fn parse_byte_vec(src: &str) -> ByteVec {
 
 /// Represents a wrapper around a distant message, supporting single and batch requests
 #[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum DistantMsg<T> {
     Single(T),
@@ -129,8 +130,16 @@ impl<T> DistantMsg<T> {
     }
 }
 
+#[cfg(feature = "schemars")]
+impl<T: schemars::JsonSchema> DistantMsg<T> {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(DistantMsg<T>)
+    }
+}
+
 /// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[cfg_attr(feature = "clap", clap(rename_all = "kebab-case"))]
@@ -373,6 +382,7 @@ pub enum DistantRequestData {
 
         /// Data to send to a process's stdin pipe
         #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -389,8 +399,16 @@ pub enum DistantRequestData {
     SystemInfo {},
 }
 
+#[cfg(feature = "schemars")]
+impl DistantRequestData {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(DistantRequestData)
+    }
+}
+
 /// Represents the payload of a successful response
 #[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[strum(serialize_all = "snake_case")]
 pub enum DistantResponseData {
@@ -406,6 +424,7 @@ pub enum DistantResponseData {
     Blob {
         /// Binary data associated with the response
         #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -446,6 +465,7 @@ pub enum DistantResponseData {
 
         /// Data read from a process' stdout pipe
         #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -456,6 +476,7 @@ pub enum DistantResponseData {
 
         /// Data read from a process' stderr pipe
         #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -473,6 +494,13 @@ pub enum DistantResponseData {
 
     /// Response to retrieving information about the server and the system it is on
     SystemInfo(SystemInfo),
+}
+
+#[cfg(feature = "schemars")]
+impl DistantResponseData {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(DistantResponseData)
+    }
 }
 
 impl From<io::Error> for DistantResponseData {

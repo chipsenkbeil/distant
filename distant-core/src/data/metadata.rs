@@ -9,6 +9,7 @@ use std::{
 
 /// Represents metadata about some path on a remote machine
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Metadata {
     /// Canonicalized path to the file or directory, resolving symlinks, only included
     /// if flagged during the request
@@ -117,8 +118,16 @@ impl Metadata {
     }
 }
 
+#[cfg(feature = "schemars")]
+impl Metadata {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Metadata)
+    }
+}
+
 /// Represents unix-specific metadata about some path on a remote machine
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct UnixMetadata {
     /// Represents whether or not owner can read from the file
     pub owner_read: bool,
@@ -146,6 +155,13 @@ pub struct UnixMetadata {
 
     /// Represents whether or not other can execute the file
     pub other_exec: bool,
+}
+
+#[cfg(feature = "schemars")]
+impl UnixMetadata {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(UnixMetadata)
+    }
 }
 
 impl From<u32> for UnixMetadata {
@@ -227,6 +243,7 @@ bitflags! {
 
 /// Represents windows-specific metadata about some path on a remote machine
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct WindowsMetadata {
     /// Represents whether or not a file or directory is an archive
     pub archive: bool,
@@ -277,6 +294,13 @@ pub struct WindowsMetadata {
 
     /// Represents whether or not a file is being used for temporary storage
     pub temporary: bool,
+}
+
+#[cfg(feature = "schemars")]
+impl WindowsMetadata {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(WindowsMetadata)
+    }
 }
 
 impl From<u32> for WindowsMetadata {

@@ -53,6 +53,8 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
+        // NOTE: We should NOT provide context here as printing help and version are both
+        //       reported this way and providing context puts them under the "caused by" section
         let Opt {
             mut common,
             config_path,
@@ -65,6 +67,7 @@ impl Cli {
         // Extract the common config from our config file
         let config_common = match &command {
             DistantSubcommand::Client(_) => config.client.common.clone(),
+            DistantSubcommand::Generate(_) => config.generate.common.clone(),
             DistantSubcommand::Manager(_) => config.manager.common.clone(),
             DistantSubcommand::Server(_) => config.server.common.clone(),
         };
@@ -81,6 +84,7 @@ impl Cli {
             common.log_file = Some(match &command {
                 DistantSubcommand::Client(_) => paths::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
                 DistantSubcommand::Server(_) => paths::user::SERVER_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Generate(_) => paths::user::GENERATE_LOG_FILE_PATH.to_path_buf(),
 
                 // If we are listening as a manager, then we want to log to a manager-specific file
                 DistantSubcommand::Manager(cmd) if cmd.is_listen() => {
@@ -145,6 +149,7 @@ impl Cli {
     pub fn run(self) -> CliResult {
         match self.command {
             DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
+            DistantSubcommand::Generate(cmd) => cmd.run(self.config.generate),
             DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),
             DistantSubcommand::Server(cmd) => cmd.run(self.config.server),
         }

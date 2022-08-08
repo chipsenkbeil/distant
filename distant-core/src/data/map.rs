@@ -10,6 +10,7 @@ use std::{
 
 /// Contains map information for connections and other use cases
 #[derive(Clone, Debug, From, IntoIterator, PartialEq, Eq)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Map(HashMap<String, String>);
 
 impl Map {
@@ -19,6 +20,13 @@ impl Map {
 
     pub fn into_map(self) -> HashMap<String, String> {
         self.0
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl Map {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Map)
     }
 }
 

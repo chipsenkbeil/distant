@@ -28,10 +28,11 @@ ssh2 = ["distant-ssh2/ssh2"]
 anyhow = "1.0.58"
 async-trait = "0.1.56"
 clap = { version = "3.2.5", features = ["derive"] }
+clap_complete = "3.2.3"
 config = { version = "0.13.1", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.1", default-features = false }
-distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap"] }
+distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap", "schemars"] }
 directories = "4.0.1"
 flexi_logger = "0.18.1"
 indoc = "1.0.6"

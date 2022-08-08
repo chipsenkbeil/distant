@@ -1,9 +1,8 @@
-use anyhow::Context;
 use distant::{Cli, MainResult};
 
 #[cfg(unix)]
 fn main() -> MainResult {
-    let cli = match Cli::initialize().context("Failed to initialize CLI") {
+    let cli = match Cli::initialize() {
         Ok(cli) => cli,
         Err(x) => return MainResult::from(x),
     };
@@ -13,7 +12,7 @@ fn main() -> MainResult {
 
 #[cfg(windows)]
 fn main() -> MainResult {
-    let cli = match Cli::initialize().context("Failed to initialize CLI") {
+    let cli = match Cli::initialize() {
         Ok(cli) => cli,
         Err(x) => return MainResult::from(x),
     };

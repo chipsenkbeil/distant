@@ -5,6 +5,7 @@ use std::{fmt, num::ParseIntError, str::FromStr};
 
 /// Represents the size associated with a remote PTY
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct PtySize {
     /// Number of lines of text
     pub rows: u16,
@@ -29,6 +30,13 @@ impl PtySize {
             cols,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl PtySize {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(PtySize)
     }
 }
 

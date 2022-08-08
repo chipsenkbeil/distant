@@ -9,12 +9,14 @@ use toml_edit::Document;
 
 mod client;
 mod common;
+mod generate;
 mod manager;
 mod network;
 mod server;
 
 pub use client::*;
 pub use common::*;
+pub use generate::*;
 pub use manager::*;
 pub use network::*;
 pub use server::*;
@@ -23,6 +25,7 @@ pub use server::*;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     pub client: ClientConfig,
+    pub generate: GenerateConfig,
     pub manager: ManagerConfig,
     pub server: ServerConfig,
 }

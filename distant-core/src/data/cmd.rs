@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 
 /// Represents some command with arguments to execute
 #[derive(Clone, Debug, Display, From, Into, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Cmd(String);
 
 impl Cmd {
@@ -26,6 +27,13 @@ impl Cmd {
             Some((_, arguments)) => arguments.trim(),
             None => "",
         }
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl Cmd {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Cmd)
     }
 }
 

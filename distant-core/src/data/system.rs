@@ -3,6 +3,7 @@ use std::{env, path::PathBuf};
 
 /// Represents information about a system
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SystemInfo {
     /// Family of the operating system as described in
     /// https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html
@@ -22,6 +23,13 @@ pub struct SystemInfo {
     /// Primary separator for path components for the current platform
     /// as defined in https://doc.rust-lang.org/std/path/constant.MAIN_SEPARATOR.html
     pub main_separator: char,
+}
+
+#[cfg(feature = "schemars")]
+impl SystemInfo {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(SystemInfo)
+    }
 }
 
 impl Default for SystemInfo {

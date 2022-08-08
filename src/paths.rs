@@ -37,6 +37,10 @@ pub mod user {
     pub static SERVER_LOG_FILE_PATH: Lazy<PathBuf> =
         Lazy::new(|| PROJECT_DIR.cache_dir().join("server.log"));
 
+    /// Path to log file for distant generate
+    pub static GENERATE_LOG_FILE_PATH: Lazy<PathBuf> =
+        Lazy::new(|| PROJECT_DIR.cache_dir().join("generate.log"));
+
     /// For Linux & BSD, this uses the runtime path. For Mac, this uses the tmp path
     ///
     /// * `/run/user/1001/distant/{user}.distant.sock` on Linux

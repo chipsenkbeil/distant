@@ -3,6 +3,7 @@ pub type Id = String;
 
 /// Represents a request to send
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Request<T> {
     /// Unique id associated with the request
     pub id: Id,
@@ -21,6 +22,13 @@ impl<T> Request<T> {
     }
 }
 
+#[cfg(feature = "schemars")]
+impl<T: schemars::JsonSchema> Request<T> {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Request<T>)
+    }
+}
+
 impl<T> From<T> for Request<T> {
     fn from(payload: T) -> Self {
         Self::new(payload)
@@ -29,6 +37,7 @@ impl<T> From<T> for Request<T> {
 
 /// Represents a response received related to some request
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Response<T> {
     /// Unique id associated with the response
     pub id: Id,
@@ -48,5 +57,12 @@ impl<T> Response<T> {
             origin_id,
             payload,
         }
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl<T: schemars::JsonSchema> Response<T> {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Response<T>)
     }
 }

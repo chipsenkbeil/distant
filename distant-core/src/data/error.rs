@@ -5,6 +5,7 @@ use std::io;
 
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[display(fmt = "{}: {}", kind, description)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
@@ -16,6 +17,13 @@ pub struct Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(feature = "schemars")]
+impl Error {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(Error)
+    }
+}
 
 impl<'a> From<&'a str> for Error {
     fn from(x: &'a str) -> Self {
@@ -116,6 +124,7 @@ impl From<tokio::task::JoinError> for Error {
 
 /// All possible kinds of errors that can be returned
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ErrorKind {
     /// An entity was not found, often a file
@@ -192,6 +201,13 @@ pub enum ErrorKind {
 
     /// Catchall for an error that has no specific type
     Unknown,
+}
+
+#[cfg(feature = "schemars")]
+impl ErrorKind {
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(ErrorKind)
+    }
 }
 
 impl From<io::ErrorKind> for ErrorKind {
