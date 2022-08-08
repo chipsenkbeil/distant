@@ -16,15 +16,11 @@ binary.
 
 ## Details
 
-The `distant-core` library supplies a mixture of functionality and data to run
-servers that operate on remote machines and clients that talk to them.
-
-- Asynchronous in nature, powered by [`tokio`](https://tokio.rs/)
-- Data is serialized to send across the wire via [`msgpack`](https://msgpack.org/)
-- Encryption & authentication are handled via
-  [XChaCha20Poly1305](https://tools.ietf.org/html/rfc8439) for an authenticated
-  encryption scheme via
-  [RustCrypto/ChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305)
+The `distant-core` library supplies the client, manager, and server
+implementations for use with the distant API in order to communicate with
+remote machines and perform actions. This library acts as the primary
+implementation that powers the CLI, but is also available for other extensions
+like `distant-ssh2`.
 
 ## Installation
 
@@ -41,6 +37,8 @@ Currently, the library supports the following features:
 
 - `clap`: generates [`Clap`](https://github.com/clap-rs) bindings for
   `DistantRequestData` (used by cli to expose request actions)
+- `schemars`: derives the `schemars::JsonSchema` interface on
+  `DistantMsg`, `DistantRequestData`, and `DistantResponseData` data types
 
 By default, no features are enabled on the library.
 
