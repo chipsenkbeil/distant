@@ -2,9 +2,16 @@
 compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
 
 use async_compat::CompatExt;
+use async_once_cell::OnceCell;
+use async_trait::async_trait;
 use distant_core::{
-    Request, Session, SessionChannelExt, SessionDetails, SessionInfo, Transport,
-    XChaCha20Poly1305Codec,
+    data::Environment,
+    net::{
+        FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
+        XChaCha20Poly1305Codec,
+    },
+    BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, DistantApiServer,
+    DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
 };
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
@@ -15,17 +22,30 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     str::FromStr,
-    sync::Arc,
     time::Duration,
 };
-use tokio::sync::{mpsc, Mutex};
 use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
 
-mod handler;
+mod api;
 mod process;
+mod utils;
+
+use api::SshDistantApi;
+
+/// Represents the family of the remote machine connected over SSH
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum SshFamily {
+    /// Operating system belongs to unix family
+    Unix,
+
+    /// Operating system belongs to windows family
+    Windows,
+}
 
 /// Represents the backend to use for ssh operations
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum SshBackend {
@@ -96,10 +116,10 @@ impl fmt::Display for SshBackend {
     }
 }
 
-/// Represents a singular authentication prompt for a new ssh session
+/// Represents a singular authentication prompt for a new ssh client
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Ssh2AuthPrompt {
+pub struct SshAuthPrompt {
     /// The label to show when prompting the user
     pub prompt: String,
 
@@ -108,11 +128,11 @@ pub struct Ssh2AuthPrompt {
     pub echo: bool,
 }
 
-/// Represents an authentication request that needs to be handled before an ssh session can be
+/// Represents an authentication request that needs to be handled before an ssh client can be
 /// established
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Ssh2AuthEvent {
+pub struct SshAuthEvent {
     /// Represents the name of the user to be authenticated. This may be empty!
     pub username: String,
 
@@ -120,14 +140,14 @@ pub struct Ssh2AuthEvent {
     pub instructions: String,
 
     /// Prompts to be conveyed to the user, each representing a single answer needed
-    pub prompts: Vec<Ssh2AuthPrompt>,
+    pub prompts: Vec<SshAuthPrompt>,
 }
 
-/// Represents options to be provided when establishing an ssh session
+/// Represents options to be provided when establishing an ssh client
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
-pub struct Ssh2SessionOpts {
+pub struct SshOpts {
     /// Represents the backend to use for ssh operations
     pub backend: SshBackend,
 
@@ -168,9 +188,9 @@ pub struct Ssh2SessionOpts {
     pub other: BTreeMap<String, String>,
 }
 
-/// Represents options to be provided when converting an ssh session into a distant session
+/// Represents options to be provided when converting an ssh client into a distant client
 #[derive(Clone, Debug)]
-pub struct IntoDistantSessionOpts {
+pub struct DistantLaunchOpts {
     /// Binary to use for distant server
     pub binary: String,
 
@@ -185,7 +205,7 @@ pub struct IntoDistantSessionOpts {
     pub timeout: Duration,
 }
 
-impl Default for IntoDistantSessionOpts {
+impl Default for DistantLaunchOpts {
     fn default() -> Self {
         Self {
             binary: String::from("distant"),
@@ -196,81 +216,109 @@ impl Default for IntoDistantSessionOpts {
     }
 }
 
-/// Represents callback functions to be invoked during authentication of an ssh session
-pub struct Ssh2AuthHandler<'a> {
+/// Interface to handle various events during ssh authentication
+#[async_trait]
+pub trait SshAuthHandler {
     /// Invoked whenever a series of authentication prompts need to be displayed and responded to,
     /// receiving one event at a time and returning a collection of answers matching the total
     /// prompts provided in the event
-    pub on_authenticate: Box<dyn FnMut(Ssh2AuthEvent) -> io::Result<Vec<String>> + 'a>,
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>>;
+
+    /// Invoked when the host is unknown for a new ssh connection, receiving the host as a str and
+    /// returning true if the host is acceptable or false if the host (and thereby ssh client)
+    /// should be declined
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool>;
 
     /// Invoked when receiving a banner from the ssh server, receiving the banner as a str, useful
     /// to display to the user
-    pub on_banner: Box<dyn FnMut(&str) + 'a>,
-
-    /// Invoked when the host is unknown for a new ssh connection, receiving the host as a str and
-    /// returning true if the host is acceptable or false if the host (and thereby ssh session)
-    /// should be declined
-    pub on_host_verify: Box<dyn FnMut(&str) -> io::Result<bool> + 'a>,
+    async fn on_banner(&self, text: &str);
 
     /// Invoked when an error is encountered, receiving the error as a str
-    pub on_error: Box<dyn FnMut(&str) + 'a>,
+    async fn on_error(&self, text: &str);
 }
 
-impl Default for Ssh2AuthHandler<'static> {
-    fn default() -> Self {
-        Self {
-            on_authenticate: Box::new(|ev| {
-                if !ev.username.is_empty() {
-                    eprintln!("Authentication for {}", ev.username);
+/// Implementation of [`SshAuthHandler`] that prompts locally for authentication and verification
+/// events
+pub struct LocalSshAuthHandler;
+
+#[async_trait]
+impl SshAuthHandler for LocalSshAuthHandler {
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
+        trace!("[local] on_authenticate({event:?})");
+        let task = tokio::task::spawn_blocking(move || {
+            if !event.username.is_empty() {
+                eprintln!("Authentication for {}", event.username);
+            }
+
+            if !event.instructions.is_empty() {
+                eprintln!("{}", event.instructions);
+            }
+
+            let mut answers = Vec::new();
+            for prompt in &event.prompts {
+                // Contains all prompt lines including same line
+                let mut prompt_lines = prompt.prompt.split('\n').collect::<Vec<_>>();
+
+                // Line that is prompt on same line as answer
+                let prompt_line = prompt_lines.pop().unwrap();
+
+                // Go ahead and display all other lines
+                for line in prompt_lines.into_iter() {
+                    eprintln!("{}", line);
                 }
 
-                if !ev.instructions.is_empty() {
-                    eprintln!("{}", ev.instructions);
-                }
+                let answer = if prompt.echo {
+                    eprint!("{}", prompt_line);
+                    std::io::stderr().lock().flush()?;
 
-                let mut answers = Vec::new();
-                for prompt in &ev.prompts {
-                    // Contains all prompt lines including same line
-                    let mut prompt_lines = prompt.prompt.split('\n').collect::<Vec<_>>();
+                    let mut answer = String::new();
+                    std::io::stdin().read_line(&mut answer)?;
+                    answer
+                } else {
+                    rpassword::prompt_password(prompt_line)?
+                };
 
-                    // Line that is prompt on same line as answer
-                    let prompt_line = prompt_lines.pop().unwrap();
+                answers.push(answer);
+            }
+            Ok(answers)
+        });
 
-                    // Go ahead and display all other lines
-                    for line in prompt_lines.into_iter() {
-                        eprintln!("{}", line);
-                    }
+        task.await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+    }
 
-                    let answer = if prompt.echo {
-                        eprint!("{}", prompt_line);
-                        std::io::stderr().lock().flush()?;
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+        trace!("[local] on_verify_host({host})");
+        eprintln!("{}", host);
+        let task = tokio::task::spawn_blocking(|| {
+            eprint!("Enter [y/N]> ");
+            std::io::stderr().lock().flush()?;
 
-                        let mut answer = String::new();
-                        std::io::stdin().read_line(&mut answer)?;
-                        answer
-                    } else {
-                        rpassword::prompt_password_stderr(prompt_line)?
-                    };
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
 
-                    answers.push(answer);
-                }
-                Ok(answers)
-            }),
-            on_banner: Box::new(|_| {}),
-            on_host_verify: Box::new(|message| {
-                eprintln!("{}", message);
-                match rpassword::prompt_password_stderr("Enter [y/N]> ")?.as_str() {
-                    "y" | "Y" | "yes" | "YES" => Ok(true),
-                    _ => Ok(false),
-                }
-            }),
-            on_error: Box::new(|_| {}),
-        }
+            trace!("Verify? Answer = '{answer}'");
+            match answer.as_str().trim() {
+                "y" | "Y" | "yes" | "YES" => Ok(true),
+                _ => Ok(false),
+            }
+        });
+
+        task.await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+    }
+
+    async fn on_banner(&self, _text: &str) {
+        trace!("[local] on_banner({_text})");
+    }
+
+    async fn on_error(&self, _text: &str) {
+        trace!("[local] on_error({_text})");
     }
 }
 
-/// Represents an ssh2 session
-pub struct Ssh2Session {
+/// Represents an ssh2 client
+pub struct Ssh {
     session: WezSession,
     events: SmolReceiver<WezSessionEvent>,
     host: String,
@@ -278,9 +326,9 @@ pub struct Ssh2Session {
     authenticated: bool,
 }
 
-impl Ssh2Session {
+impl Ssh {
     /// Connect to a remote TCP server using SSH
-    pub fn connect(host: impl AsRef<str>, opts: Ssh2SessionOpts) -> io::Result<Self> {
+    pub fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
         debug!(
             "Establishing ssh connection to {} using {:?}",
             host.as_ref(),
@@ -292,7 +340,7 @@ impl Ssh2Session {
         // Grab the config for the specific host
         let mut config = config.for_host(host.as_ref());
 
-        // Override config with any settings provided by session opts
+        // Override config with any settings provided by client opts
         if let Some(port) = opts.port.as_ref() {
             config.insert("port".to_string(), port.to_string());
         }
@@ -363,12 +411,12 @@ impl Ssh2Session {
         })
     }
 
-    /// Host this session is connected to
+    /// Host this client is connected to
     pub fn host(&self) -> &str {
         &self.host
     }
 
-    /// Port this session is connected to on remote host
+    /// Port this client is connected to on remote host
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -378,8 +426,8 @@ impl Ssh2Session {
         self.authenticated
     }
 
-    /// Authenticates the [`Ssh2Session`] if not already authenticated
-    pub async fn authenticate(&mut self, mut handler: Ssh2AuthHandler<'_>) -> io::Result<()> {
+    /// Authenticates the [`Ssh`] if not already authenticated
+    pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
         // If already authenticated, exit
         if self.authenticated {
             return Ok(());
@@ -391,11 +439,11 @@ impl Ssh2Session {
             match event {
                 WezSessionEvent::Banner(banner) => {
                     if let Some(banner) = banner {
-                        (handler.on_banner)(banner.as_ref());
+                        handler.on_banner(banner.as_ref()).await;
                     }
                 }
                 WezSessionEvent::HostVerify(verify) => {
-                    let verified = (handler.on_host_verify)(verify.message.as_str())?;
+                    let verified = handler.on_verify_host(verify.message.as_str()).await?;
                     verify
                         .answer(verified)
                         .compat()
@@ -403,27 +451,27 @@ impl Ssh2Session {
                         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
                 }
                 WezSessionEvent::Authenticate(mut auth) => {
-                    let ev = Ssh2AuthEvent {
+                    let ev = SshAuthEvent {
                         username: auth.username.clone(),
                         instructions: auth.instructions.clone(),
                         prompts: auth
                             .prompts
                             .drain(..)
-                            .map(|p| Ssh2AuthPrompt {
+                            .map(|p| SshAuthPrompt {
                                 prompt: p.prompt,
                                 echo: p.echo,
                             })
                             .collect(),
                     };
 
-                    let answers = (handler.on_authenticate)(ev)?;
+                    let answers = handler.on_authenticate(ev).await?;
                     auth.answer(answers)
                         .compat()
                         .await
                         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
                 }
                 WezSessionEvent::Error(err) => {
-                    (handler.on_error)(&err);
+                    handler.on_error(&err).await;
                     return Err(io::Error::new(io::ErrorKind::PermissionDenied, err));
                 }
                 WezSessionEvent::Authenticated => break,
@@ -436,9 +484,37 @@ impl Ssh2Session {
         Ok(())
     }
 
-    /// Consume [`Ssh2Session`] and produce a distant [`Session`] that is connected to a remote
-    /// distant server that is spawned using the ssh session
-    pub async fn into_distant_session(self, opts: IntoDistantSessionOpts) -> io::Result<Session> {
+    /// Detects the family of operating system on the remote machine
+    pub async fn detect_family(&self) -> io::Result<SshFamily> {
+        static INSTANCE: OnceCell<SshFamily> = OnceCell::new();
+
+        // Exit early if not authenticated as this is a requirement
+        if !self.authenticated {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Not authenticated",
+            ));
+        }
+
+        INSTANCE
+            .get_or_try_init(async move {
+                let is_windows = utils::is_windows(&self.session.sftp()).await?;
+
+                Ok(if is_windows {
+                    SshFamily::Windows
+                } else {
+                    SshFamily::Unix
+                })
+            })
+            .await
+            .copied()
+    }
+
+    /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote
+    /// distant server that is spawned using the ssh client
+    pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
+        trace!("ssh::launch_and_connect({:?})", opts);
+
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -477,17 +553,17 @@ impl Ssh2Session {
             ));
         }
 
-        let info = self.into_distant_session_info(opts).await?;
-        let key = info.key;
+        let credentials = self.launch(opts).await?;
+        let key = credentials.key;
         let codec = XChaCha20Poly1305Codec::from(key);
 
         // Try each IP address with the same port to see if one works
         let mut err = None;
         for ip in candidate_ips {
-            let addr = SocketAddr::new(ip, info.port);
+            let addr = SocketAddr::new(ip, credentials.port);
             debug!("Attempting to connect to distant server @ {}", addr);
-            match Session::tcp_connect_timeout(addr, codec.clone(), timeout).await {
-                Ok(session) => return Ok(session),
+            match DistantClient::connect_timeout(addr, codec.clone(), timeout).await {
+                Ok(client) => return Ok(client),
                 Err(x) => err = Some(x),
             }
         }
@@ -496,12 +572,11 @@ impl Ssh2Session {
         Err(err.expect("Err set above"))
     }
 
-    /// Consume [`Ssh2Session`] and produce a distant [`SessionInfo`] representing a remote
-    /// distant server that is spawned using the ssh session
-    pub async fn into_distant_session_info(
-        self,
-        opts: IntoDistantSessionOpts,
-    ) -> io::Result<SessionInfo> {
+    /// Consume [`Ssh`] and launch a distant server, returning a [`DistantSingleKeyCredentials`]
+    /// tied to the launched server that includes credentials
+    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
+        trace!("ssh::launch({:?})", opts);
+
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -510,73 +585,66 @@ impl Ssh2Session {
             ));
         }
 
+        let family = self.detect_family().await?;
+
         let host = self.host().to_string();
 
-        // Turn our ssh connection into a client session so we can use it to spawn our server
-        let (mut session, cleanup_session) = self.into_ssh_client_session_impl().await?;
+        // Turn our ssh connection into a client/server pair so we can use it to spawn our server
+        let (mut client, server) = self.into_distant_pair().await?;
 
         // Build arguments for distant to execute listen subcommand
         let mut args = vec![
+            String::from("server"),
             String::from("listen"),
+            String::from("--daemon"),
             String::from("--host"),
             String::from("ssh"),
         ];
-        args.extend(
-            shell_words::split(&opts.args)
+        args.extend(match family {
+            SshFamily::Windows => winsplit::split(&opts.args),
+            SshFamily::Unix => shell_words::split(&opts.args)
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-        );
+        });
 
         // If we are using a login shell, we need to make the binary be sh
         // so we can appropriately pipe into the login shell
-        let (bin, args) = if opts.use_login_shell {
-            (
-                String::from("sh"),
-                vec![
-                    String::from("-c"),
-                    shell_words::quote(&format!(
-                        "echo {} {} | $SHELL -l",
-                        opts.binary,
-                        args.join(" ")
-                    ))
-                    .to_string(),
-                ],
+        let cmd = if opts.use_login_shell {
+            format!(
+                "sh -c {}",
+                shell_words::quote(&format!(
+                    "echo {} {} | $SHELL -l",
+                    opts.binary,
+                    args.join(" ")
+                ))
             )
         } else {
-            (opts.binary, args)
+            format!("{} {}", opts.binary, args.join(" "))
         };
 
         // Spawn distant server and detach it so that we don't kill it when the
-        // ssh session is closed
-        debug!("Executing {} {}", bin, args.join(" "));
-        let mut proc = session
-            .spawn("<ssh-launch>", bin, args, true, None)
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-        let mut stdout = proc.stdout.take().unwrap();
-        let mut stderr = proc.stderr.take().unwrap();
-        let (success, code) = proc
-            .wait()
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x))?;
+        // ssh client is closed
+        debug!("Executing {}", cmd);
+        let output = client.output(cmd, Environment::new(), None, None).await?;
+        debug!(
+            "Completed with success = {}, code = {:?}",
+            output.success, output.code
+        );
 
-        // Close out ssh session
-        cleanup_session();
-        session.abort();
-        let _ = session.wait().await;
-        let mut output = Vec::new();
+        // Close out ssh client by killing the internal server and client
+        server.abort();
+        client.abort();
+        let _ = client.wait().await;
 
-        // If successful, grab the session information and establish a connection
+        // If successful, grab the client information and establish a connection
         // with the distant server
-        if success {
-            while let Ok(data) = stdout.read().await {
-                output.extend(&data);
-            }
-
-            // Iterate over output as individual lines, looking for session info
+        if output.success {
+            // Iterate over output as individual lines, looking for client info
+            trace!("Searching for credentials");
             let maybe_info = output
+                .stdout
                 .split(|&b| b == b'\n')
                 .map(String::from_utf8_lossy)
-                .find_map(|line| line.parse::<SessionInfo>().ok());
+                .find_map(|line| line.parse::<DistantSingleKeyCredentials>().ok());
             match maybe_info {
                 Some(mut info) => {
                     info.host = host;
@@ -584,21 +652,19 @@ impl Ssh2Session {
                 }
                 None => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Missing session data",
+                    "Missing launch information",
                 )),
             }
         } else {
-            while let Ok(data) = stderr.read().await {
-                output.extend(&data);
-            }
-
             Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!(
                     "Spawning distant failed [{}]: {}",
-                    code.map(|x| x.to_string())
+                    output
+                        .code
+                        .map(|x| x.to_string())
                         .unwrap_or_else(|| String::from("???")),
-                    match String::from_utf8(output) {
+                    match String::from_utf8(output.stderr) {
                         Ok(output) => output,
                         Err(x) => x.to_string(),
                     }
@@ -607,13 +673,29 @@ impl Ssh2Session {
         }
     }
 
-    /// Consume [`Ssh2Session`] and produce a distant [`Session`] that is powered by an ssh client
+    /// Consume [`Ssh`] and produce a [`DistantClient`] that is powered by an ssh client
     /// underneath
-    pub async fn into_ssh_client_session(self) -> io::Result<Session> {
-        self.into_ssh_client_session_impl().await.map(|x| x.0)
+    pub async fn into_distant_client(self) -> io::Result<DistantClient> {
+        Ok(self.into_distant_pair().await?.0)
     }
 
-    async fn into_ssh_client_session_impl(self) -> io::Result<(Session, Box<dyn FnOnce()>)> {
+    /// Consume [`Ssh`] and produce a [`BoxedDistantWriterReader`] that is powered by an ssh client
+    /// underneath
+    pub async fn into_distant_writer_reader(self) -> io::Result<BoxedDistantWriterReader> {
+        Ok(self.into_writer_reader_and_server().await?.0)
+    }
+
+    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`DistantApiServer`] pair
+    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, Box<dyn ServerRef>)> {
+        let ((writer, reader), server) = self.into_writer_reader_and_server().await?;
+        let client = DistantClient::new(writer, reader)?;
+        Ok((client, server))
+    }
+
+    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`DistantApiServer`] pair
+    async fn into_writer_reader_and_server(
+        self,
+    ) -> io::Result<(BoxedDistantWriterReader, Box<dyn ServerRef>)> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -622,47 +704,24 @@ impl Ssh2Session {
             ));
         }
 
-        let (t1, t2) = Transport::pair(1);
-        let tag = format!("ssh {}:{}", self.host, self.port);
-        let session = Session::initialize_with_details(t1, Some(SessionDetails::Custom { tag }))?;
+        let (t1, t2) = FramedTransport::pair(1);
 
-        // Spawn tasks that forward requests to the ssh session
-        // and send back responses from the ssh session
-        let (mut t_read, mut t_write) = t2.into_split();
-        let Self {
-            session: wez_session,
-            ..
-        } = self;
+        // Spawn a bridge client that is directly connected to our server
+        let (writer, reader) = t1.into_split();
+        let writer: BoxedDistantWriter = Box::new(writer);
+        let reader: BoxedDistantReader = Box::new(reader);
 
-        let (tx, mut rx) = mpsc::channel(1);
-        let request_task = tokio::spawn(async move {
-            let state = Arc::new(Mutex::new(handler::State::default()));
-            while let Ok(Some(req)) = t_read.receive::<Request>().await {
-                if let Err(x) =
-                    handler::process(wez_session.clone(), Arc::clone(&state), req, tx.clone()).await
-                {
-                    error!("Ssh session receiver handler failed: {}", x);
-                }
-            }
-            debug!("Ssh receiver task is now closed");
-        });
+        // Spawn a bridge server that is directly connected to our client
+        let server = {
+            let Self {
+                session: wez_session,
+                ..
+            } = self;
+            let (writer, reader) = t2.into_split();
+            DistantApiServer::new(SshDistantApi::new(wez_session))
+                .start(OneshotListener::from_value((writer, reader)))?
+        };
 
-        let send_task = tokio::spawn(async move {
-            while let Some(res) = rx.recv().await {
-                if let Err(x) = t_write.send(res).await {
-                    error!("Ssh session sender failed: {}", x);
-                    break;
-                }
-            }
-            debug!("Ssh sender task is now closed");
-        });
-
-        Ok((
-            session,
-            Box::new(move || {
-                send_task.abort();
-                request_task.abort();
-            }),
-        ))
+        Ok(((writer, reader), server))
     }
 }

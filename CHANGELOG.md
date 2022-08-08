@@ -7,9 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+
+- `distant manager` subcommand
+  - `distant manager service` subcommand contains functionality to install,
+    start, stop, and uninstall the manager as a service on various operating
+    systems
+  - `distant manager info` will print information about an active connection
+  - `distant manager list` will print information about all connections
+- `distant generate` subcommand
+  - `distant generate schema` will produce JSON schema for server
+    request/response
+  - `distant generate completion` will produce completion file for a specific
+    shell
+
 ### Changed
+
+- `distant launch` is now `distant client launch`
+- `distant action` is now `distant client action`
+- `distant shell` is now `distant client shell`
+- `distant listen` is now `distant server listen`
+- Minimum supported rust version (MSRV) has been bumped to `1.61.0`
+
 ### Fixed
+
+- Shell no longer has issues with fancier command prompts and other
+  terminal-oriented printing as `TERM=x256-color` is now set by default
+
 ### Removed
+
+- Networking directly from distant client to distant server. All connections
+  are now facilitated by the manager interface with client -> manager -> server
+- Environment variable output as part of launch is now gone as the connection
+  is now being managed, so there is no need to export session information
 
 ## [0.16.4] - 2022-06-01
 ### Added
@@ -134,6 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/chipsenkbeil/distant/compare/v0.16.4...v0.17.0
+[0.16.4]: https://github.com/chipsenkbeil/distant/compare/v0.16.3...v0.16.4
+[0.16.3]: https://github.com/chipsenkbeil/distant/compare/v0.16.2...v0.16.3
+[0.16.2]: https://github.com/chipsenkbeil/distant/compare/v0.16.1...v0.16.2
+[0.16.1]: https://github.com/chipsenkbeil/distant/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/chipsenkbeil/distant/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/chipsenkbeil/distant/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/chipsenkbeil/distant/compare/v0.14.0...v0.15.0

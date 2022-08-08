@@ -1,99 +1,194 @@
-use crate::cli::utils;
 use assert_cmd::Command;
-use distant_core::*;
-use once_cell::sync::OnceCell;
+use derive_more::{Deref, DerefMut};
+use once_cell::sync::Lazy;
 use rstest::*;
 use std::{
-    ffi::OsStr,
-    net::SocketAddr,
-    process::{Command as StdCommand, Stdio},
-    thread,
+    path::PathBuf,
+    process::{Child, Command as StdCommand, Stdio},
+    time::Duration,
 };
-use tokio::{runtime::Runtime, sync::mpsc};
 
-const LOG_PATH: &str = "/tmp/test.distant.server.log";
+mod repl;
+pub use repl::Repl;
 
-/// Context for some listening distant server
-pub struct DistantServerCtx {
-    pub addr: SocketAddr,
-    pub key: String,
-    done_tx: mpsc::Sender<()>,
+static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
+static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
+const TIMEOUT: Duration = Duration::from_secs(3);
+
+#[derive(Deref, DerefMut)]
+pub struct CtxCommand<T> {
+    pub ctx: DistantManagerCtx,
+
+    #[deref]
+    #[deref_mut]
+    pub cmd: T,
 }
 
-impl DistantServerCtx {
-    pub fn initialize() -> Self {
-        let ip_addr = "127.0.0.1".parse().unwrap();
-        let (done_tx, mut done_rx) = mpsc::channel(1);
-        let (started_tx, mut started_rx) = mpsc::channel(1);
+/// Context for some listening distant server
+pub struct DistantManagerCtx {
+    manager: Child,
+    socket_or_pipe: String,
+}
 
-        // NOTE: We spawn a dedicated thread that runs our tokio runtime separately
-        //       from our test itself because using assert_cmd blocks the thread
-        //       and prevents our runtime from working unless we make the tokio
-        //       test multi-threaded using `tokio::test(flavor = "multi_thread", worker_threads = 1)`
-        //       which isn't great because we're only using async tests for our
-        //       server itself; so, we hide that away since our test logic doesn't need to be async
-        thread::spawn(move || match Runtime::new() {
-            Ok(rt) => {
-                rt.block_on(async move {
-                    let logger = utils::init_logging(LOG_PATH);
-                    let opts = DistantServerOptions {
-                        shutdown_after: None,
-                        max_msg_capacity: 100,
-                    };
-                    let key = SecretKey::default();
-                    let key_hex_string = key.unprotected_to_hex_key();
-                    let codec = XChaCha20Poly1305Codec::from(key);
-                    let (_server, port) =
-                        DistantServer::bind(ip_addr, "0".parse().unwrap(), codec, opts)
-                            .await
-                            .unwrap();
+impl DistantManagerCtx {
+    /// Starts a manager and server so that clients can connect
+    pub fn start() -> Self {
+        eprintln!("Logging to {:?}", ROOT_LOG_DIR.as_path());
+        std::fs::create_dir_all(ROOT_LOG_DIR.as_path()).expect("Failed to create root log dir");
 
-                    started_tx.send(Ok((port, key_hex_string))).await.unwrap();
+        // Start the manager
+        let mut manager_cmd = StdCommand::new(bin_path());
+        manager_cmd
+            .arg("manager")
+            .arg("listen")
+            .arg("--log-file")
+            .arg(random_log_file("manager"))
+            .arg("--log-level")
+            .arg("trace");
 
-                    let _ = done_rx.recv().await;
-                    logger.flush();
-                    logger.shutdown();
-                });
-            }
-            Err(x) => {
-                started_tx.blocking_send(Err(x)).unwrap();
-            }
-        });
+        let socket_or_pipe = if cfg!(windows) {
+            format!("distant_test_{}", rand::random::<usize>())
+        } else {
+            std::env::temp_dir()
+                .join(format!("distant_test_{}.sock", rand::random::<usize>()))
+                .to_string_lossy()
+                .to_string()
+        };
 
-        // Extract our server startup data if we succeeded
-        let (port, key) = started_rx.blocking_recv().unwrap().unwrap();
+        if cfg!(windows) {
+            manager_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            manager_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
+        }
+
+        eprintln!("Spawning manager cmd: {manager_cmd:?}");
+        let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
+        std::thread::sleep(Duration::from_millis(50));
+        if let Ok(Some(status)) = manager.try_wait() {
+            panic!("Manager exited ({}): {:?}", status.success(), status.code());
+        }
+
+        // Spawn a server locally by launching it through the manager
+        let mut launch_cmd = StdCommand::new(bin_path());
+        launch_cmd
+            .arg("client")
+            .arg("launch")
+            .arg("--log-file")
+            .arg(random_log_file("launch"))
+            .arg("--log-level")
+            .arg("trace")
+            .arg("--distant")
+            .arg(bin_path())
+            .arg("--distant-args")
+            .arg(format!(
+                "--log-file {} --log-level trace",
+                random_log_file("server").to_string_lossy()
+            ));
+
+        if cfg!(windows) {
+            launch_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            launch_cmd.arg("--unix-socket").arg(socket_or_pipe.as_str());
+        }
+
+        launch_cmd.arg("manager://localhost");
+
+        eprintln!("Spawning launch cmd: {launch_cmd:?}");
+        let output = launch_cmd.output().expect("Failed to launch server");
+        if !output.status.success() {
+            let _ = manager.kill();
+            panic!(
+                "Failed to launch: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         Self {
-            addr: SocketAddr::new(ip_addr, port),
-            key,
-            done_tx,
+            manager,
+            socket_or_pipe,
+        }
+    }
+
+    pub fn shutdown(&self) {
+        // Send a shutdown request to the manager
+        let mut shutdown_cmd = StdCommand::new(bin_path());
+        shutdown_cmd
+            .arg("manager")
+            .arg("shutdown")
+            .arg("--log-file")
+            .arg(random_log_file("shutdown"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            shutdown_cmd
+                .arg("--windows-pipe")
+                .arg(self.socket_or_pipe.as_str());
+        } else {
+            shutdown_cmd
+                .arg("--unix-socket")
+                .arg(self.socket_or_pipe.as_str());
+        }
+
+        eprintln!("Spawning shutdown cmd: {shutdown_cmd:?}");
+        let output = shutdown_cmd.output().expect("Failed to shutdown server");
+        if !output.status.success() {
+            panic!(
+                "Failed to shutdown: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
-    pub fn new_assert_cmd(&self, subcommand: impl AsRef<OsStr>) -> Command {
-        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
-        cmd.arg(subcommand)
-            .args(&["--session", "environment"])
-            .env("DISTANT_HOST", self.addr.ip().to_string())
-            .env("DISTANT_PORT", self.addr.port().to_string())
-            .env("DISTANT_KEY", self.key.as_str());
+    pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
+        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd");
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
         cmd
     }
 
     /// Configures some distant command with an environment that can talk to a
     /// remote distant server, spawning it as a child process
-    pub fn new_std_cmd(&self, subcommand: impl AsRef<OsStr>) -> StdCommand {
-        let cmd_path = assert_cmd::cargo::cargo_bin(env!("CARGO_PKG_NAME"));
-        let mut cmd = StdCommand::new(cmd_path);
+    pub fn new_std_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> StdCommand {
+        let mut cmd = StdCommand::new(bin_path());
 
-        cmd.arg(subcommand)
-            .args(&["--session", "environment"])
-            .env("DISTANT_HOST", self.addr.ip().to_string())
-            .env("DISTANT_PORT", self.addr.port().to_string())
-            .env("DISTANT_KEY", self.key.as_str())
-            .stdin(Stdio::piped())
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -101,31 +196,62 @@ impl DistantServerCtx {
     }
 }
 
-impl Drop for DistantServerCtx {
-    /// Kills server upon drop
+/// Path to distant binary
+fn bin_path() -> PathBuf {
+    assert_cmd::cargo::cargo_bin(env!("CARGO_PKG_NAME"))
+}
+
+fn random_log_file(prefix: &str) -> PathBuf {
+    ROOT_LOG_DIR.join(format!(
+        "{}.{}.{}.log",
+        prefix,
+        *SESSION_RANDOM,
+        rand::random::<u16>()
+    ))
+}
+
+impl Drop for DistantManagerCtx {
+    /// Kills manager upon drop
     fn drop(&mut self) {
-        let _ = self.done_tx.send(());
+        // Attempt to shutdown gracefully, forcing a kill otherwise
+        if std::panic::catch_unwind(|| self.shutdown()).is_err() {
+            let _ = self.manager.kill();
+            let _ = self.manager.wait();
+        }
     }
 }
 
 #[fixture]
-pub fn ctx() -> &'static DistantServerCtx {
-    static CTX: OnceCell<DistantServerCtx> = OnceCell::new();
-
-    CTX.get_or_init(DistantServerCtx::initialize)
+pub fn ctx() -> DistantManagerCtx {
+    DistantManagerCtx::start()
 }
 
 #[fixture]
-pub fn action_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_assert_cmd("action")
+pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+    let cmd = ctx.new_assert_cmd(vec!["client", "lsp"]);
+    CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: &'_ DistantServerCtx) -> Command {
-    ctx.new_assert_cmd("lsp")
+pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+    let cmd = ctx.new_assert_cmd(vec!["client", "action"]);
+    CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: &'_ DistantServerCtx) -> StdCommand {
-    ctx.new_std_cmd("action")
+pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
+    let cmd = ctx.new_std_cmd(vec!["client", "action"]);
+    CtxCommand { ctx, cmd }
+}
+
+#[fixture]
+pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
+    let child = ctx
+        .new_std_cmd(vec!["client", "repl"])
+        .arg("--format")
+        .arg("json")
+        .spawn()
+        .expect("Failed to start distant repl with json format");
+    let cmd = Repl::new(child, TIMEOUT);
+    CtxCommand { ctx, cmd }
 }

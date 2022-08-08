@@ -1,69 +1,72 @@
-mod buf;
+use derive_more::{Display, Error, From};
+use std::process::{ExitCode, Termination};
+
+mod cli;
+pub mod config;
 mod constants;
-mod environment;
-mod exit;
-mod link;
-mod msg;
-mod opt;
-mod output;
-mod session;
-mod stdin;
-mod subcommand;
-mod utils;
+mod paths;
 
-use log::error;
+#[cfg(windows)]
+pub mod win_service;
 
-pub use exit::{ExitCode, ExitCodeError};
+pub use self::config::Config;
+pub use cli::Cli;
 
-/// Main entrypoint into the program
-pub fn run() {
-    let opt = opt::Opt::load();
-    let logger = init_logging(&opt.common, opt.subcommand.is_remote_process());
-    if let Err(x) = opt.subcommand.run(opt.common) {
-        if !x.is_silent() {
-            error!("Exiting due to error: {}", x);
-        }
-        logger.flush();
-        logger.shutdown();
+/// Wrapper around a [`CliResult`] that provides [`Termination`] support
+pub struct MainResult(CliResult);
 
-        std::process::exit(x.to_i32());
+impl MainResult {
+    pub const OK: MainResult = MainResult(Ok(()));
+}
+
+impl From<CliResult> for MainResult {
+    fn from(res: CliResult) -> Self {
+        Self(res)
     }
 }
 
-fn init_logging(opt: &opt::CommonOpt, is_remote_process: bool) -> flexi_logger::LoggerHandle {
-    use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
-    let modules = &["distant", "distant_core"];
+impl From<anyhow::Error> for MainResult {
+    fn from(x: anyhow::Error) -> Self {
+        Self(Err(CliError::Error(x)))
+    }
+}
 
-    // Disable logging for everything but our binary, which is based on verbosity
-    let mut builder = LogSpecification::builder();
-    builder.default(LevelFilter::Off);
+impl From<anyhow::Result<()>> for MainResult {
+    fn from(res: anyhow::Result<()>) -> Self {
+        Self(res.map_err(CliError::Error))
+    }
+}
 
-    // For each module, configure logging
-    for module in modules {
-        builder.module(module, opt.log_level.to_log_level_filter());
+pub type CliResult = Result<(), CliError>;
 
-        // If quiet, we suppress all logging output
-        //
-        // NOTE: For a process request, unless logging to a file, we also suppress logging output
-        //       to avoid unexpected results when being treated like a process
-        //
-        //       Without this, CI tests can sporadically fail when getting the exit code of a
-        //       process because an error log is provided about failing to broadcast a response
-        //       on the client side
-        if opt.quiet || (is_remote_process && opt.log_file.is_none()) {
-            builder.module(module, LevelFilter::Off);
+/// Represents an error associated with the CLI
+#[derive(Debug, Display, Error, From)]
+pub enum CliError {
+    /// CLI should return a specific error code
+    Exit(#[error(not(source))] u8),
+
+    /// CLI encountered some unexpected error
+    Error(#[error(not(source))] anyhow::Error),
+}
+
+impl CliError {
+    /// Represents a generic failure with exit code = 1
+    pub const FAILURE: CliError = CliError::Exit(1);
+}
+
+impl Termination for MainResult {
+    fn report(self) -> ExitCode {
+        match self.0 {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(x) => match x {
+                CliError::Exit(code) => ExitCode::from(code),
+                CliError::Error(x) => {
+                    eprintln!("{x:?}");
+                    ::log::error!("{x:?}");
+                    ::log::logger().flush();
+                    ExitCode::FAILURE
+                }
+            },
         }
     }
-
-    // Create our logger, but don't initialize yet
-    let logger = Logger::with(builder.build()).format_for_files(flexi_logger::opt_format);
-
-    // If provided, log to file instead of stderr
-    let logger = if let Some(path) = opt.log_file.as_ref() {
-        logger.log_to_file(FileSpec::try_from(path).expect("Failed to create log file spec"))
-    } else {
-        logger
-    };
-
-    logger.start().expect("Failed to initialize logger")
 }

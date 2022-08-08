@@ -1,17 +1,39 @@
-//! # distant
-//!
-//! ### Exit codes
-//!
-//! * EX_USAGE (64) - being used when arguments missing or bad arguments provided to CLI
-//! * EX_DATAERR (65) - being used when bad data received not in UTF-8 format or transport data is bad
-//! * EX_NOINPUT (66) - being used when not getting expected data from launch
-//! * EX_NOHOST (68) - being used when failed to resolve a host
-//! * EX_UNAVAILABLE (69) - being used when IO error encountered where connection is problem
-//! * EX_OSERR (71) - being used when fork failed
-//! * EX_IOERR (74) - being used as catchall for IO errors
-//! * EX_TEMPFAIL (75) - being used when we get a timeout
-//! * EX_PROTOCOL (76) - being used as catchall for transport errors
+use distant::{Cli, MainResult};
 
-fn main() {
-    distant::run();
+#[cfg(unix)]
+fn main() -> MainResult {
+    let cli = match Cli::initialize() {
+        Ok(cli) => cli,
+        Err(x) => return MainResult::from(x),
+    };
+    let _logger = cli.init_logger();
+    MainResult::from(cli.run())
+}
+
+#[cfg(windows)]
+fn main() -> MainResult {
+    let cli = match Cli::initialize() {
+        Ok(cli) => cli,
+        Err(x) => return MainResult::from(x),
+    };
+    let _logger = cli.init_logger();
+
+    // If we are trying to listen as a manager, try as a service first
+    if cli.is_manager_listen_command() {
+        match distant::win_service::run() {
+            // Success! So we don't need to run again
+            Ok(_) => return MainResult::OK,
+
+            // In this case, we know there was a service error, and we're assuming it
+            // means that we were trying to dispatch a service when we were not started
+            // as a service, so we will move forward as a console application
+            Err(distant::win_service::ServiceError::Service(_)) => (),
+
+            // Otherwise, we got a raw error that we want to return
+            Err(distant::win_service::ServiceError::Anyhow(x)) => return MainResult::from(x),
+        }
+    }
+
+    // Otherwise, execute as a non-service CLI
+    MainResult::from(cli.run())
 }

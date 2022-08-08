@@ -1,16 +1,11 @@
 use crate::cli::{
     fixtures::*,
-    utils::{random_tenant, FAILURE_LINE},
+    utils::{regex_pred, FAILURE_LINE},
 };
 use assert_cmd::Command;
 use assert_fs::prelude::*;
-use distant::ExitCode;
-use distant_core::{
-    data::{DirEntry, Error, ErrorKind, FileType},
-    Request, RequestData, Response, ResponseData,
-};
 use rstest::*;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Creates a directory in the form
 ///
@@ -76,96 +71,143 @@ fn make_directory() -> assert_fs::TempDir {
     temp
 }
 
+fn regex_stdout<'a>(lines: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let mut s = String::new();
+
+    s.push('^');
+    for (ty, path) in lines {
+        s.push_str(&regex_line(ty, path));
+    }
+    s.push('$');
+
+    s
+}
+
+fn regex_line(ty: &str, path: &str) -> String {
+    format!(r"\s*{ty}\s+{path}\s*\n")
+}
+
 #[rstest]
-fn should_print_immediate_files_and_directories_by_default(mut action_cmd: Command) {
+fn should_print_immediate_files_and_directories_by_default(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
+
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", "dir1"),
+        ("<DIR>", "dir2"),
+        ("", "file1"),
+        ("", "file2"),
+    ]));
 
     // distant action dir-read {path}
     action_cmd
         .args(&["dir-read", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(concat!("dir1/\n", "dir2/\n", "file1\n", "file2\n"))
+        .stdout(expected)
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
-fn should_use_absolute_paths_if_specified(mut action_cmd: Command) {
+#[cfg_attr(windows, ignore)]
+fn should_use_absolute_paths_if_specified(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so the absolute path
     //       provided is our canonicalized root path prepended
     let root_path = temp.to_path_buf().canonicalize().unwrap();
 
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", root_path.join("dir1").to_str().unwrap()),
+        ("<DIR>", root_path.join("dir2").to_str().unwrap()),
+        ("", root_path.join("file1").to_str().unwrap()),
+        ("", root_path.join("file2").to_str().unwrap()),
+    ]));
+
     // distant action dir-read --absolute {path}
     action_cmd
         .args(&["dir-read", "--absolute", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(format!(
-            "{}\n",
-            vec![
-                format!("{}/{}", root_path.to_str().unwrap(), "dir1/"),
-                format!("{}/{}", root_path.to_str().unwrap(), "dir2/"),
-                format!("{}/{}", root_path.to_str().unwrap(), "file1"),
-                format!("{}/{}", root_path.to_str().unwrap(), "file2"),
-            ]
-            .join("\n")
-        ))
+        .stdout(expected)
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
-fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: Command) {
+#[cfg_attr(windows, ignore)]
+fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
+
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", Path::new("dir1").to_str().unwrap()),
+        ("<DIR>", Path::new("dir1").join("dira").to_str().unwrap()),
+        ("<DIR>", Path::new("dir1").join("dirb").to_str().unwrap()),
+        (
+            "",
+            Path::new("dir1")
+                .join("dirb")
+                .join("file1")
+                .to_str()
+                .unwrap(),
+        ),
+        ("", Path::new("dir1").join("file1").to_str().unwrap()),
+        ("", Path::new("dir1").join("file2").to_str().unwrap()),
+        ("<DIR>", Path::new("dir2").to_str().unwrap()),
+        ("<DIR>", Path::new("dir2").join("dira").to_str().unwrap()),
+        ("<DIR>", Path::new("dir2").join("dirb").to_str().unwrap()),
+        (
+            "",
+            Path::new("dir2")
+                .join("dirb")
+                .join("file1")
+                .to_str()
+                .unwrap(),
+        ),
+        ("", Path::new("dir2").join("file1").to_str().unwrap()),
+        ("", Path::new("dir2").join("file2").to_str().unwrap()),
+        ("", Path::new("file1").to_str().unwrap()),
+        ("", Path::new("file2").to_str().unwrap()),
+    ]));
 
     // distant action dir-read --depth 0 {path}
     action_cmd
         .args(&["dir-read", "--depth", "0", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(concat!(
-            "dir1/\n",
-            "dir1/dira/\n",
-            "dir1/dirb/\n",
-            "dir1/dirb/file1\n",
-            "dir1/file1\n",
-            "dir1/file2\n",
-            "dir2/\n",
-            "dir2/dira/\n",
-            "dir2/dirb/\n",
-            "dir2/dirb/file1\n",
-            "dir2/file1\n",
-            "dir2/file2\n",
-            "file1\n",
-            "file2\n",
-        ))
+        .stdout(expected)
         .stderr("");
 }
 
+// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
-fn should_include_root_directory_if_specified(mut action_cmd: Command) {
+#[cfg_attr(windows, ignore)]
+fn should_include_root_directory_if_specified(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so yielded entry
     //       is the canonicalized version
     let root_path = temp.to_path_buf().canonicalize().unwrap();
 
+    let expected = regex_pred(&regex_stdout(vec![
+        ("<DIR>", root_path.to_str().unwrap()),
+        ("<DIR>", "dir1"),
+        ("<DIR>", "dir2"),
+        ("", "file1"),
+        ("", "file2"),
+    ]));
+
     // distant action dir-read --include-root {path}
     action_cmd
         .args(&["dir-read", "--include-root", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(format!(
-            "{}/\n{}",
-            root_path.to_str().unwrap(),
-            concat!("dir1/\n", "dir2/\n", "file1\n", "file2\n")
-        ))
+        .stdout(expected)
         .stderr("");
 }
 
 #[rstest]
-fn yield_an_error_when_fails(mut action_cmd: Command) {
+fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
     let dir = temp.child("missing-dir");
 
@@ -173,348 +215,7 @@ fn yield_an_error_when_fails(mut action_cmd: Command) {
     action_cmd
         .args(&["dir-read", dir.to_str().unwrap()])
         .assert()
-        .code(ExitCode::Software.to_i32())
+        .code(1)
         .stdout("")
         .stderr(FAILURE_LINE.clone());
-}
-
-#[rstest]
-fn should_support_json_output(mut action_cmd: Command) {
-    let temp = make_directory();
-
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::DirRead {
-            path: temp.to_path_buf(),
-            depth: 1,
-            absolute: false,
-            canonicalize: false,
-            include_root: false,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(
-        res.payload[0],
-        ResponseData::DirEntries {
-            entries: vec![
-                DirEntry {
-                    path: PathBuf::from("dir1"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("file1"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("file2"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-            ],
-            errors: Vec::new(),
-        }
-    );
-}
-
-#[rstest]
-fn should_support_json_returning_absolute_paths_if_specified(mut action_cmd: Command) {
-    let temp = make_directory();
-
-    // NOTE: Our root path is always canonicalized, so the absolute path
-    //       provided is our canonicalized root path prepended
-    let root_path = temp.to_path_buf().canonicalize().unwrap();
-
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::DirRead {
-            path: temp.to_path_buf(),
-            depth: 1,
-            absolute: true,
-            canonicalize: false,
-            include_root: false,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(
-        res.payload[0],
-        ResponseData::DirEntries {
-            entries: vec![
-                DirEntry {
-                    path: root_path.join("dir1"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: root_path.join("dir2"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: root_path.join("file1"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-                DirEntry {
-                    path: root_path.join("file2"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-            ],
-            errors: Vec::new(),
-        }
-    );
-}
-
-#[rstest]
-fn should_support_json_returning_all_files_and_directories_if_depth_is_0(mut action_cmd: Command) {
-    let temp = make_directory();
-
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::DirRead {
-            path: temp.to_path_buf(),
-            depth: 0,
-            absolute: false,
-            canonicalize: false,
-            include_root: false,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(
-        res.payload[0],
-        ResponseData::DirEntries {
-            /* "dir1/\n",
-            "dir1/dira/\n",
-            "dir1/dirb/\n",
-            "dir1/dirb/file1\n",
-            "dir1/file1\n",
-            "dir1/file2\n",
-            "dir2/\n",
-            "dir2/dira/\n",
-            "dir2/dirb/\n",
-            "dir2/dirb/file1\n",
-            "dir2/file1\n",
-            "dir2/file2\n",
-            "file1\n",
-            "file2\n", */
-            entries: vec![
-                DirEntry {
-                    path: PathBuf::from("dir1"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("dir1").join("dira"),
-                    file_type: FileType::Dir,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir1").join("dirb"),
-                    file_type: FileType::Dir,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir1").join("dirb").join("file1"),
-                    file_type: FileType::File,
-                    depth: 3
-                },
-                DirEntry {
-                    path: PathBuf::from("dir1").join("file1"),
-                    file_type: FileType::File,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir1").join("file2"),
-                    file_type: FileType::File,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2").join("dira"),
-                    file_type: FileType::Dir,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2").join("dirb"),
-                    file_type: FileType::Dir,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2").join("dirb").join("file1"),
-                    file_type: FileType::File,
-                    depth: 3
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2").join("file1"),
-                    file_type: FileType::File,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2").join("file2"),
-                    file_type: FileType::File,
-                    depth: 2
-                },
-                DirEntry {
-                    path: PathBuf::from("file1"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("file2"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-            ],
-            errors: Vec::new(),
-        }
-    );
-}
-
-#[rstest]
-fn should_support_json_including_root_directory_if_specified(mut action_cmd: Command) {
-    let temp = make_directory();
-
-    // NOTE: Our root path is always canonicalized, so yielded entry
-    //       is the canonicalized version
-    let root_path = temp.to_path_buf().canonicalize().unwrap();
-
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::DirRead {
-            path: temp.to_path_buf(),
-            depth: 1,
-            absolute: false,
-            canonicalize: false,
-            include_root: true,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert_eq!(
-        res.payload[0],
-        ResponseData::DirEntries {
-            entries: vec![
-                DirEntry {
-                    path: root_path,
-                    file_type: FileType::Dir,
-                    depth: 0
-                },
-                DirEntry {
-                    path: PathBuf::from("dir1"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("dir2"),
-                    file_type: FileType::Dir,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("file1"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-                DirEntry {
-                    path: PathBuf::from("file2"),
-                    file_type: FileType::File,
-                    depth: 1
-                },
-            ],
-            errors: Vec::new(),
-        }
-    );
-}
-
-#[rstest]
-fn should_support_json_output_for_error(mut action_cmd: Command) {
-    let temp = make_directory();
-    let dir = temp.child("missing-dir");
-
-    let req = Request {
-        id: rand::random(),
-        tenant: random_tenant(),
-        payload: vec![RequestData::DirRead {
-            path: dir.to_path_buf(),
-            depth: 1,
-            absolute: false,
-            canonicalize: false,
-            include_root: false,
-        }],
-    };
-
-    // distant action --format json --interactive
-    let cmd = action_cmd
-        .args(&["--format", "json"])
-        .arg("--interactive")
-        .write_stdin(format!("{}\n", serde_json::to_string(&req).unwrap()))
-        .assert()
-        .success()
-        .stderr("");
-
-    let res: Response = serde_json::from_slice(&cmd.get_output().stdout).unwrap();
-    assert!(
-        matches!(
-            res.payload[0],
-            ResponseData::Error(Error {
-                kind: ErrorKind::NotFound,
-                ..
-            })
-        ),
-        "Unexpected response: {:?}",
-        res.payload[0]
-    );
 }

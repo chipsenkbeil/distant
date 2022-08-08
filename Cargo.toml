@@ -3,16 +3,16 @@ name = "distant"
 description = "Operate on a remote computer through file and process manipulation"
 categories = ["command-line-utilities"]
 keywords = ["cli"]
-version = "0.16.4"
+version = "0.17.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
-edition = "2018"
+edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
 repository = "https://github.com/chipsenkbeil/distant"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["distant-core", "distant-ssh2"]
+members = ["distant-core", "distant-net", "distant-ssh2"]
 
 [profile.release]
 opt-level = 'z'
@@ -25,31 +25,44 @@ libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
+anyhow = "1.0.58"
+async-trait = "0.1.56"
+clap = { version = "3.2.5", features = ["derive"] }
+clap_complete = "3.2.3"
+config = { version = "0.13.1", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
-distant-core = { version = "=0.16.4", path = "distant-core", features = ["structopt"] }
+dialoguer = { version = "0.10.1", default-features = false }
+distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap", "schemars"] }
+directories = "4.0.1"
 flexi_logger = "0.18.1"
 indoc = "1.0.6"
 log = "0.4.17"
 once_cell = "1.12.0"
 rand = { version = "0.8.5", features = ["getrandom"] }
+rpassword = "6.0.1"
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
-structopt = "0.3.26"
-strum = { version = "0.21.0", features = ["derive"] }
-sysinfo = "0.23.13"
+shell-words = "1.0"
+service-manager = { version = "0.1.2", features = ["clap", "serde"] }
+tabled = "0.7.0"
 tokio = { version = "1.19.0", features = ["full"] }
+toml_edit = { version = "0.14.4", features = ["serde"] }
 terminal_size = "0.1.17"
 termwiz = "0.15.0"
+uriparse = "0.6.4"
+which = "4.2.5"
+winsplit = "0.1"
 whoami = "1.2.1"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.16.4", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
+distant-ssh2 = { version = "=0.17.0", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.19"
 
-# [target.'cfg(windows)'.dependencies]
-# sysinfo = "0.23.2"
+[target.'cfg(windows)'.dependencies]
+sysinfo = "0.24.7"
+windows-service = "0.5"
 
 [dev-dependencies]
 assert_cmd = "2.0.4"
