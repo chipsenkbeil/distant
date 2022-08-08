@@ -25,33 +25,33 @@ libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
-anyhow = "1.0.58"
-async-trait = "0.1.56"
-clap = { version = "3.2.5", features = ["derive"] }
+anyhow = "1.0.60"
+async-trait = "0.1.57"
+clap = { version = "3.2.16", features = ["derive"] }
 clap_complete = "3.2.3"
-config = { version = "0.13.1", default-features = false, features = ["toml"] }
+config = { version = "0.13.2", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
-dialoguer = { version = "0.10.1", default-features = false }
+dialoguer = { version = "0.10.2", default-features = false }
 distant-core = { version = "=0.17.0", path = "distant-core", features = ["clap", "schemars"] }
 directories = "4.0.1"
-flexi_logger = "0.18.1"
-indoc = "1.0.6"
+flexi_logger = "0.23.0"
+indoc = "1.0.7"
 log = "0.4.17"
-once_cell = "1.12.0"
+once_cell = "1.13.0"
 rand = { version = "0.8.5", features = ["getrandom"] }
-rpassword = "6.0.1"
-serde = { version = "1.0.137", features = ["derive"] }
-serde_json = "1.0.81"
-shell-words = "1.0"
-service-manager = { version = "0.1.2", features = ["clap", "serde"] }
-tabled = "0.7.0"
-tokio = { version = "1.19.0", features = ["full"] }
+rpassword = "7.0.0"
+serde = { version = "1.0.142", features = ["derive"] }
+serde_json = "1.0.83"
+shell-words = "1.1.0"
+service-manager = { version = "0.1.3", features = ["clap", "serde"] }
+tabled = "0.8.0"
+tokio = { version = "1.20.1", features = ["full"] }
 toml_edit = { version = "0.14.4", features = ["serde"] }
-terminal_size = "0.1.17"
+terminal_size = "0.2.1"
 termwiz = "0.15.0"
 uriparse = "0.6.4"
 which = "4.2.5"
-winsplit = "0.1"
+winsplit = "0.1.0"
 whoami = "1.2.1"
 
 # Optional native SSH functionality
@@ -61,12 +61,12 @@ distant-ssh2 = { version = "=0.17.0", path = "distant-ssh2", default-features = 
 fork = "0.1.19"
 
 [target.'cfg(windows)'.dependencies]
-sysinfo = "0.24.7"
-windows-service = "0.5"
+sysinfo = "0.25.1"
+windows-service = "0.5.0"
 
 [dev-dependencies]
 assert_cmd = "2.0.4"
 assert_fs = "1.0.7"
-indoc = "1.0.6"
+indoc = "1.0.7"
 predicates = "2.1.1"
-rstest = "0.11.0"
+rstest = "0.15.0"

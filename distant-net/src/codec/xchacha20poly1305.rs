@@ -1,9 +1,6 @@
 use crate::{Codec, SecretKey, SecretKey32};
 use bytes::{Buf, BufMut, BytesMut};
-use chacha20poly1305::{
-    aead::{Aead, NewAead},
-    Key, XChaCha20Poly1305, XNonce,
-};
+use chacha20poly1305::{aead::Aead, Key, KeyInit, XChaCha20Poly1305, XNonce};
 use std::{convert::TryInto, fmt};
 use tokio::io;
 
