@@ -298,8 +298,10 @@ impl ConnectHandler for SshConnectHandler {
     }
 }
 
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 struct AuthClientSshAuthHandler<'a>(Mutex<&'a mut AuthClient>);
 
+#[cfg(any(feature = "libssh", feature = "ssh2"))]
 impl<'a> AuthClientSshAuthHandler<'a> {
     pub fn new(auth_client: &'a mut AuthClient) -> Self {
         Self(Mutex::new(auth_client))
