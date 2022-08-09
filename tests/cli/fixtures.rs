@@ -5,6 +5,7 @@ use rstest::*;
 use std::{
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
+    thread,
     time::Duration,
 };
 
@@ -14,6 +15,10 @@ pub use repl::Repl;
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
 const TIMEOUT: Duration = Duration::from_secs(3);
+
+// Number of times to retry launching a server before giving up
+const LAUNCH_RETRY_CNT: usize = 2;
+const LAUNCH_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
@@ -99,14 +104,23 @@ impl DistantManagerCtx {
 
         launch_cmd.arg("manager://localhost");
 
-        eprintln!("Spawning launch cmd: {launch_cmd:?}");
-        let output = launch_cmd.output().expect("Failed to launch server");
-        if !output.status.success() {
-            let _ = manager.kill();
-            panic!(
-                "Failed to launch: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+        for i in 0..=LAUNCH_RETRY_CNT {
+            eprintln!("[{i}/{LAUNCH_RETRY_CNT}] Spawning launch cmd: {launch_cmd:?}");
+            let output = launch_cmd.output().expect("Failed to launch server");
+            let success = output.status.success();
+            if success {
+                break;
+            }
+
+            if !success && i == LAUNCH_RETRY_CNT {
+                let _ = manager.kill();
+                panic!(
+                    "Failed to launch: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            thread::sleep(LAUNCH_RETRY_TIMEOUT);
         }
 
         Self {
