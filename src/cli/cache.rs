@@ -18,6 +18,13 @@ pub struct Cache {
 }
 
 impl Cache {
+    pub fn new(custom_path: impl Into<Option<PathBuf>>) -> Self {
+        Self {
+            file: CacheFile::new(custom_path),
+            data: CacheData::default(),
+        }
+    }
+
     /// Loads the cache from the specified file path, or default user-local cache path,
     /// constructing data from the default cache if not found
     pub async fn read_from_disk_or_default(

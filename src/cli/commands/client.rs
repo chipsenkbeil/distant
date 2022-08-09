@@ -233,7 +233,10 @@ impl ClientSubcommand {
     }
 
     async fn async_run(self, config: ClientConfig) -> CliResult {
-        let mut cache = Cache::read_from_disk_or_default(self.cache_path().to_path_buf()).await?;
+        // If we get an error, just default anyway
+        let mut cache = Cache::read_from_disk_or_default(self.cache_path().to_path_buf())
+            .await
+            .unwrap_or_else(|_| Cache::new(self.cache_path().to_path_buf()));
 
         match self {
             Self::Action {
