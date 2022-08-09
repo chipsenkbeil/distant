@@ -9,7 +9,7 @@ use std::time::Duration;
 use terminal_size::{terminal_size, Height, Width};
 use termwiz::{
     caps::Capabilities,
-    input::{InputEvent, KeyCodeEncodeModes},
+    input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding},
     terminal::{new_terminal, Terminal},
 };
 
@@ -60,10 +60,11 @@ impl Shell {
                         if let Ok(input) = ev.key.encode(
                             ev.modifiers,
                             KeyCodeEncodeModes {
-                                enable_csi_u_key_encoding: false,
+                                encoding: KeyboardEncoding::Xterm,
                                 application_cursor_keys: false,
                                 newline_mode: false,
                             },
+                            /* is_down */ true,
                         ) {
                             if let Err(x) = stdin.write_str(input).await {
                                 error!("Failed to write to stdin of remote process: {}", x);
