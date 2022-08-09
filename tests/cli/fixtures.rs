@@ -3,6 +3,7 @@ use derive_more::{Deref, DerefMut};
 use once_cell::sync::Lazy;
 use rstest::*;
 use std::{
+    io,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
     thread,
@@ -129,7 +130,7 @@ impl DistantManagerCtx {
         }
     }
 
-    pub fn shutdown(&self) {
+    pub fn shutdown(&self) -> io::Result<()> {
         // Send a shutdown request to the manager
         let mut shutdown_cmd = StdCommand::new(bin_path());
         shutdown_cmd
@@ -153,10 +154,15 @@ impl DistantManagerCtx {
         eprintln!("Spawning shutdown cmd: {shutdown_cmd:?}");
         let output = shutdown_cmd.output().expect("Failed to shutdown server");
         if !output.status.success() {
-            panic!(
-                "Failed to shutdown: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Failed to shutdown: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -228,7 +234,7 @@ impl Drop for DistantManagerCtx {
     /// Kills manager upon drop
     fn drop(&mut self) {
         // Attempt to shutdown gracefully, forcing a kill otherwise
-        if std::panic::catch_unwind(|| self.shutdown()).is_err() {
+        if self.shutdown().is_err() {
             let _ = self.manager.kill();
             let _ = self.manager.wait();
         }
