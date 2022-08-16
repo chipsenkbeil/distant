@@ -1,6 +1,7 @@
 use crate::{transport::framed::utils, Codec, UntypedTransportRead};
 use async_trait::async_trait;
 use futures::StreamExt;
+use log::*;
 use serde::de::DeserializeOwned;
 use std::io;
 use tokio::io::AsyncRead;
@@ -31,8 +32,13 @@ where
             let data = data?;
 
             // Deserialize byte stream into our expected type
-            let data = utils::deserialize_from_slice(&data)?;
-            Ok(Some(data))
+            match utils::deserialize_from_slice(&data) {
+                Ok(data) => Ok(Some(data)),
+                Err(x) => {
+                    error!("Invalid data: {}", String::from_utf8_lossy(&data));
+                    Err(x)
+                }
+            }
         } else {
             Ok(None)
         }
