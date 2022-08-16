@@ -1,5 +1,5 @@
 use crate::serde_str::{deserialize_from_str, serialize_to_str};
-use derive_more::{From, IntoIterator};
+use derive_more::{Display, Error, From, IntoIterator};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -55,7 +55,7 @@ impl fmt::Display for Map {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let len = self.0.len();
         for (i, (key, value)) in self.0.iter().enumerate() {
-            write!(f, "{}=\"{}\"", key, value)?;
+            write!(f, "{}=\"{}\"", key, encode_value(value))?;
 
             // Include a comma after each but the last pair
             if i + 1 < len {
@@ -66,8 +66,20 @@ impl fmt::Display for Map {
     }
 }
 
+#[derive(Clone, Debug, Display, Error)]
+pub enum MapParseError {
+    #[display(fmt = "Missing = after key ('{}')", key)]
+    MissingEqualsAfterKey { key: String },
+
+    #[display(fmt = "Key ('{}') must start with alphabetic character", key)]
+    KeyMustStartWithAlphabeticCharacter { key: String },
+
+    #[display(fmt = "Missing closing \" for value")]
+    MissingClosingQuoteForValue,
+}
+
 impl FromStr for Map {
-    type Err = &'static str;
+    type Err = MapParseError;
 
     /// Parses a series of `key=value` pairs in the form `key="value",key2=value2` where
     /// the quotes around the value are optional
@@ -77,13 +89,17 @@ impl FromStr for Map {
         let mut s = s.trim();
         while !s.is_empty() {
             // Find {key}={tail...} where tail is everything after =
-            let (key, tail) = s.split_once('=').ok_or("Missing = after key")?;
+            let (key, tail) = s
+                .split_once('=')
+                .ok_or_else(|| MapParseError::MissingEqualsAfterKey { key: s.to_string() })?;
 
             // Remove whitespace around the key and ensure it starts with a proper character
             let key = key.trim();
 
             if !key.starts_with(char::is_alphabetic) {
-                return Err("Key must start with alphabetic character");
+                return Err(MapParseError::KeyMustStartWithAlphabeticCharacter {
+                    key: key.to_string(),
+                });
             }
 
             // Remove any map whitespace at the front of the tail
@@ -93,14 +109,41 @@ impl FromStr for Map {
             let (value, tail) = match tail.strip_prefix('"') {
                 // If quoted, we maintain the whitespace within the quotes
                 Some(tail) => {
-                    // Skip the quote so we can look for the trailing quote
-                    let (value, tail) =
-                        tail.split_once('"').ok_or("Missing closing \" for value")?;
+                    let mut backslash_cnt: usize = 0;
+                    let mut split_idx = None;
+                    for (i, b) in tail.bytes().enumerate() {
+                        // If we get a backslash, increment our count
+                        if b == b'\\' {
+                            backslash_cnt += 1;
 
-                    // Skip comma if we have one
-                    let tail = tail.strip_prefix(',').unwrap_or(tail);
+                        // If we get a quote and have an even number of preceding backslashes,
+                        // this is considered a closing quote and we've found our split index
+                        } else if b == b'"' && backslash_cnt % 2 == 0 {
+                            split_idx = Some(i);
+                            break;
 
-                    (value, tail)
+                        // Otherwise, we've encountered some other character, so reset our backlash
+                        // count
+                        } else {
+                            backslash_cnt = 0;
+                        }
+                    }
+
+                    match split_idx {
+                        Some(i) => {
+                            // Splitting at idx will result in the double quote being at the
+                            // beginning of the tail str, so we want to have the tail start
+                            // one after the beginning of the slice
+                            let (value, tail) = tail.split_at(i);
+                            let tail = &tail[1..].trim_start();
+
+                            // Also remove a trailing comma if it exists
+                            let tail = tail.strip_prefix(',').unwrap_or(tail).trim_start();
+
+                            (value, tail)
+                        }
+                        None => return Err(MapParseError::MissingClosingQuoteForValue),
+                    }
                 }
 
                 // If not quoted, we remove all whitespace around the value
@@ -111,12 +154,30 @@ impl FromStr for Map {
             };
 
             // Insert our new pair and update the slice to be the tail (removing whitespace)
-            map.insert(key.to_string(), value.to_string());
+            map.insert(key.to_string(), decode_value(value));
             s = tail.trim();
         }
 
         Ok(Self(map))
     }
+}
+
+/// Escapes double-quotes of a value str
+/// * `\` -> `\\`
+/// * `"` -> `\"`
+#[inline]
+fn encode_value(value: &str) -> String {
+    // \ -> \\
+    // " -> \"
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Translates escaped double-quotes back into quotes
+/// * `\\` -> `\`
+/// * `\"` -> `"`
+#[inline]
+fn decode_value(value: &str) -> String {
+    value.replace("\\\\", "\\").replace("\\\"", "\"")
 }
 
 impl Serialize for Map {
@@ -139,7 +200,7 @@ impl<'de> Deserialize<'de> for Map {
 
 #[macro_export]
 macro_rules! map {
-    ($($key:literal -> $value:literal),*) => {{
+    ($($key:literal -> $value:literal),* $(,)?) => {{
         let mut _map = ::std::collections::HashMap::new();
 
         $(
@@ -211,6 +272,18 @@ mod tests {
         let map = "key=value key2=value2".parse::<Map>().unwrap();
         assert_eq!(map, map!("key" -> "value key2=value2"));
 
+        // Support escaped quotes within value
+        let map = r#"key="\"va\"lue\"""#.parse::<Map>().unwrap();
+        assert_eq!(map, map!("key" -> r#""va"lue""#));
+
+        // Support escaped backslashes within value
+        let map = r#"key="a\\b\\c""#.parse::<Map>().unwrap();
+        assert_eq!(map, map!("key" -> r"a\b\c"));
+
+        // Backslashes and double quotes in a value are escaped together
+        let map = r#"key="\"\\\"\\\"""#.parse::<Map>().unwrap();
+        assert_eq!(map, map!("key" -> r#""\"\""#));
+
         // Variety of edge cases that should fail
         let _ = ",".parse::<Map>().unwrap_err();
         let _ = ",key=value".parse::<Map>().unwrap_err();
@@ -224,6 +297,18 @@ mod tests {
 
         let map = map!("key" -> "value").to_string();
         assert_eq!(map, r#"key="value""#);
+
+        // Double quotes in a value are escaped
+        let map = map!("key" -> r#""va"lue""#).to_string();
+        assert_eq!(map, r#"key="\"va\"lue\"""#);
+
+        // Backslashes in a value are also escaped
+        let map = map!("key" -> r"a\b\c").to_string();
+        assert_eq!(map, r#"key="a\\b\\c""#);
+
+        // Backslashes and double quotes in a value are escaped together
+        let map = map!("key" -> r#""\"\""#).to_string();
+        assert_eq!(map, r#"key="\"\\\"\\\"""#);
 
         // Order of key=value output is not guaranteed
         let map = map!("key" -> "value", "key2" -> "value2").to_string();

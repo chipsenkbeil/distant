@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `DistantManagerRouter` no longer silently fails when `distant.args` is
+  provided that includes double quotes within it
+
+### Changed
+
+- `Map` implementation of `Display` now escapes `\` and `"`
+- `Map` implementation of `FromStr` now handles escaped `\` and `"`
+
 ## [0.17.1] - 2022-08-16
 ### Added
 
