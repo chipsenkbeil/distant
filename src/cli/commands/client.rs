@@ -17,6 +17,7 @@ use distant_core::{
     DistantResponseData, Extra, RemoteCommand, Watcher,
 };
 use log::*;
+use serde_json::{json, Value};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -177,6 +178,9 @@ pub enum ClientSubcommand {
 
         /// Connection to use, otherwise will prompt to select
         connection: Option<ConnectionId>,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
 
         #[clap(flatten)]
         network: NetworkConfig,
@@ -401,7 +405,17 @@ impl ClientSubcommand {
                 *cache.data.selected = id;
                 cache.write_to_disk().await?;
 
-                println!("{}", id);
+                match format {
+                    Format::Shell => println!("{}", id),
+                    Format::Json => println!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "type": "connected",
+                            "id": id,
+                        }))
+                        .unwrap()
+                    ),
+                }
             }
             Self::Launch {
                 config: launcher_config,
@@ -465,7 +479,17 @@ impl ClientSubcommand {
                 *cache.data.selected = id;
                 cache.write_to_disk().await?;
 
-                println!("{}", id);
+                match format {
+                    Format::Shell => println!("{}", id),
+                    Format::Json => println!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "type": "launched",
+                            "id": id,
+                        }))
+                        .unwrap()
+                    ),
+                }
             }
             Self::Lsp {
                 connection,
@@ -583,6 +607,7 @@ impl ClientSubcommand {
             }
             Self::Select {
                 connection,
+                format,
                 network,
                 ..
             } => match connection {
@@ -608,8 +633,8 @@ impl ClientSubcommand {
                         )));
                     }
 
-                    trace!("Building selection prompt of {} choices", list.len());
-                    let selected = list
+                    // Figure out the current selection
+                    let current = list
                         .iter()
                         .enumerate()
                         .find_map(|(i, (id, _))| {
@@ -621,6 +646,7 @@ impl ClientSubcommand {
                         })
                         .unwrap_or_default();
 
+                    trace!("Building selection prompt of {} choices", list.len());
                     let items: Vec<String> = list
                         .iter()
                         .map(|(_, destination)| {
@@ -639,12 +665,51 @@ impl ClientSubcommand {
                         })
                         .collect();
 
-                    trace!("Rendering prompt");
-                    let selected = Select::with_theme(&ColorfulTheme::default())
-                        .items(&items)
-                        .default(selected)
-                        .interact_on_opt(&Term::stderr())
-                        .context("Failed to render prompt")?;
+                    // Prompt for a selection, with None meaning no change
+                    let selected = match format {
+                        Format::Shell => {
+                            trace!("Rendering prompt");
+                            Select::with_theme(&ColorfulTheme::default())
+                                .items(&items)
+                                .default(current)
+                                .interact_on_opt(&Term::stderr())
+                                .context("Failed to render prompt")?
+                        }
+
+                        Format::Json => {
+                            // Print out choices
+                            MsgSender::from_stdout()
+                                .send_blocking(&json!({
+                                    "type": "select",
+                                    "choices": items,
+                                    "current": current,
+                                }))
+                                .context("Failed to send JSON choices")?;
+
+                            // Wait for a response
+                            let msg = MsgReceiver::from_stdin()
+                                .recv_blocking::<Value>()
+                                .context("Failed to receive JSON selection")?;
+
+                            // Verify the response type is "selected"
+                            match msg.get("type") {
+                                Some(value) if value == "selected" => msg
+                                    .get("choice")
+                                    .and_then(|value| value.as_u64())
+                                    .map(|choice| choice as usize),
+                                Some(value) => {
+                                    return Err(CliError::Error(anyhow::anyhow!(
+                                        "Unexpected 'type' field value: {value}"
+                                    )))
+                                }
+                                None => {
+                                    return Err(CliError::Error(anyhow::anyhow!(
+                                        "Missing 'type' field"
+                                    )))
+                                }
+                            }
+                        }
+                    };
 
                     match selected {
                         Some(index) => {

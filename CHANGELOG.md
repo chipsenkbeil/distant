@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2022-08-16
+### Added
+
+- New `format` option available for `client select`
+  - Choices are provided via `{"type": "select", "choices": ["...", ...], "current": 0}`
+  - Selection is specified via `{"type": "selected", "choice": 0}`
+
+### Fixed
+
+- `distant client launch` using `--format json` now properly prints out id in
+  JSON format (`{"type": "launched", "id": "..."}`)
+- `distant client connect` using `--format json` now properly prints out id in
+  JSON format (`{"type": "connected", "id": "..."}`)
+
 ## [0.17.0] - 2022-08-09
 ### Added
 
