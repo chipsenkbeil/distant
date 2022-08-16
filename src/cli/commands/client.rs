@@ -421,7 +421,7 @@ impl ClientSubcommand {
                 config: launcher_config,
                 network,
                 format,
-                destination,
+                mut destination,
                 ..
             } => {
                 let network = network.merge(config.network);
@@ -444,6 +444,17 @@ impl ClientSubcommand {
 
                 // Grab the host we are connecting to for later use
                 let host = destination.to_host_string();
+
+                // If we have no scheme on launch, we need to fill it in with something
+                //
+                // TODO: Can we have the server support this instead of the client? Right now, the
+                //       server is failing because it cannot parse //localhost/ as it fails with
+                //       an invalid IPv4 or registered name character error on host
+                if destination.scheme().is_none() {
+                    destination
+                        .replace_scheme("ssh")
+                        .context("Failed to set a default scheme for a scheme-less destination")?;
+                }
 
                 // Start the server using our manager
                 debug!("Launching server at {} with {}", destination, extra);

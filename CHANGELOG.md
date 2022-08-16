@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- `replace_scheme` method to `Destination`
 
 ### Fixed
 
@@ -16,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Map` implementation of `Display` now escapes `\` and `"`
 - `Map` implementation of `FromStr` now handles escaped `\` and `"`
+- Split `fallback_scheme` for `DistantManagerConfig` into
+  `launch_fallback_scheme` (defaulting to ssh) and `connect_fallback_scheme`
+  (defaulting to distant); this means that subsequent use of 
+  `distant client launch [user@]host[:port]` will now default to ssh instead of
+  failing due to lack of distant launch handler
 
 ## [0.17.1] - 2022-08-16
 ### Added

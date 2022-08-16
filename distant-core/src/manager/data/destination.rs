@@ -29,6 +29,14 @@ impl Destination {
         self.0.scheme().map(Scheme::as_str)
     }
 
+    /// Replaces the current scheme of the destination with the provided scheme, returning the old
+    /// scheme as a string if it existed
+    pub fn replace_scheme(&mut self, scheme: &str) -> Result<Option<String>, URIReferenceError> {
+        self.0
+            .set_scheme(Some(Scheme::try_from(scheme).map(Scheme::into_owned)?))
+            .map(|s| s.map(|s| s.to_string()))
+    }
+
     /// Returns the host of the destination as a string
     pub fn to_host_string(&self) -> String {
         // NOTE: We guarantee that there is a host for a destination during construction

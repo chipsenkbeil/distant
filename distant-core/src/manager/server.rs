@@ -148,9 +148,9 @@ impl DistantManager {
             None => {
                 trace!(
                     "Using fallback scheme of {}",
-                    self.config.fallback_scheme.as_str()
+                    self.config.launch_fallback_scheme.as_str()
                 );
-                self.config.fallback_scheme.as_str()
+                self.config.launch_fallback_scheme.as_str()
             }
         }
         .to_lowercase();
@@ -193,9 +193,9 @@ impl DistantManager {
             None => {
                 trace!(
                     "Using fallback scheme of {}",
-                    self.config.fallback_scheme.as_str()
+                    self.config.connect_fallback_scheme.as_str()
                 );
-                self.config.fallback_scheme.as_str()
+                self.config.connect_fallback_scheme.as_str()
             }
         }
         .to_lowercase();
