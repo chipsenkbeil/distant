@@ -30,7 +30,7 @@ impl From<Map> for ClientLaunchConfig {
                     .unwrap_or_default(),
             },
             ssh: ClientLaunchSshConfig {
-                bin: map.remove("ssh.bind"),
+                bin: map.remove("ssh.bin"),
                 #[cfg(any(feature = "libssh", feature = "ssh2"))]
                 backend: map
                     .remove("ssh.backend")

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- New `ClientConnectConfig` to support connect settings, specifically for ssh
+
+### Fixed
+
+- `ssh` option to specify external binary not working on `launch` due to the
+  key being mis-labeled as `ssh.bind` instead of `ssh.bin`
+- All ssh settings were not being applied with manager handlers due to some key
+  checks being incorrect (e.g. `backend` instead of `ssh.backend`). This has
+  now been corrected and settings now properly get applied
 
 ## [0.17.2] - 2022-08-16
 ### Added

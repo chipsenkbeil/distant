@@ -362,43 +362,54 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
 
 #[cfg(any(feature = "libssh", feature = "ssh2"))]
 fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2::Ssh> {
+    trace!("load_ssh({destination}, {extra}");
     use distant_ssh2::{Ssh, SshOpts};
 
     let host = destination.to_host_string();
 
     let opts = SshOpts {
-        backend: match extra.get("backend") {
+        backend: match extra.get("backend").or_else(|| extra.get("ssh.backend")) {
             Some(s) => s.parse().map_err(|_| invalid("backend"))?,
             None => Default::default(),
         },
 
         identity_files: extra
             .get("identity_files")
+            .or_else(|| extra.get("ssh.identity_files"))
             .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
             .unwrap_or_default(),
 
-        identities_only: match extra.get("identities_only") {
+        identities_only: match extra
+            .get("identities_only")
+            .or_else(|| extra.get("ssh.identities_only"))
+        {
             Some(s) => Some(s.parse().map_err(|_| invalid("identities_only"))?),
             None => None,
         },
 
         port: destination.port(),
 
-        proxy_command: extra.get("proxy_command").cloned(),
+        proxy_command: extra
+            .get("proxy_command")
+            .or_else(|| extra.get("ssh.proxy_command"))
+            .cloned(),
 
         user: destination.username().map(ToString::to_string),
 
         user_known_hosts_files: extra
             .get("user_known_hosts_files")
+            .or_else(|| extra.get("ssh.user_known_hosts_files"))
             .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
             .unwrap_or_default(),
 
-        verbose: match extra.get("verbose") {
+        verbose: match extra.get("verbose").or_else(|| extra.get("ssh.verbose")) {
             Some(s) => s.parse().map_err(|_| invalid("verbose"))?,
             None => false,
         },
 
         ..Default::default()
     };
+
+    debug!("Connecting to {host} via ssh with {opts:?}");
     Ssh::connect(host, opts)
 }
