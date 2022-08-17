@@ -1,5 +1,5 @@
 use crate::{
-    config::NetworkConfig,
+    config::{AccessControl, NetworkConfig},
     paths::{global as global_paths, user as user_paths},
 };
 use anyhow::Context;
@@ -7,15 +7,12 @@ use distant_core::{net::PlainCodec, DistantManager, DistantManagerConfig, Distan
 use log::*;
 
 pub struct Manager {
-    config: DistantManagerConfig,
-    network: NetworkConfig,
+    pub access: AccessControl,
+    pub config: DistantManagerConfig,
+    pub network: NetworkConfig,
 }
 
 impl Manager {
-    pub fn new(config: DistantManagerConfig, network: NetworkConfig) -> Self {
-        Self { config, network }
-    }
-
     /// Begin listening on the network interface specified within [`NetworkConfig`]
     pub async fn listen(self) -> anyhow::Result<DistantManagerRef> {
         let user = self.config.user;
@@ -41,7 +38,7 @@ impl Manager {
                 self.config,
                 socket_path,
                 PlainCodec,
-                self.network.access.unwrap_or_default().into_mode(),
+                self.access.into_mode(),
             )
             .await
             .with_context(|| format!("Failed to start manager at socket {socket_path:?}"))?

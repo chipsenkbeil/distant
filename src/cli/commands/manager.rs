@@ -1,6 +1,6 @@
 use crate::{
     cli::{Cache, Client, Manager},
-    config::{ManagerConfig, NetworkConfig},
+    config::{AccessControl, ManagerConfig, NetworkConfig},
     paths::user::CACHE_FILE_PATH_STR,
     CliResult,
 };
@@ -33,6 +33,10 @@ pub enum ManagerSubcommand {
 
     /// Listen for incoming requests as a manager
     Listen {
+        /// Type of access to apply to created unix socket or windows pipe
+        #[clap(long, value_enum)]
+        access: Option<AccessControl>,
+
         /// If specified, will fork the process to run as a standalone daemon
         #[clap(long)]
         daemon: bool,
@@ -256,7 +260,13 @@ impl ManagerSubcommand {
 
                 Ok(())
             }
-            Self::Listen { network, user, .. } => {
+            Self::Listen {
+                access,
+                network,
+                user,
+                ..
+            } => {
+                let access = access.or(config.access).unwrap_or_default();
                 let network = network.merge(config.network);
 
                 info!(
@@ -271,13 +281,14 @@ impl ManagerSubcommand {
                         "global"
                     }
                 );
-                let manager_ref = Manager::new(
-                    DistantManagerConfig {
+                let manager_ref = Manager {
+                    access,
+                    config: DistantManagerConfig {
                         user,
                         ..Default::default()
                     },
                     network,
-                )
+                }
                 .listen()
                 .await
                 .context("Failed to start manager")?;

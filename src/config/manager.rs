@@ -1,4 +1,4 @@
-use super::{CommonConfig, NetworkConfig};
+use super::{AccessControl, CommonConfig, NetworkConfig};
 use clap::Args;
 use distant_core::Destination;
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,10 @@ use service_manager::ServiceManagerKind;
 /// Represents configuration settings for the distant manager
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
 pub struct ManagerConfig {
+    /// Type of access to apply to created unix socket or windows pipe
+    #[clap(long, value_enum)]
+    pub access: Option<AccessControl>,
+
     #[clap(flatten)]
     #[serde(flatten)]
     pub common: CommonConfig,

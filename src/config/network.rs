@@ -37,10 +37,6 @@ impl Default for AccessControl {
 /// Represents common networking configuration
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NetworkConfig {
-    /// Type of access to apply to created unix socket or windows pipe
-    #[clap(long, value_enum)]
-    pub access: Option<AccessControl>,
-
     /// Override the path to the Unix socket used by the manager (unix-only)
     #[clap(long)]
     pub unix_socket: Option<std::path::PathBuf>,
@@ -53,7 +49,6 @@ pub struct NetworkConfig {
 impl NetworkConfig {
     pub fn merge(self, other: Self) -> Self {
         Self {
-            access: self.access.or(other.access),
             unix_socket: self.unix_socket.or(other.unix_socket),
             windows_pipe: self.windows_pipe.or(other.windows_pipe),
         }

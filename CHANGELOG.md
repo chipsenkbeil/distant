@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failing due to lack of distant launch handler
 - Expose `windows-pipe` and `unix-socket` config and cli options regardless of
   platform (so they can be provided without worrying about which OS)
+- Lock `--access` to `distant manager listen` as a cli parameter and move it
+  out of `[network]` config to be tied to manager config only
 
 ## [0.17.1] - 2022-08-16
 ### Added
