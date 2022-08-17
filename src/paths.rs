@@ -2,7 +2,6 @@ use directories::ProjectDirs;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
 
-#[cfg(unix)]
 const SOCKET_FILE_STR: &str = "distant.sock";
 
 /// User-oriented paths
@@ -46,7 +45,6 @@ pub mod user {
     /// * `/run/user/1001/distant/{user}.distant.sock` on Linux
     /// * `/var/run/{user}.distant.sock` on BSD
     /// * `/tmp/{user}.distant.dock` on MacOS
-    #[cfg(unix)]
     pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
         // Form of {user}.distant.sock
         let mut file_name = whoami::username_os();
@@ -61,7 +59,6 @@ pub mod user {
     });
 
     /// Name of the pipe used by Windows in the form of `{user}.distant`
-    #[cfg(windows)]
     pub static WINDOWS_PIPE_NAME: Lazy<String> =
         Lazy::new(|| format!("{}.distant", whoami::username()));
 }
@@ -90,7 +87,6 @@ pub mod global {
     /// * `/run/distant.sock` on Linux
     /// * `/var/run/distant.sock` on BSD
     /// * `/tmp/distant.dock` on MacOS
-    #[cfg(unix)]
     pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
         if cfg!(target_os = "macos") {
             std::env::temp_dir().join(SOCKET_FILE_STR)
@@ -107,6 +103,5 @@ pub mod global {
     });
 
     /// Name of the pipe used by Windows
-    #[cfg(windows)]
     pub static WINDOWS_PIPE_NAME: Lazy<String> = Lazy::new(|| "distant".to_string());
 }

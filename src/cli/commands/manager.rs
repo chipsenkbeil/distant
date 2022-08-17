@@ -261,7 +261,9 @@ impl ManagerSubcommand {
 
                 info!(
                     "Starting manager (network = {})",
-                    if network.as_opt().is_some() {
+                    if (cfg!(windows) && network.windows_pipe.is_some())
+                        || (cfg!(unix) && network.unix_socket.is_some())
+                    {
                         "custom"
                     } else if user {
                         "user"

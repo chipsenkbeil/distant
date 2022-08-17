@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (defaulting to distant); this means that subsequent use of 
   `distant client launch [user@]host[:port]` will now default to ssh instead of
   failing due to lack of distant launch handler
+- Expose `windows-pipe` and `unix-socket` config and cli options regardless of
+  platform (so they can be provided without worrying about which OS)
 
 ## [0.17.1] - 2022-08-16
 ### Added
