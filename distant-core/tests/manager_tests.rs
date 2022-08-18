@@ -33,7 +33,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
             let (t1, t2) = FramedTransport::pair(100);
 
             // Spawn a server on one end
-            let _ = DistantApiServer::local()
+            let _ = DistantApiServer::local(Default::default())
                 .unwrap()
                 .start(OneshotListener::from_value(t2.into_split()))?;
 

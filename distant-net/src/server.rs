@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 
+mod config;
+pub use config::*;
+
 mod connection;
 pub use connection::*;
 
@@ -30,6 +33,11 @@ pub trait Server: Send {
 
     /// Type of data to store locally tied to the specific connection
     type LocalData: Send + Sync;
+
+    /// Returns configuration tied to server instance
+    fn config(&self) -> ServerConfig {
+        ServerConfig::default()
+    }
 
     /// Invoked immediately on server start, being provided the raw listener to use (untyped
     /// transport), and returning the listener when ready to start (enabling servers that need to

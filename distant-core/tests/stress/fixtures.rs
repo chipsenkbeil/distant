@@ -25,7 +25,7 @@ impl DistantClientCtx {
             let key = SecretKey::default();
             let codec = XChaCha20Poly1305Codec::from(key.clone());
 
-            if let Ok(api) = LocalDistantApi::initialize() {
+            if let Ok(api) = LocalDistantApi::initialize(Default::default()) {
                 let port: PortRange = "0".parse().unwrap();
                 let port = {
                     let server_ref = DistantApiServer::new(api)

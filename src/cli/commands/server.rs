@@ -5,11 +5,17 @@ use crate::{
 use anyhow::Context;
 use clap::Subcommand;
 use distant_core::{
-    net::{SecretKey32, ServerRef, TcpServerExt, XChaCha20Poly1305Codec},
+    net::{
+        SecretKey32, ServerConfig as NetServerConfig, ServerRef, TcpServerExt,
+        XChaCha20Poly1305Codec,
+    },
     DistantApiServer, DistantSingleKeyCredentials, Host,
 };
 use log::*;
-use std::io::{self, Read, Write};
+use std::{
+    io::{self, Read, Write},
+    time::Duration,
+};
 
 #[derive(Debug, Subcommand)]
 pub enum ServerSubcommand {
@@ -36,18 +42,18 @@ pub enum ServerSubcommand {
 }
 
 impl ServerSubcommand {
-    pub fn run(self, _config: ServerConfig) -> CliResult {
+    pub fn run(self, config: ServerConfig) -> CliResult {
         match &self {
-            Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self),
+            Self::Listen { daemon, .. } if *daemon => Self::run_daemon(self, config),
             Self::Listen { .. } => {
                 let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-                rt.block_on(Self::async_run(self, false))
+                rt.block_on(Self::async_run(self, config, false))
             }
         }
     }
 
     #[cfg(windows)]
-    fn run_daemon(self) -> CliResult {
+    fn run_daemon(self, _config: ServerConfig) -> CliResult {
         use crate::cli::Spawner;
         use distant_core::net::{Listener, WindowsPipeListener};
         use std::ffi::OsString;
@@ -96,7 +102,7 @@ impl ServerSubcommand {
     }
 
     #[cfg(unix)]
-    fn run_daemon(self) -> CliResult {
+    fn run_daemon(self, config: ServerConfig) -> CliResult {
         use fork::{daemon, Fork};
 
         // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
@@ -104,7 +110,7 @@ impl ServerSubcommand {
         match daemon(true, true) {
             Ok(Fork::Child) => {
                 let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-                rt.block_on(async { Self::async_run(self, true).await })?;
+                rt.block_on(async { Self::async_run(self, config, true).await })?;
                 Ok(())
             }
             Ok(Fork::Parent(pid)) => {
@@ -119,21 +125,30 @@ impl ServerSubcommand {
         }
     }
 
-    async fn async_run(self, _is_forked: bool) -> CliResult {
+    async fn async_run(self, config: ServerConfig, _is_forked: bool) -> CliResult {
         match self {
             Self::Listen {
-                config,
+                config: listen_config,
                 key_from_stdin,
                 #[cfg(windows)]
                 output_to_local_pipe,
                 ..
             } => {
-                let host = config.host.unwrap_or(BindAddress::Any);
+                macro_rules! get {
+                    (@flag $field:ident) => {{
+                        config.listen.$field || listen_config.$field
+                    }};
+                    ($field:ident) => {{
+                        config.listen.$field.or(listen_config.$field)
+                    }};
+                }
+
+                let host = get!(host).unwrap_or(BindAddress::Any);
                 trace!("Starting server using unresolved host '{}'", host);
-                let addr = host.resolve(config.use_ipv6)?;
+                let addr = host.resolve(get!(@flag use_ipv6))?;
 
                 // If specified, change the current working directory of this program
-                if let Some(path) = config.current_dir.as_ref() {
+                if let Some(path) = get!(current_dir) {
                     debug!("Setting current directory to {:?}", path);
                     std::env::set_current_dir(path)
                         .context("Failed to set new current directory")?;
@@ -156,25 +171,26 @@ impl ServerSubcommand {
                 debug!(
                     "Starting local API server, binding to {} {}",
                     addr,
-                    match config.port {
+                    match get!(port) {
                         Some(range) => format!("with port in range {}", range),
                         None => "using an ephemeral port".to_string(),
                     }
                 );
-                let server = DistantApiServer::local()
-                    .context("Failed to create local distant api")?
-                    .start(addr, config.port.unwrap_or_else(|| 0.into()), codec)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to start server @ {} with {}",
-                            addr,
-                            config
-                                .port
-                                .map(|p| format!("port in range {p}"))
-                                .unwrap_or_else(|| String::from("ephemeral port"))
-                        )
-                    })?;
+                let server = DistantApiServer::local(NetServerConfig {
+                    shutdown_after: get!(shutdown_after).map(Duration::from_secs_f32),
+                })
+                .context("Failed to create local distant api")?
+                .start(addr, get!(port).unwrap_or_else(|| 0.into()), codec)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to start server @ {} with {}",
+                        addr,
+                        get!(port)
+                            .map(|p| format!("port in range {p}"))
+                            .unwrap_or_else(|| String::from("ephemeral port"))
+                    )
+                })?;
 
                 let credentials = DistantSingleKeyCredentials {
                     host: Host::from(addr),

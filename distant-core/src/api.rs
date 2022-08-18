@@ -3,7 +3,7 @@ use crate::{
     ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::{Reply, Server, ServerCtx};
+use distant_net::{Reply, Server, ServerConfig, ServerCtx};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
 
@@ -39,9 +39,9 @@ where
 
 impl DistantApiServer<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
     /// Creates a new server using the [`LocalDistantApi`] implementation
-    pub fn local() -> io::Result<Self> {
+    pub fn local(config: ServerConfig) -> io::Result<Self> {
         Ok(Self {
-            api: LocalDistantApi::initialize()?,
+            api: LocalDistantApi::initialize(config)?,
         })
     }
 }
@@ -59,6 +59,11 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 #[async_trait]
 pub trait DistantApi {
     type LocalData: Send + Sync;
+
+    /// Returns config associated with API server
+    fn config(&self) -> ServerConfig {
+        ServerConfig::default()
+    }
 
     /// Invoked whenever a new connection is established, providing a mutable reference to the
     /// newly-created local data. This is a way to support modifying local data before it is used.
@@ -384,6 +389,11 @@ where
     type Request = DistantMsg<DistantRequestData>;
     type Response = DistantMsg<DistantResponseData>;
     type LocalData = D;
+
+    /// Overridden to leverage [`DistantApi`] implementation of `config`
+    fn config(&self) -> ServerConfig {
+        T::config(&self.api)
+    }
 
     /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
     async fn on_accept(&self, local_data: &mut Self::LocalData) {
