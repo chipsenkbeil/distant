@@ -1,10 +1,88 @@
+use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
 /// Represents a general-purpose set of properties tied with a server instance
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// If provided, will cause server to shut down if duration is exceeded with no active
-    /// connections
-    pub shutdown_after: Option<Duration>,
+    /// Rules for how a server will shutdown automatically
+    pub shutdown: Shutdown,
+}
+
+/// Rules for how a server will shut itself down automatically
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Shutdown {
+    /// Server should shutdown immediately after duration exceeded
+    #[display(fmt = "after={}", "_0.as_secs_f32()")]
+    After(Duration),
+
+    /// Server should shutdown after no connections for over duration time
+    #[display(fmt = "lonely={}", "_0.as_secs_f32()")]
+    Lonely(Duration),
+
+    /// No shutdown logic will be applied to the server
+    #[display(fmt = "never")]
+    Never,
+}
+
+impl Shutdown {
+    /// Return duration associated with shutdown if it has one
+    pub fn duration(&self) -> Option<Duration> {
+        match self {
+            Self::Never => None,
+            Self::After(x) | Self::Lonely(x) => Some(*x),
+        }
+    }
+}
+
+impl Default for Shutdown {
+    /// By default, shutdown is never
+    fn default() -> Self {
+        Self::Never
+    }
+}
+
+/// Parsing errors that can occur for [`Shutdown`]
+#[derive(Clone, Debug, Display, Error, PartialEq, Eq)]
+pub enum ShutdownParseError {
+    #[display(fmt = "Bad value for after: {}", _0)]
+    BadValueForAfter(ParseFloatError),
+
+    #[display(fmt = "Bad value for lonely: {}", _0)]
+    BadValueForLonely(ParseFloatError),
+
+    #[display(fmt = "Missing key")]
+    MissingKey,
+
+    #[display(fmt = "Unknown key")]
+    UnknownKey,
+}
+
+impl FromStr for Shutdown {
+    type Err = ShutdownParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("never") {
+            Ok(Self::Never)
+        } else {
+            let (left, right) = s.split_once('=').ok_or(ShutdownParseError::MissingKey)?;
+            let left = left.trim();
+            let right = right.trim();
+            if left.eq_ignore_ascii_case("after") {
+                Ok(Self::After(Duration::from_secs_f32(
+                    right
+                        .parse()
+                        .map_err(ShutdownParseError::BadValueForAfter)?,
+                )))
+            } else if left.eq_ignore_ascii_case("lonely") {
+                Ok(Self::Lonely(Duration::from_secs_f32(
+                    right
+                        .parse()
+                        .map_err(ShutdownParseError::BadValueForLonely)?,
+                )))
+            } else {
+                Err(ShutdownParseError::UnknownKey)
+            }
+        }
+    }
 }

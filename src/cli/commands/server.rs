@@ -12,10 +12,7 @@ use distant_core::{
     DistantApiServer, DistantSingleKeyCredentials, Host,
 };
 use log::*;
-use std::{
-    io::{self, Read, Write},
-    time::Duration,
-};
+use std::io::{self, Read, Write};
 
 #[derive(Debug, Subcommand)]
 pub enum ServerSubcommand {
@@ -177,7 +174,7 @@ impl ServerSubcommand {
                     }
                 );
                 let server = DistantApiServer::local(NetServerConfig {
-                    shutdown_after: get!(shutdown_after).map(Duration::from_secs_f32),
+                    shutdown: get!(shutdown).unwrap_or_default(),
                 })
                 .context("Failed to create local distant api")?
                 .start(addr, get!(port).unwrap_or_else(|| 0.into()), codec)

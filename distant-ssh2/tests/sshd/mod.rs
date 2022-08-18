@@ -529,7 +529,7 @@ pub async fn launched_client(
     let client = ssh_client
         .launch_and_connect(DistantLaunchOpts {
             binary,
-            args: "--shutdown-after 10".to_string(),
+            args: "--shutdown after=10".to_string(),
             ..Default::default()
         })
         .await

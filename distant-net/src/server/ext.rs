@@ -1,6 +1,6 @@
 use crate::{
     utils::Timer, GenericServerRef, Listener, Request, Response, Server, ServerConnection,
-    ServerCtx, ServerRef, ServerReply, ServerState, TypedAsyncRead, TypedAsyncWrite,
+    ServerCtx, ServerRef, ServerReply, ServerState, Shutdown, TypedAsyncRead, TypedAsyncWrite,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -86,11 +86,19 @@ where
     //       shutdown receiver to last forever in the event that there is no shutdown configured,
     //       not return immediately, which is what would happen if the sender was dropped.
     #[allow(clippy::manual_map)]
-    let mut shutdown_timer = match config.shutdown_after {
-        Some(duration) => Some(Timer::new(duration, async move {
+    let mut shutdown_timer = match config.shutdown {
+        // Create a timer, start it, and drop it so it will always happen
+        Shutdown::After(duration) => {
+            Timer::new(duration, async move {
+                let _ = shutdown_tx.send(()).await;
+            })
+            .start();
+            None
+        }
+        Shutdown::Lonely(duration) => Some(Timer::new(duration, async move {
             let _ = shutdown_tx.send(()).await;
         })),
-        None => None,
+        Shutdown::Never => None,
     };
 
     if let Some(timer) = shutdown_timer.as_mut() {
@@ -124,7 +132,7 @@ where
             _ = shutdown_rx.recv() => {
                 info!(
                     "Server shutdown triggered after {}s",
-                    config.shutdown_after.unwrap_or_default().as_secs_f32(),
+                    config.shutdown.duration().unwrap_or_default().as_secs_f32(),
                 );
                 break;
             }
@@ -289,12 +297,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_shutdown_if_no_connections_received_after_n_secs_when_config_set() {
+    async fn should_lonely_shutdown_if_no_connections_received_after_n_secs_when_config_set() {
         let (_tx, listener) = make_listener(100);
 
         let server = ServerExt::start(
             TestServer(ServerConfig {
-                shutdown_after: Some(Duration::from_millis(100)),
+                shutdown: Shutdown::Lonely(Duration::from_millis(100)),
             }),
             listener,
         )
@@ -307,7 +315,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_shutdown_if_last_connection_terminated_and_then_no_connections_after_n_secs() {
+    async fn should_lonely_shutdown_if_last_connection_terminated_and_then_no_connections_after_n_secs(
+    ) {
         // Create a test listener where we will forward a connection
         let (tx, listener) = make_listener(100);
 
@@ -319,7 +328,7 @@ mod tests {
 
         let server = ServerExt::start(
             TestServer(ServerConfig {
-                shutdown_after: Some(Duration::from_millis(100)),
+                shutdown: Shutdown::Lonely(Duration::from_millis(100)),
             }),
             listener,
         )
@@ -335,7 +344,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_not_shutdown_as_long_as_a_connection_exists() {
+    async fn should_not_lonely_shutdown_as_long_as_a_connection_exists() {
         // Create a test listener where we will forward a connection
         let (tx, listener) = make_listener(100);
 
@@ -347,7 +356,7 @@ mod tests {
 
         let server = ServerExt::start(
             TestServer(ServerConfig {
-                shutdown_after: Some(Duration::from_millis(100)),
+                shutdown: Shutdown::Lonely(Duration::from_millis(100)),
             }),
             listener,
         )
@@ -360,12 +369,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_never_shutdown_if_config_not_set() {
+    async fn should_shutdown_after_n_seconds_even_with_connections_if_config_set_to_after() {
+        let (tx, listener) = make_listener(100);
+
+        // Make bounded transport pair and send off one of them to act as our connection
+        let (_transport, connection) = MpscTransport::<Request<u16>, Response<String>>::pair(100);
+        tx.send(connection.into_split())
+            .await
+            .expect("Failed to feed listener a connection");
+
+        let server = ServerExt::start(
+            TestServer(ServerConfig {
+                shutdown: Shutdown::After(Duration::from_millis(100)),
+            }),
+            listener,
+        )
+        .expect("Failed to start server");
+
+        // Wait for some time
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert!(server.is_finished(), "Server shutdown not triggered!");
+    }
+
+    #[tokio::test]
+    async fn should_shutdown_after_n_seconds_if_config_set_to_after() {
         let (_tx, listener) = make_listener(100);
 
         let server = ServerExt::start(
             TestServer(ServerConfig {
-                shutdown_after: None,
+                shutdown: Shutdown::After(Duration::from_millis(100)),
+            }),
+            listener,
+        )
+        .expect("Failed to start server");
+
+        // Wait for some time
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert!(server.is_finished(), "Server shutdown not triggered!");
+    }
+
+    #[tokio::test]
+    async fn should_never_shutdown_if_config_set_to_never() {
+        let (_tx, listener) = make_listener(100);
+
+        let server = ServerExt::start(
+            TestServer(ServerConfig {
+                shutdown: Shutdown::Never,
             }),
             listener,
         )

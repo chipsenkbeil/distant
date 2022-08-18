@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - ???
+### Changed
+
+- `shutdown-after` replaced with `shutdown` that supports three options:
+    1. `never` - server will never shutdown automatically
+    2. `after=N` - server will shutdown after N seconds
+    3. `lonely=N` - server will shutdown N seconds after no connections
+
 ## [0.17.6] - 2022-08-18
 ### Fixed
 

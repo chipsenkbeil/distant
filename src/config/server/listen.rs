@@ -1,7 +1,10 @@
 use anyhow::Context;
 use clap::Args;
 use derive_more::Display;
-use distant_core::{net::PortRange, Map};
+use distant_core::{
+    net::{PortRange, Shutdown},
+    Map,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -41,12 +44,15 @@ pub struct ServerListenConfig {
     #[clap(short = '6', long)]
     pub use_ipv6: bool,
 
-    /// The time in seconds before shutting down the server if there are no active
-    /// connections. The countdown begins once all connections have closed and
-    /// stops when a new connection is made. In not specified, the server will not
-    /// shutdown at any point when there are no active connections.
+    /// Logic to apply to server when determining when to shutdown automatically
+    ///
+    /// 1. "never" means the server will never automatically shut down
+    /// 2. "after=<N>" means the server will shut down after N seconds
+    /// 3. "lonely=<N>" means the server will shut down after N seconds with no connections
+    ///
+    /// Default is to never shut down
     #[clap(long)]
-    pub shutdown_after: Option<f32>,
+    pub shutdown: Option<Shutdown>,
 
     /// Changes the current working directory (cwd) to the specified directory
     #[clap(long)]
@@ -64,9 +70,9 @@ impl From<Map> for ServerListenConfig {
                 .remove("use_ipv6")
                 .and_then(|x| x.parse::<bool>().ok())
                 .unwrap_or_default(),
-            shutdown_after: map
-                .remove("shutdown_after")
-                .and_then(|x| x.parse::<f32>().ok()),
+            shutdown: map
+                .remove("shutdown")
+                .and_then(|x| x.parse::<Shutdown>().ok()),
             current_dir: map
                 .remove("current_dir")
                 .and_then(|x| x.parse::<PathBuf>().ok()),
@@ -88,8 +94,8 @@ impl From<ServerListenConfig> for Map {
 
         this.insert("use_ipv6".to_string(), config.use_ipv6.to_string());
 
-        if let Some(x) = config.shutdown_after {
-            this.insert("shutdown_after".to_string(), x.to_string());
+        if let Some(x) = config.shutdown {
+            this.insert("shutdown".to_string(), x.to_string());
         }
 
         if let Some(x) = config.current_dir {

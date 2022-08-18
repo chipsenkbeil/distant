@@ -161,5 +161,20 @@ mod tests {
             assert!(timer.callback.is_finished(), "Callback not finished");
             assert!(rx.try_recv().is_ok(), "Callback not triggered");
         }
+
+        #[tokio::test]
+        async fn should_trigger_callback_even_if_timer_dropped() {
+            let (tx, mut rx) = mpsc::channel(1);
+
+            let mut timer = Timer::new(Duration::default(), async move {
+                let _ = tx.send(()).await;
+            });
+            timer.start();
+            drop(timer);
+
+            tokio::time::sleep(Duration::from_millis(300)).await;
+
+            assert!(rx.try_recv().is_ok(), "Callback not triggered");
+        }
     }
 }
