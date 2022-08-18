@@ -65,7 +65,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         .await
         .expect("Failed to get list of connections");
     assert_eq!(list.len(), 1);
-    assert_eq!(list.get(&id).unwrap().to_string(), "scheme://host/");
+    assert_eq!(list.get(&id).unwrap().to_string(), "scheme://host");
 
     // Test retrieving information
     let info = client
@@ -73,7 +73,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         .await
         .expect("Failed to get info about connection");
     assert_eq!(info.id, id);
-    assert_eq!(info.destination.to_string(), "scheme://host/");
+    assert_eq!(info.destination.to_string(), "scheme://host");
     assert_eq!(info.extra, "key=value".parse::<Extra>().unwrap());
 
     // Create a new channel and request some data

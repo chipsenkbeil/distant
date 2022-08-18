@@ -350,15 +350,11 @@ impl ManagerSubcommand {
                     "{}",
                     Table::new(vec![InfoRow {
                         id: info.id,
-                        scheme: info
-                            .destination
-                            .scheme()
-                            .map(ToString::to_string)
-                            .unwrap_or_default(),
-                        host: info.destination.to_host_string(),
+                        scheme: info.destination.scheme.unwrap_or_default(),
+                        host: info.destination.host.to_string(),
                         port: info
                             .destination
-                            .port()
+                            .port
                             .map(|x| x.to_string())
                             .unwrap_or_default(),
                         extra: info.extra.to_string()
@@ -400,15 +396,9 @@ impl ManagerSubcommand {
                         ListRow {
                             selected: *selected == id,
                             id,
-                            scheme: destination
-                                .scheme()
-                                .map(ToString::to_string)
-                                .unwrap_or_default(),
-                            host: destination.to_host_string(),
-                            port: destination
-                                .port()
-                                .map(|x| x.to_string())
-                                .unwrap_or_default(),
+                            scheme: destination.scheme.unwrap_or_default(),
+                            host: destination.host.to_string(),
+                            port: destination.port.map(|x| x.to_string()).unwrap_or_default(),
                         }
                     }))
                 );

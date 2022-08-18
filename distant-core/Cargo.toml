@@ -34,7 +34,6 @@ shell-words = "1.1.0"
 strum = { version = "0.24.1", features = ["derive"] }
 tokio = { version = "1.20.1", features = ["full"] }
 tokio-util = { version = "0.7.3", features = ["codec"] }
-uriparse = "0.6.4"
 walkdir = "2.3.2"
 winsplit = "0.1.0"
 

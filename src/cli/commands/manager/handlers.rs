@@ -23,12 +23,12 @@ use tokio::{
 
 #[inline]
 fn missing(label: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, format!("Missing {}", label))
+    io::Error::new(io::ErrorKind::InvalidInput, format!("Missing {label}"))
 }
 
 #[inline]
 fn invalid(label: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid {}", label))
+    io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid {label}"))
 }
 
 /// Supports launching locally through the manager as defined by `manager://...`
@@ -52,7 +52,7 @@ impl LaunchHandler for ManagerLaunchHandler {
         extra: &Extra,
         _auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        trace!("Handling launch of {destination} with {extra}");
+        trace!("Handling launch of {destination} with extra '{extra}'");
         let config = ClientLaunchConfig::from(extra.clone());
 
         // Get the path to the distant binary, ensuring it exists and is executable
@@ -81,7 +81,7 @@ impl LaunchHandler for ManagerLaunchHandler {
                 .unwrap_or_else(|| String::from("any")),
         ];
 
-        if let Some(port) = destination.port() {
+        if let Some(port) = destination.port {
             args.push("--port".to_string());
             args.push(port.to_string());
         }
@@ -165,7 +165,7 @@ impl LaunchHandler for SshLaunchHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        trace!("Handling launch of {destination} with {extra}");
+        trace!("Handling launch of {destination} with extra '{extra}'");
         let config = ClientLaunchConfig::from(extra.clone());
 
         use distant_ssh2::DistantLaunchOpts;
@@ -221,15 +221,17 @@ impl ConnectHandler for DistantConnectHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        trace!("Handling connect of {destination} with {extra}");
-        let host = destination.to_host_string();
-        let port = destination.port().ok_or_else(|| missing("port"))?;
-        let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", host, port))
+        trace!("Handling connect of {destination} with extra '{extra}'");
+        let host = destination.host.to_string();
+        let port = destination.port.ok_or_else(|| missing("port"))?;
+
+        debug!("Looking up host {host} @ port {port}");
+        let mut candidate_ips = tokio::net::lookup_host(format!("{host}:{port}"))
             .await
             .map_err(|x| {
                 io::Error::new(
                     x.kind(),
-                    format!("{} needs to be resolvable outside of ssh: {}", host, x),
+                    format!("{host} needs to be resolvable outside of ssh: {x}"),
                 )
             })?
             .into_iter()
@@ -240,7 +242,7 @@ impl ConnectHandler for DistantConnectHandler {
         if candidate_ips.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::AddrNotAvailable,
-                format!("Unable to resolve {}:{}", host, port),
+                format!("Unable to resolve {host}:{port}"),
             ));
         }
 
@@ -248,7 +250,8 @@ impl ConnectHandler for DistantConnectHandler {
         // codec using the key
         let codec = {
             let key = destination
-                .password()
+                .password
+                .as_deref()
                 .or_else(|| extra.get("key").map(|s| s.as_str()));
 
             let key = match key {
@@ -290,7 +293,7 @@ impl ConnectHandler for SshConnectHandler {
         extra: &Extra,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        trace!("Handling connect of {destination} with {extra}");
+        trace!("Handling connect of {destination} with extra '{extra}'");
         let mut ssh = load_ssh(destination, extra)?;
         let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
@@ -365,7 +368,7 @@ fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2
     trace!("load_ssh({destination}, {extra}");
     use distant_ssh2::{Ssh, SshOpts};
 
-    let host = destination.to_host_string();
+    let host = destination.host.to_string();
 
     let opts = SshOpts {
         backend: match extra.get("backend").or_else(|| extra.get("ssh.backend")) {
@@ -387,14 +390,14 @@ fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2
             None => None,
         },
 
-        port: destination.port(),
+        port: destination.port,
 
         proxy_command: extra
             .get("proxy_command")
             .or_else(|| extra.get("ssh.proxy_command"))
             .cloned(),
 
-        user: destination.username().map(ToString::to_string),
+        user: destination.username.clone(),
 
         user_known_hosts_files: extra
             .get("user_known_hosts_files")

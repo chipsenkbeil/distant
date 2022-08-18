@@ -513,7 +513,7 @@ impl Ssh {
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote
     /// distant server that is spawned using the ssh client
     pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
-        trace!("ssh::launch_and_connect({:?})", opts);
+        trace!("ssh::launch_and_colnnnect({:?})", opts);
 
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
@@ -533,6 +533,7 @@ impl Ssh {
         //       IP address of the end machine it is connected to, but that probably isn't
         //       possible with ssh. So, for now, connecting to a distant server from an
         //       established ssh connection requires that we can resolve the specified host
+        debug!("Looking up host {} @ port {}", self.host, self.port);
         let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
             .await
             .map_err(|x| {
@@ -640,19 +641,17 @@ impl Ssh {
         if output.success {
             // Iterate over output as individual lines, looking for client info
             trace!("Searching for credentials");
-            let maybe_info = output
-                .stdout
-                .split(|&b| b == b'\n')
-                .map(String::from_utf8_lossy)
-                .find_map(|line| line.parse::<DistantSingleKeyCredentials>().ok());
-            match maybe_info {
+            match DistantSingleKeyCredentials::find(&String::from_utf8_lossy(&output.stdout)) {
                 Some(mut info) => {
                     info.host = host;
                     Ok(info)
                 }
                 None => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Missing launch information",
+                    format!(
+                        "Missing launch information: '{}'",
+                        String::from_utf8_lossy(&output.stdout)
+                    ),
                 )),
             }
         } else {

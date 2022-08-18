@@ -742,7 +742,6 @@ dependencies = [
  "termwiz",
  "tokio",
  "toml_edit",
- "uriparse",
  "which",
  "whoami",
  "windows-service",
@@ -779,7 +778,6 @@ dependencies = [
  "strum",
  "tokio",
  "tokio-util",
- "uriparse",
  "walkdir",
  "winsplit",
 ]
@@ -3088,16 +3086,6 @@ checksum = "7d3160b73c9a19f7e2939a2fdad446c57c1bbbbf4d919d3213ff1267a580d8b5"
 dependencies = [
  "crypto-common",
  "subtle",
-]
-
-[[package]]
-name = "uriparse"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0200d0fc04d809396c2ad43f3c95da3582a2556eba8d453c1087f4120ee352ff"
-dependencies = [
- "fnv",
- "lazy_static",
 ]
 
 [[package]]

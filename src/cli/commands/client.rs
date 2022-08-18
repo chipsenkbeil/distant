@@ -14,7 +14,7 @@ use distant_core::{
     data::{ChangeKindSet, Environment},
     net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
     ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
-    DistantResponseData, Extra, RemoteCommand, Watcher,
+    DistantResponseData, Extra, Host, RemoteCommand, Watcher,
 };
 use log::*;
 use serde_json::{json, Value};
@@ -443,17 +443,15 @@ impl ClientSubcommand {
                 extra.extend(Extra::from(launcher_config).into_map());
 
                 // Grab the host we are connecting to for later use
-                let host = destination.to_host_string();
+                let host = destination.host.to_string();
 
                 // If we have no scheme on launch, we need to fill it in with something
                 //
                 // TODO: Can we have the server support this instead of the client? Right now, the
                 //       server is failing because it cannot parse //localhost/ as it fails with
                 //       an invalid IPv4 or registered name character error on host
-                if destination.scheme().is_none() {
-                    destination
-                        .replace_scheme("ssh")
-                        .context("Failed to set a default scheme for a scheme-less destination")?;
+                if destination.scheme.is_none() {
+                    destination.scheme = Some("ssh".to_string());
                 }
 
                 // Start the server using our manager
@@ -465,17 +463,18 @@ impl ClientSubcommand {
 
                 // Update the new destination with our previously-used host if the
                 // new host is not globally-accessible
-                if !new_destination.is_host_global() {
+                if !new_destination.host.is_global() {
                     trace!(
                         "Updating host to {:?} from non-global {:?}",
                         host,
-                        new_destination.to_host_string()
+                        new_destination.host.to_string()
                     );
-                    new_destination
-                        .replace_host(host.as_str())
+                    new_destination.host = host
+                        .parse::<Host>()
+                        .map_err(|x| anyhow::anyhow!(x))
                         .context("Failed to replace host")?;
                 } else {
-                    trace!("Host {:?} is global", new_destination.to_host_string());
+                    trace!("Host {:?} is global", new_destination.host.to_string());
                 }
 
                 // Trigger our manager to connect to the launched server
@@ -664,13 +663,14 @@ impl ClientSubcommand {
                             format!(
                                 "{}{}{}",
                                 destination
-                                    .scheme()
-                                    .map(|x| format!(r"{}://", x))
+                                    .scheme
+                                    .as_ref()
+                                    .map(|scheme| format!(r"{scheme}://"))
                                     .unwrap_or_default(),
-                                destination.to_host_string(),
+                                destination.host,
                                 destination
-                                    .port()
-                                    .map(|x| format!(":{}", x))
+                                    .port
+                                    .map(|port| format!(":{port}"))
                                     .unwrap_or_default()
                             )
                         })

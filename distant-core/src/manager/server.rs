@@ -140,7 +140,7 @@ impl DistantManager {
             )
         })?;
 
-        let scheme = match destination.scheme() {
+        let scheme = match destination.scheme.as_deref() {
             Some(scheme) => {
                 trace!("Using scheme {}", scheme);
                 scheme
@@ -185,7 +185,7 @@ impl DistantManager {
             )
         })?;
 
-        let scheme = match destination.scheme() {
+        let scheme = match destination.scheme.as_deref() {
             Some(scheme) => {
                 trace!("Using scheme {}", scheme);
                 scheme
@@ -588,7 +588,7 @@ mod tests {
         let lock = server.connections.read().await;
         let connection = lock.get(&id).unwrap();
         assert_eq!(connection.id, id);
-        assert_eq!(connection.destination, "scheme://host".parse().unwrap());
+        assert_eq!(connection.destination, "scheme://host");
         assert_eq!(connection.extra, "key=value".parse().unwrap());
     }
 

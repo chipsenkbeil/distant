@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New `ClientConnectConfig` to support connect settings, specifically for ssh
+- `Host` with `HostParseError` that follows the 
+  [DoD Internet Host Table Specification](https://www.ietf.org/rfc/rfc0952.txt)
+  and subsequent [RFC-1123](https://www.rfc-editor.org/rfc/rfc1123)
+
+### Changed
+
+- `Destination` now has direct fields for scheme, username, password, host, and
+  port that are populated from parsing
+- `Destination` no longer wraps `uriparse::URI` and all references to
+  implementing/wrapping have been removed
 
 ### Fixed
 
@@ -17,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All ssh settings were not being applied with manager handlers due to some key
   checks being incorrect (e.g. `backend` instead of `ssh.backend`). This has
   now been corrected and settings now properly get applied
+
+### Removed
+
+- The ssh settings of `ssh.user` and `ssh.port` were unused as these were now
+  being taking from the destination `ssh://[username:]host[:port]`, so they
+  have now been removed to avoid confusion
+- Remove `uriparse` dependency
 
 ## [0.17.2] - 2022-08-16
 ### Added

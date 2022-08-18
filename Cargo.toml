@@ -49,7 +49,6 @@ tokio = { version = "1.20.1", features = ["full"] }
 toml_edit = { version = "0.14.4", features = ["serde"] }
 terminal_size = "0.2.1"
 termwiz = "0.17.1"
-uriparse = "0.6.4"
 which = "4.2.5"
 winsplit = "0.1.0"
 whoami = "1.2.1"

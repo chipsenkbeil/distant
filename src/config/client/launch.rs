@@ -39,11 +39,9 @@ impl From<Map> for ClientLaunchConfig {
                     .remove("ssh.external")
                     .and_then(|x| x.parse::<bool>().ok())
                     .unwrap_or_default(),
-                username: map.remove("ssh.username"),
                 identity_file: map
                     .remove("ssh.identity_file")
                     .and_then(|x| x.parse::<PathBuf>().ok()),
-                port: map.remove("ssh.port").and_then(|x| x.parse::<u16>().ok()),
             },
         }
     }
@@ -81,19 +79,11 @@ impl From<ClientLaunchConfig> for Map {
 
         this.insert("ssh.external".to_string(), config.ssh.external.to_string());
 
-        if let Some(x) = config.ssh.username {
-            this.insert("ssh.username".to_string(), x);
-        }
-
         if let Some(x) = config.ssh.identity_file {
             this.insert(
                 "ssh.identity_file".to_string(),
                 x.to_string_lossy().to_string(),
             );
-        }
-
-        if let Some(x) = config.ssh.port {
-            this.insert("ssh.port".to_string(), x.to_string());
         }
 
         this
@@ -148,15 +138,7 @@ pub struct ClientLaunchSshConfig {
     #[clap(name = "ssh-external", long)]
     pub external: bool,
 
-    /// Username to use when sshing into remote machine
-    #[clap(name = "ssh-username", short = 'u', long)]
-    pub username: Option<String>,
-
     /// Explicit identity file to use with ssh
     #[clap(name = "ssh-identity-file", short = 'i', long)]
     pub identity_file: Option<PathBuf>,
-
-    /// Port to use for sshing into the remote machine
-    #[clap(name = "ssh-port", short = 'p', long)]
-    pub port: Option<u16>,
 }
