@@ -240,7 +240,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.17.4...HEAD
+[0.17.4]: https://github.com/chipsenkbeil/distant/compare/v0.17.3...v0.17.4
+[0.17.3]: https://github.com/chipsenkbeil/distant/compare/v0.17.2...v0.17.3
+[0.17.2]: https://github.com/chipsenkbeil/distant/compare/v0.17.1...v0.17.2
+[0.17.1]: https://github.com/chipsenkbeil/distant/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/chipsenkbeil/distant/compare/v0.16.4...v0.17.0
 [0.16.4]: https://github.com/chipsenkbeil/distant/compare/v0.16.3...v0.16.4
 [0.16.3]: https://github.com/chipsenkbeil/distant/compare/v0.16.2...v0.16.3
