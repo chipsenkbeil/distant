@@ -86,7 +86,11 @@ impl fmt::Display for Destination {
             write!(f, "@")?;
         }
 
-        write!(f, "{}", self.host)?;
+        // For host, if we have a port and are IPv6, we need to wrap in [{}]
+        match &self.host {
+            Host::Ipv6(x) if self.port.is_some() => write!(f, "[{}]", x)?,
+            x => write!(f, "{}", x)?,
+        }
 
         if let Some(port) = self.port {
             write!(f, ":{port}")?;
@@ -153,5 +157,29 @@ mod tests {
             port: None,
         };
         assert_eq!(destination, "example.com");
+    }
+
+    #[test]
+    fn display_should_not_wrap_ipv6_in_square_brackets_if_has_no_port() {
+        let destination = Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: Host::Ipv6("::1".parse().unwrap()),
+            port: None,
+        };
+        assert_eq!(destination, "::1");
+    }
+
+    #[test]
+    fn display_should_wrap_ipv6_in_square_brackets_if_has_port() {
+        let destination = Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: Host::Ipv6("::1".parse().unwrap()),
+            port: Some(12345),
+        };
+        assert_eq!(destination, "[::1]:12345");
     }
 }

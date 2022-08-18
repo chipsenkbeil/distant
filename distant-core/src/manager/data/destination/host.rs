@@ -3,7 +3,7 @@ use derive_more::{Display, Error, From};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{
     fmt,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str::FromStr,
 };
 
@@ -39,6 +39,30 @@ impl Host {
                 x.is_multicast() && (x.segments()[0] & 0x000f == 14)
             }
             Self::Name(_) => false,
+        }
+    }
+
+    /// Returns true if host is an IPv4 address
+    pub const fn is_ipv4(&self) -> bool {
+        matches!(self, Self::Ipv4(_))
+    }
+
+    /// Returns true if host is an IPv6 address
+    pub const fn is_ipv6(&self) -> bool {
+        matches!(self, Self::Ipv6(_))
+    }
+
+    /// Returns true if host is a name
+    pub const fn is_name(&self) -> bool {
+        matches!(self, Self::Name(_))
+    }
+}
+
+impl From<IpAddr> for Host {
+    fn from(addr: IpAddr) -> Self {
+        match addr {
+            IpAddr::V4(x) => Self::Ipv4(x),
+            IpAddr::V6(x) => Self::Ipv6(x),
         }
     }
 }

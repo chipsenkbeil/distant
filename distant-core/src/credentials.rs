@@ -1,6 +1,6 @@
 use crate::{
     serde_str::{deserialize_from_str, serialize_to_str},
-    Destination,
+    Destination, Host,
 };
 use distant_net::SecretKey32;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
@@ -13,7 +13,7 @@ const SCHEME_WITH_SEP: &str = "distant://";
 /// across all connections
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DistantSingleKeyCredentials {
-    pub host: String,
+    pub host: Host,
     pub port: u16,
     pub key: SecretKey32,
     pub username: Option<String>,
@@ -23,10 +23,21 @@ impl fmt::Display for DistantSingleKeyCredentials {
     /// Converts credentials into string in the form of `distant://[username]:{key}@{host}:{port}`
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{SCHEME}://")?;
+
         if let Some(username) = self.username.as_ref() {
             write!(f, "{}", username)?;
         }
-        write!(f, ":{}@{}:{}", self.key, self.host, self.port)
+
+        write!(f, ":{}@", self.key)?;
+
+        // If we are IPv6, we need to include square brackets
+        if self.host.is_ipv6() {
+            write!(f, "[{}]", self.host)?;
+        } else {
+            write!(f, "{}", self.host)?;
+        }
+
+        write!(f, ":{}", self.port)
     }
 }
 
@@ -53,7 +64,7 @@ impl FromStr for DistantSingleKeyCredentials {
         }
 
         Ok(Self {
-            host: destination.host.to_string(),
+            host: destination.host,
             port: destination
                 .port
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing port"))?,
@@ -132,10 +143,7 @@ impl TryFrom<DistantSingleKeyCredentials> for Destination {
             scheme: Some("distant".to_string()),
             username: credentials.username,
             password: Some(credentials.key.to_string()),
-            host: credentials
-                .host
-                .parse()
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
+            host: credentials.host,
             port: Some(credentials.port),
         })
     }
@@ -145,6 +153,7 @@ impl TryFrom<DistantSingleKeyCredentials> for Destination {
 mod tests {
     use super::*;
     use once_cell::sync::Lazy;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     const HOST: &str = "testhost";
     const PORT: u16 = 12345;
@@ -238,5 +247,37 @@ mod tests {
         );
         let credentials = DistantSingleKeyCredentials::find(&s);
         assert_eq!(credentials, None);
+    }
+
+    #[test]
+    fn display_should_not_wrap_ipv4_address() {
+        let key = KEY.as_str();
+        let credentials = DistantSingleKeyCredentials {
+            host: Host::Ipv4(Ipv4Addr::LOCALHOST),
+            port: 12345,
+            username: None,
+            key: key.parse().unwrap(),
+        };
+
+        assert_eq!(
+            credentials.to_string(),
+            format!("{SCHEME}://:{key}@127.0.0.1:12345")
+        );
+    }
+
+    #[test]
+    fn display_should_wrap_ipv6_address_in_square_brackets() {
+        let key = KEY.as_str();
+        let credentials = DistantSingleKeyCredentials {
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: 12345,
+            username: None,
+            key: key.parse().unwrap(),
+        };
+
+        assert_eq!(
+            credentials.to_string(),
+            format!("{SCHEME}://:{key}@[::1]:12345")
+        );
     }
 }

@@ -7,7 +7,32 @@ type PError = &'static str;
 pub fn parse(s: &str) -> Result<Destination, &'static str> {
     let (s, scheme) = maybe(parse_scheme)(s)?;
     let (s, username_password) = maybe(parse_username_password)(s)?;
-    let (s, host) = parse_and_then(parse_until(|c| c == ':'), parse_host)(s)?;
+
+    // NOTE: We can have a host or host/port in a couple of different ways
+    //
+    // 1. IPv4 - 127.0.0.1 or 127.0.0.1:1234
+    // 2. IPv6 - ::1 or [::1]:1234
+    // 3. Name - localhost or localhost:1234
+    //
+    // To determine path to take, we count the colons. If there is more than 1, we can assume IPv6
+    // is involved and can try to parse entirely as IPv6, or if that fails split off one colon and
+    // try a second time. Otherwise, we assume that it is not IPv6 and can parse with a single
+    // colon at most for a port.
+    let colon_cnt = s.chars().filter(|c| *c == ':').count();
+    let (s, host) = if colon_cnt > 1 {
+        // Either the host is [{}] with a port following, or the host is everything
+        either(
+            delimited(
+                parse_char('['),
+                parse_and_then(parse_until(|c| c == ']'), parse_host),
+                parse_char(']'),
+            ),
+            parse_host,
+        )(s)?
+    } else {
+        parse_and_then(parse_until(|c| c == ':'), parse_host)(s)?
+    };
+
     let (s, port) = maybe(prefixed(parse_char(':'), parse_port))(s)?;
 
     if !s.is_empty() {
@@ -68,6 +93,34 @@ fn parse_port(s: &str) -> PResult<u16> {
         .map_err(|_| "Not an unsigned 16-bit integer")?;
 
     Ok(("", port))
+}
+
+/// Execute parsers in order from left to right, returning the result of the first that succeeds
+fn either<'a, T>(
+    left: impl Fn(&'a str) -> PResult<'a, T>,
+    right: impl Fn(&'a str) -> PResult<'a, T>,
+) -> impl Fn(&'a str) -> PResult<'a, T> {
+    move |s: &str| {
+        if let Ok((s, value)) = left(s) {
+            Ok((s, value))
+        } else {
+            right(s)
+        }
+    }
+}
+
+/// Execute three parsers in a row, failing if any fails, and returns second parser's result
+fn delimited<'a, T1, T2, T3>(
+    p1: impl Fn(&'a str) -> PResult<'a, T1>,
+    p2: impl Fn(&'a str) -> PResult<'a, T2>,
+    p3: impl Fn(&'a str) -> PResult<'a, T3>,
+) -> impl Fn(&'a str) -> PResult<'a, T2> {
+    move |s: &str| {
+        let (s, _) = p1(s)?;
+        let (s, value) = p2(s)?;
+        let (s, _) = p3(s)?;
+        Ok((s, value))
+    }
 }
 
 /// Execute two parsers in a row, failing if either fails, and returns second parser's result
@@ -617,6 +670,46 @@ mod tests {
             assert_eq!(destination.password.as_deref(), Some("password"));
             assert_eq!(destination.host, "example.com");
             assert_eq!(destination.port, Some(22));
+        }
+
+        #[test]
+        fn parse_should_succeed_if_given_ipv4_host() {
+            let destination = parse("127.0.0.1").unwrap();
+            assert_eq!(destination.scheme, None);
+            assert_eq!(destination.username, None);
+            assert_eq!(destination.password, None);
+            assert_eq!(destination.host, "127.0.0.1");
+            assert_eq!(destination.port, None);
+        }
+
+        #[test]
+        fn parse_should_succeed_if_given_ipv4_host_and_port() {
+            let destination = parse("127.0.0.1:12345").unwrap();
+            assert_eq!(destination.scheme, None);
+            assert_eq!(destination.username, None);
+            assert_eq!(destination.password, None);
+            assert_eq!(destination.host, "127.0.0.1");
+            assert_eq!(destination.port, Some(12345));
+        }
+
+        #[test]
+        fn parse_should_succeed_if_given_ipv6_host() {
+            let destination = parse("::1").unwrap();
+            assert_eq!(destination.scheme, None);
+            assert_eq!(destination.username, None);
+            assert_eq!(destination.password, None);
+            assert_eq!(destination.host, "::1");
+            assert_eq!(destination.port, None);
+        }
+
+        #[test]
+        fn parse_should_succeed_if_given_ipv6_host_and_port() {
+            let destination = parse("[::1]:12345").unwrap();
+            assert_eq!(destination.scheme, None);
+            assert_eq!(destination.username, None);
+            assert_eq!(destination.password, None);
+            assert_eq!(destination.host, "::1");
+            assert_eq!(destination.port, Some(12345));
         }
 
         #[test]

@@ -6,7 +6,7 @@ use anyhow::Context;
 use clap::Subcommand;
 use distant_core::{
     net::{SecretKey32, ServerRef, TcpServerExt, XChaCha20Poly1305Codec},
-    DistantApiServer, DistantSingleKeyCredentials,
+    DistantApiServer, DistantSingleKeyCredentials, Host,
 };
 use log::*;
 use std::io::{self, Read, Write};
@@ -177,7 +177,7 @@ impl ServerSubcommand {
                     })?;
 
                 let credentials = DistantSingleKeyCredentials {
-                    host: addr.to_string(),
+                    host: Host::from(addr),
                     port: server.port(),
                     key,
                     username: None,

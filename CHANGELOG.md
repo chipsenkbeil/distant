@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.17.4] - 2022-08-18
+### Fixed
+
+- Parsing of a host for `Destination` now correctly handles IPv6 addresses such
+  that `::1` and `[::1]:12345` are captured into host and port
+- Displaying of `Distant` and `DistantSingleKeyCredentials` now properly wrap
+  IPv6 addresses in square brackets when a port is available
 
 ## [0.17.3] - 2022-08-18
 ### Added

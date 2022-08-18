@@ -643,7 +643,9 @@ impl Ssh {
             trace!("Searching for credentials");
             match DistantSingleKeyCredentials::find(&String::from_utf8_lossy(&output.stdout)) {
                 Some(mut info) => {
-                    info.host = host;
+                    info.host = host
+                        .parse()
+                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
                     Ok(info)
                 }
                 None => Err(io::Error::new(
