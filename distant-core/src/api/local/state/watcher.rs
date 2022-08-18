@@ -1,8 +1,8 @@
 use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind, ConnectionId};
 use log::*;
 use notify::{
-    Config as WatcherConfig, Error as WatcherError, Event as WatcherEvent, RecommendedWatcher,
-    RecursiveMode, Watcher,
+    Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
+    Event as WatcherEvent, PollWatcher, RecursiveMode, Watcher,
 };
 use std::{
     collections::HashMap,
@@ -41,10 +41,32 @@ impl WatcherState {
         //       with a large volume of watch requests
         let (tx, rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
 
-        let mut watcher = {
-            let tx = tx.clone();
-            notify::recommended_watcher(move |res| {
-                match tx.try_send(match res {
+        macro_rules! configure_and_spawn {
+            ($watcher:ident) => {{
+                // Attempt to configure watcher, but don't fail if these configurations fail
+                match $watcher.configure(WatcherConfig::PreciseEvents(true)) {
+                    Ok(true) => debug!("Watcher configured for precise events"),
+                    Ok(false) => debug!("Watcher not configured for precise events",),
+                    Err(x) => error!("Watcher configuration for precise events failed: {}", x),
+                }
+
+                // Attempt to configure watcher, but don't fail if these configurations fail
+                match $watcher.configure(WatcherConfig::NoticeEvents(true)) {
+                    Ok(true) => debug!("Watcher configured for notice events"),
+                    Ok(false) => debug!("Watcher not configured for notice events",),
+                    Err(x) => error!("Watcher configuration for notice events failed: {}", x),
+                }
+
+                Ok(Self {
+                    channel: WatcherChannel { tx },
+                    task: tokio::spawn(watcher_task($watcher, rx)),
+                })
+            }};
+        }
+
+        macro_rules! event_handler {
+            ($tx:ident) => {
+                move |res| match $tx.try_send(match res {
                     Ok(x) => InnerWatcherMsg::Event { ev: x },
                     Err(x) => InnerWatcherMsg::Error { err: x },
                 }) {
@@ -59,28 +81,31 @@ impl WatcherState {
                         warn!("Skipping watch event because watcher channel closed");
                     }
                 }
-            })
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+            };
+        }
+
+        let tx = tx.clone();
+        let result = {
+            let tx = tx.clone();
+            notify::recommended_watcher(event_handler!(tx))
         };
 
-        // Attempt to configure watcher, but don't fail if these configurations fail
-        match watcher.configure(WatcherConfig::PreciseEvents(true)) {
-            Ok(true) => debug!("Watcher configured for precise events"),
-            Ok(false) => debug!("Watcher not configured for precise events",),
-            Err(x) => error!("Watcher configuration for precise events failed: {}", x),
+        match result {
+            Ok(mut watcher) => configure_and_spawn!(watcher),
+            Err(x) => match x.kind {
+                // notify-rs has a bug on Mac M1 with Docker and Linux, so we detect that error
+                // and fall back to the poll watcher if this occurs
+                //
+                // https://github.com/notify-rs/notify/issues/423
+                WatcherErrorKind::Io(x) if x.raw_os_error() == Some(38) => {
+                    warn!("Recommended watcher is unsupported! Falling back to polling watcher!");
+                    let mut watcher = PollWatcher::new(event_handler!(tx))
+                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                    configure_and_spawn!(watcher)
+                }
+                _ => Err(io::Error::new(io::ErrorKind::Other, x)),
+            },
         }
-
-        // Attempt to configure watcher, but don't fail if these configurations fail
-        match watcher.configure(WatcherConfig::NoticeEvents(true)) {
-            Ok(true) => debug!("Watcher configured for notice events"),
-            Ok(false) => debug!("Watcher not configured for notice events",),
-            Err(x) => error!("Watcher configuration for notice events failed: {}", x),
-        }
-
-        Ok(Self {
-            channel: WatcherChannel { tx },
-            task: tokio::spawn(watcher_task(watcher, rx)),
-        })
     }
 
     pub fn clone_channel(&self) -> WatcherChannel {
@@ -163,7 +188,7 @@ enum InnerWatcherMsg {
     },
 }
 
-async fn watcher_task(mut watcher: RecommendedWatcher, mut rx: mpsc::Receiver<InnerWatcherMsg>) {
+async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWatcherMsg>) {
     // TODO: Optimize this in some way to be more performant than
     //       checking every path whenever an event comes in
     let mut registered_paths: Vec<RegisteredPath> = Vec::new();
