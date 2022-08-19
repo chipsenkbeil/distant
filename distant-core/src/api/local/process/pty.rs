@@ -12,14 +12,14 @@ use std::{
     ffi::OsStr,
     io::{self, Read, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 
 /// Represents a process that is associated with a pty
 pub struct PtyProcess {
     id: ProcessId,
-    pty_master: PtyProcessMaster,
+    pty_master: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
     stdin: Option<Box<dyn InputChannel>>,
     stdout: Option<Box<dyn OutputChannel>>,
     stdin_task: Option<JoinHandle<()>>,
@@ -118,25 +118,35 @@ impl PtyProcess {
                             "Pty process {id} has exited: success = {}",
                             status.success()
                         );
-                        // TODO: Keep track of io error
-                        let _ = wait_tx
+
+                        if let Err(x) = wait_tx
                             .send(ExitStatus {
                                 success: status.success(),
                                 code: None,
                             })
-                            .await;
+                            .await
+                        {
+                            error!("Pty process {id} exit status lost: {x}");
+                        }
+
                         break;
                     }
                     (_, Ok(_)) => {
                         trace!("Pty process {id} received kill request");
-                        // TODO: Keep track of io error
-                        let _ = wait_tx.kill().await;
+
+                        if let Err(x) = wait_tx.kill().await {
+                            error!("Pty process {id} exit status lost: {x}");
+                        }
+
                         break;
                     }
                     (Err(x), _) => {
                         trace!("Pty process {id} failed to wait");
-                        // TODO: Keep track of io error
-                        let _ = wait_tx.send(x).await;
+
+                        if let Err(x) = wait_tx.send(x).await {
+                            error!("Pty process {id} exit status lost: {x}");
+                        }
+
                         break;
                     }
                     _ => {
@@ -150,7 +160,7 @@ impl PtyProcess {
 
         Ok(Self {
             id,
-            pty_master: PtyProcessMaster(Arc::new(Mutex::new(pty_master))),
+            pty_master: Some(Arc::new(Mutex::new(pty_master))),
             stdin: Some(Box::new(stdin_tx)),
             stdout: Some(Box::new(stdout_rx)),
             stdin_task: Some(stdin_task),
@@ -158,6 +168,14 @@ impl PtyProcess {
             kill_tx,
             wait: wait_rx,
         })
+    }
+
+    /// Return a weak reference to the pty master
+    fn pty_master(&self) -> Weak<Mutex<Box<dyn MasterPty + Send>>> {
+        self.pty_master
+            .as_ref()
+            .map(Arc::downgrade)
+            .unwrap_or_default()
     }
 }
 
@@ -170,6 +188,9 @@ impl Process for PtyProcess {
         async fn inner(this: &mut PtyProcess) -> io::Result<ExitStatus> {
             let mut status = this.wait.recv().await?;
 
+            // Drop our master once we have finished
+            let _ = this.pty_master.take();
+
             if let Some(task) = this.stdin_task.take() {
                 task.abort();
             }
@@ -180,6 +201,7 @@ impl Process for PtyProcess {
             if status.success && status.code.is_none() {
                 status.code = Some(0);
             }
+
             Ok(status)
         }
         Box::pin(inner(self))
@@ -259,42 +281,53 @@ impl ProcessKiller for PtyProcessKiller {
 
 impl ProcessPty for PtyProcess {
     fn pty_size(&self) -> Option<PtySize> {
-        self.pty_master.pty_size()
+        PtyProcessMaster(self.pty_master()).pty_size()
     }
 
     fn resize_pty(&self, size: PtySize) -> io::Result<()> {
-        self.pty_master.resize_pty(size)
+        PtyProcessMaster(self.pty_master()).resize_pty(size)
     }
 
     fn clone_pty(&self) -> Box<dyn ProcessPty> {
-        self.pty_master.clone_pty()
+        PtyProcessMaster(self.pty_master()).clone_pty()
     }
 }
 
 #[derive(Clone)]
-pub struct PtyProcessMaster(Arc<Mutex<Box<dyn MasterPty + Send>>>);
+struct PtyProcessMaster(Weak<Mutex<Box<dyn MasterPty + Send>>>);
 
 impl ProcessPty for PtyProcessMaster {
     fn pty_size(&self) -> Option<PtySize> {
-        self.0.lock().unwrap().get_size().ok().map(|size| PtySize {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: size.pixel_width,
-            pixel_height: size.pixel_height,
-        })
-    }
-
-    fn resize_pty(&self, size: PtySize) -> io::Result<()> {
-        self.0
-            .lock()
-            .unwrap()
-            .resize(PortablePtySize {
+        if let Some(master) = Weak::upgrade(&self.0) {
+            master.lock().unwrap().get_size().ok().map(|size| PtySize {
                 rows: size.rows,
                 cols: size.cols,
                 pixel_width: size.pixel_width,
                 pixel_height: size.pixel_height,
             })
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        } else {
+            None
+        }
+    }
+
+    fn resize_pty(&self, size: PtySize) -> io::Result<()> {
+        if let Some(master) = Weak::upgrade(&self.0) {
+            master
+                .lock()
+                .unwrap()
+                .resize(PortablePtySize {
+                    rows: size.rows,
+                    cols: size.cols,
+                    pixel_width: size.pixel_width,
+                    pixel_height: size.pixel_height,
+                })
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Pty master has been dropped",
+            ))
+        }
     }
 
     fn clone_pty(&self) -> Box<dyn ProcessPty> {

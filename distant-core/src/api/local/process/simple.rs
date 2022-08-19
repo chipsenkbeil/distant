@@ -80,8 +80,9 @@ impl SimpleProcess {
                             .unwrap_or_else(|| "<terminated>".to_string()),
                     );
 
-                    // TODO: Keep track of io error
-                    let _ = wait_tx.send(status).await;
+                    if let Err(x) = wait_tx.send(status).await {
+                        error!("Simple process {id} exit status lost: {x}");
+                    }
                 }
                 status = child.wait() => {
                     match &status {
@@ -95,8 +96,9 @@ impl SimpleProcess {
                         Err(_) => trace!("Simple process {id} failed to wait"),
                     }
 
-                    // TODO: Keep track of io error
-                    let _ = wait_tx.send(status).await;
+                    if let Err(x) = wait_tx.send(status).await {
+                        error!("Simple process {id} exit status lost: {x}");
+                    }
                 }
             }
         });
