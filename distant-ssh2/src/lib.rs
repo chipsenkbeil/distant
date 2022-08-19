@@ -44,6 +44,15 @@ pub enum SshFamily {
     Windows,
 }
 
+impl SshFamily {
+    pub const fn as_static_str(&self) -> &'static str {
+        match self {
+            Self::Unix => "unix",
+            Self::Windows => "windows",
+        }
+    }
+}
+
 /// Represents the backend to use for ssh operations
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -59,7 +68,7 @@ pub enum SshBackend {
 }
 
 impl SshBackend {
-    pub fn as_static_str(&self) -> &'static str {
+    pub const fn as_static_str(&self) -> &'static str {
         match self {
             #[cfg(feature = "libssh")]
             Self::LibSsh => "libssh",
@@ -587,6 +596,7 @@ impl Ssh {
         }
 
         let family = self.detect_family().await?;
+        trace!("Detected family: {}", family.as_static_str());
 
         let host = self.host().to_string();
 
