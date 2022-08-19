@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `distant client shell` will now choose between `/bin/sh` and `cmd.exe` as the
+  default shell based on the family returned by a system info request
+- `distant client shell` properly terminates master pty when the shell exits,
+  resolving the hanging that occurred for Windows `cmd.exe` and
+  `powershell.exe` upon exit
+
 ## [0.18.0] - 2022-08-18
 ### Changed
 

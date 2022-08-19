@@ -2,7 +2,7 @@ use super::{link::RemoteProcessLink, CliError, CliResult};
 use anyhow::Context;
 use distant_core::{
     data::{Environment, PtySize},
-    DistantChannel, RemoteCommand,
+    DistantChannel, DistantChannelExt, RemoteCommand,
 };
 use log::*;
 use std::time::Duration;
@@ -22,7 +22,7 @@ impl Shell {
     }
 
     pub async fn spawn(
-        self,
+        mut self,
         cmd: impl Into<Option<String>>,
         mut environment: Environment,
         persist: bool,
@@ -32,7 +32,23 @@ impl Shell {
             environment.insert("TERM".to_string(), "xterm-256color".to_string());
         }
 
-        let cmd = cmd.into().unwrap_or_else(|| "/bin/sh".to_string());
+        // Use provided shell, or determine remote operating system to pick a shell
+        let cmd = match cmd.into() {
+            Some(cmd) => cmd,
+            None => {
+                let system_info = self
+                    .0
+                    .system_info()
+                    .await
+                    .context("Failed to detect remote operating system")?;
+                if system_info.family.eq_ignore_ascii_case("windows") {
+                    "cmd.exe".to_string()
+                } else {
+                    "/bin/sh".to_string()
+                }
+            }
+        };
+
         let mut proc = RemoteCommand::new()
             .persist(persist)
             .environment(environment)
