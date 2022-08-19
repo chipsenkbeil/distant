@@ -28,7 +28,7 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-core = "0.17"
+distant-core = "0.18"
 ```
 
 ## Features
