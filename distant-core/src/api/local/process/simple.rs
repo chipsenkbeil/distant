@@ -3,6 +3,7 @@ use super::{
     ProcessKiller, WaitRx,
 };
 use crate::data::Environment;
+use log::*;
 use std::{ffi::OsStr, path::PathBuf, process::Stdio};
 use tokio::{io, process::Command, sync::mpsc, task::JoinHandle};
 
@@ -34,6 +35,7 @@ impl SimpleProcess {
         I: IntoIterator<Item = S2>,
         S2: AsRef<OsStr>,
     {
+        let id = rand::random();
         let mut child = {
             let mut command = Command::new(program);
 
@@ -65,15 +67,34 @@ impl SimpleProcess {
         tokio::spawn(async move {
             tokio::select! {
                 _ = kill_rx.recv() => {
+                    trace!("Pty process {id} received kill request");
                     let status = match child.kill().await {
                         Ok(_) => ExitStatus::killed(),
                         Err(x) => ExitStatus::from(x),
                     };
 
+                    trace!(
+                        "Simple process {id} has exited: success = {}, code = {}",
+                        status.success,
+                        status.code.map(|code| code.to_string())
+                            .unwrap_or_else(|| "<terminated>".to_string()),
+                    );
+
                     // TODO: Keep track of io error
                     let _ = wait_tx.send(status).await;
                 }
                 status = child.wait() => {
+                    match &status {
+                        Ok(status) => trace!(
+                            "Simple process {id} has exited: success = {}, code = {}",
+                            status.success(),
+                            status.code()
+                                .map(|code| code.to_string())
+                                .unwrap_or_else(|| "<terminated>".to_string()),
+                        ),
+                        Err(_) => trace!("Simple process {id} failed to wait"),
+                    }
+
                     // TODO: Keep track of io error
                     let _ = wait_tx.send(status).await;
                 }
@@ -81,7 +102,7 @@ impl SimpleProcess {
         });
 
         Ok(Self {
-            id: rand::random(),
+            id,
             stdin: Some(Box::new(stdin_ch)),
             stdout: Some(Box::new(stdout_ch)),
             stderr: Some(Box::new(stderr_ch)),

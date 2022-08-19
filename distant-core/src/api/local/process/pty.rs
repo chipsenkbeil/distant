@@ -6,6 +6,7 @@ use crate::{
     constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
     data::Environment,
 };
+use log::*;
 use portable_pty::{CommandBuilder, MasterPty, PtySize as PortablePtySize};
 use std::{
     ffi::OsStr,
@@ -41,6 +42,8 @@ impl PtyProcess {
         I: IntoIterator<Item = S2>,
         S2: AsRef<OsStr>,
     {
+        let id = rand::random();
+
         // Establish our new pty for the given size
         let pty_system = portable_pty::native_pty_system();
         let pty_pair = pty_system
@@ -111,6 +114,10 @@ impl PtyProcess {
             loop {
                 match (child.try_wait(), kill_rx.try_recv()) {
                     (Ok(Some(status)), _) => {
+                        trace!(
+                            "Pty process {id} has exited: success = {}",
+                            status.success()
+                        );
                         // TODO: Keep track of io error
                         let _ = wait_tx
                             .send(ExitStatus {
@@ -121,11 +128,13 @@ impl PtyProcess {
                         break;
                     }
                     (_, Ok(_)) => {
+                        trace!("Pty process {id} received kill request");
                         // TODO: Keep track of io error
                         let _ = wait_tx.kill().await;
                         break;
                     }
                     (Err(x), _) => {
+                        trace!("Pty process {id} failed to wait");
                         // TODO: Keep track of io error
                         let _ = wait_tx.send(x).await;
                         break;
@@ -140,7 +149,7 @@ impl PtyProcess {
         });
 
         Ok(Self {
-            id: rand::random(),
+            id,
             pty_master: PtyProcessMaster(Arc::new(Mutex::new(pty_master))),
             stdin: Some(Box::new(stdin_tx)),
             stdout: Some(Box::new(stdout_rx)),
