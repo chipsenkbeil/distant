@@ -779,6 +779,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "walkdir",
+ "whoami",
  "winsplit",
 ]
 

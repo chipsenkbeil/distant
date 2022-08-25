@@ -23,6 +23,12 @@ pub struct SystemInfo {
     /// Primary separator for path components for the current platform
     /// as defined in https://doc.rust-lang.org/std/path/constant.MAIN_SEPARATOR.html
     pub main_separator: char,
+
+    /// Name of the user running the server process
+    pub username: String,
+
+    /// Default shell tied to user running the server process
+    pub shell: String,
 }
 
 #[cfg(feature = "schemars")]
@@ -40,6 +46,12 @@ impl Default for SystemInfo {
             arch: env::consts::ARCH.to_string(),
             current_dir: env::current_dir().unwrap_or_default(),
             main_separator: std::path::MAIN_SEPARATOR,
+            username: whoami::username(),
+            shell: if cfg!(windows) {
+                env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
+            } else {
+                env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
+            },
         }
     }
 }

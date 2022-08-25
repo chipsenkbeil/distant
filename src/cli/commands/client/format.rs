@@ -301,16 +301,20 @@ fn format_shell(data: DistantResponseData) -> Output {
             arch,
             current_dir,
             main_separator,
+            username,
+            shell,
         }) => Output::StdoutLine(
             format!(
                 concat!(
-                    "Family: {:?}\n",
-                    "Operating System: {:?}\n",
-                    "Arch: {:?}\n",
-                    "Cwd: {:?}\n",
+                    "Family: {:?}",
+                    "Operating System: {:?}",
+                    "Arch: {:?}",
+                    "Cwd: {:?}",
                     "Path Sep: {:?}",
+                    "Username: {:?}",
+                    "Shell: {:?}"
                 ),
-                family, os, arch, current_dir, main_separator,
+                family, os, arch, current_dir, main_separator, username, shell
             )
             .into_bytes(),
         ),

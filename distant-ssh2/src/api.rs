@@ -837,6 +837,11 @@ impl DistantApi for SshDistantApi {
             arch: "".to_string(),
             current_dir,
             main_separator: if is_windows { '\\' } else { '/' },
+
+            // TODO: We should be able to calculate these once the problem described with SIGPIPE
+            //       is resolved, but for now we will just return empty strings
+            username: "".to_string(),
+            shell: "".to_string(),
         })
     }
 }

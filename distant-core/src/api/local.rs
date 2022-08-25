@@ -2125,6 +2125,12 @@ mod tests {
                 arch: std::env::consts::ARCH.to_string(),
                 current_dir: std::env::current_dir().unwrap_or_default(),
                 main_separator: std::path::MAIN_SEPARATOR,
+                username: whoami::username(),
+                shell: if cfg!(windows) {
+                    std::env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
+                } else {
+                    std::env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
+                }
             }
         );
     }
