@@ -480,18 +480,22 @@ pub struct MockSshAuthHandler;
 #[async_trait]
 impl SshAuthHandler for MockSshAuthHandler {
     async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
-        println!("on_authenticate: {:?}", event);
+        eprintln!("on_authenticate: {:?}", event);
         Ok(vec![String::new(); event.prompts.len()])
     }
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
-        println!("on_host_verify: {}", host);
+        eprintln!("on_host_verify: {}", host);
         Ok(true)
     }
 
-    async fn on_banner(&self, _text: &str) {}
+    async fn on_banner(&self, text: &str) {
+        eprintln!("on_banner: {:?}", text);
+    }
 
-    async fn on_error(&self, _text: &str) {}
+    async fn on_error(&self, text: &str) {
+        eprintln!("on_error: {:?}", text);
+    }
 }
 
 #[fixture]
