@@ -306,12 +306,12 @@ fn format_shell(data: DistantResponseData) -> Output {
         }) => Output::StdoutLine(
             format!(
                 concat!(
-                    "Family: {:?}",
-                    "Operating System: {:?}",
-                    "Arch: {:?}",
-                    "Cwd: {:?}",
-                    "Path Sep: {:?}",
-                    "Username: {:?}",
+                    "Family: {:?}\n",
+                    "Operating System: {:?}\n",
+                    "Arch: {:?}\n",
+                    "Cwd: {:?}\n",
+                    "Path Sep: {:?}\n",
+                    "Username: {:?}\n",
                     "Shell: {:?}"
                 ),
                 family, os, arch, current_dir, main_separator, username, shell
