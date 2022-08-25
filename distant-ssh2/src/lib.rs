@@ -617,19 +617,18 @@ impl Ssh {
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         });
 
-        // If we are using a login shell, we need to make the binary be sh
-        // so we can appropriately pipe into the login shell
-        let cmd = if opts.use_login_shell {
-            format!(
+        // If we are using a login shell, we need to make the binary be sh so we can appropriately
+        // pipe into the login shell. This is only available on unix.
+        let cmd = match family {
+            SshFamily::Unix if opts.use_login_shell => format!(
                 "sh -c {}",
                 shell_words::quote(&format!(
                     "echo {} {} | $SHELL -l",
                     opts.binary,
                     args.join(" ")
                 ))
-            )
-        } else {
-            format!("{} {}", opts.binary, args.join(" "))
+            ),
+            _ => format!("{} {}", opts.binary, args.join(" ")),
         };
 
         // Spawn distant server and detach it so that we don't kill it when the

@@ -7,13 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `SystemInfo` data type now includes two additional fields: `username` and
+  `shell`. The `username` field represents the name of the user running the
+  server process. The `shell` field points to the default shell associated with
+  the user running the server process
+
 ### Fixed
 
-- `distant client shell` will now choose between `/bin/sh` and `cmd.exe` as the
-  default shell based on the family returned by a system info request
+- `distant client shell` will now use the default shell from system info, or
+  choose between `/bin/sh` and `cmd.exe` as the default shell based on the
+  family returned by a system info request
 - `distant client shell` properly terminates master pty when the shell exits,
   resolving the hanging that occurred for Windows `cmd.exe` and
   `powershell.exe` upon exit
+- ssh launch with login shell now only uses `sh` when remote family is `unix`
 
 ## [0.18.0] - 2022-08-18
 ### Changed

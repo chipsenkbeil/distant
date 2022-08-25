@@ -23,7 +23,13 @@ async fn should_support_json_system_info(mut json_repl: CtxCommand<Repl>) {
             "os": env::consts::OS.to_string(),
             "arch": env::consts::ARCH.to_string(),
             "current_dir": env::current_dir().unwrap_or_default(),
-            "main_separator": std::path::MAIN_SEPARATOR,
+            "main_separator": std::path::MAIN_SEPARATOR.to_string(),
+            "username": whoami::username(),
+            "shell": if cfg!(windows) {
+                std::env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
+            } else {
+                std::env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
+            }
         })
     );
 }
