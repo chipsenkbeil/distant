@@ -507,7 +507,7 @@ impl Ssh {
 
         INSTANCE
             .get_or_try_init(async move {
-                let is_windows = utils::is_windows(&self.session.sftp()).await?;
+                let is_windows = utils::is_windows(&self.session).await?;
 
                 Ok(if is_windows {
                     SshFamily::Windows

@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use typed_path::{windows::WindowsComponent, WindowsEncoding, WindowsPathBuf};
 use wezterm_ssh::{ExecResult, Session, Sftp};
 
 #[allow(dead_code)]
@@ -37,12 +36,16 @@ impl fmt::Debug for ExecOutput {
 }
 
 #[allow(dead_code)]
-pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutput> {
+pub async fn execute_output(
+    session: &Session,
+    cmd: &str,
+    timeout: Option<Duration>,
+) -> io::Result<ExecOutput> {
     let ExecResult {
         mut child,
         mut stdout,
         mut stderr,
-        ..
+        stdin: _stdin,
     } = session
         .exec(cmd, None)
         .compat()
@@ -74,12 +77,23 @@ pub async fn execute_output(session: &Session, cmd: &str) -> io::Result<ExecOutp
     let stdout_handle = spawn_reader!(stdout);
     let stderr_handle = spawn_reader!(stderr);
 
-    // Wait for our handles to conclude
-    let stdout = stdout_handle.await.map_err(to_other_error)??;
-    let stderr = stderr_handle.await.map_err(to_other_error)??;
-
     // Wait for process to conclude
     let status = child.async_wait().compat().await.map_err(to_other_error)?;
+
+    // Wait for our handles to conclude (max of timeout if provided)
+    let (stdout, stderr) = match timeout {
+        Some(duration) => {
+            let (res1, res2) = tokio::try_join!(
+                tokio::time::timeout(duration, stdout_handle),
+                tokio::time::timeout(duration, stderr_handle)
+            )?;
+            (res1??, res2??)
+        }
+        None => {
+            let (res1, res2) = tokio::try_join!(stdout_handle, stderr_handle)?;
+            (res1?, res2?)
+        }
+    };
 
     Ok(ExecOutput {
         success: status.success(),
@@ -96,31 +110,30 @@ where
 }
 
 /// Determines if using windows by checking the canonicalized path of '.'
-pub async fn is_windows(sftp: &Sftp) -> io::Result<bool> {
-    // Look up the current directory
-    let current_dir = canonicalize(sftp, ".").await?;
+pub async fn is_windows(session: &Session) -> io::Result<bool> {
+    let output = execute_output(
+        session,
+        "cmd.exe /C echo %OS%",
+        Some(Duration::from_secs(1)),
+    )
+    .await?;
 
-    // TODO: Ideally, we would determine the family using something like the following:
-    //
-    //      cmd.exe /C echo %OS%
-    //
-    //      Determine OS by printing OS variable (works with Windows 2000+)
-    //      If it matches Windows_NT, then we are on windows
-    //
-    // However, the above is not working for whatever reason (always has success == false); so,
-    // we're purely using a check if we have a drive letter on the canonicalized path to
-    // determine if on windows for now. Some sort of failure with SIGPIPE
-    let windows_path = WindowsPathBuf::from(current_dir.to_string_lossy().to_string());
-    let mut components = windows_path.components();
-    if let Some(WindowsComponent::Prefix(_)) = components.next() {
-        Ok(true)
-    } else if let Some(WindowsComponent::Prefix(_)) =
-        components.as_path::<WindowsEncoding>().components().next()
-    {
-        Ok(true)
-    } else {
-        Ok(false)
+    fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+        for i in 0..slice.len() {
+            if i + subslice.len() > slice.len() {
+                break;
+            }
+
+            if slice[i..].starts_with(subslice) {
+                return true;
+            }
+        }
+
+        false
     }
+
+    Ok(contains_subslice(&output.stdout, b"Windows_NT")
+        || contains_subslice(&output.stderr, b"Windows_NT"))
 }
 
 /// Performs canonicalization of the given path using SFTP
