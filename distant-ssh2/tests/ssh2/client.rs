@@ -1445,4 +1445,6 @@ async fn system_info_should_return_system_info_based_on_binary(
     assert_eq!(system_info.os, "");
     assert_eq!(system_info.arch, "");
     assert_eq!(system_info.main_separator, std::path::MAIN_SEPARATOR);
+    assert_ne!(system_info.username, "");
+    assert_ne!(system_info.shell, "");
 }

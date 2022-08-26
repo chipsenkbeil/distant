@@ -18,7 +18,6 @@ use std::{
     sync::{Arc, Weak},
 };
 use tokio::sync::{mpsc, RwLock};
-use typed_path::WindowsPathBuf;
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
 
 #[derive(Default)]
@@ -813,18 +812,25 @@ impl DistantApi for SshDistantApi {
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
         debug!("[Conn {}] Reading system information", ctx.connection_id);
 
-        // Look up the current directory
-        let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
-
-        // Repair directories like /C:/... and /C/... into C:\...
-        let path_buf = match WindowsPathBuf::try_from(current_dir) {
-            Ok(path_buf) => path_buf,
-            Err(path_buf) => path_buf,
-        };
-
         // Look up whether the remote system is windows
         let is_windows = utils::is_windows(&self.session).await?;
         let family = if is_windows { "windows" } else { "unix" }.to_string();
+
+        // Look up the current directory
+        let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
+
+        // If windows, we need to see if we got a weird directory from ssh in the form of
+        // /C:/... or /C/... as examples. Easiest way is to convert into a WindowsPath,
+        // check if the first component is a root dir, and then make a new windows path to
+        // see if it now starts with a prefix.
+        let current_dir = current_dir
+            .to_str()
+            .and_then(utils::convert_to_windows_path)
+            .unwrap_or(current_dir);
+
+        // Look up username and shell
+        let username = utils::query_username(&self.session, is_windows).await?;
+        let shell = utils::query_shell(&self.session, is_windows).await?;
 
         Ok(SystemInfo {
             family,
@@ -832,11 +838,8 @@ impl DistantApi for SshDistantApi {
             arch: "".to_string(),
             current_dir,
             main_separator: if is_windows { '\\' } else { '/' },
-
-            // TODO: We should be able to calculate these once the problem described with SIGPIPE
-            //       is resolved, but for now we will just return empty strings
-            username: "".to_string(),
-            shell: "".to_string(),
+            username,
+            shell,
         })
     }
 }

@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use typed_path::{windows::WindowsComponent, Components, WindowsPath, WindowsPathBuf};
 use wezterm_ssh::{ExecResult, Session, Sftp};
+
+const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(1));
 
 #[allow(dead_code)]
 const READER_PAUSE_MILLIS: u64 = 100;
@@ -109,14 +112,9 @@ where
     io::Error::new(io::ErrorKind::Other, err)
 }
 
-/// Determines if using windows by checking the canonicalized path of '.'
+/// Determines if using windows by checking the OS environment variable
 pub async fn is_windows(session: &Session) -> io::Result<bool> {
-    let output = execute_output(
-        session,
-        "cmd.exe /C echo %OS%",
-        Some(Duration::from_secs(1)),
-    )
-    .await?;
+    let output = execute_output(session, "cmd.exe /C echo %OS%", SSH_EXEC_TIMEOUT).await?;
 
     fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
         for i in 0..slice.len() {
@@ -134,6 +132,67 @@ pub async fn is_windows(session: &Session) -> io::Result<bool> {
 
     Ok(contains_subslice(&output.stdout, b"Windows_NT")
         || contains_subslice(&output.stderr, b"Windows_NT"))
+}
+
+/// Query remote system for name of current user
+pub async fn query_username(session: &Session, is_windows: bool) -> io::Result<String> {
+    let output = if is_windows {
+        execute_output(session, "cmd.exe /C echo %username%", SSH_EXEC_TIMEOUT).await?
+    } else {
+        execute_output(session, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?
+    };
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Query remote system for the default shell of current user
+pub async fn query_shell(session: &Session, is_windows: bool) -> io::Result<String> {
+    let output = if is_windows {
+        execute_output(session, "cmd.exe /C echo %ComSpec%", SSH_EXEC_TIMEOUT).await?
+    } else {
+        execute_output(session, "/bin/sh -c 'echo $SHELL'", SSH_EXEC_TIMEOUT).await?
+    };
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Attempts to convert UTF8 str into a path compliant with Windows
+pub fn convert_to_windows_path(s: &str) -> Option<PathBuf> {
+    let path = WindowsPath::new(s);
+    let mut components = path.components();
+
+    // If we start with a root directory, we may have the weird path
+    match components.next() {
+        // Something weird like /C:/... or /C/... that we need to convert to C:\...
+        Some(WindowsComponent::RootDir) => {
+            let path = WindowsPath::new(components.as_bytes());
+
+            // If we have a prefix, then that means we had something like /C:/...
+            if let Some(WindowsComponent::Prefix(_)) = path.components().next() {
+                TryFrom::try_from(path).ok()
+            } else if let Some(WindowsComponent::Normal(filename)) = components.next() {
+                // If we have a drive letter, convert it into a path
+                // /C/... -> C:\...
+                if filename.len() == 1 && (filename[0] as char).is_alphabetic() {
+                    let mut path_buf = WindowsPathBuf::from(format!("{}:", filename[0]));
+                    for component in components {
+                        path_buf.push(component);
+                    }
+                    TryFrom::try_from(path).ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+
+        // Already is a Windows path, so just wrap str in std PathBuf
+        Some(WindowsComponent::Prefix(_)) => Some(PathBuf::from(s)),
+
+        // Not a reliable Windows path, so return None
+        _ => None,
+    }
 }
 
 /// Performs canonicalization of the given path using SFTP
