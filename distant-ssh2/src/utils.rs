@@ -157,7 +157,7 @@ pub async fn query_shell(session: &Session, is_windows: bool) -> io::Result<Stri
 }
 
 /// Attempts to convert UTF8 str into a path compliant with Windows
-pub fn convert_to_windows_path(s: &str) -> Option<PathBuf> {
+pub fn convert_to_windows_path_string(s: &str) -> Option<String> {
     let path = WindowsPath::new(s);
     let mut components = path.components();
 
@@ -169,16 +169,19 @@ pub fn convert_to_windows_path(s: &str) -> Option<PathBuf> {
 
             // If we have a prefix, then that means we had something like /C:/...
             if let Some(WindowsComponent::Prefix(_)) = path.components().next() {
-                std::str::from_utf8(path.as_bytes()).ok().map(PathBuf::from)
+                std::str::from_utf8(path.as_bytes())
+                    .ok()
+                    .map(ToString::to_string)
             } else if let Some(WindowsComponent::Normal(filename)) = components.next() {
-                // If we have a drive letter, convert it into a path
-                // /C/... -> C:\...
+                // If we have a drive letter, convert it into a path, e.g. /C/... -> C:\...
                 if filename.len() == 1 && (filename[0] as char).is_alphabetic() {
                     let mut path_buf = WindowsPathBuf::from(format!("{}:", filename[0]));
                     for component in components {
                         path_buf.push(component);
                     }
-                    std::str::from_utf8(path.as_bytes()).ok().map(PathBuf::from)
+                    std::str::from_utf8(path.as_bytes())
+                        .ok()
+                        .map(ToString::to_string)
                 } else {
                     None
                 }
@@ -187,8 +190,8 @@ pub fn convert_to_windows_path(s: &str) -> Option<PathBuf> {
             }
         }
 
-        // Already is a Windows path, so just wrap str in std PathBuf
-        Some(WindowsComponent::Prefix(_)) => Some(PathBuf::from(s)),
+        // Already is a Windows path, so just return string
+        Some(WindowsComponent::Prefix(_)) => Some(s.to_string()),
 
         // Not a reliable Windows path, so return None
         _ => None,

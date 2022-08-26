@@ -3,6 +3,7 @@ use crate::{
     utils::{self, to_other_error},
 };
 use async_compat::CompatExt;
+use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::{
     data::{
@@ -810,27 +811,50 @@ impl DistantApi for SshDistantApi {
     }
 
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+        // We cache each of these requested values since they should not change for the
+        // lifetime of the ssh connection
+        static IS_WINDOWS: OnceCell<bool> = OnceCell::new();
+        static CURRENT_DIR: OnceCell<PathBuf> = OnceCell::new();
+        static USERNAME: OnceCell<String> = OnceCell::new();
+        static SHELL: OnceCell<String> = OnceCell::new();
+
         debug!("[Conn {}] Reading system information", ctx.connection_id);
 
         // Look up whether the remote system is windows
-        let is_windows = utils::is_windows(&self.session).await?;
+        let is_windows = *IS_WINDOWS
+            .get_or_try_init(utils::is_windows(&self.session))
+            .await?;
         let family = if is_windows { "windows" } else { "unix" }.to_string();
 
         // Look up the current directory
-        let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
+        let current_dir = CURRENT_DIR
+            .get_or_try_init(async move {
+                let current_dir: PathBuf = utils::canonicalize(&self.session.sftp(), ".").await?;
 
-        // If windows, we need to see if we got a weird directory from ssh in the form of
-        // /C:/... or /C/... as examples. Easiest way is to convert into a WindowsPath,
-        // check if the first component is a root dir, and then make a new windows path to
-        // see if it now starts with a prefix.
-        let current_dir = current_dir
-            .to_str()
-            .and_then(utils::convert_to_windows_path)
-            .unwrap_or(current_dir);
+                // If windows, we need to see if we got a weird directory from ssh in the form of
+                // /C:/... or /C/... as examples. Easiest way is to convert into a WindowsPath,
+                // check if the first component is a root dir, and then make a new windows path to
+                // see if it now starts with a prefix.
+                let current_dir: PathBuf = current_dir
+                    .to_str()
+                    .and_then(utils::convert_to_windows_path_string)
+                    .map(PathBuf::from)
+                    .unwrap_or(current_dir);
+
+                Result::<_, io::Error>::Ok(current_dir)
+            })
+            .await?
+            .clone();
 
         // Look up username and shell
-        let username = utils::query_username(&self.session, is_windows).await?;
-        let shell = utils::query_shell(&self.session, is_windows).await?;
+        let username = USERNAME
+            .get_or_try_init(utils::query_username(&self.session, is_windows))
+            .await?
+            .clone();
+        let shell = SHELL
+            .get_or_try_init(utils::query_shell(&self.session, is_windows))
+            .await?
+            .clone();
 
         Ok(SystemInfo {
             family,
