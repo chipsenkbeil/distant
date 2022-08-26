@@ -14,10 +14,11 @@ use log::*;
 use std::{
     collections::{HashMap, HashSet},
     io,
-    path::{Component, PathBuf},
+    path::PathBuf,
     sync::{Arc, Weak},
 };
 use tokio::sync::{mpsc, RwLock};
+use typed_path::WindowsPathBuf;
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
 
 #[derive(Default)]
@@ -815,20 +816,14 @@ impl DistantApi for SshDistantApi {
         // Look up the current directory
         let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
 
-        // TODO: Ideally, we would determine the family using something like the following:
-        //
-        //      cmd.exe /C echo %OS%
-        //
-        //      Determine OS by printing OS variable (works with Windows 2000+)
-        //      If it matches Windows_NT, then we are on windows
-        //
-        // However, the above is not working for whatever reason (always has success == false); so,
-        // we're purely using a check if we have a drive letter on the canonicalized path to
-        // determine if on windows for now.
-        let is_windows = current_dir
-            .components()
-            .any(|c| matches!(c, Component::Prefix(_)));
+        // Repair directories like /C:/... and /C/... into C:\...
+        let path_buf = match WindowsPathBuf::try_from(current_dir) {
+            Ok(path_buf) => path_buf,
+            Err(path_buf) => path_buf,
+        };
 
+        // Look up whether the remote system is windows
+        let is_windows = utils::is_windows(&self.session).await?;
         let family = if is_windows { "windows" } else { "unix" }.to_string();
 
         Ok(SystemInfo {
