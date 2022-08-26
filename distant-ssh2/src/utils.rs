@@ -169,7 +169,7 @@ pub fn convert_to_windows_path(s: &str) -> Option<PathBuf> {
 
             // If we have a prefix, then that means we had something like /C:/...
             if let Some(WindowsComponent::Prefix(_)) = path.components().next() {
-                TryFrom::try_from(path).ok()
+                std::str::from_utf8(path.as_bytes()).ok().map(PathBuf::from)
             } else if let Some(WindowsComponent::Normal(filename)) = components.next() {
                 // If we have a drive letter, convert it into a path
                 // /C/... -> C:\...
@@ -178,7 +178,7 @@ pub fn convert_to_windows_path(s: &str) -> Option<PathBuf> {
                     for component in components {
                         path_buf.push(component);
                     }
-                    TryFrom::try_from(path).ok()
+                    std::str::from_utf8(path.as_bytes()).ok().map(PathBuf::from)
                 } else {
                     None
                 }
