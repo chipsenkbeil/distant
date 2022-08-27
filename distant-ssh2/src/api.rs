@@ -539,13 +539,21 @@ impl DistantApi for SshDistantApi {
         // NOTE: SFTP does not provide a remote-to-remote copy method, so we instead execute
         //       a program based on the platform and hope that it applies
         let is_windows = self.is_windows().await?;
-        let cmd = if is_windows {
-            format!("powershell.exe -NonInteractive -Command \"& {{Copy-Item -Path {:?} -Destination {:?} -Recurse}}\"", src, dst)
+        let output = if is_windows {
+            utils::powershell_output(
+                &self.session,
+                &format!("Copy-Item -Path {src:?} -Destination {dst:?} -Recurse"),
+                COPY_COMPLETE_TIMEOUT,
+            )
+            .await?
         } else {
-            format!("cp -R {:?} {:?}", src, dst)
+            utils::execute_output(
+                &self.session,
+                &format!("cp -R {src:?} {dst:?}"),
+                COPY_COMPLETE_TIMEOUT,
+            )
+            .await?
         };
-
-        let output = utils::execute_output(&self.session, &cmd, COPY_COMPLETE_TIMEOUT).await?;
 
         // NOTE: For some reason, powershell.exe is not returning an error upon failure, so we
         //       have to check if we got some stderr as output and consider that a failure
@@ -849,6 +857,7 @@ impl DistantApi for SshDistantApi {
             .get_or_try_init(utils::query_username(&self.session, is_windows))
             .await?
             .clone();
+
         let shell = SHELL
             .get_or_try_init(utils::query_shell(&self.session, is_windows))
             .await?
@@ -856,7 +865,7 @@ impl DistantApi for SshDistantApi {
 
         Ok(SystemInfo {
             family: if is_windows { "windows" } else { "unix" }.to_string(),
-            os: "".to_string(),
+            os: if is_windows { "windows" } else { "" }.to_string(),
             arch: "".to_string(),
             current_dir,
             main_separator: if is_windows { '\\' } else { '/' },

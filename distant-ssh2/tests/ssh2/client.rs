@@ -1442,9 +1442,19 @@ async fn system_info_should_return_system_info_based_on_binary(
     let system_info = client.system_info().await.unwrap();
 
     assert_eq!(system_info.family, std::env::consts::FAMILY.to_string());
-    assert_eq!(system_info.os, "");
+
+    // We only support setting the os when the family is windows
+    if system_info.family == "windows" {
+        assert_eq!(system_info.os, "windows");
+    } else {
+        assert_eq!(system_info.os, "");
+    }
+
     assert_eq!(system_info.arch, "");
     assert_eq!(system_info.main_separator, std::path::MAIN_SEPARATOR);
+
+    // We don't have an easy way to tell the remote username and shell in most cases,
+    // so we just check that they are not empty
     assert_ne!(system_info.username, "");
     assert_ne!(system_info.shell, "");
 }

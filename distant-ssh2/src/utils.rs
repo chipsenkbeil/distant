@@ -38,6 +38,15 @@ impl fmt::Debug for ExecOutput {
     }
 }
 
+pub async fn powershell_output(
+    session: &Session,
+    cmd: &str,
+    timeout: impl Into<Option<Duration>>,
+) -> io::Result<ExecOutput> {
+    let cmd = format!("powershell.exe -NonInteractive -Command \"& {{{cmd}}}\"");
+    execute_output(session, &cmd, timeout).await
+}
+
 pub async fn execute_output(
     session: &Session,
     cmd: &str,
@@ -128,7 +137,12 @@ where
 
 /// Determines if using windows by checking the OS environment variable
 pub async fn is_windows(session: &Session) -> io::Result<bool> {
-    let output = execute_output(session, "cmd.exe /B /Q /C echo %OS%", SSH_EXEC_TIMEOUT).await?;
+    let output = powershell_output(
+        session,
+        "[Environment]::GetEnvironmentVariable('OS')",
+        SSH_EXEC_TIMEOUT,
+    )
+    .await?;
 
     fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
         for i in 0..slice.len() {
@@ -150,24 +164,38 @@ pub async fn is_windows(session: &Session) -> io::Result<bool> {
 
 /// Query remote system for name of current user
 pub async fn query_username(session: &Session, is_windows: bool) -> io::Result<String> {
-    let output = if is_windows {
-        execute_output(
+    if is_windows {
+        // Will get DOMAIN\USERNAME as output -- needed because USERNAME isn't set on
+        // Github's Windows CI (it sets USER instead)
+        let output = powershell_output(
             session,
-            "cmd.exe /B /Q /C echo %username%",
+            "[System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
             SSH_EXEC_TIMEOUT,
         )
-        .await?
-    } else {
-        execute_output(session, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?
-    };
+        .await?;
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let output = String::from_utf8_lossy(&output.stdout);
+        let output = match output.split_once('\\') {
+            Some((_, username)) => username,
+            None => output.as_ref(),
+        };
+
+        Ok(output.trim().to_string())
+    } else {
+        let output = execute_output(session, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
 }
 
 /// Query remote system for the default shell of current user
 pub async fn query_shell(session: &Session, is_windows: bool) -> io::Result<String> {
     let output = if is_windows {
-        execute_output(session, "cmd.exe /B /Q /C echo %ComSpec%", SSH_EXEC_TIMEOUT).await?
+        powershell_output(
+            session,
+            "[Environment]::GetEnvironmentVariable('ComSpec')",
+            SSH_EXEC_TIMEOUT,
+        )
+        .await?
     } else {
         execute_output(session, "/bin/sh -c 'echo $SHELL'", SSH_EXEC_TIMEOUT).await?
     };
