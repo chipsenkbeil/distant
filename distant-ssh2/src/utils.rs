@@ -38,12 +38,12 @@ impl fmt::Debug for ExecOutput {
     }
 }
 
-#[allow(dead_code)]
 pub async fn execute_output(
     session: &Session,
     cmd: &str,
-    timeout: Option<Duration>,
+    timeout: impl Into<Option<Duration>>,
 ) -> io::Result<ExecOutput> {
+    let timeout = timeout.into();
     let ExecResult {
         mut child,
         mut stdout,

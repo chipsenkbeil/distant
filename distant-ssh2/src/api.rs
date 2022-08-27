@@ -17,9 +17,13 @@ use std::{
     io,
     path::PathBuf,
     sync::{Arc, Weak},
+    time::Duration,
 };
 use tokio::sync::{mpsc, RwLock};
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
+
+/// Time after copy completes to wait for stdout/stderr to close
+const COPY_COMPLETE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 pub struct ConnectionState {
@@ -52,6 +56,17 @@ impl SshDistantApi {
             session,
             processes: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Checks if the remote server is a Windows machine
+    async fn is_windows(&self) -> io::Result<bool> {
+        // We cache the request as it should not change for the lifetime of the ssh connection
+        static IS_WINDOWS: OnceCell<bool> = OnceCell::new();
+
+        // Look up whether the remote system is windows
+        Ok(*IS_WINDOWS
+            .get_or_try_init(utils::is_windows(&self.session))
+            .await?)
     }
 }
 
@@ -522,44 +537,27 @@ impl DistantApi for SshDistantApi {
         );
 
         // NOTE: SFTP does not provide a remote-to-remote copy method, so we instead execute
-        //       a program and hope that it applies, starting with the Unix/BSD/GNU cp method
-        //       and switch to Window's xcopy if the former fails
-
-        // Unix cp -R <src> <dst>
-        let unix_result = self
-            .session
-            .exec(&format!("cp -R {:?} {:?}", src, dst), None)
-            .compat()
-            .await;
-
-        let failed = unix_result.is_err() || {
-            let exit_status = unix_result.unwrap().child.async_wait().compat().await;
-            exit_status.is_err() || !exit_status.unwrap().success()
+        //       a program based on the platform and hope that it applies
+        let is_windows = self.is_windows().await?;
+        let cmd = if is_windows {
+            format!("xcopy {:?} {:?} /s /e", src, dst)
+        } else {
+            format!("cp -R {:?} {:?}", src, dst)
         };
 
-        // Windows xcopy <src> <dst> /s /e
-        if failed {
-            let exit_status = self
-                .session
-                .exec(&format!("xcopy {:?} {:?} /s /e", src, dst), None)
-                .compat()
-                .await
-                .map_err(to_other_error)?
-                .child
-                .async_wait()
-                .compat()
-                .await
-                .map_err(to_other_error)?;
+        let output = utils::execute_output(&self.session, &cmd, COPY_COMPLETE_TIMEOUT).await?;
 
-            if !exit_status.success() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Unix and windows copy commands failed",
-                ));
-            }
+        if output.success {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Copy command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ))
         }
-
-        Ok(())
     }
 
     async fn rename(
@@ -813,7 +811,6 @@ impl DistantApi for SshDistantApi {
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
         // We cache each of these requested values since they should not change for the
         // lifetime of the ssh connection
-        static IS_WINDOWS: OnceCell<bool> = OnceCell::new();
         static CURRENT_DIR: OnceCell<PathBuf> = OnceCell::new();
         static USERNAME: OnceCell<String> = OnceCell::new();
         static SHELL: OnceCell<String> = OnceCell::new();
@@ -821,10 +818,7 @@ impl DistantApi for SshDistantApi {
         debug!("[Conn {}] Reading system information", ctx.connection_id);
 
         // Look up whether the remote system is windows
-        let is_windows = *IS_WINDOWS
-            .get_or_try_init(utils::is_windows(&self.session))
-            .await?;
-        let family = if is_windows { "windows" } else { "unix" }.to_string();
+        let is_windows = self.is_windows().await?;
 
         // Look up the current directory
         let current_dir = CURRENT_DIR
@@ -857,7 +851,7 @@ impl DistantApi for SshDistantApi {
             .clone();
 
         Ok(SystemInfo {
-            family,
+            family: if is_windows { "windows" } else { "unix" }.to_string(),
             os: "".to_string(),
             arch: "".to_string(),
             current_dir,
