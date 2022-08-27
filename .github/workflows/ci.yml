@@ -26,14 +26,14 @@ jobs:
           git config --system core.autocrlf false
           git config --system core.eol lf
         if: matrix.os == 'windows-latest'
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install Rust (clippy)
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
       - name: distant-core (all features)
@@ -57,14 +57,14 @@ jobs:
           git config --system core.autocrlf false
           git config --system core.eol lf
         if: matrix.os == 'windows-latest'
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install Rust (rustfmt)
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           components: rustfmt
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo fmt --all -- --check
@@ -80,7 +80,7 @@ jobs:
           - { rust: stable, os: ubuntu-latest }
           - { rust: 1.61.0, os: ubuntu-latest }
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install Rust ${{ matrix.rust }}
         uses: actions-rs/toolchain@v1
         with:
@@ -90,7 +90,7 @@ jobs:
       - uses: taiki-e/install-action@v1
         with:
           tool: cargo-nextest
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
       - name: Install OpenSSH on Windows
@@ -169,7 +169,7 @@ jobs:
           - { rust: stable, os: ubuntu-latest }
           - { rust: 1.61.0, os: ubuntu-latest }
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install Rust ${{ matrix.rust }}
         uses: actions-rs/toolchain@v1
         with:
@@ -178,7 +178,7 @@ jobs:
       - uses: taiki-e/install-action@v1
         with:
           tool: cargo-nextest
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
       - name: Install distant cli for use in launch tests

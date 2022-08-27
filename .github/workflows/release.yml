@@ -20,7 +20,7 @@ jobs:
       BUILD_BIN: distant
       UNIVERSAL_REL_BIN: distant-macos
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install Rust (x86)
         uses: actions-rs/toolchain@v1
         with:
@@ -33,7 +33,7 @@ jobs:
           profile: minimal
           toolchain: stable
           target: ${{ env.ARM_ARCH }}
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Build binary (x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_ARCH }}
@@ -75,7 +75,7 @@ jobs:
           profile: minimal
           toolchain: stable
           target: ${{ env.X86_ARCH }}
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Build binary (x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_ARCH }}
@@ -108,7 +108,7 @@ jobs:
           profile: minimal
           toolchain: stable
           target: ${{ env.X86_GNU_ARCH }}
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Build binary (GNU x86_64)
         run: |
           cargo build --release --all-features --target ${{ env.X86_GNU_ARCH }}
@@ -145,7 +145,7 @@ jobs:
       - name: Install Rust (MUSL)
         run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Build binary (MUSL x86_64)
         run: |
           source $HOME/.cargo/env
