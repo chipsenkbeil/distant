@@ -1,6 +1,5 @@
 use crate::{
-    manager::data::{Destination, Extra},
-    DistantMsg, DistantRequestData, DistantResponseData,
+    data::Map, manager::data::Destination, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
 use distant_net::{AuthClient, Request, Response, TypedAsyncRead, TypedAsyncWrite};
@@ -20,7 +19,7 @@ pub trait LaunchHandler: Send + Sync {
     async fn launch(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination>;
 }
@@ -28,16 +27,16 @@ pub trait LaunchHandler: Send + Sync {
 #[async_trait]
 impl<F, R> LaunchHandler for F
 where
-    F: for<'a> Fn(&'a Destination, &'a Extra, &'a mut AuthClient) -> R + Send + Sync + 'static,
+    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut AuthClient) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<Destination>> + Send + 'static,
 {
     async fn launch(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        self(destination, extra, auth_client).await
+        self(destination, options, auth_client).await
     }
 }
 
@@ -47,7 +46,7 @@ pub trait ConnectHandler: Send + Sync {
     async fn connect(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader>;
 }
@@ -55,15 +54,15 @@ pub trait ConnectHandler: Send + Sync {
 #[async_trait]
 impl<F, R> ConnectHandler for F
 where
-    F: for<'a> Fn(&'a Destination, &'a Extra, &'a mut AuthClient) -> R + Send + Sync + 'static,
+    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut AuthClient) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<BoxedDistantWriterReader>> + Send + 'static,
 {
     async fn connect(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        self(destination, extra, auth_client).await
+        self(destination, options, auth_client).await
     }
 }

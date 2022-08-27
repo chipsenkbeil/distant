@@ -1,6 +1,6 @@
 use crate::{
-    ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest,
-    ManagerResponse,
+    ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerRequest,
+    ManagerResponse, Map,
 };
 use async_trait::async_trait;
 use distant_net::{
@@ -123,14 +123,14 @@ impl DistantManager {
         })
     }
 
-    /// Launches a new server at the specified `destination` using the given `extra` information
+    /// Launches a new server at the specified `destination` using the given `options` information
     /// and authentication client (if needed) to retrieve additional information needed to
     /// enter the destination prior to starting the server, returning the destination of the
     /// launched server
     async fn launch(
         &self,
         destination: Destination,
-        extra: Extra,
+        options: Map,
         auth: Option<&mut AuthClient>,
     ) -> io::Result<Destination> {
         let auth = auth.ok_or_else(|| {
@@ -163,19 +163,19 @@ impl DistantManager {
                     format!("No launch handler registered for {}", scheme),
                 )
             })?;
-            handler.launch(&destination, &extra, auth).await?
+            handler.launch(&destination, &options, auth).await?
         };
 
         Ok(credentials)
     }
 
-    /// Connects to a new server at the specified `destination` using the given `extra` information
+    /// Connects to a new server at the specified `destination` using the given `options` information
     /// and authentication client (if needed) to retrieve additional information needed to
     /// establish the connection to the server
     async fn connect(
         &self,
         destination: Destination,
-        extra: Extra,
+        options: Map,
         auth: Option<&mut AuthClient>,
     ) -> io::Result<ConnectionId> {
         let auth = auth.ok_or_else(|| {
@@ -208,10 +208,10 @@ impl DistantManager {
                     format!("No connect handler registered for {}", scheme),
                 )
             })?;
-            handler.connect(&destination, &extra, auth).await?
+            handler.connect(&destination, &options, auth).await?
         };
 
-        let connection = DistantManagerConnection::new(destination, extra, writer, reader);
+        let connection = DistantManagerConnection::new(destination, options, writer, reader);
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
@@ -223,7 +223,7 @@ impl DistantManager {
             Some(connection) => Ok(ConnectionInfo {
                 id: connection.id,
                 destination: connection.destination.clone(),
-                extra: connection.extra.clone(),
+                options: connection.options.clone(),
             }),
             None => Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -297,24 +297,36 @@ impl Server for DistantManager {
         } = ctx;
 
         let response = match request.payload {
-            ManagerRequest::Launch { destination, extra } => {
+            ManagerRequest::Launch {
+                destination,
+                options,
+            } => {
                 let mut auth = match local_data.auth_client.as_ref() {
                     Some(client) => Some(client.lock().await),
                     None => None,
                 };
 
-                match self.launch(*destination, extra, auth.as_deref_mut()).await {
+                match self
+                    .launch(*destination, options, auth.as_deref_mut())
+                    .await
+                {
                     Ok(destination) => ManagerResponse::Launched { destination },
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
             }
-            ManagerRequest::Connect { destination, extra } => {
+            ManagerRequest::Connect {
+                destination,
+                options,
+            } => {
                 let mut auth = match local_data.auth_client.as_ref() {
                     Some(client) => Some(client.lock().await),
                     None => None,
                 };
 
-                match self.connect(*destination, extra, auth.as_deref_mut()).await {
+                match self
+                    .connect(*destination, options, auth.as_deref_mut())
+                    .await
+                {
                     Ok(id) => ManagerResponse::Connected { id },
                     Err(x) => ManagerResponse::Error(x.into()),
                 }
@@ -461,10 +473,10 @@ mod tests {
         let server = setup();
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
-        let extra = "".parse::<Extra>().unwrap();
+        let options = "".parse::<Map>().unwrap();
         let (mut auth, _auth_server) = auth_client_server();
         let err = server
-            .launch(destination, extra, Some(&mut auth))
+            .launch(destination, options, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", err);
@@ -485,10 +497,10 @@ mod tests {
             .insert("scheme".to_string(), handler);
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
-        let extra = "".parse::<Extra>().unwrap();
+        let options = "".parse::<Map>().unwrap();
         let (mut auth, _auth_server) = auth_client_server();
         let err = server
-            .launch(destination, extra, Some(&mut auth))
+            .launch(destination, options, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
@@ -512,10 +524,10 @@ mod tests {
             .insert("scheme".to_string(), handler);
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
-        let extra = "key=value".parse::<Extra>().unwrap();
+        let options = "key=value".parse::<Map>().unwrap();
         let (mut auth, _auth_server) = auth_client_server();
         let destination = server
-            .launch(destination, extra, Some(&mut auth))
+            .launch(destination, options, Some(&mut auth))
             .await
             .unwrap();
 
@@ -530,10 +542,10 @@ mod tests {
         let server = setup();
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
-        let extra = "".parse::<Extra>().unwrap();
+        let options = "".parse::<Map>().unwrap();
         let (mut auth, _auth_server) = auth_client_server();
         let err = server
-            .connect(destination, extra, Some(&mut auth))
+            .connect(destination, options, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", err);
@@ -554,10 +566,10 @@ mod tests {
             .insert("scheme".to_string(), handler);
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
-        let extra = "".parse::<Extra>().unwrap();
+        let options = "".parse::<Map>().unwrap();
         let (mut auth, _auth_server) = auth_client_server();
         let err = server
-            .connect(destination, extra, Some(&mut auth))
+            .connect(destination, options, Some(&mut auth))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
@@ -578,10 +590,10 @@ mod tests {
             .insert("scheme".to_string(), handler);
 
         let destination = "scheme://host".parse::<Destination>().unwrap();
-        let extra = "key=value".parse::<Extra>().unwrap();
+        let options = "key=value".parse::<Map>().unwrap();
         let (mut auth, _auth_server) = auth_client_server();
         let id = server
-            .connect(destination, extra, Some(&mut auth))
+            .connect(destination, options, Some(&mut auth))
             .await
             .unwrap();
 
@@ -589,7 +601,7 @@ mod tests {
         let connection = lock.get(&id).unwrap();
         assert_eq!(connection.id, id);
         assert_eq!(connection.destination, "scheme://host");
-        assert_eq!(connection.extra, "key=value".parse().unwrap());
+        assert_eq!(connection.options, "key=value".parse().unwrap());
     }
 
     #[tokio::test]
@@ -620,7 +632,7 @@ mod tests {
             ConnectionInfo {
                 id,
                 destination: "scheme://host".parse().unwrap(),
-                extra: "key=value".parse().unwrap(),
+                options: "key=value".parse().unwrap(),
             }
         );
     }

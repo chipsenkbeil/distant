@@ -343,7 +343,7 @@ impl ManagerSubcommand {
                     scheme: String,
                     host: String,
                     port: String,
-                    extra: String,
+                    options: String,
                 }
 
                 println!(
@@ -357,7 +357,7 @@ impl ManagerSubcommand {
                             .port
                             .map(|x| x.to_string())
                             .unwrap_or_default(),
-                        extra: info.extra.to_string()
+                        options: info.options.to_string()
                     }])
                 );
 

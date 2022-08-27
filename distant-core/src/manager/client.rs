@@ -1,8 +1,9 @@
 use super::data::{
-    ConnectionId, ConnectionInfo, ConnectionList, Destination, Extra, ManagerRequest,
-    ManagerResponse,
+    ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerRequest, ManagerResponse,
 };
-use crate::{DistantChannel, DistantClient, DistantMsg, DistantRequestData, DistantResponseData};
+use crate::{
+    DistantChannel, DistantClient, DistantMsg, DistantRequestData, DistantResponseData, Map,
+};
 use distant_net::{
     router, Auth, AuthServer, Client, IntoSplit, MpscTransport, OneshotListener, Request, Response,
     ServerExt, ServerRef, UntypedTransportRead, UntypedTransportWrite,
@@ -122,20 +123,23 @@ impl DistantManagerClient {
     }
 
     /// Request that the manager launches a new server at the given `destination`
-    /// with `extra` being passed for destination-specific details, returning the new
+    /// with `options` being passed for destination-specific details, returning the new
     /// `destination` of the spawned server to connect to
     pub async fn launch(
         &mut self,
         destination: impl Into<Destination>,
-        extra: impl Into<Extra>,
+        options: impl Into<Map>,
     ) -> io::Result<Destination> {
         let destination = Box::new(destination.into());
-        let extra = extra.into();
-        trace!("launch({}, {})", destination, extra);
+        let options = options.into();
+        trace!("launch({}, {})", destination, options);
 
         let res = self
             .client
-            .send(ManagerRequest::Launch { destination, extra })
+            .send(ManagerRequest::Launch {
+                destination,
+                options,
+            })
             .await?;
         match res.payload {
             ManagerResponse::Launched { destination } => Ok(destination),
@@ -148,19 +152,22 @@ impl DistantManagerClient {
     }
 
     /// Request that the manager establishes a new connection at the given `destination`
-    /// with `extra` being passed for destination-specific details
+    /// with `options` being passed for destination-specific details
     pub async fn connect(
         &mut self,
         destination: impl Into<Destination>,
-        extra: impl Into<Extra>,
+        options: impl Into<Map>,
     ) -> io::Result<ConnectionId> {
         let destination = Box::new(destination.into());
-        let extra = extra.into();
-        trace!("connect({}, {})", destination, extra);
+        let options = options.into();
+        trace!("connect({}, {})", destination, options);
 
         let res = self
             .client
-            .send(ManagerRequest::Connect { destination, extra })
+            .send(ManagerRequest::Connect {
+                destination,
+                options,
+            })
             .await?;
         match res.payload {
             ManagerResponse::Connected { id } => Ok(id),
@@ -406,7 +413,7 @@ mod tests {
         let err = client
             .connect(
                 "scheme://host".parse::<Destination>().unwrap(),
-                "key=value".parse::<Extra>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
             )
             .await
             .unwrap_err();
@@ -434,7 +441,7 @@ mod tests {
         let err = client
             .connect(
                 "scheme://host".parse::<Destination>().unwrap(),
-                "key=value".parse::<Extra>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
             )
             .await
             .unwrap_err();
@@ -465,7 +472,7 @@ mod tests {
         let id = client
             .connect(
                 "scheme://host".parse::<Destination>().unwrap(),
-                "key=value".parse::<Extra>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
             )
             .await
             .unwrap();
@@ -532,7 +539,7 @@ mod tests {
             let info = ConnectionInfo {
                 id: 123,
                 destination: "scheme://host".parse::<Destination>().unwrap(),
-                extra: "key=value".parse::<Extra>().unwrap(),
+                options: "key=value".parse::<Map>().unwrap(),
             };
 
             transport
@@ -547,7 +554,7 @@ mod tests {
             info.destination,
             "scheme://host".parse::<Destination>().unwrap()
         );
-        assert_eq!(info.extra, "key=value".parse::<Extra>().unwrap());
+        assert_eq!(info.options, "key=value".parse::<Map>().unwrap());
     }
 
     #[tokio::test]

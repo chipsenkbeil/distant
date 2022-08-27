@@ -50,7 +50,7 @@ pub enum AuthRequest {
     /// Represents a challenge comprising a series of questions to be presented
     Challenge {
         questions: Vec<AuthQuestion>,
-        extra: HashMap<String, String>,
+        options: HashMap<String, String>,
     },
 
     /// Represents an ask to verify some information
@@ -91,17 +91,17 @@ pub struct AuthQuestion {
     /// The text of the question
     pub text: String,
 
-    /// Any extra information specific to a particular auth domain
+    /// Any options information specific to a particular auth domain
     /// such as including a username and instructions for SSH authentication
-    pub extra: HashMap<String, String>,
+    pub options: HashMap<String, String>,
 }
 
 impl AuthQuestion {
-    /// Creates a new question without any extra data
+    /// Creates a new question without any options data
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            extra: HashMap::new(),
+            options: HashMap::new(),
         }
     }
 }

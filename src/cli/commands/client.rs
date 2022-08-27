@@ -3,7 +3,10 @@ use crate::{
         client::{MsgReceiver, MsgSender},
         Cache, Client,
     },
-    config::{ClientConfig, ClientLaunchConfig, NetworkConfig},
+    config::{
+        ClientActionConfig, ClientConfig, ClientConnectConfig, ClientLaunchConfig,
+        ClientReplConfig, NetworkConfig,
+    },
     paths::user::CACHE_FILE_PATH_STR,
     CliError, CliResult,
 };
@@ -14,7 +17,7 @@ use distant_core::{
     data::{ChangeKindSet, Environment},
     net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
     ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
-    DistantResponseData, Extra, Host, RemoteCommand, Watcher,
+    DistantResponseData, Host, Map, RemoteCommand, Watcher,
 };
 use log::*;
 use serde_json::{json, Value};
@@ -50,16 +53,15 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
+        #[clap(flatten)]
+        config: ClientActionConfig,
+
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
 
         #[clap(flatten)]
         network: NetworkConfig,
-
-        /// Represents the maximum time (in seconds) to wait for a network request before timing out
-        #[clap(short, long)]
-        timeout: Option<f32>,
 
         #[clap(subcommand)]
         request: DistantRequestData,
@@ -75,6 +77,9 @@ pub enum ClientSubcommand {
             default_value = CACHE_FILE_PATH_STR.as_str()
         )]
         cache: PathBuf,
+
+        #[clap(flatten)]
+        config: ClientConnectConfig,
 
         #[clap(flatten)]
         network: NetworkConfig,
@@ -149,6 +154,9 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
+        #[clap(flatten)]
+        config: ClientReplConfig,
+
         /// Specify a connection being managed
         #[clap(long)]
         connection: Option<ConnectionId>,
@@ -159,10 +167,6 @@ pub enum ClientSubcommand {
         /// Format used for input into and output from the repl
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
-
-        /// Represents the maximum time (in seconds) to wait for a network request before timing out
-        #[clap(short, long)]
-        timeout: Option<f32>,
     },
 
     /// Select the active connection
@@ -244,10 +248,10 @@ impl ClientSubcommand {
 
         match self {
             Self::Action {
+                config: action_config,
                 connection,
                 network,
                 request,
-                timeout,
                 ..
             } => {
                 let network = network.merge(config.network);
@@ -264,6 +268,8 @@ impl ClientSubcommand {
                 let mut channel = client.open_channel(connection_id).await.with_context(|| {
                     format!("Failed to open channel to connection {connection_id}")
                 })?;
+
+                let timeout = action_config.timeout.or(config.action.timeout);
 
                 debug!(
                     "Timeout configured to be {}",
@@ -375,6 +381,7 @@ impl ClientSubcommand {
                 }
             }
             Self::Connect {
+                config: connect_config,
                 network,
                 format,
                 destination,
@@ -393,10 +400,15 @@ impl ClientSubcommand {
                         .context("Failed to connect to manager")?
                 };
 
+                // Merge our connect configs, overwriting anything in the config file with our cli
+                // arguments
+                let mut options = Map::from(config.connect);
+                options.extend(Map::from(connect_config).into_map());
+
                 // Trigger our manager to connect to the launched server
-                debug!("Connecting to server at {}", destination);
+                debug!("Connecting to server at {} with {}", destination, options);
                 let id = client
-                    .connect(*destination, Extra::new())
+                    .connect(*destination, options)
                     .await
                     .context("Failed to connect to server")?;
 
@@ -418,7 +430,7 @@ impl ClientSubcommand {
                 }
             }
             Self::Launch {
-                config: launcher_config,
+                config: launch_config,
                 network,
                 format,
                 mut destination,
@@ -439,8 +451,8 @@ impl ClientSubcommand {
 
                 // Merge our launch configs, overwriting anything in the config file
                 // with our cli arguments
-                let mut extra = Extra::from(config.launch);
-                extra.extend(Extra::from(launcher_config).into_map());
+                let mut options = Map::from(config.launch);
+                options.extend(Map::from(launch_config).into_map());
 
                 // Grab the host we are connecting to for later use
                 let host = destination.host.to_string();
@@ -455,9 +467,9 @@ impl ClientSubcommand {
                 }
 
                 // Start the server using our manager
-                debug!("Launching server at {} with {}", destination, extra);
+                debug!("Launching server at {} with {}", destination, options);
                 let mut new_destination = client
-                    .launch(*destination, extra)
+                    .launch(*destination, options)
                     .await
                     .context("Failed to launch server")?;
 
@@ -480,7 +492,7 @@ impl ClientSubcommand {
                 // Trigger our manager to connect to the launched server
                 debug!("Connecting to server at {}", new_destination);
                 let id = client
-                    .connect(new_destination, Extra::new())
+                    .connect(new_destination, Map::new())
                     .await
                     .context("Failed to connect to server")?;
 
@@ -531,10 +543,10 @@ impl ClientSubcommand {
                 Lsp::new(channel).spawn(cmd, persist, pty).await?;
             }
             Self::Repl {
+                config: repl_config,
                 connection,
                 network,
                 format,
-                timeout,
                 ..
             } => {
                 let network = network.merge(config.network);
@@ -547,6 +559,8 @@ impl ClientSubcommand {
 
                 let connection_id =
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+                let timeout = repl_config.timeout.or(config.repl.timeout);
 
                 debug!("Opening raw channel to connection {}", connection_id);
                 let channel = client

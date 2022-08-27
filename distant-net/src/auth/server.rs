@@ -120,12 +120,12 @@ where
 
                 let response = match request {
                     Ok(request) => match request {
-                        AuthRequest::Challenge { questions, extra } => {
+                        AuthRequest::Challenge { questions, options } => {
                             trace!("Received challenge request");
                             trace!("questions = {:?}", questions);
-                            trace!("extra = {:?}", extra);
+                            trace!("options = {:?}", options);
 
-                            let answers = (self.on_challenge)(questions, extra);
+                            let answers = (self.on_challenge)(questions, options);
                             AuthResponse::Challenge { answers }
                         }
                         AuthRequest::Verify { kind, text } => {
@@ -310,8 +310,8 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let (mut t, _) = spawn_auth_server(
             /* on_challenge */
-            move |questions, extra| {
-                tx.try_send((questions, extra)).unwrap();
+            move |questions, options| {
+                tx.try_send((questions, options)).unwrap();
                 vec!["answer1".to_string(), "answer2".to_string()]
             },
             /* on_verify    */ |_, _| false,
@@ -346,12 +346,12 @@ mod tests {
                         AuthQuestion::new("question1".to_string()),
                         AuthQuestion {
                             text: "question2".to_string(),
-                            extra: vec![("key".to_string(), "value".to_string())]
+                            options: vec![("key".to_string(), "value".to_string())]
                                 .into_iter()
                                 .collect(),
                         },
                     ],
-                    extra: vec![("hello".to_string(), "world".to_string())]
+                    options: vec![("hello".to_string(), "world".to_string())]
                         .into_iter()
                         .collect(),
                 },
@@ -362,21 +362,21 @@ mod tests {
         .unwrap();
 
         // Verify that the handler was triggered
-        let (questions, extra) = rx.recv().await.expect("Channel closed unexpectedly");
+        let (questions, options) = rx.recv().await.expect("Channel closed unexpectedly");
         assert_eq!(
             questions,
             vec![
                 AuthQuestion::new("question1".to_string()),
                 AuthQuestion {
                     text: "question2".to_string(),
-                    extra: vec![("key".to_string(), "value".to_string())]
+                    options: vec![("key".to_string(), "value".to_string())]
                         .into_iter()
                         .collect(),
                 }
             ]
         );
         assert_eq!(
-            extra,
+            options,
             vec![("hello".to_string(), "world".to_string())]
                 .into_iter()
                 .collect()

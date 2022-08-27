@@ -2,7 +2,6 @@ use crate::config::BindAddress;
 use clap::Args;
 use distant_core::Map;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Args, Debug, Default, Serialize, Deserialize)]
 pub struct ClientLaunchConfig {
@@ -10,9 +9,14 @@ pub struct ClientLaunchConfig {
     #[serde(flatten)]
     pub distant: ClientLaunchDistantConfig,
 
-    #[clap(flatten)]
+    /// Additional options to provide, typically forwarded to the handler within the manager
+    /// facilitating the launch of a distant server. Options are key-value pairs separated by
+    /// comma.
+    ///
+    /// E.g. `key="value",key2="value2"`
+    #[clap(long, default_value_t)]
     #[serde(flatten)]
-    pub ssh: ClientLaunchSshConfig,
+    pub options: Map,
 }
 
 impl From<Map> for ClientLaunchConfig {
@@ -29,20 +33,7 @@ impl From<Map> for ClientLaunchConfig {
                     .and_then(|x| x.parse::<bool>().ok())
                     .unwrap_or_default(),
             },
-            ssh: ClientLaunchSshConfig {
-                bin: map.remove("ssh.bin"),
-                #[cfg(any(feature = "libssh", feature = "ssh2"))]
-                backend: map
-                    .remove("ssh.backend")
-                    .and_then(|x| x.parse::<distant_ssh2::SshBackend>().ok()),
-                external: map
-                    .remove("ssh.external")
-                    .and_then(|x| x.parse::<bool>().ok())
-                    .unwrap_or_default(),
-                identity_file: map
-                    .remove("ssh.identity_file")
-                    .and_then(|x| x.parse::<PathBuf>().ok()),
-            },
+            options: map,
         }
     }
 }
@@ -68,23 +59,7 @@ impl From<ClientLaunchConfig> for Map {
             config.distant.no_shell.to_string(),
         );
 
-        if let Some(x) = config.ssh.bin {
-            this.insert("ssh.bin".to_string(), x);
-        }
-
-        #[cfg(any(feature = "libssh", feature = "ssh2"))]
-        if let Some(x) = config.ssh.backend {
-            this.insert("ssh.backend".to_string(), x.to_string());
-        }
-
-        this.insert("ssh.external".to_string(), config.ssh.external.to_string());
-
-        if let Some(x) = config.ssh.identity_file {
-            this.insert(
-                "ssh.identity_file".to_string(),
-                x.to_string_lossy().to_string(),
-            );
-        }
+        this.extend(config.options);
 
         this
     }
@@ -119,26 +94,4 @@ pub struct ClientLaunchDistantConfig {
     /// If specified, will not launch distant using a login shell but instead execute it directly
     #[clap(long)]
     pub no_shell: bool,
-}
-
-#[derive(Args, Debug, Default, Serialize, Deserialize)]
-pub struct ClientLaunchSshConfig {
-    /// Path to ssh program on local machine to execute when using external ssh
-    #[clap(name = "ssh", long)]
-    pub bin: Option<String>,
-
-    /// If using native ssh integration, represents the backend
-    #[cfg(any(feature = "libssh", feature = "ssh2"))]
-    #[clap(name = "ssh-backend", long)]
-    pub backend: Option<distant_ssh2::SshBackend>,
-
-    /// If specified, will use the external ssh program to launch the server
-    /// instead of the native integration; does nothing if the ssh2 feature is
-    /// not enabled as there is no other option than external ssh
-    #[clap(name = "ssh-external", long)]
-    pub external: bool,
-
-    /// Explicit identity file to use with ssh
-    #[clap(name = "ssh-identity-file", short = 'i', long)]
-    pub identity_file: Option<PathBuf>,
 }

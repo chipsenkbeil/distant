@@ -23,9 +23,9 @@ fn setup() -> (AuthClient, mpsc::Receiver<AuthRequest>) {
 
     // Make a server that echos questions back as answers and only verifies the text "yes"
     let server = AuthServer {
-        on_challenge: move |questions, extra| {
+        on_challenge: move |questions, options| {
             let questions_2 = questions.clone();
-            tx.try_send(AuthRequest::Challenge { questions, extra })
+            tx.try_send(AuthRequest::Challenge { questions, options })
                 .unwrap();
             questions_2.into_iter().map(|x| x.text).collect()
         },
@@ -75,12 +75,12 @@ async fn client_should_be_able_to_challenge_against_server() {
     // Verify that the server received the request
     let request = rx.recv().await.unwrap();
     match request {
-        AuthRequest::Challenge { questions, extra } => {
+        AuthRequest::Challenge { questions, options } => {
             assert_eq!(questions.len(), 1);
             assert_eq!(questions[0].text, "hello");
-            assert_eq!(questions[0].extra, HashMap::new());
+            assert_eq!(questions[0].options, HashMap::new());
 
-            assert_eq!(extra, HashMap::new());
+            assert_eq!(options, HashMap::new());
         }
         x => panic!("Unexpected request received by server: {:?}", x),
     }

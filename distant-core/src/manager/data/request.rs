@@ -1,5 +1,5 @@
-use super::{ChannelId, ConnectionId, Destination, Extra};
-use crate::{DistantMsg, DistantRequestData};
+use super::{ChannelId, ConnectionId, Destination};
+use crate::{DistantMsg, DistantRequestData, Map};
 use distant_net::Request;
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +12,9 @@ pub enum ManagerRequest {
         // NOTE: Boxed per clippy's large_enum_variant warning
         destination: Box<Destination>,
 
-        /// Extra details specific to the connection
+        /// Additional options specific to the connection
         #[cfg_attr(feature = "clap", clap(short, long, action = clap::ArgAction::Append))]
-        extra: Extra,
+        options: Map,
     },
 
     /// Initiate a connection through the manager
@@ -22,9 +22,9 @@ pub enum ManagerRequest {
         // NOTE: Boxed per clippy's large_enum_variant warning
         destination: Box<Destination>,
 
-        /// Extra details specific to the connection
+        /// Additional options specific to the connection
         #[cfg_attr(feature = "clap", clap(short, long, action = clap::ArgAction::Append))]
-        extra: Extra,
+        options: Map,
     },
 
     /// Opens a channel for communication with a server

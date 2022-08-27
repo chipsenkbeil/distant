@@ -1,6 +1,7 @@
 use crate::{
+    data::Map,
     manager::{
-        data::{ChannelId, ConnectionId, Destination, Extra},
+        data::{ChannelId, ConnectionId, Destination},
         BoxedDistantReader, BoxedDistantWriter,
     },
     DistantMsg, DistantRequestData, DistantResponseData, ManagerResponse,
@@ -14,7 +15,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 pub struct DistantManagerConnection {
     pub id: ConnectionId,
     pub destination: Destination,
-    pub extra: Extra,
+    pub options: Map,
     tx: mpsc::Sender<StateMachine>,
     reader_task: JoinHandle<()>,
     writer_task: JoinHandle<()>,
@@ -84,7 +85,7 @@ enum StateMachine {
 impl DistantManagerConnection {
     pub fn new(
         destination: Destination,
-        extra: Extra,
+        options: Map,
         mut writer: BoxedDistantWriter,
         mut reader: BoxedDistantReader,
     ) -> Self {
@@ -162,7 +163,7 @@ impl DistantManagerConnection {
         Self {
             id: connection_id,
             destination,
-            extra,
+            options,
             tx,
             reader_task,
             writer_task,

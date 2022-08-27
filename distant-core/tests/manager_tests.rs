@@ -1,7 +1,7 @@
 use distant_core::{
     net::{FramedTransport, InmemoryTransport, IntoSplit, OneshotListener, PlainCodec},
     BoxedDistantReader, BoxedDistantWriter, Destination, DistantApiServer, DistantChannelExt,
-    DistantManager, DistantManagerClient, DistantManagerClientConfig, DistantManagerConfig, Extra,
+    DistantManager, DistantManagerClient, DistantManagerClientConfig, DistantManagerConfig, Map,
 };
 use std::io;
 
@@ -54,7 +54,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     let id = client
         .connect(
             "scheme://host".parse::<Destination>().unwrap(),
-            "key=value".parse::<Extra>().unwrap(),
+            "key=value".parse::<Map>().unwrap(),
         )
         .await
         .expect("Failed to connect to a remote server");
@@ -74,7 +74,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         .expect("Failed to get info about connection");
     assert_eq!(info.id, id);
     assert_eq!(info.destination.to_string(), "scheme://host");
-    assert_eq!(info.extra, "key=value".parse::<Extra>().unwrap());
+    assert_eq!(info.options, "key=value".parse::<Map>().unwrap());
 
     // Create a new channel and request some data
     let mut channel = client

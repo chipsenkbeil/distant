@@ -83,18 +83,18 @@ impl AuthClient {
     pub async fn challenge(
         &mut self,
         questions: Vec<AuthQuestion>,
-        extra: HashMap<String, String>,
+        options: HashMap<String, String>,
     ) -> io::Result<Vec<String>> {
         trace!(
-            "AuthClient::challenge(questions = {:?}, extra = {:?})",
+            "AuthClient::challenge(questions = {:?}, options = {:?})",
             questions,
-            extra
+            options
         );
 
         // Perform JIT handshake if enabled
         self.jit_handshake().await?;
 
-        let payload = AuthRequest::Challenge { questions, extra };
+        let payload = AuthRequest::Challenge { questions, options };
         let encrypted_payload = self.serialize_and_encrypt(&payload)?;
         let response = self.inner.send(Auth::Msg { encrypted_payload }).await?;
 
@@ -281,7 +281,7 @@ mod tests {
                         AuthQuestion::new("question1".to_string()),
                         AuthQuestion {
                             text: "question2".to_string(),
-                            extra: vec![("key2".to_string(), "value2".to_string())]
+                            options: vec![("key2".to_string(), "value2".to_string())]
                                 .into_iter()
                                 .collect(),
                         },
@@ -360,7 +360,7 @@ mod tests {
                         AuthQuestion::new("question1".to_string()),
                         AuthQuestion {
                             text: "question2".to_string(),
-                            extra: vec![("key2".to_string(), "value2".to_string())]
+                            options: vec![("key2".to_string(), "value2".to_string())]
                                 .into_iter()
                                 .collect(),
                         },
@@ -398,14 +398,14 @@ mod tests {
         match request.payload {
             Auth::Msg { encrypted_payload } => {
                 match decrypt_and_deserialize(&mut codec, &encrypted_payload).unwrap() {
-                    AuthRequest::Challenge { questions, extra } => {
+                    AuthRequest::Challenge { questions, options } => {
                         assert_eq!(
                             questions,
                             vec![
                                 AuthQuestion::new("question1".to_string()),
                                 AuthQuestion {
                                     text: "question2".to_string(),
-                                    extra: vec![("key2".to_string(), "value2".to_string())]
+                                    options: vec![("key2".to_string(), "value2".to_string())]
                                         .into_iter()
                                         .collect(),
                                 },
@@ -413,7 +413,7 @@ mod tests {
                         );
 
                         assert_eq!(
-                            extra,
+                            options,
                             vec![("key".to_string(), "value".to_string())]
                                 .into_iter()
                                 .collect(),

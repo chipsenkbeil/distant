@@ -1,4 +1,5 @@
-use super::{ConnectionId, Destination, Extra};
+use super::{ConnectionId, Destination};
+use crate::data::Map;
 use serde::{Deserialize, Serialize};
 
 /// Information about a specific connection
@@ -10,6 +11,6 @@ pub struct ConnectionInfo {
     /// Destination with which this connection is associated
     pub destination: Destination,
 
-    /// Extra information associated with this connection
-    pub extra: Extra,
+    /// Additional options associated with this connection
+    pub options: Map,
 }

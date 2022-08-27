@@ -42,10 +42,11 @@ impl Client {
             on_challenge: {
                 let tx = tx.clone();
                 let rx = rx.clone();
-                Box::new(move |questions, extra| {
+                Box::new(move |questions, options| {
                     let question_cnt = questions.len();
 
-                    if let Err(x) = tx.send_blocking(&AuthRequest::Challenge { questions, extra }) {
+                    if let Err(x) = tx.send_blocking(&AuthRequest::Challenge { questions, options })
+                    {
                         error!("{}", x);
                         return (0..question_cnt)
                             .into_iter()

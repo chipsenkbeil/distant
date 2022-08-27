@@ -6,7 +6,7 @@ use distant_core::{
         XChaCha20Poly1305Codec,
     },
     BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, ConnectHandler, Destination,
-    Extra, LaunchHandler,
+    LaunchHandler, Map,
 };
 use log::*;
 use std::{
@@ -49,11 +49,11 @@ impl LaunchHandler for ManagerLaunchHandler {
     async fn launch(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         _auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        trace!("Handling launch of {destination} with extra '{extra}'");
-        let config = ClientLaunchConfig::from(extra.clone());
+        debug!("Handling launch of {destination} with options '{options}'");
+        let config = ClientLaunchConfig::from(options.clone());
 
         // Get the path to the distant binary, ensuring it exists and is executable
         let program = which::which(match config.distant.bin {
@@ -86,13 +86,13 @@ impl LaunchHandler for ManagerLaunchHandler {
             args.push(port.to_string());
         }
 
-        // Add any extra arguments to the command
-        if let Some(extra_args) = config.distant.args {
+        // Add any options arguments to the command
+        if let Some(options_args) = config.distant.args {
             // NOTE: Split arguments based on whether we are running on windows or unix
             args.extend(if cfg!(windows) {
-                winsplit::split(&extra_args)
+                winsplit::split(&options_args)
             } else {
-                shell_words::split(&extra_args)
+                shell_words::split(&options_args)
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?
             });
         }
@@ -162,14 +162,14 @@ impl LaunchHandler for SshLaunchHandler {
     async fn launch(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<Destination> {
-        trace!("Handling launch of {destination} with extra '{extra}'");
-        let config = ClientLaunchConfig::from(extra.clone());
+        debug!("Handling launch of {destination} with options '{options}'");
+        let config = ClientLaunchConfig::from(options.clone());
 
         use distant_ssh2::DistantLaunchOpts;
-        let mut ssh = load_ssh(destination, extra)?;
+        let mut ssh = load_ssh(destination, options)?;
         let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
         let opts = {
@@ -178,7 +178,7 @@ impl LaunchHandler for SshLaunchHandler {
                 binary: config.distant.bin.unwrap_or(opts.binary),
                 args: config.distant.args.unwrap_or(opts.args),
                 use_login_shell: !config.distant.no_shell,
-                timeout: match extra.get("timeout") {
+                timeout: match options.get("timeout") {
                     Some(s) => std::time::Duration::from_millis(
                         s.parse::<u64>().map_err(|_| invalid("timeout"))?,
                     ),
@@ -218,10 +218,10 @@ impl ConnectHandler for DistantConnectHandler {
     async fn connect(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        trace!("Handling connect of {destination} with extra '{extra}'");
+        debug!("Handling connect of {destination} with options '{options}'");
         let host = destination.host.to_string();
         let port = destination.port.ok_or_else(|| missing("port"))?;
 
@@ -246,13 +246,13 @@ impl ConnectHandler for DistantConnectHandler {
             ));
         }
 
-        // Use provided password or extra key if available, otherwise ask for it, and produce a
+        // Use provided password or options key if available, otherwise ask for it, and produce a
         // codec using the key
         let codec = {
             let key = destination
                 .password
                 .as_deref()
-                .or_else(|| extra.get("key").map(|s| s.as_str()));
+                .or_else(|| options.get("key").map(|s| s.as_str()));
 
             let key = match key {
                 Some(key) => key.parse::<SecretKey32>().map_err(|_| invalid("key"))?,
@@ -290,11 +290,11 @@ impl ConnectHandler for SshConnectHandler {
     async fn connect(
         &self,
         destination: &Destination,
-        extra: &Extra,
+        options: &Map,
         auth_client: &mut AuthClient,
     ) -> io::Result<BoxedDistantWriterReader> {
-        trace!("Handling connect of {destination} with extra '{extra}'");
-        let mut ssh = load_ssh(destination, extra)?;
+        debug!("Handling connect of {destination} with options '{options}'");
+        let mut ssh = load_ssh(destination, options)?;
         let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
         ssh.into_distant_writer_reader().await
@@ -316,22 +316,22 @@ impl<'a> AuthClientSshAuthHandler<'a> {
 impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     async fn on_authenticate(&self, event: distant_ssh2::SshAuthEvent) -> io::Result<Vec<String>> {
         use std::collections::HashMap;
-        let mut extra = HashMap::new();
+        let mut options = HashMap::new();
         let mut questions = Vec::new();
 
         for prompt in event.prompts {
-            let mut extra = HashMap::new();
-            extra.insert("echo".to_string(), prompt.echo.to_string());
+            let mut options = HashMap::new();
+            options.insert("echo".to_string(), prompt.echo.to_string());
             questions.push(AuthQuestion {
                 text: prompt.prompt,
-                extra,
+                options,
             });
         }
 
-        extra.insert("instructions".to_string(), event.instructions);
-        extra.insert("username".to_string(), event.username);
+        options.insert("instructions".to_string(), event.instructions);
+        options.insert("username".to_string(), event.username);
 
-        self.0.lock().await.challenge(questions, extra).await
+        self.0.lock().await.challenge(questions, options).await
     }
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
@@ -364,27 +364,30 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
 }
 
 #[cfg(any(feature = "libssh", feature = "ssh2"))]
-fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2::Ssh> {
-    trace!("load_ssh({destination}, {extra}");
+fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh2::Ssh> {
+    trace!("load_ssh({destination}, {options})");
     use distant_ssh2::{Ssh, SshOpts};
 
     let host = destination.host.to_string();
 
     let opts = SshOpts {
-        backend: match extra.get("backend").or_else(|| extra.get("ssh.backend")) {
+        backend: match options
+            .get("backend")
+            .or_else(|| options.get("ssh.backend"))
+        {
             Some(s) => s.parse().map_err(|_| invalid("backend"))?,
             None => Default::default(),
         },
 
-        identity_files: extra
+        identity_files: options
             .get("identity_files")
-            .or_else(|| extra.get("ssh.identity_files"))
+            .or_else(|| options.get("ssh.identity_files"))
             .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
             .unwrap_or_default(),
 
-        identities_only: match extra
+        identities_only: match options
             .get("identities_only")
-            .or_else(|| extra.get("ssh.identities_only"))
+            .or_else(|| options.get("ssh.identities_only"))
         {
             Some(s) => Some(s.parse().map_err(|_| invalid("identities_only"))?),
             None => None,
@@ -392,20 +395,23 @@ fn load_ssh(destination: &Destination, extra: &Extra) -> io::Result<distant_ssh2
 
         port: destination.port,
 
-        proxy_command: extra
+        proxy_command: options
             .get("proxy_command")
-            .or_else(|| extra.get("ssh.proxy_command"))
+            .or_else(|| options.get("ssh.proxy_command"))
             .cloned(),
 
         user: destination.username.clone(),
 
-        user_known_hosts_files: extra
+        user_known_hosts_files: options
             .get("user_known_hosts_files")
-            .or_else(|| extra.get("ssh.user_known_hosts_files"))
+            .or_else(|| options.get("ssh.user_known_hosts_files"))
             .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
             .unwrap_or_default(),
 
-        verbose: match extra.get("verbose").or_else(|| extra.get("ssh.verbose")) {
+        verbose: match options
+            .get("verbose")
+            .or_else(|| options.get("ssh.verbose"))
+        {
             Some(s) => s.parse().map_err(|_| invalid("verbose"))?,
             None => false,
         },
