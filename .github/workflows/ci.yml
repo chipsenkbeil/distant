@@ -36,6 +36,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
+      - name: distant-net (all features)
+        run: cargo clippy -p distant-net --all-targets --verbose --all-features
       - name: distant-core (all features)
         run: cargo clippy -p distant-core --all-targets --verbose --all-features
       - name: distant-ssh2 (all features)
@@ -142,22 +144,24 @@ jobs:
         shell: pwsh
         if: matrix.os == 'windows-latest'
       - name: Run net tests (default features)
-        run: cargo nextest run --profile ci --release --verbose -p distant-net
-      - name: Run core tests (default features)
-        run: cargo nextest run --profile ci --release --verbose -p distant-core
+        run: cargo nextest run --profile ci --release -p distant-net
+      - name: Build core (default features)
+        run: cargo build --release -p distant-core
       - name: Run core tests (all features)
-        run: cargo nextest run --profile ci --release --verbose --all-features -p distant-core
+        run: cargo nextest run --profile ci --release --all-features -p distant-core
       - name: Ensure /run/sshd exists on Unix
         run: mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
-      - name: Run ssh2 client tests (default features)
-        run: cargo nextest run --profile ci --release --verbose -p distant-ssh2 ssh2::client
+      - name: Build ssh2 (default features)
+        run: cargo build --release -p distant-ssh2
       - name: Run ssh2 client tests (all features)
-        run: cargo nextest run --profile ci --release --verbose --all-features -p distant-ssh2 ssh2::client
-      - name: Run CLI tests
-        run: cargo nextest run --profile ci --release --verbose
-      - name: Run CLI tests (no default features)
-        run: cargo nextest run --profile ci --release --verbose --no-default-features
+        run: cargo nextest run --profile ci --release --all-features -p distant-ssh2 ssh2::client
+      - name: Build CLI (no default features)
+        run: cargo build --release --no-default-features
+      - name: Build CLI (default features)
+        run: cargo build --release
+      - name: Run CLI tests (all features)
+        run: cargo nextest run --profile ci --release --all-features
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
@@ -185,7 +189,5 @@ jobs:
         run: |
           cargo install --path .
           echo "DISTANT_PATH=$HOME/.cargo/bin/distant" >> $GITHUB_ENV
-      - name: Run ssh2 launch tests (default features)
-        run: cargo nextest run --profile ci --release --verbose -p distant-ssh2 ssh2::launched
       - name: Run ssh2 launch tests (all features)
-        run: cargo nextest run --profile ci --release --verbose --all-features -p distant-ssh2 ssh2::launched
+        run: cargo nextest run --profile ci --release --all-features -p distant-ssh2 ssh2::launched
