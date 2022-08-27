@@ -128,7 +128,7 @@ where
 
 /// Determines if using windows by checking the OS environment variable
 pub async fn is_windows(session: &Session) -> io::Result<bool> {
-    let output = execute_output(session, "cmd.exe /C echo %OS%", SSH_EXEC_TIMEOUT).await?;
+    let output = execute_output(session, "cmd.exe /B /Q /C echo %OS%", SSH_EXEC_TIMEOUT).await?;
 
     fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
         for i in 0..slice.len() {
@@ -151,7 +151,12 @@ pub async fn is_windows(session: &Session) -> io::Result<bool> {
 /// Query remote system for name of current user
 pub async fn query_username(session: &Session, is_windows: bool) -> io::Result<String> {
     let output = if is_windows {
-        execute_output(session, "cmd.exe /C echo %username%", SSH_EXEC_TIMEOUT).await?
+        execute_output(
+            session,
+            "cmd.exe /B /Q /C echo %username%",
+            SSH_EXEC_TIMEOUT,
+        )
+        .await?
     } else {
         execute_output(session, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?
     };
@@ -162,7 +167,7 @@ pub async fn query_username(session: &Session, is_windows: bool) -> io::Result<S
 /// Query remote system for the default shell of current user
 pub async fn query_shell(session: &Session, is_windows: bool) -> io::Result<String> {
     let output = if is_windows {
-        execute_output(session, "cmd.exe /C echo %ComSpec%", SSH_EXEC_TIMEOUT).await?
+        execute_output(session, "cmd.exe /B /Q /C echo %ComSpec%", SSH_EXEC_TIMEOUT).await?
     } else {
         execute_output(session, "/bin/sh -c 'echo $SHELL'", SSH_EXEC_TIMEOUT).await?
     };
