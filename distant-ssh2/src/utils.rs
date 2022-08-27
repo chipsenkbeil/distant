@@ -55,8 +55,14 @@ pub async fn execute_output(
         .await
         .map_err(to_other_error)?;
 
+    // NOTE: There is a bug where if the ssh backend is libssh, the non-blocking readers
+    //       will never report Ok(0) and are always Err(WouldBlock). So, we want to track
+    //       when a process exits and then cancel the readers if we receive Err(Wouldblock)
+    let (tx, rx) = tokio::sync::watch::channel(false);
+
     macro_rules! spawn_reader {
         ($reader:ident) => {{
+            let rx = rx.clone();
             $reader.set_non_blocking(true).map_err(to_other_error)?;
             tokio::spawn(async move {
                 use std::io::Read;
@@ -67,6 +73,11 @@ pub async fn execute_output(
                         Ok(n) if n > 0 => bytes.extend(&buf[..n]),
                         Ok(_) => break Ok(bytes),
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                            // NOTE: This only exists because of the above bug with libssh!
+                            if *rx.borrow() {
+                                break Ok(bytes);
+                            }
+
                             tokio::time::sleep(Duration::from_millis(READER_PAUSE_MILLIS)).await;
                         }
                         Err(x) => break Err(x),
@@ -82,6 +93,9 @@ pub async fn execute_output(
 
     // Wait for process to conclude
     let status = child.async_wait().compat().await.map_err(to_other_error)?;
+
+    // Notify our handles that we are done
+    let _ = tx.send(true);
 
     // Wait for our handles to conclude (max of timeout if provided)
     let (stdout, stderr) = match timeout {
