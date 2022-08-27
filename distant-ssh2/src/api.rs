@@ -540,7 +540,12 @@ impl DistantApi for SshDistantApi {
         //       a program based on the platform and hope that it applies
         let is_windows = self.is_windows().await?;
         let cmd = if is_windows {
-            format!("xcopy {:?} {:?} /s /e", src, dst)
+            // /S /E - copies directories & subdirectories including empty ones
+            // /H    - copy hidden and system files
+            // /O    - copy file ownership and ACL information
+            // /Q    - don't display filenames while copying
+            // /Y    - suppresses prompting about overwriting files
+            format!("xcopy {:?} {:?} /S /E /H/ /O /Q /Y", src, dst)
         } else {
             format!("cp -R {:?} {:?}", src, dst)
         };
