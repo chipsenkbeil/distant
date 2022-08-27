@@ -547,7 +547,11 @@ impl DistantApi for SshDistantApi {
 
         let output = utils::execute_output(&self.session, &cmd, COPY_COMPLETE_TIMEOUT).await?;
 
-        if output.success {
+        // NOTE: For some reason, powershell.exe is not returning an error upon failure, so we
+        //       have to check if we got some stderr as output and consider that a failure
+        let success = output.success && (!is_windows || output.stderr.is_empty());
+
+        if success {
             Ok(())
         } else {
             Err(io::Error::new(
