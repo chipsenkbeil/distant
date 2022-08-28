@@ -3,8 +3,8 @@ use crate::{
         RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Watcher,
     },
     data::{
-        ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Environment,
-        Error as Failure, Metadata, PtySize, SystemInfo,
+        Capabilities, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData,
+        Environment, Error as Failure, Metadata, PtySize, SystemInfo,
     },
     DistantMsg,
 };
@@ -33,6 +33,9 @@ pub trait DistantChannelExt {
         path: impl Into<PathBuf>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()>;
+
+    /// Retrieves server capabilities
+    fn capabilities(&mut self) -> AsyncReturn<'_, Capabilities>;
 
     /// Copies a remote file or directory from src to dst
     fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
@@ -182,6 +185,18 @@ impl DistantChannelExt
             self,
             DistantRequestData::FileAppendText { path: path.into(), text: data.into() },
             @ok
+        )
+    }
+
+    fn capabilities(&mut self) -> AsyncReturn<'_, Capabilities> {
+        make_body!(
+            self,
+            DistantRequestData::Capabilities {},
+            |data| match data {
+                DistantResponseData::Capabilities { supported } => Ok(supported),
+                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                _ => Err(mismatched_response()),
+            }
         )
     }
 
