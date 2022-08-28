@@ -571,6 +571,10 @@ impl SshAuthHandler for MockSshAuthHandler {
 pub fn sshd() -> Sshd {
     let mut i = 0;
     loop {
+        if i == SPAWN_RETRY_CNT {
+            panic!("Exceeded retry count!");
+        }
+
         match Sshd::spawn(Default::default()) {
             // Succeeded, so wait a bit, check that is still alive, and then continue
             Ok(sshd) => {
@@ -583,7 +587,8 @@ pub fn sshd() -> Sshd {
                     // We want to print out the config file from sshd in case it sheds clues on problem
                     sshd.print_config_file();
 
-                    panic!();
+                    // Skip this spawn and try again
+                    continue;
                 }
 
                 return sshd;
