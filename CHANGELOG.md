@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SystemInfo` via ssh backend now detects and reports username and shell
+- `SystemInfo` via ssh backend now reports os when windows detected
+
 ### Changed
 
 - `SystemInfo` data type now includes two additional fields: `username` and
@@ -23,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolving the hanging that occurred for Windows `cmd.exe` and
   `powershell.exe` upon exit
 - ssh launch with login shell now only uses `sh` when remote family is `unix`
+- ssh backend implementation of copy now works more widely across windows
+  systems by switching to `powershell.exe` to perform copy
 
 ## [0.18.0] - 2022-08-18
 ### Changed
