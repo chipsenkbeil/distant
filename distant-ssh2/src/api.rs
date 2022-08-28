@@ -3,6 +3,7 @@ use crate::{
     utils::{self, to_other_error},
 };
 use async_compat::CompatExt;
+use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::{
     data::{
@@ -14,11 +15,15 @@ use log::*;
 use std::{
     collections::{HashMap, HashSet},
     io,
-    path::{Component, PathBuf},
+    path::PathBuf,
     sync::{Arc, Weak},
+    time::Duration,
 };
 use tokio::sync::{mpsc, RwLock};
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
+
+/// Time after copy completes to wait for stdout/stderr to close
+const COPY_COMPLETE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 pub struct ConnectionState {
@@ -51,6 +56,17 @@ impl SshDistantApi {
             session,
             processes: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Checks if the remote server is a Windows machine
+    async fn is_windows(&self) -> io::Result<bool> {
+        // We cache the request as it should not change for the lifetime of the ssh connection
+        static IS_WINDOWS: OnceCell<bool> = OnceCell::new();
+
+        // Look up whether the remote system is windows
+        Ok(*IS_WINDOWS
+            .get_or_try_init(utils::is_windows(&self.session))
+            .await?)
     }
 }
 
@@ -521,44 +537,39 @@ impl DistantApi for SshDistantApi {
         );
 
         // NOTE: SFTP does not provide a remote-to-remote copy method, so we instead execute
-        //       a program and hope that it applies, starting with the Unix/BSD/GNU cp method
-        //       and switch to Window's xcopy if the former fails
-
-        // Unix cp -R <src> <dst>
-        let unix_result = self
-            .session
-            .exec(&format!("cp -R {:?} {:?}", src, dst), None)
-            .compat()
-            .await;
-
-        let failed = unix_result.is_err() || {
-            let exit_status = unix_result.unwrap().child.async_wait().compat().await;
-            exit_status.is_err() || !exit_status.unwrap().success()
+        //       a program based on the platform and hope that it applies
+        let is_windows = self.is_windows().await?;
+        let output = if is_windows {
+            utils::powershell_output(
+                &self.session,
+                &format!("Copy-Item -Path {src:?} -Destination {dst:?} -Recurse"),
+                COPY_COMPLETE_TIMEOUT,
+            )
+            .await?
+        } else {
+            utils::execute_output(
+                &self.session,
+                &format!("cp -R {src:?} {dst:?}"),
+                COPY_COMPLETE_TIMEOUT,
+            )
+            .await?
         };
 
-        // Windows xcopy <src> <dst> /s /e
-        if failed {
-            let exit_status = self
-                .session
-                .exec(&format!("xcopy {:?} {:?} /s /e", src, dst), None)
-                .compat()
-                .await
-                .map_err(to_other_error)?
-                .child
-                .async_wait()
-                .compat()
-                .await
-                .map_err(to_other_error)?;
+        // NOTE: For some reason, powershell.exe is not returning an error upon failure, so we
+        //       have to check if we got some stderr as output and consider that a failure
+        let success = output.success && (!is_windows || output.stderr.is_empty());
 
-            if !exit_status.success() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Unix and windows copy commands failed",
-                ));
-            }
+        if success {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Copy command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ))
         }
-
-        Ok(())
     }
 
     async fn rename(
@@ -810,38 +821,56 @@ impl DistantApi for SshDistantApi {
     }
 
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+        // We cache each of these requested values since they should not change for the
+        // lifetime of the ssh connection
+        static CURRENT_DIR: OnceCell<PathBuf> = OnceCell::new();
+        static USERNAME: OnceCell<String> = OnceCell::new();
+        static SHELL: OnceCell<String> = OnceCell::new();
+
         debug!("[Conn {}] Reading system information", ctx.connection_id);
 
+        // Look up whether the remote system is windows
+        let is_windows = self.is_windows().await?;
+
         // Look up the current directory
-        let current_dir = utils::canonicalize(&self.session.sftp(), ".").await?;
+        let current_dir = CURRENT_DIR
+            .get_or_try_init(async move {
+                let current_dir: PathBuf = utils::canonicalize(&self.session.sftp(), ".").await?;
 
-        // TODO: Ideally, we would determine the family using something like the following:
-        //
-        //      cmd.exe /C echo %OS%
-        //
-        //      Determine OS by printing OS variable (works with Windows 2000+)
-        //      If it matches Windows_NT, then we are on windows
-        //
-        // However, the above is not working for whatever reason (always has success == false); so,
-        // we're purely using a check if we have a drive letter on the canonicalized path to
-        // determine if on windows for now.
-        let is_windows = current_dir
-            .components()
-            .any(|c| matches!(c, Component::Prefix(_)));
+                // If windows, we need to see if we got a weird directory from ssh in the form of
+                // /C:/... or /C/... as examples. Easiest way is to convert into a WindowsPath,
+                // check if the first component is a root dir, and then make a new windows path to
+                // see if it now starts with a prefix.
+                let current_dir: PathBuf = current_dir
+                    .to_str()
+                    .and_then(utils::convert_to_windows_path_string)
+                    .map(PathBuf::from)
+                    .unwrap_or(current_dir);
 
-        let family = if is_windows { "windows" } else { "unix" }.to_string();
+                Result::<_, io::Error>::Ok(current_dir)
+            })
+            .await?
+            .clone();
+
+        // Look up username and shell
+        let username = USERNAME
+            .get_or_try_init(utils::query_username(&self.session, is_windows))
+            .await?
+            .clone();
+
+        let shell = SHELL
+            .get_or_try_init(utils::query_shell(&self.session, is_windows))
+            .await?
+            .clone();
 
         Ok(SystemInfo {
-            family,
-            os: "".to_string(),
+            family: if is_windows { "windows" } else { "unix" }.to_string(),
+            os: if is_windows { "windows" } else { "" }.to_string(),
             arch: "".to_string(),
             current_dir,
             main_separator: if is_windows { '\\' } else { '/' },
-
-            // TODO: We should be able to calculate these once the problem described with SIGPIPE
-            //       is resolved, but for now we will just return empty strings
-            username: "".to_string(),
-            shell: "".to_string(),
+            username,
+            shell,
         })
     }
 }
