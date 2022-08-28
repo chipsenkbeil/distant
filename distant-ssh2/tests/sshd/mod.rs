@@ -433,6 +433,13 @@ impl Sshd {
         config_path: impl AsRef<Path>,
         log_path: impl AsRef<Path>,
     ) -> anyhow::Result<Result<Child, (Option<i32>, String)>> {
+        // Sshd doesn't reliably fail when binding to a taken port, so we do a TCP check first
+        // to try to ensure it is available
+        drop(
+            std::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::LOCALHOST), port))
+                .with_context(|| format!("Port {port} already taken"))?,
+        );
+
         let child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
