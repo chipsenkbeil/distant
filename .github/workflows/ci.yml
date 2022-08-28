@@ -171,7 +171,6 @@ jobs:
         include:
           - { rust: stable, os: macos-latest }
           - { rust: stable, os: ubuntu-latest }
-          - { rust: 1.61.0, os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v3
       - name: Install Rust ${{ matrix.rust }}

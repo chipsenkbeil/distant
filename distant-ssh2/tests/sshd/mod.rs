@@ -46,6 +46,12 @@ const PORT_RANGE: (u16, u16) = (49152, 65535);
 
 static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 
+/// Time to wait after spawning sshd before continuing. Will check if still alive
+const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
+
+/// Maximum times to retry spawning sshd when it fails
+const SPAWN_RETRY_CNT: usize = 3;
+
 pub struct SshKeygen;
 
 impl SshKeygen {
@@ -414,7 +420,10 @@ impl Sshd {
                 Err(x) if port == PORT_RANGE.1 => anyhow::bail!(x),
 
                 // Otherwise, try next port
-                Err(_) | Ok(Err(_)) => continue,
+                Err(_) | Ok(Err(_)) => {
+                    eprintln!("sshd could not spawn on port {port}, so trying next port");
+                    continue;
+                }
             }
         }
     }
@@ -448,6 +457,66 @@ impl Sshd {
 
         let result = check(child).context("Sshd encountered problems (after 200ms)")?;
         Ok(result)
+    }
+
+    /// Checks if still alive
+    fn check_is_alive(&self) -> bool {
+        // Check if our sshd process is still running, or if it died and we can report about it
+        let mut child_lock = self.child.lock().unwrap();
+        if let Some(child) = child_lock.take() {
+            match check(child) {
+                Ok(Ok(child)) => {
+                    child_lock.replace(child);
+                    true
+                }
+                Ok(Err((code, msg))) => {
+                    eprintln!(
+                        "sshd died w/ exit code {}: {msg}",
+                        if let Some(code) = code {
+                            code.to_string()
+                        } else {
+                            "[missing]".to_string()
+                        }
+                    );
+                    false
+                }
+                Err(x) => {
+                    eprintln!("Failed to check status of sshd: {x}");
+                    false
+                }
+            }
+        } else {
+            eprintln!("sshd is dead!");
+            false
+        }
+    }
+
+    fn print_log_file(&self) {
+        if let Ok(log) = std::fs::read_to_string(&self.log_file) {
+            eprintln!();
+            eprintln!("====================");
+            eprintln!("= SSHD LOG FILE     ");
+            eprintln!("====================");
+            eprintln!();
+            eprintln!("{log}");
+            eprintln!();
+            eprintln!("====================");
+            eprintln!();
+        }
+    }
+
+    fn print_config_file(&self) {
+        if let Ok(contents) = std::fs::read_to_string(&self.config_file) {
+            eprintln!();
+            eprintln!("====================");
+            eprintln!("= SSHD CONFIG FILE     ");
+            eprintln!("====================");
+            eprintln!();
+            eprintln!("{contents}");
+            eprintln!();
+            eprintln!("====================");
+            eprintln!();
+        }
     }
 }
 
@@ -500,7 +569,35 @@ impl SshAuthHandler for MockSshAuthHandler {
 
 #[fixture]
 pub fn sshd() -> Sshd {
-    Sshd::spawn(Default::default()).expect("Failed to spawn sshd")
+    let mut i = 0;
+    loop {
+        match Sshd::spawn(Default::default()) {
+            // Succeeded, so wait a bit, check that is still alive, and then continue
+            Ok(sshd) => {
+                std::thread::sleep(WAIT_AFTER_SPAWN);
+
+                if !sshd.check_is_alive() {
+                    // We want to print out the log file from sshd in case it sheds clues on problem
+                    sshd.print_log_file();
+
+                    // We want to print out the config file from sshd in case it sheds clues on problem
+                    sshd.print_config_file();
+
+                    panic!();
+                }
+
+                return sshd;
+            }
+
+            // Last attempt failed, so panic with the error encountered
+            Err(x) if i + 1 == SPAWN_RETRY_CNT => panic!("{x}"),
+
+            // Not last attempt, so sleep and then try again
+            Err(_) => std::thread::sleep(WAIT_AFTER_SPAWN),
+        }
+
+        i += 1;
+    }
 }
 
 /// Fixture to establish a client to an SSH server
@@ -608,54 +705,16 @@ async fn load_ssh_client(sshd: &Sshd) -> Ssh {
         }
     }
 
-    // We want to print out the log file from sshd in case it sheds clues on problem
-    if let Ok(log) = std::fs::read_to_string(&sshd.log_file) {
-        eprintln!();
-        eprintln!("====================");
-        eprintln!("= SSHD LOG FILE     ");
-        eprintln!("====================");
-        eprintln!();
-        eprintln!("{log}");
-        eprintln!();
-        eprintln!("====================");
-        eprintln!();
+    // Check if still alive, which will print out messages
+    if sshd.check_is_alive() {
+        eprintln!("sshd is still alive, so something else is going on");
     }
+
+    // We want to print out the log file from sshd in case it sheds clues on problem
+    sshd.print_log_file();
 
     // We want to print out the config file from sshd in case it sheds clues on problem
-    if let Ok(contents) = std::fs::read_to_string(&sshd.config_file) {
-        eprintln!();
-        eprintln!("====================");
-        eprintln!("= SSHD CONFIG FILE     ");
-        eprintln!("====================");
-        eprintln!();
-        eprintln!("{contents}");
-        eprintln!();
-        eprintln!("====================");
-        eprintln!();
-    }
-
-    // Check if our sshd process is still running, or if it died and we can report about it
-    let mut child_lock = sshd.child.lock().unwrap();
-    if let Some(child) = child_lock.take() {
-        match check(child) {
-            Ok(Ok(child)) => {
-                eprintln!("sshd is still alive, so something else is going on");
-                child_lock.replace(child);
-            }
-            Ok(Err((code, msg))) => eprintln!(
-                "sshd died w/ exit code {}: {msg}",
-                if let Some(code) = code {
-                    code.to_string()
-                } else {
-                    "[missing]".to_string()
-                }
-            ),
-            Err(x) => eprintln!("Failed to check status of sshd: {x}"),
-        }
-    } else {
-        eprintln!("sshd is dead!");
-    }
-    drop(child_lock);
+    sshd.print_config_file();
 
     let error = match errors.into_iter().reduce(|x, y| x.context(y)) {
         Some(x) => x.context(msg),

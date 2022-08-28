@@ -9,6 +9,9 @@ use predicates::prelude::*;
 use rstest::*;
 use std::{io, path::Path, time::Duration};
 
+const SETUP_DIR_TIMEOUT: Duration = Duration::from_secs(1);
+const SETUP_DIR_POLL: Duration = Duration::from_millis(50);
+
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
 
@@ -358,7 +361,9 @@ async fn dir_read_should_send_error_if_directory_does_not_exist(
 // /root/sub1/file2
 async fn setup_dir() -> assert_fs::TempDir {
     let root_dir = assert_fs::TempDir::new().unwrap();
-    root_dir.child("file1").touch().unwrap();
+
+    let file1 = root_dir.child("file1");
+    file1.touch().unwrap();
 
     let sub1 = root_dir.child("sub1");
     sub1.create_dir_all().unwrap();
@@ -368,6 +373,27 @@ async fn setup_dir() -> assert_fs::TempDir {
 
     let link1 = root_dir.child("link1");
     link1.symlink_to_file(file2.path()).unwrap();
+
+    // Wait to ensure that everything was set up
+    tokio::time::timeout(SETUP_DIR_TIMEOUT, async {
+        macro_rules! all_exist {
+            () => {{
+                let root_dir_exists = root_dir.exists();
+                let sub1_exists = sub1.exists();
+                let file1_exists = file1.exists();
+                let file2_exists = file2.exists();
+                let link1_exists = link1.exists();
+
+                root_dir_exists && sub1_exists && file1_exists && file2_exists && link1_exists
+            }};
+        }
+
+        while !all_exist!() {
+            tokio::time::sleep(SETUP_DIR_POLL).await;
+        }
+    })
+    .await
+    .expect("Failed to setup dir");
 
     root_dir
 }
