@@ -1,10 +1,13 @@
 use derive_more::{From, IsVariant};
 use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
-use strum::AsRefStr;
+use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 #[cfg(feature = "clap")]
 use strum::VariantNames;
+
+mod capabilities;
+pub use capabilities::*;
 
 mod change;
 pub use change::*;
@@ -138,14 +141,37 @@ impl<T: schemars::JsonSchema> DistantMsg<T> {
 }
 
 /// Represents the payload of a request to be performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, EnumDiscriminants, IsVariant, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "clap", derive(clap::Subcommand))]
+#[strum_discriminants(derive(
+    strum::Display,
+    EnumIter,
+    EnumMessage,
+    EnumString,
+    Hash,
+    PartialOrd,
+    Ord,
+    IsVariant,
+    Serialize,
+    Deserialize
+))]
+#[cfg_attr(
+    feature = "schemars",
+    strum_discriminants(derive(schemars::JsonSchema))
+)]
+#[strum_discriminants(name(CapabilityKind))]
+#[strum_discriminants(strum(serialize_all = "snake_case"))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[cfg_attr(feature = "clap", clap(rename_all = "kebab-case"))]
 pub enum DistantRequestData {
+    /// Retrieve information about the server's capabilities
+    #[strum_discriminants(strum(message = "Supports retrieving capabilities"))]
+    Capabilities {},
+
     /// Reads a file from the specified path on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["cat"]))]
+    #[strum_discriminants(strum(message = "Supports reading binary file"))]
     FileRead {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -153,6 +179,7 @@ pub enum DistantRequestData {
 
     /// Reads a file from the specified path on the remote machine
     /// and treats the contents as text
+    #[strum_discriminants(strum(message = "Supports reading text file"))]
     FileReadText {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -160,6 +187,7 @@ pub enum DistantRequestData {
 
     /// Writes a file, creating it if it does not exist, and overwriting any existing content
     /// on the remote machine
+    #[strum_discriminants(strum(message = "Supports writing binary file"))]
     FileWrite {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -171,6 +199,7 @@ pub enum DistantRequestData {
 
     /// Writes a file using text instead of bytes, creating it if it does not exist,
     /// and overwriting any existing content on the remote machine
+    #[strum_discriminants(strum(message = "Supports writing text file"))]
     FileWriteText {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -180,6 +209,7 @@ pub enum DistantRequestData {
     },
 
     /// Appends to a file, creating it if it does not exist, on the remote machine
+    #[strum_discriminants(strum(message = "Supports appending to binary file"))]
     FileAppend {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -190,6 +220,7 @@ pub enum DistantRequestData {
     },
 
     /// Appends text to a file, creating it if it does not exist, on the remote machine
+    #[strum_discriminants(strum(message = "Supports appending to text file"))]
     FileAppendText {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -200,6 +231,7 @@ pub enum DistantRequestData {
 
     /// Reads a directory from the specified path on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["ls"]))]
+    #[strum_discriminants(strum(message = "Supports reading directory"))]
     DirRead {
         /// The path to the directory on the remote machine
         path: PathBuf,
@@ -238,6 +270,7 @@ pub enum DistantRequestData {
 
     /// Creates a directory on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["mkdir"]))]
+    #[strum_discriminants(strum(message = "Supports creating directory"))]
     DirCreate {
         /// The path to the directory on the remote machine
         path: PathBuf,
@@ -250,6 +283,7 @@ pub enum DistantRequestData {
 
     /// Removes a file or directory on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["rm"]))]
+    #[strum_discriminants(strum(message = "Supports removing files, directories, and symlinks"))]
     Remove {
         /// The path to the file or directory on the remote machine
         path: PathBuf,
@@ -263,6 +297,7 @@ pub enum DistantRequestData {
 
     /// Copies a file or directory on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["cp"]))]
+    #[strum_discriminants(strum(message = "Supports copying files, directories, and symlinks"))]
     Copy {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -273,6 +308,7 @@ pub enum DistantRequestData {
 
     /// Moves/renames a file or directory on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["mv"]))]
+    #[strum_discriminants(strum(message = "Supports renaming files, directories, and symlinks"))]
     Rename {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -282,6 +318,7 @@ pub enum DistantRequestData {
     },
 
     /// Watches a path for changes
+    #[strum_discriminants(strum(message = "Supports watching filesystem for changes"))]
     Watch {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
@@ -310,18 +347,23 @@ pub enum DistantRequestData {
     },
 
     /// Unwatches a path for changes, meaning no additional changes will be reported
+    #[strum_discriminants(strum(message = "Supports unwatching filesystem for changes"))]
     Unwatch {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
     },
 
     /// Checks whether the given path exists
+    #[strum_discriminants(strum(message = "Supports checking if a path exists"))]
     Exists {
         /// The path to the file or directory on the remote machine
         path: PathBuf,
     },
 
     /// Retrieves filesystem metadata for the specified path on the remote machine
+    #[strum_discriminants(strum(
+        message = "Supports retrieving metadata about a file, directory, or symlink"
+    ))]
     Metadata {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
@@ -341,6 +383,7 @@ pub enum DistantRequestData {
 
     /// Spawns a new process on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
+    #[strum_discriminants(strum(message = "Supports spawning a process"))]
     ProcSpawn {
         /// The full command to run including arguments
         #[cfg_attr(feature = "clap", clap(flatten))]
@@ -370,12 +413,14 @@ pub enum DistantRequestData {
 
     /// Kills a process running on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["kill"]))]
+    #[strum_discriminants(strum(message = "Supports killing a spawned process"))]
     ProcKill {
         /// Id of the actively-running process
         id: ProcessId,
     },
 
     /// Sends additional data to stdin of running process
+    #[strum_discriminants(strum(message = "Supports sending stdin to a spawned process"))]
     ProcStdin {
         /// Id of the actively-running process to send stdin data
         id: ProcessId,
@@ -387,6 +432,7 @@ pub enum DistantRequestData {
     },
 
     /// Resize pty of remote process
+    #[strum_discriminants(strum(message = "Supports resizing the pty of a spawned process"))]
     ProcResizePty {
         /// Id of the actively-running process whose pty to resize
         id: ProcessId,
@@ -396,6 +442,7 @@ pub enum DistantRequestData {
     },
 
     /// Retrieve information about the server and the system it is on
+    #[strum_discriminants(strum(message = "Supports retrieving system information"))]
     SystemInfo {},
 }
 
@@ -494,6 +541,9 @@ pub enum DistantResponseData {
 
     /// Response to retrieving information about the server and the system it is on
     SystemInfo(SystemInfo),
+
+    /// Response to retrieving information about the server's capabilities
+    Capabilities { supported: Capabilities },
 }
 
 #[cfg(feature = "schemars")]

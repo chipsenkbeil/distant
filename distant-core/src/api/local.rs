@@ -1,7 +1,7 @@
 use crate::{
     data::{
-        ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize,
-        SystemInfo,
+        Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
+        ProcessId, PtySize, SystemInfo,
     },
     DistantApi, DistantCtx,
 };
@@ -52,6 +52,12 @@ impl DistantApi for LocalDistantApi {
     async fn on_accept(&self, local_data: &mut Self::LocalData) {
         local_data.process_channel = self.state.process.clone_channel();
         local_data.watcher_channel = self.state.watcher.clone_channel();
+    }
+
+    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
+        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
+
+        Ok(Capabilities::all())
     }
 
     async fn read_file(

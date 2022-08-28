@@ -1,6 +1,6 @@
 use crate::{
-    ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerRequest,
-    ManagerResponse, Map,
+    ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities,
+    ManagerRequest, ManagerResponse, Map,
 };
 use async_trait::async_trait;
 use distant_net::{
@@ -217,6 +217,11 @@ impl DistantManager {
         Ok(id)
     }
 
+    /// Retrieves the list of supported capabilities for this manager
+    async fn capabilities(&self) -> io::Result<ManagerCapabilities> {
+        Ok(ManagerCapabilities::all())
+    }
+
     /// Retrieves information about the connection to the server with the specified `id`
     async fn info(&self, id: ConnectionId) -> io::Result<ConnectionInfo> {
         match self.connections.read().await.get(&id) {
@@ -297,6 +302,10 @@ impl Server for DistantManager {
         } = ctx;
 
         let response = match request.payload {
+            ManagerRequest::Capabilities {} => match self.capabilities().await {
+                Ok(supported) => ManagerResponse::Capabilities { supported },
+                Err(x) => ManagerResponse::Error(x.into()),
+            },
             ManagerRequest::Launch {
                 destination,
                 options,

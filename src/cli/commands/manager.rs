@@ -49,6 +49,12 @@ pub enum ManagerSubcommand {
         network: NetworkConfig,
     },
 
+    /// Retrieve a list of capabilities that the manager supports
+    Capabilities {
+        #[clap(flatten)]
+        network: NetworkConfig,
+    },
+
     /// Retrieve information about a specific connection
     Info {
         id: ConnectionId,
@@ -323,6 +329,35 @@ impl ManagerSubcommand {
                     .await
                     .context("Failed to wait on manager")?;
                 info!("Manager is shutting down");
+
+                Ok(())
+            }
+            Self::Capabilities { network } => {
+                let network = network.merge(config.network);
+                debug!("Getting list of capabilities");
+                let caps = Client::new(network)
+                    .connect()
+                    .await
+                    .context("Failed to connect to manager")?
+                    .capabilities()
+                    .await
+                    .context("Failed to get list of capabilities")?;
+
+                #[derive(Tabled)]
+                struct CapabilityRow {
+                    kind: String,
+                    description: String,
+                }
+
+                println!(
+                    "{}",
+                    Table::new(caps.into_sorted_vec().into_iter().map(|cap| {
+                        CapabilityRow {
+                            kind: cap.kind,
+                            description: cap.description,
+                        }
+                    }))
+                );
 
                 Ok(())
             }

@@ -1,3 +1,4 @@
+mod capabilities;
 mod copy;
 mod dir_create;
 mod dir_read;

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `SystemInfo` via ssh backend now detects and reports username and shell
 - `SystemInfo` via ssh backend now reports os when windows detected
+- `Capabilities` request/response for server and manager that report back the
+  capabilities (and descriptions) supported by the server or manager
 
 ### Changed
 

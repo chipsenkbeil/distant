@@ -1,5 +1,6 @@
 use super::data::{
-    ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerRequest, ManagerResponse,
+    ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities, ManagerRequest,
+    ManagerResponse,
 };
 use crate::{
     DistantChannel, DistantClient, DistantMsg, DistantRequestData, DistantResponseData, Map,
@@ -299,6 +300,20 @@ impl DistantManagerClient {
             forward_task,
             mailbox_task,
         })
+    }
+
+    /// Retrieves a list of supported capabilities
+    pub async fn capabilities(&mut self) -> io::Result<ManagerCapabilities> {
+        trace!("capabilities()");
+        let res = self.client.send(ManagerRequest::Capabilities).await?;
+        match res.payload {
+            ManagerResponse::Capabilities { supported } => Ok(supported),
+            ManagerResponse::Error(x) => Err(x.into()),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {:?}", x),
+            )),
+        }
     }
 
     /// Retrieves information about a specific connection

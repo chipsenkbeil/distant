@@ -318,5 +318,21 @@ fn format_shell(data: DistantResponseData) -> Output {
             )
             .into_bytes(),
         ),
+        DistantResponseData::Capabilities { supported } => {
+            #[derive(Tabled)]
+            struct EntryRow {
+                kind: String,
+                description: String,
+            }
+
+            let table = Table::new(supported.into_sorted_vec().into_iter().map(|cap| EntryRow {
+                kind: cap.kind,
+                description: cap.description,
+            }))
+            .with(Style::ascii())
+            .with(Modify::new(Rows::new(..)).with(Alignment::left()));
+
+            Output::Stdout(table.to_string().into_bytes())
+        }
     }
 }

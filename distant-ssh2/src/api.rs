@@ -7,7 +7,8 @@ use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::{
     data::{
-        DirEntry, Environment, FileType, Metadata, ProcessId, PtySize, SystemInfo, UnixMetadata,
+        Capabilities, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize, SystemInfo,
+        UnixMetadata,
     },
     DistantApi, DistantCtx,
 };
@@ -76,6 +77,12 @@ impl DistantApi for SshDistantApi {
 
     async fn on_accept(&self, local_data: &mut Self::LocalData) {
         local_data.global_processes = Arc::downgrade(&self.processes);
+    }
+
+    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
+        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
+
+        Ok(Capabilities::all())
     }
 
     async fn read_file(

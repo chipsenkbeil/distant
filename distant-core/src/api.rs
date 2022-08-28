@@ -1,5 +1,8 @@
 use crate::{
-    data::{ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize, SystemInfo},
+    data::{
+        Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize,
+        SystemInfo,
+    },
     ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
@@ -69,6 +72,14 @@ pub trait DistantApi {
     /// newly-created local data. This is a way to support modifying local data before it is used.
     #[allow(unused_variables)]
     async fn on_accept(&self, local_data: &mut Self::LocalData) {}
+
+    /// Retrieves information about the server's capabilities.
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
+        unsupported("capabilities")
+    }
 
     /// Reads bytes from a file.
     ///
@@ -488,6 +499,12 @@ where
     D: Send + Sync,
 {
     match request {
+        DistantRequestData::Capabilities {} => server
+            .api
+            .capabilities(ctx)
+            .await
+            .map(|supported| DistantResponseData::Capabilities { supported })
+            .unwrap_or_else(DistantResponseData::from),
         DistantRequestData::FileRead { path } => server
             .api
             .read_file(ctx, path)
