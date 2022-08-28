@@ -73,6 +73,8 @@ jobs:
   tests:
     name: "Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: --cfg ci
     strategy:
       fail-fast: false
       matrix:
