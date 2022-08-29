@@ -1,6 +1,6 @@
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fs::FileType as StdFileType, path::PathBuf};
 use strum::AsRefStr;
 
 /// Represents information about a single entry within a directory
@@ -35,6 +35,18 @@ pub enum FileType {
     Dir,
     File,
     Symlink,
+}
+
+impl From<StdFileType> for FileType {
+    fn from(ft: StdFileType) -> Self {
+        if ft.is_dir() {
+            Self::Dir
+        } else if ft.is_symlink() {
+            Self::Symlink
+        } else {
+            Self::File
+        }
+    }
 }
 
 #[cfg(feature = "schemars")]

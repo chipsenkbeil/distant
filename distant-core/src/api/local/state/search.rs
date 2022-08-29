@@ -221,6 +221,13 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                     _ => break,
                                 }
 
+                                // Skipy if provided explicit file types to search
+                                if !allowed_file_types.is_empty()
+                                    && !allowed_file_types.contains(&entry.file_type().into())
+                                {
+                                    continue;
+                                }
+
                                 let res = match target {
                                     // Perform the search against the path itself
                                     SearchQueryTarget::Path => {
@@ -256,7 +263,10 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                 };
 
                                 if let Err(x) = res {
-                                    error!("[Query {id}] Search failed: {x}");
+                                    error!(
+                                        "[Query {id}] Search failed for {:?}: {x}",
+                                        entry.path()
+                                    );
                                 }
                             }
                         }
