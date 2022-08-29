@@ -49,13 +49,21 @@ impl Searcher {
         while let Some(res) = mailbox.next().await {
             for data in res.payload.into_vec() {
                 match data {
+                    // If we get results before the started indicator, queue them up
                     DistantResponseData::SearchResults { matches, .. } => {
                         queue.extend(matches);
                     }
+
+                    // Once we get the started indicator, mark as ready to go
                     DistantResponseData::SearchStarted { id } => {
+                        trace!("[Query {id}] Searcher has started");
                         search_id = Some(id);
                     }
+
+                    // If we get an explicit error, convert and return it
                     DistantResponseData::Error(x) => return Err(io::Error::from(x)),
+
+                    // Otherwise, we got something unexpected, and report as such
                     x => {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
@@ -81,7 +89,7 @@ impl Searcher {
                     if tx.send(r#match).await.is_err() {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
-                            "Queue search match dropped",
+                            format!("[Query {id}] Queue search match dropped"),
                         ));
                     }
                 }
@@ -90,7 +98,12 @@ impl Searcher {
 
             // If we never received an acknowledgement of search before the mailbox closed,
             // fail with a missing confirmation error
-            None => return Err(io::Error::new(io::ErrorKind::Other, "Missing confirmation")),
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Search query missing started confirmation",
+                ))
+            }
         };
 
         // Spawn a task that continues to look for search result events and the conclusion of the
@@ -98,6 +111,8 @@ impl Searcher {
         let task = tokio::spawn({
             async move {
                 while let Some(res) = mailbox.next().await {
+                    let mut done = false;
+
                     for data in res.payload.into_vec() {
                         match data {
                             DistantResponseData::SearchResults { matches, .. } => {
@@ -121,11 +136,17 @@ impl Searcher {
 
                             // Received completion indicator, so close out
                             DistantResponseData::SearchDone { .. } => {
+                                trace!("[Query {search_id}] Searcher has finished");
+                                done = true;
                                 break;
                             }
 
                             _ => continue,
                         }
+                    }
+
+                    if done {
+                        break;
                     }
                 }
             }

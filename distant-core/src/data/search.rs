@@ -40,7 +40,7 @@ impl FromStr for SearchQuery {
 }
 
 /// Kind of data to examine using conditions
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SearchQueryTarget {
@@ -76,6 +76,18 @@ pub enum SearchQueryCondition {
     StartsWith { value: String },
 }
 
+impl SearchQueryCondition {
+    /// Converts the condition in a regex string
+    pub fn into_regex_string(self) -> String {
+        match self {
+            Self::EndsWith { value } => format!(r"{value}$"),
+            Self::Equals { value } => format!(r"^{value}$"),
+            Self::Regex { value } => value,
+            Self::StartsWith { value } => format!(r"^{value}"),
+        }
+    }
+}
+
 #[cfg(feature = "schemars")]
 impl SearchQueryCondition {
     pub fn root_schema() -> schemars::schema::RootSchema {
@@ -90,6 +102,11 @@ pub struct SearchQueryOptions {
     /// Restrict search to only these file types (otherwise all are allowed)
     #[serde(default)]
     pub allowed_file_types: HashSet<FileType>,
+
+    /// Regex to use to filter paths being searched; will prevent recursing into directories that
+    /// fail the regex
+    #[serde(default)]
+    pub path_regex: Option<String>,
 
     /// Search should follow symbolic links
     #[serde(default)]

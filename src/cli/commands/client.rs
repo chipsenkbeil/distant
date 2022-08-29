@@ -279,7 +279,7 @@ impl ClientSubcommand {
                     }
                 );
 
-                let formatter = Formatter::shell();
+                let mut formatter = Formatter::shell();
 
                 debug!("Sending request {:?}", request);
                 match request {

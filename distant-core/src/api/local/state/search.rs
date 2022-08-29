@@ -1,7 +1,7 @@
 use crate::data::{
-    DistantResponseData, SearchId, SearchQuery, SearchQueryCondition, SearchQueryContentsMatch,
-    SearchQueryMatch, SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch,
-    SearchQuerySubmatch, SearchQueryTarget,
+    DistantResponseData, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
+    SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
+    SearchQueryTarget,
 };
 use distant_net::Reply;
 use grep::{
@@ -15,7 +15,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 /// Holds information related to active searches on the server
 pub struct SearchState {
@@ -123,164 +123,37 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
     while let Some(msg) = rx.recv().await {
         match msg {
             InnerSearchMsg::Start { query, reply, cb } => {
-                let id = rand::random::<SearchId>();
+                let options = query.options.clone();
 
-                // Attach a callback for when the process is finished where
-                // we will remove it from our above list
-                let tx = tx.clone();
+                // Build our executor and send an error if it fails
+                let mut executor = match SearchQueryExecutor::new(query) {
+                    Ok(executor) => executor,
+                    Err(x) => {
+                        let _ = cb.send(Err(x));
+                        return;
+                    }
+                };
 
-                // Create a cancel channel to support interrupting and stopping the search
-                let (cancel_tx, mut cancel_rx) = oneshot::channel();
+                // Get the unique search id
+                let id = executor.id();
 
-                // Queue up our search internally and report back the id
-                searches.insert(id, cancel_tx);
+                // Queue up our search internally with a cancel sender
+                searches.insert(id, executor.take_cancel_tx().unwrap());
+
+                // Report back the search id
                 let _ = cb.send(Ok(id));
 
-                let SearchQuery {
-                    path,
-                    target,
-                    condition,
+                // Spawn our reporter of matches coming from the executor
+                SearchQueryReporter {
+                    id,
                     options,
-                } = query;
+                    rx: executor.take_match_rx().unwrap(),
+                    reply,
+                }
+                .spawn();
 
-                // Create a blocking task that will search through all files within the
-                // query path and look for matches
-                tokio::task::spawn_blocking(move || {
-                    let SearchQueryOptions {
-                        limit,
-                        pagination,
-                        allowed_file_types,
-                        follow_symbolic_links,
-                    } = options;
-
-                    // Define our walking setup
-                    let walk_dir = WalkDir::new(path).follow_links(follow_symbolic_links);
-
-                    // Define our cache of matches
-                    let mut matches = Vec::new();
-                    let (done_tx, mut done_rx) = mpsc::channel(1);
-
-                    // Pushes a match, clearing and sending matches if we reach pagination,
-                    // and returning true if should continue or false if limit reached
-                    let mut push_match = |m: SearchQueryMatch| -> io::Result<bool> {
-                        matches.push(m);
-
-                        let should_continue = match limit.as_ref() {
-                            Some(cnt) if *cnt == matches.len() as u64 => {
-                                trace!("[Query {id}] Reached limit of {cnt} matches, so stopping search");
-                                let _ = done_tx.send(());
-                                false
-                            }
-                            _ => true,
-                        };
-
-                        if let Some(len) = pagination {
-                            if matches.len() as u64 >= len {
-                                trace!(
-                                    "[Query {id}] Reached pagination capacity of {len} matches, so forwarding search results to client"
-                                );
-                                let _ = reply.blocking_send(DistantResponseData::SearchResults {
-                                    id,
-                                    matches: std::mem::take(&mut matches),
-                                });
-                            }
-                        }
-
-                        Ok(should_continue)
-                    };
-
-                    // Define our search pattern
-                    let pattern = match condition {
-                        SearchQueryCondition::EndsWith { value } => format!(r"{value}$"),
-                        SearchQueryCondition::Equals { value } => format!(r"^{value}$"),
-                        SearchQueryCondition::Regex { value } => value,
-                        SearchQueryCondition::StartsWith { value } => format!(r"^{value}"),
-                    };
-
-                    // Define our matcher using regex as the condition and execute the search
-                    match RegexMatcher::new(&pattern) {
-                        Ok(matcher) => {
-                            // Search all entries for matches and report them
-                            for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
-                                // Check if we are being interrupted, and if so exit our loop early
-                                match cancel_rx.try_recv() {
-                                    Err(oneshot::error::TryRecvError::Empty) => (),
-                                    _ => break,
-                                }
-
-                                // Check if our limit has been reached
-                                match done_rx.try_recv() {
-                                    Err(mpsc::error::TryRecvError::Empty) => (),
-                                    _ => break,
-                                }
-
-                                // Skip if provided explicit file types to search
-                                if !allowed_file_types.is_empty()
-                                    && !allowed_file_types.contains(&entry.file_type().into())
-                                {
-                                    continue;
-                                }
-
-                                let res = match target {
-                                    // Perform the search against the path itself
-                                    SearchQueryTarget::Path => {
-                                        let path_str = entry.path().to_string_lossy();
-                                        Searcher::new().search_slice(
-                                            &matcher,
-                                            path_str.as_bytes(),
-                                            SearchQueryPathSink {
-                                                search_id: id,
-                                                path: entry.path(),
-                                                matcher: &matcher,
-                                                callback: &mut push_match,
-                                            },
-                                        )
-                                    }
-
-                                    // Skip if trying to search contents of non-file
-                                    SearchQueryTarget::Contents if !entry.file_type().is_file() => {
-                                        continue
-                                    }
-
-                                    // Perform the search against the file's contents
-                                    SearchQueryTarget::Contents => Searcher::new().search_path(
-                                        &matcher,
-                                        entry.path(),
-                                        SearchQueryContentsSink {
-                                            search_id: id,
-                                            path: entry.path(),
-                                            matcher: &matcher,
-                                            callback: &mut push_match,
-                                        },
-                                    ),
-                                };
-
-                                if let Err(x) = res {
-                                    error!(
-                                        "[Query {id}] Search failed for {:?}: {x}",
-                                        entry.path()
-                                    );
-                                }
-                            }
-                        }
-                        Err(x) => {
-                            error!("[Query {id}] Failed to define regex matcher: {x}");
-                        }
-                    }
-
-                    // Send any remaining matches
-                    if !matches.is_empty() {
-                        trace!("[Query {id}] Sending final {} matches", matches.len());
-                        let _ =
-                            reply.blocking_send(DistantResponseData::SearchResults { id, matches });
-                    }
-
-                    // Send back our search completion event
-                    let _ = reply.blocking_send(DistantResponseData::SearchDone { id });
-
-                    // Once complete, we need to send a request to remove the search from our list
-                    let _ = tx.blocking_send(InnerSearchMsg::InternalRemove { id });
-                });
+                // Spawn our executor to run
+                executor.spawn(tx.clone());
             }
             InnerSearchMsg::Cancel { id, cb } => {
                 let _ = cb.send(match searches.remove(&id) {
@@ -295,9 +168,287 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                 });
             }
             InnerSearchMsg::InternalRemove { id } => {
+                trace!("[Query {id}] Removing internal tracking");
                 searches.remove(&id);
             }
         }
+    }
+}
+
+struct SearchQueryReporter {
+    id: SearchId,
+    options: SearchQueryOptions,
+    rx: mpsc::UnboundedReceiver<SearchQueryMatch>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
+}
+
+impl SearchQueryReporter {
+    /// Runs the reporter to completion in an async task
+    pub fn spawn(self) {
+        tokio::spawn(self.run());
+    }
+
+    async fn run(self) {
+        let Self {
+            id,
+            options,
+            mut rx,
+            reply,
+        } = self;
+
+        // Queue of matches that we hold until reaching pagination
+        let mut matches = Vec::new();
+        let mut total_matches_cnt = 0;
+
+        trace!("[Query {id}] Starting reporter with {options:?}");
+        while let Some(m) = rx.recv().await {
+            matches.push(m);
+            total_matches_cnt += 1;
+
+            // Check if we've reached the limit, and quit if we have
+            if let Some(len) = options.limit {
+                if total_matches_cnt >= len {
+                    trace!("[Query {id}] Reached limit of {len} matches");
+                    break;
+                }
+            }
+
+            // Check if we've reached pagination size, and send queued if so
+            if let Some(len) = options.pagination {
+                if matches.len() as u64 >= len {
+                    trace!("[Query {id}] Reached {len} paginated matches");
+                    if let Err(x) = reply
+                        .send(DistantResponseData::SearchResults {
+                            id,
+                            matches: std::mem::take(&mut matches),
+                        })
+                        .await
+                    {
+                        error!("[Query {id}] Failed to send paginated matches: {x}");
+                    }
+                }
+            }
+        }
+
+        // Send any remaining matches
+        if !matches.is_empty() {
+            trace!("[Query {id}] Sending {} remaining matches", matches.len());
+            if let Err(x) = reply
+                .send(DistantResponseData::SearchResults { id, matches })
+                .await
+            {
+                error!("[Query {id}] Failed to send final matches: {x}");
+            }
+        }
+
+        // Report that we are done
+        trace!("[Query {id}] Reporting as done");
+        if let Err(x) = reply.send(DistantResponseData::SearchDone { id }).await {
+            error!("[Query {id}] Failed to send done status: {x}");
+        }
+    }
+}
+
+struct SearchQueryExecutor {
+    id: SearchId,
+    query: SearchQuery,
+    walk_dir: WalkDir,
+    matcher: RegexMatcher,
+
+    cancel_tx: Option<oneshot::Sender<()>>,
+    cancel_rx: oneshot::Receiver<()>,
+
+    match_tx: mpsc::UnboundedSender<SearchQueryMatch>,
+    match_rx: Option<mpsc::UnboundedReceiver<SearchQueryMatch>>,
+}
+
+impl SearchQueryExecutor {
+    /// Creates a new executor
+    pub fn new(query: SearchQuery) -> io::Result<Self> {
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (match_tx, match_rx) = mpsc::unbounded_channel();
+
+        let path = query.path.as_path();
+        let follow_links = query.options.follow_symbolic_links;
+        let regex = query.condition.clone().into_regex_string();
+
+        let matcher = RegexMatcher::new(&regex)
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
+        let walk_dir = WalkDir::new(path).follow_links(follow_links);
+
+        Ok(Self {
+            id: rand::random(),
+            query,
+            matcher,
+            walk_dir,
+
+            cancel_tx: Some(cancel_tx),
+            cancel_rx,
+
+            match_tx,
+            match_rx: Some(match_rx),
+        })
+    }
+
+    pub fn id(&self) -> SearchId {
+        self.id
+    }
+
+    pub fn take_cancel_tx(&mut self) -> Option<oneshot::Sender<()>> {
+        self.cancel_tx.take()
+    }
+
+    pub fn take_match_rx(&mut self) -> Option<mpsc::UnboundedReceiver<SearchQueryMatch>> {
+        self.match_rx.take()
+    }
+
+    /// Runs the executor to completion in another thread
+    pub fn spawn(self, tx: mpsc::Sender<InnerSearchMsg>) {
+        tokio::task::spawn_blocking(move || {
+            let id = self.id;
+            self.run();
+
+            // Once complete, we need to send a request to remove the search from our list
+            let _ = tx.blocking_send(InnerSearchMsg::InternalRemove { id });
+        });
+    }
+
+    fn run(self) {
+        let id = self.id;
+        let walk_dir = self.walk_dir;
+        let tx = self.match_tx;
+        let mut cancel = self.cancel_rx;
+
+        // Create our path filter we will use to filter entries
+        let path_filter = match self.query.options.path_regex.as_deref() {
+            Some(regex) => match SearchQueryPathFilter::new(regex) {
+                Ok(filter) => {
+                    trace!("[Query {id}] Using regex path filter for {regex:?}");
+                    filter
+                }
+                Err(x) => {
+                    error!("[Query {id}] Failed to instantiate path filter: {x}");
+                    return;
+                }
+            },
+            None => {
+                trace!("[Query {id}] Using noop path filter");
+                SearchQueryPathFilter::noop()
+            }
+        };
+
+        let options_filter = SearchQueryOptionsFilter {
+            target: self.query.target,
+            options: self.query.options.clone(),
+        };
+
+        // Search all entries for matches and report them
+        for entry in walk_dir
+            .into_iter()
+            .filter_entry(|e| path_filter.filter(e.path()))
+            .filter_map(|e| e.ok())
+            .filter(|e| options_filter.filter(e))
+        {
+            // Check if we are being interrupted, and if so exit our loop early
+            match cancel.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => (),
+                _ => {
+                    debug!("[Query {id}] Cancelled");
+                    break;
+                }
+            }
+
+            let res = match self.query.target {
+                // Perform the search against the path itself
+                SearchQueryTarget::Path => {
+                    let path_str = entry.path().to_string_lossy();
+                    Searcher::new().search_slice(
+                        &self.matcher,
+                        path_str.as_bytes(),
+                        SearchQueryPathSink {
+                            search_id: id,
+                            path: entry.path(),
+                            matcher: &self.matcher,
+                            callback: |m| Ok(tx.send(m).is_ok()),
+                        },
+                    )
+                }
+
+                // Perform the search against the file's contents
+                SearchQueryTarget::Contents => Searcher::new().search_path(
+                    &self.matcher,
+                    entry.path(),
+                    SearchQueryContentsSink {
+                        search_id: id,
+                        path: entry.path(),
+                        matcher: &self.matcher,
+                        callback: |m| Ok(tx.send(m).is_ok()),
+                    },
+                ),
+            };
+
+            if let Err(x) = res {
+                error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
+            }
+        }
+    }
+}
+
+struct SearchQueryPathFilter {
+    matcher: Option<RegexMatcher>,
+}
+
+impl SearchQueryPathFilter {
+    pub fn new(regex: &str) -> io::Result<Self> {
+        Ok(Self {
+            matcher: Some(
+                RegexMatcher::new(regex)
+                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+            ),
+        })
+    }
+
+    /// Returns a filter that always passes the path
+    pub fn noop() -> Self {
+        Self { matcher: None }
+    }
+
+    /// Returns true if path passes the filter
+    pub fn filter(&self, path: impl AsRef<Path>) -> bool {
+        self.try_filter(path).unwrap_or(false)
+    }
+
+    fn try_filter(&self, path: impl AsRef<Path>) -> io::Result<bool> {
+        match &self.matcher {
+            Some(matcher) => matcher
+                .is_match(path.as_ref().to_string_lossy().as_bytes())
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x)),
+            None => Ok(true),
+        }
+    }
+}
+
+struct SearchQueryOptionsFilter {
+    target: SearchQueryTarget,
+    options: SearchQueryOptions,
+}
+
+impl SearchQueryOptionsFilter {
+    pub fn filter(&self, entry: &DirEntry) -> bool {
+        // Check if filetype is allowed
+        let file_type_allowed = self.options.allowed_file_types.is_empty()
+            || self
+                .options
+                .allowed_file_types
+                .contains(&entry.file_type().into());
+
+        // Check if target is appropriate
+        let targeted = match self.target {
+            SearchQueryTarget::Contents => entry.file_type().is_file(),
+            _ => true,
+        };
+
+        file_type_allowed && targeted
     }
 }
 
@@ -424,5 +575,40 @@ where
         };
 
         Ok(should_continue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_send_event_when_starting_query() {
+        todo!();
+    }
+
+    #[test]
+    fn should_send_event_when_query_finished() {
+        todo!();
+    }
+
+    #[test]
+    fn should_send_all_matches_at_once_by_default() {
+        todo!();
+    }
+
+    #[test]
+    fn should_send_paginated_results_if_specified() {
+        todo!();
+    }
+
+    #[test]
+    fn should_send_maximum_of_limit_results_if_specified() {
+        todo!();
+    }
+
+    #[test]
+    fn should_limit_searched_paths_using_regex_filter_if_specified() {
+        todo!();
     }
 }
