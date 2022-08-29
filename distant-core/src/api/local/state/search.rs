@@ -4,11 +4,17 @@ use crate::data::{
     SearchQuerySubmatch, SearchQueryTarget,
 };
 use distant_net::Reply;
+use grep::{
+    matcher::Matcher,
+    regex::RegexMatcher,
+    searcher::{Searcher, Sink, SinkMatch},
+};
 use log::*;
 use std::{
     collections::{HashMap, HashSet},
     io,
     ops::Deref,
+    path::Path,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -122,15 +128,6 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
     while let Some(msg) = rx.recv().await {
         match msg {
             InnerSearchMsg::Start { query, reply, cb } => {
-                use grep::{
-                    matcher::Matcher,
-                    regex::RegexMatcher,
-                    searcher::{
-                        sinks::{Lossy, UTF8},
-                        Searcher,
-                    },
-                };
-
                 let id = rand::random::<SearchId>();
 
                 // Attach a callback for when the process is finished where
@@ -173,6 +170,25 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                     // Define our cache of matches
                     let mut matches = Vec::new();
 
+                    // Pushes a match, clearing and sending matches if we reach pagination,
+                    // and returning true if should continue or false if limit reached
+                    let mut push_match = |m: SearchQueryMatch| -> io::Result<bool> {
+                        matches.push(m);
+
+                        let done = Some(matches.len() as u64) == limit.as_ref().copied();
+
+                        if let Some(len) = pagination {
+                            if matches.len() as u64 >= len {
+                                let _ = reply.blocking_send(DistantResponseData::SearchResults {
+                                    id,
+                                    matches: std::mem::take(&mut matches),
+                                });
+                            }
+                        }
+
+                        Ok(done)
+                    };
+
                     // Define our search pattern
                     let pattern = match condition {
                         SearchQueryCondition::EndsWith { value } => format!(r"{value}$"),
@@ -199,18 +215,11 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                         Searcher::new().search_slice(
                                             &matcher,
                                             path_str.as_bytes(),
-                                            UTF8(|lnum, line| {
-
-                                            // TODO: Write a custom Sink like https://docs.rs/grep-searcher/0.1.10/src/grep_searcher/sink.rs.html#536-538
-                                            //       Will put together a SearchQueryPathMatch
-                                            //       and invoke a function with it, which we can
-                                            //       use to populate our matches
-
-                                                let mymatch =
-                                                    matcher.find(line.as_bytes())?.unwrap();
-                                                matches.push((lnum, line[mymatch].to_string()));
-                                                Ok(true)
-                                            }),
+                                            SearchQueryPathSink {
+                                                path: entry.path(),
+                                                matcher: &matcher,
+                                                callback: &mut push_match,
+                                            },
                                         )
                                     }
 
@@ -218,45 +227,11 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                     SearchQueryTarget::Contents => Searcher::new().search_path(
                                         &matcher,
                                         entry.path(),
-                                        Lossy(|lnum, line| {
-                                            let mut submatches = Vec::new();
-
-                                            // TODO: Write a custom Sink like https://docs.rs/grep-searcher/0.1.10/src/grep_searcher/sink.rs.html#536-538
-                                            //       Will put together a SearchQueryContentsMatch
-                                            //       and invoke a function with it, which we can
-                                            //       use to populate our matches
-
-                                            // Find all matches within the line
-                                            matcher.find_iter(line.as_bytes(), |m| {
-                                                submatches.push(SearchQuerySubmatch {
-                                                    r#match: SearchQueryMatchData::Text(
-                                                        line[m].to_string(),
-                                                    ),
-                                                    start: m.start() as u64,
-                                                    end: m.end() as u64,
-                                                });
-
-                                                true
-                                            });
-
-                                            // If we have at least one submatch, then we have a
-                                            // match
-                                            if !submatches.is_empty() {
-                                                matches.push(SearchQueryMatch::Contents(
-                                                    SearchQueryContentsMatch {
-                                                        path: entry.path().to_path_buf(),
-                                                        lines: SearchQueryMatchData::Text(
-                                                            line.to_string(),
-                                                        ),
-                                                        line_number: lnum,
-                                                        absolute_offset: todo!(),
-                                                        submatches,
-                                                    },
-                                                ));
-                                            }
-
-                                            Ok(true)
-                                        }),
+                                        SearchQueryContentsSink {
+                                            path: entry.path(),
+                                            matcher: &matcher,
+                                            callback: &mut push_match,
+                                        },
                                     ),
                                 };
 
@@ -302,5 +277,123 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                 searches.remove(&id);
             }
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SearchQueryPathSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    path: &'a Path,
+    matcher: &'a M,
+    callback: F,
+}
+
+impl<'a, M, F> Sink for SearchQueryPathSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        let mut submatches = Vec::new();
+
+        // Find all matches within the line
+        let res = self.matcher.find_iter(mat.bytes(), |m| {
+            let bytes = &mat.bytes()[m];
+            submatches.push(SearchQuerySubmatch {
+                r#match: match std::str::from_utf8(bytes) {
+                    Ok(s) => SearchQueryMatchData::Text(s.to_string()),
+                    Err(_) => SearchQueryMatchData::Bytes(bytes.to_vec()),
+                },
+                start: m.start() as u64,
+                end: m.end() as u64,
+            });
+
+            true
+        });
+
+        if let Err(x) = res {
+            error!("SearchQueryPathSink encountered matcher error: {x}");
+        }
+
+        // If we have at least one submatch, then we have a match
+        let should_continue = if !submatches.is_empty() {
+            let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
+                path: self.path.to_path_buf(),
+                submatches,
+            });
+
+            (self.callback)(r#match)?
+        } else {
+            true
+        };
+
+        Ok(should_continue)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SearchQueryContentsSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    path: &'a Path,
+    matcher: &'a M,
+    callback: F,
+}
+
+impl<'a, M, F> Sink for SearchQueryContentsSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        let mut submatches = Vec::new();
+
+        // Find all matches within the line
+        let res = self.matcher.find_iter(mat.bytes(), |m| {
+            let bytes = &mat.bytes()[m];
+            submatches.push(SearchQuerySubmatch {
+                r#match: match std::str::from_utf8(bytes) {
+                    Ok(s) => SearchQueryMatchData::Text(s.to_string()),
+                    Err(_) => SearchQueryMatchData::Bytes(bytes.to_vec()),
+                },
+                start: m.start() as u64,
+                end: m.end() as u64,
+            });
+
+            true
+        });
+
+        if let Err(x) = res {
+            error!("SearchQueryContentsSink encountered matcher error: {x}");
+        }
+
+        // If we have at least one submatch, then we have a match
+        let should_continue = if !submatches.is_empty() {
+            let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                path: self.path.to_path_buf(),
+                lines: match std::str::from_utf8(mat.bytes()) {
+                    Ok(s) => SearchQueryMatchData::Text(s.to_string()),
+                    Err(_) => SearchQueryMatchData::Bytes(mat.bytes().to_vec()),
+                },
+                line_number: mat.line_number().unwrap_or(0),
+                absolute_offset: mat.absolute_byte_offset(),
+                submatches,
+            });
+
+            (self.callback)(r#match)?
+        } else {
+            true
+        };
+
+        Ok(should_continue)
     }
 }
