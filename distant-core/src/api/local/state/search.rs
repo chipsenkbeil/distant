@@ -175,10 +175,19 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                     let mut push_match = |m: SearchQueryMatch| -> io::Result<bool> {
                         matches.push(m);
 
-                        let done = Some(matches.len() as u64) == limit.as_ref().copied();
+                        let done = match limit.as_ref() {
+                            Some(cnt) if *cnt == matches.len() as u64 => {
+                                trace!("[Query {id}] Reached limit of {cnt} matches, so stopping search");
+                                true
+                            }
+                            _ => false,
+                        };
 
                         if let Some(len) = pagination {
                             if matches.len() as u64 >= len {
+                                trace!(
+                                    "[Query {id}] Reached pagination capacity of {len} matches, so forwarding search results to client"
+                                );
                                 let _ = reply.blocking_send(DistantResponseData::SearchResults {
                                     id,
                                     matches: std::mem::take(&mut matches),
@@ -216,6 +225,7 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                             &matcher,
                                             path_str.as_bytes(),
                                             SearchQueryPathSink {
+                                                search_id: id,
                                                 path: entry.path(),
                                                 matcher: &matcher,
                                                 callback: &mut push_match,
@@ -223,11 +233,17 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                         )
                                     }
 
+                                    // Skip if trying to search contents of non-file
+                                    SearchQueryTarget::Contents if !entry.file_type().is_file() => {
+                                        continue
+                                    }
+
                                     // Perform the search against the file's contents
                                     SearchQueryTarget::Contents => Searcher::new().search_path(
                                         &matcher,
                                         entry.path(),
                                         SearchQueryContentsSink {
+                                            search_id: id,
                                             path: entry.path(),
                                             matcher: &matcher,
                                             callback: &mut push_match,
@@ -236,17 +252,18 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                 };
 
                                 if let Err(x) = res {
-                                    error!("Search failed: {x}");
+                                    error!("[Query {id}] Search failed: {x}");
                                 }
                             }
                         }
                         Err(x) => {
-                            error!("Failed to define regex matcher: {x}");
+                            error!("[Query {id}] Failed to define regex matcher: {x}");
                         }
                     }
 
                     // Send any remaining matches
                     if !matches.is_empty() {
+                        trace!("[Query {id}] Sending final {} matches", matches.len());
                         let _ =
                             reply.blocking_send(DistantResponseData::SearchResults { id, matches });
                     }
@@ -269,7 +286,7 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                     }
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No search found with id {id}"),
+                        format!("[Query {id}] Cancellation failed because no search found"),
                     )),
                 });
             }
@@ -286,6 +303,7 @@ where
     M: Matcher,
     F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
 {
+    search_id: SearchId,
     path: &'a Path,
     matcher: &'a M,
     callback: F,
@@ -317,7 +335,10 @@ where
         });
 
         if let Err(x) = res {
-            error!("SearchQueryPathSink encountered matcher error: {x}");
+            error!(
+                "[Query {}] SearchQueryPathSink encountered matcher error: {x}",
+                self.search_id
+            );
         }
 
         // If we have at least one submatch, then we have a match
@@ -342,6 +363,7 @@ where
     M: Matcher,
     F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
 {
+    search_id: SearchId,
     path: &'a Path,
     matcher: &'a M,
     callback: F,
@@ -373,7 +395,10 @@ where
         });
 
         if let Err(x) = res {
-            error!("SearchQueryContentsSink encountered matcher error: {x}");
+            error!(
+                "[Query {}] SearchQueryContentsSink encountered matcher error: {x}",
+                self.search_id
+            );
         }
 
         // If we have at least one submatch, then we have a match
