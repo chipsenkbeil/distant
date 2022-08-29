@@ -49,8 +49,7 @@ impl Searcher {
         while let Some(res) = mailbox.next().await {
             for data in res.payload.into_vec() {
                 match data {
-                    DistantResponseData::SearchResults { id, matches } => {
-                        search_id = Some(id);
+                    DistantResponseData::SearchResults { matches, .. } => {
                         queue.extend(matches);
                     }
                     DistantResponseData::SearchStarted { id } => {
@@ -74,28 +73,25 @@ impl Searcher {
             }
         }
 
-        // Send out any of our queued changes that we got prior to the acknowledgement
-        trace!(
-            "[Query {}] Forwarding {} queued matches",
-            queue.len(),
-            search_id.unwrap_or(0),
-        );
-        for r#match in queue {
-            if tx.send(r#match).await.is_err() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Queue search match dropped",
-                ));
+        let search_id = match search_id {
+            // Send out any of our queued changes that we got prior to the acknowledgement
+            Some(id) => {
+                trace!("[Query {id}] Forwarding {} queued matches", queue.len());
+                for r#match in queue.drain(..) {
+                    if tx.send(r#match).await.is_err() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "Queue search match dropped",
+                        ));
+                    }
+                }
+                id
             }
-        }
 
-        // If we never received an acknowledgement of search before the mailbox closed,
-        // fail with a missing confirmation error
-        if search_id.is_none() {
-            return Err(io::Error::new(io::ErrorKind::Other, "Missing confirmation"));
-        }
-
-        let search_id = search_id.unwrap();
+            // If we never received an acknowledgement of search before the mailbox closed,
+            // fail with a missing confirmation error
+            None => return Err(io::Error::new(io::ErrorKind::Other, "Missing confirmation")),
+        };
 
         // Spawn a task that continues to look for search result events and the conclusion of the
         // search, discarding anything else that it gets

@@ -158,6 +158,7 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
 
                     // Define our cache of matches
                     let mut matches = Vec::new();
+                    let (done_tx, mut done_rx) = mpsc::channel(1);
 
                     // Pushes a match, clearing and sending matches if we reach pagination,
                     // and returning true if should continue or false if limit reached
@@ -167,6 +168,7 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                         let should_continue = match limit.as_ref() {
                             Some(cnt) if *cnt == matches.len() as u64 => {
                                 trace!("[Query {id}] Reached limit of {cnt} matches, so stopping search");
+                                let _ = done_tx.send(());
                                 false
                             }
                             _ => true,
@@ -206,7 +208,13 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                                     _ => break,
                                 }
 
-                                // Skipy if provided explicit file types to search
+                                // Check if our limit has been reached
+                                match done_rx.try_recv() {
+                                    Err(mpsc::error::TryRecvError::Empty) => (),
+                                    _ => break,
+                                }
+
+                                // Skip if provided explicit file types to search
                                 if !allowed_file_types.is_empty()
                                     && !allowed_file_types.contains(&entry.file_type().into())
                                 {
