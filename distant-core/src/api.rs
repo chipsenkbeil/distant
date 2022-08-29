@@ -1,7 +1,7 @@
 use crate::{
     data::{
         Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize,
-        SystemInfo,
+        SearchId, SearchQuery, SystemInfo,
     },
     ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
@@ -317,6 +317,34 @@ pub trait DistantApi {
         unsupported("metadata")
     }
 
+    /// Searches files for matches based on a query.
+    ///
+    /// * `query` - the specific query to perform
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    async fn search(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        query: SearchQuery,
+    ) -> io::Result<SearchId> {
+        unsupported("search")
+    }
+
+    /// Cancels an actively-ongoing search.
+    ///
+    /// * `id` - the id of the search to cancel
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    async fn cancel_search(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        id: SearchId,
+    ) -> io::Result<()> {
+        unsupported("cancel_search")
+    }
+
     /// Spawns a new process, returning its id.
     ///
     /// * `cmd` - the full command to run as a new process (including arguments)
@@ -612,6 +640,18 @@ where
             .metadata(ctx, path, canonicalize, resolve_file_type)
             .await
             .map(DistantResponseData::Metadata)
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::Search { query } => server
+            .api
+            .search(ctx, query)
+            .await
+            .map(|id| DistantResponseData::SearchStarted { id })
+            .unwrap_or_else(DistantResponseData::from),
+        DistantRequestData::CancelSearch { id } => server
+            .api
+            .cancel_search(ctx, id)
+            .await
+            .map(|_| DistantResponseData::Ok)
             .unwrap_or_else(DistantResponseData::from),
         DistantRequestData::ProcSpawn {
             cmd,

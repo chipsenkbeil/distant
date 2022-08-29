@@ -7,8 +7,8 @@ use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::{
     data::{
-        Capabilities, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize, SystemInfo,
-        UnixMetadata,
+        Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, ProcessId,
+        PtySize, SystemInfo, UnixMetadata,
     },
     DistantApi, DistantCtx,
 };
@@ -82,7 +82,14 @@ impl DistantApi for SshDistantApi {
     async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
         debug!("[Conn {}] Querying capabilities", ctx.connection_id);
 
-        Ok(Capabilities::all())
+        let mut capabilities = Capabilities::all();
+
+        // Searching is not supported by ssh implementation
+        // TODO: Could we have external search using ripgrep's JSON lines API?
+        capabilities.take(CapabilityKind::Search);
+        capabilities.take(CapabilityKind::CancelSearch);
+
+        Ok(capabilities)
     }
 
     async fn read_file(

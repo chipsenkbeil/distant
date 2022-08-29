@@ -27,7 +27,7 @@ impl DirEntry {
 }
 
 /// Represents the type associated with a dir entry
-#[derive(Copy, Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]

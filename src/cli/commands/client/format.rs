@@ -1,10 +1,16 @@
 use clap::ValueEnum;
 use distant_core::{
-    data::{ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata, SystemInfo},
+    data::{
+        ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
+        SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SystemInfo,
+    },
     net::Response,
 };
 use log::*;
-use std::io::{self, Write};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+};
 use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -283,6 +289,49 @@ fn format_shell(data: DistantResponseData) -> Output {
             )
             .into_bytes(),
         ),
+        DistantResponseData::SearchStarted { id } => {
+            Output::StdoutLine(format!("Query {id} started").into_bytes())
+        }
+        DistantResponseData::SearchDone { .. } => Output::None,
+        DistantResponseData::SearchResults { matches, .. } => {
+            let mut files: HashMap<_, Vec<String>> = HashMap::new();
+
+            for m in matches {
+                match m {
+                    SearchQueryMatch::Path(SearchQueryPathMatch { path, .. }) => {
+                        // Create the entry with no lines called out
+                        files.entry(path).or_default();
+                    }
+
+                    SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                        path,
+                        lines,
+                        line_number,
+                        ..
+                    }) => {
+                        let file_matches = files.entry(path).or_default();
+
+                        file_matches.push(format!("{line_number}:{}", lines.to_string_lossy()));
+                    }
+                }
+            }
+
+            let mut output = String::new();
+            for (path, lines) in files {
+                use std::fmt::Write;
+                writeln!(&mut output, "{}", path.to_string_lossy()).unwrap();
+                for line in lines {
+                    writeln!(&mut output, "{line}").unwrap();
+                }
+                writeln!(&mut output).unwrap();
+            }
+
+            if !output.is_empty() {
+                Output::Stdout(output.into_bytes())
+            } else {
+                Output::None
+            }
+        }
         DistantResponseData::ProcSpawned { .. } => Output::None,
         DistantResponseData::ProcStdout { data, .. } => Output::Stdout(data),
         DistantResponseData::ProcStderr { data, .. } => Output::Stderr(data),
