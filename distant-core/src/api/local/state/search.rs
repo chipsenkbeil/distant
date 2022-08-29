@@ -137,6 +137,10 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                 // Create a cancel channel to support interrupting and stopping the search
                 let (cancel_tx, mut cancel_rx) = oneshot::channel();
 
+                // Queue up our search internally and report back the id
+                searches.insert(id, cancel_tx);
+                let _ = cb.send(Ok(id));
+
                 let SearchQuery {
                     path,
                     target,
@@ -175,12 +179,12 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                     let mut push_match = |m: SearchQueryMatch| -> io::Result<bool> {
                         matches.push(m);
 
-                        let done = match limit.as_ref() {
+                        let should_continue = match limit.as_ref() {
                             Some(cnt) if *cnt == matches.len() as u64 => {
                                 trace!("[Query {id}] Reached limit of {cnt} matches, so stopping search");
-                                true
+                                false
                             }
-                            _ => false,
+                            _ => true,
                         };
 
                         if let Some(len) = pagination {
@@ -195,7 +199,7 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                             }
                         }
 
-                        Ok(done)
+                        Ok(should_continue)
                     };
 
                     // Define our search pattern
@@ -274,9 +278,6 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                     // Once complete, we need to send a request to remove the search from our list
                     let _ = tx.blocking_send(InnerSearchMsg::InternalRemove { id });
                 });
-
-                searches.insert(id, cancel_tx);
-                let _ = cb.send(Ok(id));
             }
             InnerSearchMsg::Cancel { id, cb } => {
                 let _ = cb.send(match searches.remove(&id) {
