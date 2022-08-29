@@ -1,6 +1,6 @@
 use super::FileType;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, path::PathBuf, str::FromStr};
+use std::{borrow::Cow, collections::HashSet, path::PathBuf, str::FromStr};
 
 /// Id associated with a search
 pub type SearchId = u32;
@@ -20,7 +20,7 @@ pub struct SearchQuery {
 
     /// Options to apply to the query
     #[serde(default)]
-    pub options: Vec<SearchQueryOption>,
+    pub options: SearchQueryOptions,
 }
 
 #[cfg(feature = "schemars")]
@@ -83,29 +83,32 @@ impl SearchQueryCondition {
     }
 }
 
-/// Option associated with a search query
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Options associated with a search query
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
-pub enum SearchQueryOption {
-    /// Restrict search to only this file type (more than one can be included)
-    FileType { kind: FileType },
+pub struct SearchQueryOptions {
+    /// Restrict search to only these file types (otherwise all are allowed)
+    #[serde(default)]
+    pub allowed_file_types: HashSet<FileType>,
 
     /// Search should follow symbolic links
-    FollowSymbolicLinks,
+    #[serde(default)]
+    pub follow_symbolic_links: bool,
 
     /// Maximum results to return before stopping the query
-    Limit { limit: u64 },
+    #[serde(default)]
+    pub limit: Option<u64>,
 
     /// Amount of results to batch before sending back excluding final submission that will always
     /// include the remaining results even if less than pagination request
-    Pagination { count: u64 },
+    #[serde(default)]
+    pub pagination: Option<u64>,
 }
 
 #[cfg(feature = "schemars")]
-impl SearchQueryOption {
+impl SearchQueryOptions {
     pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryOption)
+        schemars::schema_for!(SearchQueryOptions)
     }
 }
 

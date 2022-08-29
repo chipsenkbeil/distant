@@ -1,6 +1,6 @@
 use crate::data::{
     DistantResponseData, SearchId, SearchQuery, SearchQueryCondition, SearchQueryContentsMatch,
-    SearchQueryMatch, SearchQueryMatchData, SearchQueryOption, SearchQueryPathMatch,
+    SearchQueryMatch, SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch,
     SearchQuerySubmatch, SearchQueryTarget,
 };
 use distant_net::Reply;
@@ -10,12 +10,7 @@ use grep::{
     searcher::{Searcher, Sink, SinkMatch},
 };
 use log::*;
-use std::{
-    collections::{HashMap, HashSet},
-    io,
-    ops::Deref,
-    path::Path,
-};
+use std::{collections::HashMap, io, ops::Deref, path::Path};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -151,22 +146,12 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                 // Create a blocking task that will search through all files within the
                 // query path and look for matches
                 tokio::task::spawn_blocking(move || {
-                    let mut limit = None;
-                    let mut pagination = None;
-                    let mut allowed_file_types = HashSet::new();
-                    let mut follow_symbolic_links = false;
-
-                    // Read in our options
-                    for opt in options {
-                        match opt {
-                            SearchQueryOption::FileType { kind } => {
-                                allowed_file_types.insert(kind);
-                            }
-                            SearchQueryOption::FollowSymbolicLinks => follow_symbolic_links = true,
-                            SearchQueryOption::Limit { limit: value } => limit = Some(value),
-                            SearchQueryOption::Pagination { count } => pagination = Some(count),
-                        }
-                    }
+                    let SearchQueryOptions {
+                        limit,
+                        pagination,
+                        allowed_file_types,
+                        follow_symbolic_links,
+                    } = options;
 
                     // Define our walking setup
                     let walk_dir = WalkDir::new(path).follow_links(follow_symbolic_links);
