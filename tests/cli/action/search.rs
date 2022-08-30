@@ -4,7 +4,6 @@ use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::Predicate;
 use rstest::*;
-use serde_json::json;
 
 const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 .*?[\\/]file1.txt
@@ -25,12 +24,6 @@ fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
         .write_str("lines\nof\ntextual\ninformation")
         .unwrap();
     root.child("file3.txt").write_str("more content").unwrap();
-
-    let query = json!({
-        "path": root.path().to_string_lossy(),
-        "target": "contents",
-        "condition": {"type": "regex", "value": "te[a-z]*\\b"},
-    });
 
     let stdout_predicate_fn = predicates::function::function(|s: &[u8]| {
         let s = std::str::from_utf8(s).unwrap();
@@ -54,7 +47,8 @@ fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
     // distant action system-info
     action_cmd
         .arg("search")
-        .arg(&serde_json::to_string(&query).unwrap())
+        .arg("te[a-z]*\\b")
+        .arg(root.path())
         .assert()
         .success()
         .stdout(stdout_predicate_fn)

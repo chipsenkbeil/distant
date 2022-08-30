@@ -389,6 +389,7 @@ pub enum DistantRequestData {
     #[strum_discriminants(strum(message = "Supports searching filesystem using queries"))]
     Search {
         /// Query to perform against the filesystem
+        #[cfg_attr(feature = "clap", clap(flatten))]
         query: SearchQuery,
     },
 

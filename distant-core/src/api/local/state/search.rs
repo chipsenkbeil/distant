@@ -256,7 +256,7 @@ impl SearchQueryReporter {
 struct SearchQueryExecutor {
     id: SearchId,
     query: SearchQuery,
-    walk_dir: WalkDir,
+    walk_dirs: Vec<WalkDir>,
     matcher: RegexMatcher,
 
     cancel_tx: Option<oneshot::Sender<()>>,
@@ -272,29 +272,34 @@ impl SearchQueryExecutor {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (match_tx, match_rx) = mpsc::unbounded_channel();
 
-        let path = query.path.as_path();
-        let follow_links = query.options.follow_symbolic_links;
         let regex = query.condition.to_regex_string();
-
         let matcher = RegexMatcher::new(&regex)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
-        let walk_dir = WalkDir::new(path).follow_links(follow_links);
 
-        let walk_dir = match query.options.min_depth.as_ref().copied() {
-            Some(depth) => walk_dir.min_depth(depth as usize),
-            None => walk_dir,
-        };
+        let mut walk_dirs = Vec::new();
+        for path in query.paths.iter() {
+            let path = path.as_path();
+            let follow_links = query.options.follow_symbolic_links;
+            let walk_dir = WalkDir::new(path).follow_links(follow_links);
 
-        let walk_dir = match query.options.max_depth.as_ref().copied() {
-            Some(depth) => walk_dir.max_depth(depth as usize),
-            None => walk_dir,
-        };
+            let walk_dir = match query.options.min_depth.as_ref().copied() {
+                Some(depth) => walk_dir.min_depth(depth as usize),
+                None => walk_dir,
+            };
+
+            let walk_dir = match query.options.max_depth.as_ref().copied() {
+                Some(depth) => walk_dir.max_depth(depth as usize),
+                None => walk_dir,
+            };
+
+            walk_dirs.push(walk_dir);
+        }
 
         Ok(Self {
             id: rand::random(),
             query,
             matcher,
-            walk_dir,
+            walk_dirs,
 
             cancel_tx: Some(cancel_tx),
             cancel_rx,
@@ -329,7 +334,7 @@ impl SearchQueryExecutor {
 
     fn run(self) {
         let id = self.id;
-        let walk_dir = self.walk_dir;
+        let walk_dirs = self.walk_dirs;
         let tx = self.match_tx;
         let mut cancel = self.cancel_rx;
 
@@ -374,54 +379,56 @@ impl SearchQueryExecutor {
             options: self.query.options.clone(),
         };
 
-        // Search all entries for matches and report them
-        for entry in walk_dir
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| include_path_filter.filter(e.path()))
-            .filter(|e| !exclude_path_filter.filter(e.path()))
-            .filter(|e| options_filter.filter(e))
-        {
-            // Check if we are being interrupted, and if so exit our loop early
-            match cancel.try_recv() {
-                Err(oneshot::error::TryRecvError::Empty) => (),
-                _ => {
-                    debug!("[Query {id}] Cancelled");
-                    break;
+        for walk_dir in walk_dirs {
+            // Search all entries for matches and report them
+            for entry in walk_dir
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| include_path_filter.filter(e.path()))
+                .filter(|e| !exclude_path_filter.filter(e.path()))
+                .filter(|e| options_filter.filter(e))
+            {
+                // Check if we are being interrupted, and if so exit our loop early
+                match cancel.try_recv() {
+                    Err(oneshot::error::TryRecvError::Empty) => (),
+                    _ => {
+                        debug!("[Query {id}] Cancelled");
+                        break;
+                    }
                 }
-            }
 
-            let res = match self.query.target {
-                // Perform the search against the path itself
-                SearchQueryTarget::Path => {
-                    let path_str = entry.path().to_string_lossy();
-                    Searcher::new().search_slice(
+                let res = match self.query.target {
+                    // Perform the search against the path itself
+                    SearchQueryTarget::Path => {
+                        let path_str = entry.path().to_string_lossy();
+                        Searcher::new().search_slice(
+                            &self.matcher,
+                            path_str.as_bytes(),
+                            SearchQueryPathSink {
+                                search_id: id,
+                                path: entry.path(),
+                                matcher: &self.matcher,
+                                callback: |m| Ok(tx.send(m).is_ok()),
+                            },
+                        )
+                    }
+
+                    // Perform the search against the file's contents
+                    SearchQueryTarget::Contents => Searcher::new().search_path(
                         &self.matcher,
-                        path_str.as_bytes(),
-                        SearchQueryPathSink {
+                        entry.path(),
+                        SearchQueryContentsSink {
                             search_id: id,
                             path: entry.path(),
                             matcher: &self.matcher,
                             callback: |m| Ok(tx.send(m).is_ok()),
                         },
-                    )
+                    ),
+                };
+
+                if let Err(x) = res {
+                    error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
                 }
-
-                // Perform the search against the file's contents
-                SearchQueryTarget::Contents => Searcher::new().search_path(
-                    &self.matcher,
-                    entry.path(),
-                    SearchQueryContentsSink {
-                        search_id: id,
-                        path: entry.path(),
-                        matcher: &self.matcher,
-                        callback: |m| Ok(tx.send(m).is_ok()),
-                    },
-                ),
-            };
-
-            if let Err(x) = res {
-                error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
             }
         }
     }
@@ -663,7 +670,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::equals(""),
             options: Default::default(),
@@ -693,7 +700,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex("other"),
             options: Default::default(),
@@ -770,7 +777,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex("path"),
             options: Default::default(),
@@ -848,7 +855,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: Default::default(),
@@ -919,7 +926,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex(r"[abc][ab]"),
             options: Default::default(),
@@ -1016,7 +1023,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1112,7 +1119,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1149,7 +1156,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1194,7 +1201,7 @@ mod tests {
             let state = SearchState::new();
             let (reply, mut rx) = mpsc::channel(100);
             let query = SearchQuery {
-                path: root.path().to_path_buf(),
+                paths: vec![root.path().to_path_buf()],
                 target: SearchQueryTarget::Path,
                 condition: SearchQueryCondition::regex(".*"),
                 options: SearchQueryOptions {
@@ -1304,7 +1311,7 @@ mod tests {
             let state = SearchState::new();
             let (reply, mut rx) = mpsc::channel(100);
             let query = SearchQuery {
-                path: root.path().to_path_buf(),
+                paths: vec![root.path().to_path_buf()],
                 target: SearchQueryTarget::Path,
                 condition: SearchQueryCondition::regex(".*"),
                 options: SearchQueryOptions {
@@ -1396,7 +1403,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1451,7 +1458,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1522,7 +1529,7 @@ mod tests {
         // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
         //       and checking for 0x9F (159)
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex(r"(?-u:\x9F)"),
             options: Default::default(),
@@ -1578,7 +1585,7 @@ mod tests {
             let (reply, mut rx) = mpsc::channel(100);
 
             let query = SearchQuery {
-                path: root.path().to_path_buf(),
+                paths: vec![root.path().to_path_buf()],
                 target: SearchQueryTarget::Path,
                 condition: SearchQueryCondition::regex(".*"),
                 options: SearchQueryOptions {
@@ -1665,7 +1672,7 @@ mod tests {
         let (reply, mut rx) = mpsc::channel(100);
 
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex(".*"),
             options: SearchQueryOptions {
@@ -1726,7 +1733,7 @@ mod tests {
         //       type filter, it will evaluate the underlying type of symbolic links and filter
         //       based on that instead of the the symbolic link
         let query = SearchQuery {
-            path: root.path().to_path_buf(),
+            paths: vec![root.path().to_path_buf()],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex(".*"),
             options: SearchQueryOptions {
@@ -1751,6 +1758,76 @@ mod tests {
             vec![
                 root.child("file").to_path_buf(),
                 root.child("file_symlink").to_path_buf(),
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_support_being_supplied_more_than_one_path() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            paths: vec![
+                root.child(make_path("path/to/file1.txt"))
+                    .path()
+                    .to_path_buf(),
+                root.child(make_path("path/to/file2.txt"))
+                    .path()
+                    .to_path_buf(),
+            ],
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("lines of text in\n"),
+                    line_number: 2,
+                    absolute_offset: 5,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 9,
+                        end: 13,
+                    }]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("more text"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 5,
+                        end: 9,
+                    }]
+                }
             ]
         );
 

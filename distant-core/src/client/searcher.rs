@@ -216,7 +216,7 @@ mod tests {
     async fn searcher_should_have_query_reflect_ongoing_query() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            path: PathBuf::from("/some/test/path"),
+            paths: vec![PathBuf::from("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -252,7 +252,7 @@ mod tests {
     async fn searcher_should_support_getting_next_match() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            path: PathBuf::from("/some/test/path"),
+            paths: vec![PathBuf::from("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -371,7 +371,7 @@ mod tests {
         let (mut transport, session) = make_session();
 
         let test_query = SearchQuery {
-            path: PathBuf::from("/some/test/path"),
+            paths: vec![PathBuf::from("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -492,7 +492,7 @@ mod tests {
         let (mut transport, session) = make_session();
 
         let test_query = SearchQuery {
-            path: PathBuf::from("/some/test/path"),
+            paths: vec![PathBuf::from("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),

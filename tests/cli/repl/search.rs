@@ -19,7 +19,7 @@ async fn should_support_json_search_filesystem_using_query(mut json_repl: CtxCom
         "payload": {
             "type": "search",
             "query": {
-                "path": root.path().to_string_lossy(),
+                "paths": [root.path().to_string_lossy()],
                 "target": "contents",
                 "condition": {"type": "regex", "value": "ua"},
             },
