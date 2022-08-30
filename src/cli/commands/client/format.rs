@@ -306,12 +306,14 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
         DistantResponseData::SearchDone { .. } => Output::None,
         DistantResponseData::SearchResults { matches, .. } => {
             let mut files: HashMap<_, Vec<String>> = HashMap::new();
+            let mut is_targeting_paths = false;
 
             for m in matches {
                 match m {
                     SearchQueryMatch::Path(SearchQueryPathMatch { path, .. }) => {
                         // Create the entry with no lines called out
                         files.entry(path).or_default();
+                        is_targeting_paths = true;
                     }
 
                     SearchQueryMatch::Contents(SearchQueryContentsMatch {
@@ -337,8 +339,9 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
                 // If we are seening a new path, print it out
                 if state.last_searched_path.as_deref() != Some(path.as_path()) {
                     // If we have already seen some path before, we would have printed it, and
-                    // we want to add a space between it and the current path
-                    if state.last_searched_path.is_some() {
+                    // we want to add a space between it and the current path, but only if we are
+                    // printing out file content matches and not paths
+                    if state.last_searched_path.is_some() && !is_targeting_paths {
                         writeln!(&mut output).unwrap();
                     }
 
