@@ -178,7 +178,6 @@ impl LaunchHandler for SshLaunchHandler {
             DistantLaunchOpts {
                 binary: config.distant.bin.unwrap_or(opts.binary),
                 args: config.distant.args.unwrap_or(opts.args),
-                use_login_shell: !config.distant.no_shell,
                 timeout: match options.get("timeout") {
                     Some(s) => std::time::Duration::from_millis(
                         s.parse::<u64>().map_err(|_| invalid("timeout"))?,

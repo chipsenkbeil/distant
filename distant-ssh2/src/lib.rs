@@ -5,14 +5,13 @@ use async_compat::CompatExt;
 use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::{
-    data::Environment,
     net::{
         client::{Client, ClientConfig},
         common::authentication::{AuthHandlerMap, DummyAuthHandler, Verifier},
-        common::{InmemoryTransport, OneshotListener},
+        common::{Host, InmemoryTransport, OneshotListener},
         server::{Server, ServerRef},
     },
-    DistantApiServerHandler, DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
+    DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials,
 };
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
@@ -25,7 +24,10 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use wezterm_ssh::{Config as WezConfig, Session as WezSession, SessionEvent as WezSessionEvent};
+use wezterm_ssh::{
+    ChildKiller, Config as WezConfig, MasterPty, PtySize, Session as WezSession,
+    SessionEvent as WezSessionEvent,
+};
 
 mod api;
 mod process;
@@ -207,10 +209,6 @@ pub struct DistantLaunchOpts {
     /// Arguments to supply to the distant server when starting it
     pub args: String,
 
-    /// If true, launches via `echo distant listen ... | $SHELL -l`, otherwise attempts to launch
-    /// by directly invoking distant
-    pub use_login_shell: bool,
-
     /// Timeout to use when connecting to the distant server
     pub timeout: Duration,
 }
@@ -220,7 +218,6 @@ impl Default for DistantLaunchOpts {
         Self {
             binary: String::from("distant"),
             args: String::new(),
-            use_login_shell: false,
             timeout: Duration::from_secs(15),
         }
     }
@@ -603,10 +600,17 @@ impl Ssh {
         let family = self.detect_family().await?;
         trace!("Detected family: {}", family.as_static_str());
 
-        let host = self.host().to_string();
+        let host = self
+            .host()
+            .parse::<Host>()
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        // Turn our ssh connection into a client/server pair so we can use it to spawn our server
-        let (mut client, server) = self.into_distant_pair().await?;
+        let (mut pty, mut child) = self
+            .session
+            .request_pty("xterm-256color", PtySize::default(), None, None)
+            .compat()
+            .await
+            .map_err(utils::to_other_error)?;
 
         // Build arguments for distant to execute listen subcommand
         let mut args = vec![
@@ -622,70 +626,81 @@ impl Ssh {
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         });
 
-        // If we are using a login shell, we need to make the binary be sh so we can appropriately
-        // pipe into the login shell. This is only available on unix.
-        let cmd = match family {
-            SshFamily::Unix if opts.use_login_shell => format!(
-                "sh -c {}",
-                shell_words::quote(&format!(
-                    "echo {} {} | $SHELL -l",
-                    opts.binary,
-                    args.join(" ")
-                ))
-            ),
-            _ => format!("{} {}", opts.binary, args.join(" ")),
+        // Write our command to stdin of pty to execute it
+        let cmd = format!("{} {}", opts.binary, args.join(" "));
+        debug!("Executing {cmd}");
+        pty.write_all(format!("{cmd}\r\n").as_bytes())?;
+
+        // Get credentials from execution
+        let credentials = {
+            // Spawn a blocking thread to continually read stdout from the pty
+            let mut reader = pty.try_clone_reader().map_err(utils::to_other_error)?;
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+            tokio::task::spawn_blocking(move || {
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = reader.read(&mut buf) {
+                    let _ = tx.blocking_send(buf[..n].to_vec());
+                }
+            });
+
+            // Spawn an async task to read the forwarded stdout and attempt to detect credentials
+            // from the received stdout thus far. This will fail after waiting at least as long as
+            // the configured timeout duration.
+            //
+            // NOTE: We don't use `tokio::time::timeout` so we can capture and report back the
+            //       stdout in the case of an error. Since there is no way easy way to know if the
+            //       executed command on the pty failed, we rely on a timeout.
+            let start_instant = std::time::Instant::now();
+            let timeout = opts.timeout;
+            tokio::spawn(async move {
+                let mut stdout = Vec::new();
+                loop {
+                    // Continually process received stdout
+                    while let Ok(bytes) = rx.try_recv() {
+                        trace!("Received {} more bytes over stdout", bytes.len());
+                        stdout.extend_from_slice(&bytes);
+
+                        if let Some(mut credentials) =
+                            DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
+                        {
+                            credentials.host = host;
+                            return Ok(credentials);
+                        }
+                    }
+
+                    // We have waited at least as long as our timeout, so we fail
+                    if start_instant.elapsed() >= timeout {
+                        // Clean the bytes before including by removing anything that isn't ascii
+                        // and isn't a control character (except whitespace)
+                        stdout.retain(|b| {
+                            b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
+                        });
+
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!(
+                                "Failed to spawn server: '{}'",
+                                shell_words::quote(&String::from_utf8_lossy(&stdout))
+                            ),
+                        ));
+                    }
+
+                    // Otherwise, wait some period of time before trying again
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            })
         };
 
-        // Spawn distant server and detach it so that we don't kill it when the
-        // ssh client is closed
-        debug!("Executing {}", cmd);
-        let output = client.output(cmd, Environment::new(), None, None).await?;
-        debug!(
-            "Completed with success = {}, code = {:?}",
-            output.success, output.code
-        );
+        // Wait a maximum amount of time before failing
+        trace!("Waiting for credentials to appear");
+        let credentials = credentials.await??;
+        debug!("Got credentials");
 
-        // Close out ssh client by killing the internal server and client
-        server.shutdown();
-        client.abort();
-        let _ = client.wait().await;
+        // Attempt to kill the pty, but don't block if it fails
+        drop(pty);
+        let _ = child.kill();
 
-        // If successful, grab the client information and establish a connection
-        // with the distant server
-        if output.success {
-            // Iterate over output as individual lines, looking for client info
-            trace!("Searching for credentials");
-            match DistantSingleKeyCredentials::find(&String::from_utf8_lossy(&output.stdout)) {
-                Some(mut info) => {
-                    info.host = host
-                        .parse()
-                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
-                    Ok(info)
-                }
-                None => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Missing launch information: '{}'",
-                        String::from_utf8_lossy(&output.stdout)
-                    ),
-                )),
-            }
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Spawning distant failed [{}]: {}",
-                    output
-                        .code
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| String::from("???")),
-                    match String::from_utf8(output.stderr) {
-                        Ok(output) => output,
-                        Err(x) => x.to_string(),
-                    }
-                ),
-            ))
-        }
+        Ok(credentials)
     }
 
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is powered by an ssh client

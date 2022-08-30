@@ -28,10 +28,6 @@ impl From<Map> for ClientLaunchConfig {
                     .remove("distant.bind_server")
                     .and_then(|x| x.parse::<BindAddress>().ok()),
                 args: map.remove("distant.args"),
-                no_shell: map
-                    .remove("distant.no_shell")
-                    .and_then(|x| x.parse::<bool>().ok())
-                    .unwrap_or_default(),
             },
             options: map,
         }
@@ -53,11 +49,6 @@ impl From<ClientLaunchConfig> for Map {
         if let Some(x) = config.distant.args {
             this.insert("distant.args".to_string(), x);
         }
-
-        this.insert(
-            "distant.no_shell".to_string(),
-            config.distant.no_shell.to_string(),
-        );
 
         this.extend(config.options);
 
@@ -90,8 +81,4 @@ pub struct ClientLaunchDistantConfig {
     /// Additional arguments to provide to the server
     #[clap(name = "distant-args", long, allow_hyphen_values(true))]
     pub args: Option<String>,
-
-    /// If specified, will not launch distant using a login shell but instead execute it directly
-    #[clap(long)]
-    pub no_shell: bool,
 }
