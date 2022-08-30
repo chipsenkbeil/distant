@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn should_limit_searched_paths_using_regex_filter_if_specified() {
+    fn should_filter_searched_paths_using_regex_filter_if_specified() {
         todo!();
     }
 }
