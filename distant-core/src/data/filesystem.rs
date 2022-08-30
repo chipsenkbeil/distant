@@ -1,6 +1,6 @@
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fs::FileType as StdFileType, path::PathBuf};
 use strum::AsRefStr;
 
 /// Represents information about a single entry within a directory
@@ -27,7 +27,7 @@ impl DirEntry {
 }
 
 /// Represents the type associated with a dir entry
-#[derive(Copy, Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
@@ -35,6 +35,18 @@ pub enum FileType {
     Dir,
     File,
     Symlink,
+}
+
+impl From<StdFileType> for FileType {
+    fn from(ft: StdFileType) -> Self {
+        if ft.is_dir() {
+            Self::Dir
+        } else if ft.is_symlink() {
+            Self::Symlink
+        } else {
+            Self::File
+        }
+    }
 }
 
 #[cfg(feature = "schemars")]

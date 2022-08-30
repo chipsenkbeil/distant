@@ -3,11 +3,13 @@ use crate::{DistantMsg, DistantRequestData, Map};
 use derive_more::IsVariant;
 use distant_net::Request;
 use serde::{Deserialize, Serialize};
-use strum::{EnumDiscriminants, EnumIter, EnumMessage, EnumString};
+use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, EnumDiscriminants, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[strum_discriminants(derive(
+    AsRefStr,
     strum::Display,
     EnumIter,
     EnumMessage,

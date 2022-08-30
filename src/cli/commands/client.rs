@@ -17,7 +17,7 @@ use distant_core::{
     data::{ChangeKindSet, Environment},
     net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
     ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
-    DistantResponseData, Host, Map, RemoteCommand, Watcher,
+    DistantResponseData, Host, Map, RemoteCommand, Searcher, Watcher,
 };
 use log::*;
 use serde_json::{json, Value};
@@ -279,7 +279,7 @@ impl ClientSubcommand {
                     }
                 );
 
-                let formatter = Formatter::shell();
+                let mut formatter = Formatter::shell();
 
                 debug!("Sending request {:?}", request);
                 match request {
@@ -318,6 +318,26 @@ impl ClientSubcommand {
                             } else {
                                 return Err(CliError::FAILURE);
                             }
+                        }
+                    }
+                    DistantRequestData::Search { query } => {
+                        debug!("Special request creating searcher for {:?}", query);
+                        let mut searcher = Searcher::search(channel, query)
+                            .await
+                            .context("Failed to start search")?;
+
+                        // Continue to receive and process matches
+                        while let Some(m) = searcher.next().await {
+                            // TODO: Provide a cleaner way to print just a match
+                            let res = Response::new(
+                                "".to_string(),
+                                DistantMsg::Single(DistantResponseData::SearchResults {
+                                    id: 0,
+                                    matches: vec![m],
+                                }),
+                            );
+
+                            formatter.print(res).context("Failed to print match")?;
                         }
                     }
                     DistantRequestData::Watch {

@@ -4,6 +4,9 @@ pub const CLIENT_PIPE_CAPACITY: usize = 10000;
 /// Capacity associated with a client watcher receiving changes
 pub const CLIENT_WATCHER_CAPACITY: usize = 100;
 
+/// Capacity associated with a client searcher receiving matches
+pub const CLIENT_SEARCHER_CAPACITY: usize = 10000;
+
 /// Capacity associated with the server's file watcher to pass events outbound
 pub const SERVER_WATCHER_CAPACITY: usize = 10000;
 

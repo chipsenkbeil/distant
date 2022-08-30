@@ -1,10 +1,17 @@
 use clap::ValueEnum;
 use distant_core::{
-    data::{ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata, SystemInfo},
+    data::{
+        ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
+        SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SystemInfo,
+    },
     net::Response,
 };
 use log::*;
-use std::io::{self, Write};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+    path::PathBuf,
+};
 use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -31,14 +38,24 @@ impl Default for Format {
     }
 }
 
+#[derive(Default)]
+struct FormatterState {
+    /// Last seen path during search
+    pub last_searched_path: Option<PathBuf>,
+}
+
 pub struct Formatter {
     format: Format,
+    state: FormatterState,
 }
 
 impl Formatter {
     /// Create a new output message for the given response based on the specified format
     pub fn new(format: Format) -> Self {
-        Self { format }
+        Self {
+            format,
+            state: Default::default(),
+        }
     }
 
     /// Creates a new [`Formatter`] using [`Format`] of `Format::Shell`
@@ -47,7 +64,7 @@ impl Formatter {
     }
 
     /// Consumes the output message, printing it based on its configuration
-    pub fn print(&self, res: Response<DistantMsg<DistantResponseData>>) -> io::Result<()> {
+    pub fn print(&mut self, res: Response<DistantMsg<DistantResponseData>>) -> io::Result<()> {
         let output = match self.format {
             Format::Json => Output::StdoutLine(
                 serde_json::to_vec(&res)
@@ -61,7 +78,7 @@ impl Formatter {
                     "Shell does not support batch responses",
                 ))
             }
-            Format::Shell => format_shell(res.payload.into_single().unwrap()),
+            Format::Shell => format_shell(&mut self.state, res.payload.into_single().unwrap()),
         };
 
         match output {
@@ -127,7 +144,7 @@ enum Output {
     None,
 }
 
-fn format_shell(data: DistantResponseData) -> Output {
+fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output {
     match data {
         DistantResponseData::Ok => Output::None,
         DistantResponseData::Error(Error { description, .. }) => {
@@ -283,6 +300,68 @@ fn format_shell(data: DistantResponseData) -> Output {
             )
             .into_bytes(),
         ),
+        DistantResponseData::SearchStarted { id } => {
+            Output::StdoutLine(format!("Query {id} started").into_bytes())
+        }
+        DistantResponseData::SearchDone { .. } => Output::None,
+        DistantResponseData::SearchResults { matches, .. } => {
+            let mut files: HashMap<_, Vec<String>> = HashMap::new();
+            let mut is_targeting_paths = false;
+
+            for m in matches {
+                match m {
+                    SearchQueryMatch::Path(SearchQueryPathMatch { path, .. }) => {
+                        // Create the entry with no lines called out
+                        files.entry(path).or_default();
+                        is_targeting_paths = true;
+                    }
+
+                    SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                        path,
+                        lines,
+                        line_number,
+                        ..
+                    }) => {
+                        let file_matches = files.entry(path).or_default();
+
+                        file_matches.push(format!(
+                            "{line_number}:{}",
+                            lines.to_string_lossy().trim_end()
+                        ));
+                    }
+                }
+            }
+
+            let mut output = String::new();
+            for (path, lines) in files {
+                use std::fmt::Write;
+
+                // If we are seening a new path, print it out
+                if state.last_searched_path.as_deref() != Some(path.as_path()) {
+                    // If we have already seen some path before, we would have printed it, and
+                    // we want to add a space between it and the current path, but only if we are
+                    // printing out file content matches and not paths
+                    if state.last_searched_path.is_some() && !is_targeting_paths {
+                        writeln!(&mut output).unwrap();
+                    }
+
+                    writeln!(&mut output, "{}", path.to_string_lossy()).unwrap();
+                }
+
+                for line in lines {
+                    writeln!(&mut output, "{line}").unwrap();
+                }
+
+                // Update our last seen path
+                state.last_searched_path = Some(path);
+            }
+
+            if !output.is_empty() {
+                Output::Stdout(output.into_bytes())
+            } else {
+                Output::None
+            }
+        }
         DistantResponseData::ProcSpawned { .. } => Output::None,
         DistantResponseData::ProcStdout { data, .. } => Output::Stdout(data),
         DistantResponseData::ProcStderr { data, .. } => Output::Stderr(data),

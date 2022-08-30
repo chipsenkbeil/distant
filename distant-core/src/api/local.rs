@@ -1,7 +1,7 @@
 use crate::{
     data::{
         Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
-        ProcessId, PtySize, SystemInfo,
+        ProcessId, PtySize, SearchId, SearchQuery, SystemInfo,
     },
     DistantApi, DistantCtx,
 };
@@ -425,6 +425,29 @@ impl DistantApi for LocalDistantApi {
             ctx.connection_id, path, canonicalize, resolve_file_type
         );
         Metadata::read(path, canonicalize, resolve_file_type).await
+    }
+
+    async fn search(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        query: SearchQuery,
+    ) -> io::Result<SearchId> {
+        debug!(
+            "[Conn {}] Performing search via {query:?}",
+            ctx.connection_id,
+        );
+
+        self.state.search.start(query, ctx.reply).await
+    }
+
+    async fn cancel_search(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        id: SearchId,
+    ) -> io::Result<()> {
+        debug!("[Conn {}] Cancelling search {id}", ctx.connection_id,);
+
+        self.state.search.cancel(id).await
     }
 
     async fn proc_spawn(

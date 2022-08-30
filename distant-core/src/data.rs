@@ -33,6 +33,9 @@ pub use metadata::*;
 mod pty;
 pub use pty::*;
 
+mod search;
+pub use search::*;
+
 mod system;
 pub use system::*;
 
@@ -145,6 +148,7 @@ impl<T: schemars::JsonSchema> DistantMsg<T> {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[strum_discriminants(derive(
+    AsRefStr,
     strum::Display,
     EnumIter,
     EnumMessage,
@@ -381,6 +385,22 @@ pub enum DistantRequestData {
         resolve_file_type: bool,
     },
 
+    /// Searches filesystem using the provided query
+    #[strum_discriminants(strum(message = "Supports searching filesystem using queries"))]
+    Search {
+        /// Query to perform against the filesystem
+        query: SearchQuery,
+    },
+
+    /// Cancels an active search being run against the filesystem
+    #[strum_discriminants(strum(
+        message = "Supports canceling an active search against the filesystem"
+    ))]
+    CancelSearch {
+        /// Id of the search to cancel
+        id: SearchId,
+    },
+
     /// Spawns a new process on the remote machine
     #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
     #[strum_discriminants(strum(message = "Supports spawning a process"))]
@@ -498,6 +518,27 @@ pub enum DistantResponseData {
 
     /// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
     Metadata(Metadata),
+
+    /// Represents a search being started
+    SearchStarted {
+        /// Arbitrary id associated with search
+        id: SearchId,
+    },
+
+    /// Represents some subset of results for a search query (may not be all of them)
+    SearchResults {
+        /// Arbitrary id associated with search
+        id: SearchId,
+
+        /// Collection of matches from performing a query
+        matches: Vec<SearchQueryMatch>,
+    },
+
+    /// Represents a search being completed
+    SearchDone {
+        /// Arbitrary id associated with search
+        id: SearchId,
+    },
 
     /// Response to starting a new process
     ProcSpawned {

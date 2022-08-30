@@ -21,6 +21,7 @@ bytes = "1.2.1"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
 distant-net = { version = "=0.18.0", path = "../distant-net" }
 futures = "0.3.21"
+grep = "0.2.10"
 hex = "0.4.3"
 log = "0.4.17"
 notify = { version = "=5.0.0-pre.15", features = ["serde"] }

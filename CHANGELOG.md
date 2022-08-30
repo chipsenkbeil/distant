@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SystemInfo` via ssh backend now reports os when windows detected
 - `Capabilities` request/response for server and manager that report back the
   capabilities (and descriptions) supported by the server or manager
+- `Search` and `CancelSearch` request/response for server that performs a
+  search using `grep` crate against paths or file contents, returning results
+  back as a stream
+  - New `Searcher` available as part of distant client interface to support
+    performing a search and getting back results
+  - Updated `DistantChannelExt` to support creating a `Searcher` and canceling
+    an ongoing search query
+  - `distant client action search` now supported, waiting for results and
+    printing them out
 
 ### Changed
 
@@ -37,9 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `shutdown-after` replaced with `shutdown` that supports three options:
-    1. `never` - server will never shutdown automatically
-    2. `after=N` - server will shutdown after N seconds
-    3. `lonely=N` - server will shutdown N seconds after no connections
+  1. `never` - server will never shutdown automatically
+  2. `after=N` - server will shutdown after N seconds
+  3. `lonely=N` - server will shutdown N seconds after no connections
 
 ## [0.17.6] - 2022-08-18
 ### Fixed

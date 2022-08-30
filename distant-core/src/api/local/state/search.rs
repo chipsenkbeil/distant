@@ -1,0 +1,1765 @@
+use crate::data::{
+    DistantResponseData, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
+    SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
+    SearchQueryTarget,
+};
+use distant_net::Reply;
+use grep::{
+    matcher::Matcher,
+    regex::RegexMatcher,
+    searcher::{Searcher, Sink, SinkMatch},
+};
+use log::*;
+use std::{collections::HashMap, io, ops::Deref, path::Path};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
+use walkdir::{DirEntry, WalkDir};
+
+/// Holds information related to active searches on the server
+pub struct SearchState {
+    channel: SearchChannel,
+    task: JoinHandle<()>,
+}
+
+impl Drop for SearchState {
+    /// Aborts the task that handles search operations and management
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel(1);
+        let task = tokio::spawn(search_task(tx.clone(), rx));
+
+        Self {
+            channel: SearchChannel { tx },
+            task,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn clone_channel(&self) -> SearchChannel {
+        self.channel.clone()
+    }
+
+    /// Aborts the process task
+    pub fn abort(&self) {
+        self.task.abort();
+    }
+}
+
+impl Deref for SearchState {
+    type Target = SearchChannel;
+
+    fn deref(&self) -> &Self::Target {
+        &self.channel
+    }
+}
+
+#[derive(Clone)]
+pub struct SearchChannel {
+    tx: mpsc::Sender<InnerSearchMsg>,
+}
+
+impl Default for SearchChannel {
+    /// Creates a new channel that is closed by default
+    fn default() -> Self {
+        let (tx, _) = mpsc::channel(1);
+        Self { tx }
+    }
+}
+
+impl SearchChannel {
+    /// Starts a new search using the provided query
+    pub async fn start(
+        &self,
+        query: SearchQuery,
+        reply: Box<dyn Reply<Data = DistantResponseData>>,
+    ) -> io::Result<SearchId> {
+        let (cb, rx) = oneshot::channel();
+        self.tx
+            .send(InnerSearchMsg::Start {
+                query: Box::new(query),
+                reply,
+                cb,
+            })
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal search task closed"))?;
+        rx.await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to start dropped"))?
+    }
+
+    /// Cancels an active search
+    pub async fn cancel(&self, id: SearchId) -> io::Result<()> {
+        let (cb, rx) = oneshot::channel();
+        self.tx
+            .send(InnerSearchMsg::Cancel { id, cb })
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal search task closed"))?;
+        rx.await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to cancel dropped"))?
+    }
+}
+
+/// Internal message to pass to our task below to perform some action
+enum InnerSearchMsg {
+    Start {
+        query: Box<SearchQuery>,
+        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        cb: oneshot::Sender<io::Result<SearchId>>,
+    },
+    Cancel {
+        id: SearchId,
+        cb: oneshot::Sender<io::Result<()>>,
+    },
+    InternalRemove {
+        id: SearchId,
+    },
+}
+
+async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<InnerSearchMsg>) {
+    let mut searches: HashMap<SearchId, oneshot::Sender<()>> = HashMap::new();
+
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            InnerSearchMsg::Start { query, reply, cb } => {
+                let options = query.options.clone();
+
+                // Build our executor and send an error if it fails
+                let mut executor = match SearchQueryExecutor::new(*query) {
+                    Ok(executor) => executor,
+                    Err(x) => {
+                        let _ = cb.send(Err(x));
+                        return;
+                    }
+                };
+
+                // Get the unique search id
+                let id = executor.id();
+
+                // Queue up our search internally with a cancel sender
+                searches.insert(id, executor.take_cancel_tx().unwrap());
+
+                // Report back the search id
+                let _ = cb.send(Ok(id));
+
+                // Spawn our reporter of matches coming from the executor
+                SearchQueryReporter {
+                    id,
+                    options,
+                    rx: executor.take_match_rx().unwrap(),
+                    reply,
+                }
+                .spawn();
+
+                // Spawn our executor to run
+                executor.spawn(tx.clone());
+            }
+            InnerSearchMsg::Cancel { id, cb } => {
+                let _ = cb.send(match searches.remove(&id) {
+                    Some(tx) => {
+                        let _ = tx.send(());
+                        Ok(())
+                    }
+                    None => Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("[Query {id}] Cancellation failed because no search found"),
+                    )),
+                });
+            }
+            InnerSearchMsg::InternalRemove { id } => {
+                trace!("[Query {id}] Removing internal tracking");
+                searches.remove(&id);
+            }
+        }
+    }
+}
+
+struct SearchQueryReporter {
+    id: SearchId,
+    options: SearchQueryOptions,
+    rx: mpsc::UnboundedReceiver<SearchQueryMatch>,
+    reply: Box<dyn Reply<Data = DistantResponseData>>,
+}
+
+impl SearchQueryReporter {
+    /// Runs the reporter to completion in an async task
+    pub fn spawn(self) {
+        tokio::spawn(self.run());
+    }
+
+    async fn run(self) {
+        let Self {
+            id,
+            options,
+            mut rx,
+            reply,
+        } = self;
+
+        // Queue of matches that we hold until reaching pagination
+        let mut matches = Vec::new();
+        let mut total_matches_cnt = 0;
+
+        trace!("[Query {id}] Starting reporter with {options:?}");
+        while let Some(m) = rx.recv().await {
+            matches.push(m);
+            total_matches_cnt += 1;
+
+            // Check if we've reached the limit, and quit if we have
+            if let Some(len) = options.limit {
+                if total_matches_cnt >= len {
+                    trace!("[Query {id}] Reached limit of {len} matches");
+                    break;
+                }
+            }
+
+            // Check if we've reached pagination size, and send queued if so
+            if let Some(len) = options.pagination {
+                if matches.len() as u64 >= len {
+                    trace!("[Query {id}] Reached {len} paginated matches");
+                    if let Err(x) = reply
+                        .send(DistantResponseData::SearchResults {
+                            id,
+                            matches: std::mem::take(&mut matches),
+                        })
+                        .await
+                    {
+                        error!("[Query {id}] Failed to send paginated matches: {x}");
+                    }
+                }
+            }
+        }
+
+        // Send any remaining matches
+        if !matches.is_empty() {
+            trace!("[Query {id}] Sending {} remaining matches", matches.len());
+            if let Err(x) = reply
+                .send(DistantResponseData::SearchResults { id, matches })
+                .await
+            {
+                error!("[Query {id}] Failed to send final matches: {x}");
+            }
+        }
+
+        // Report that we are done
+        trace!("[Query {id}] Reporting as done");
+        if let Err(x) = reply.send(DistantResponseData::SearchDone { id }).await {
+            error!("[Query {id}] Failed to send done status: {x}");
+        }
+    }
+}
+
+struct SearchQueryExecutor {
+    id: SearchId,
+    query: SearchQuery,
+    walk_dir: WalkDir,
+    matcher: RegexMatcher,
+
+    cancel_tx: Option<oneshot::Sender<()>>,
+    cancel_rx: oneshot::Receiver<()>,
+
+    match_tx: mpsc::UnboundedSender<SearchQueryMatch>,
+    match_rx: Option<mpsc::UnboundedReceiver<SearchQueryMatch>>,
+}
+
+impl SearchQueryExecutor {
+    /// Creates a new executor
+    pub fn new(query: SearchQuery) -> io::Result<Self> {
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (match_tx, match_rx) = mpsc::unbounded_channel();
+
+        let path = query.path.as_path();
+        let follow_links = query.options.follow_symbolic_links;
+        let regex = query.condition.to_regex_string();
+
+        let matcher = RegexMatcher::new(&regex)
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
+        let walk_dir = WalkDir::new(path).follow_links(follow_links);
+
+        let walk_dir = match query.options.min_depth.as_ref().copied() {
+            Some(depth) => walk_dir.min_depth(depth as usize),
+            None => walk_dir,
+        };
+
+        let walk_dir = match query.options.max_depth.as_ref().copied() {
+            Some(depth) => walk_dir.max_depth(depth as usize),
+            None => walk_dir,
+        };
+
+        Ok(Self {
+            id: rand::random(),
+            query,
+            matcher,
+            walk_dir,
+
+            cancel_tx: Some(cancel_tx),
+            cancel_rx,
+
+            match_tx,
+            match_rx: Some(match_rx),
+        })
+    }
+
+    pub fn id(&self) -> SearchId {
+        self.id
+    }
+
+    pub fn take_cancel_tx(&mut self) -> Option<oneshot::Sender<()>> {
+        self.cancel_tx.take()
+    }
+
+    pub fn take_match_rx(&mut self) -> Option<mpsc::UnboundedReceiver<SearchQueryMatch>> {
+        self.match_rx.take()
+    }
+
+    /// Runs the executor to completion in another thread
+    pub fn spawn(self, tx: mpsc::Sender<InnerSearchMsg>) {
+        tokio::task::spawn_blocking(move || {
+            let id = self.id;
+            self.run();
+
+            // Once complete, we need to send a request to remove the search from our list
+            let _ = tx.blocking_send(InnerSearchMsg::InternalRemove { id });
+        });
+    }
+
+    fn run(self) {
+        let id = self.id;
+        let walk_dir = self.walk_dir;
+        let tx = self.match_tx;
+        let mut cancel = self.cancel_rx;
+
+        // Create our path filter we will use to filter out entries that do not match filter
+        let include_path_filter = match self.query.options.include.as_ref() {
+            Some(condition) => match SearchQueryPathFilter::new(&condition.to_regex_string()) {
+                Ok(filter) => {
+                    trace!("[Query {id}] Using regex include path filter for {condition:?}");
+                    filter
+                }
+                Err(x) => {
+                    error!("[Query {id}] Failed to instantiate include path filter: {x}");
+                    return;
+                }
+            },
+            None => {
+                trace!("[Query {id}] Using fixed include path filter of true");
+                SearchQueryPathFilter::fixed(true)
+            }
+        };
+
+        // Create our path filter we will use to filter out entries that match filter
+        let exclude_path_filter = match self.query.options.exclude.as_ref() {
+            Some(condition) => match SearchQueryPathFilter::new(&condition.to_regex_string()) {
+                Ok(filter) => {
+                    trace!("[Query {id}] Using regex exclude path filter for {condition:?}");
+                    filter
+                }
+                Err(x) => {
+                    error!("[Query {id}] Failed to instantiate exclude path filter: {x}");
+                    return;
+                }
+            },
+            None => {
+                trace!("[Query {id}] Using fixed exclude path filter of false");
+                SearchQueryPathFilter::fixed(false)
+            }
+        };
+
+        let options_filter = SearchQueryOptionsFilter {
+            target: self.query.target,
+            options: self.query.options.clone(),
+        };
+
+        // Search all entries for matches and report them
+        for entry in walk_dir
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| include_path_filter.filter(e.path()))
+            .filter(|e| !exclude_path_filter.filter(e.path()))
+            .filter(|e| options_filter.filter(e))
+        {
+            // Check if we are being interrupted, and if so exit our loop early
+            match cancel.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => (),
+                _ => {
+                    debug!("[Query {id}] Cancelled");
+                    break;
+                }
+            }
+
+            let res = match self.query.target {
+                // Perform the search against the path itself
+                SearchQueryTarget::Path => {
+                    let path_str = entry.path().to_string_lossy();
+                    Searcher::new().search_slice(
+                        &self.matcher,
+                        path_str.as_bytes(),
+                        SearchQueryPathSink {
+                            search_id: id,
+                            path: entry.path(),
+                            matcher: &self.matcher,
+                            callback: |m| Ok(tx.send(m).is_ok()),
+                        },
+                    )
+                }
+
+                // Perform the search against the file's contents
+                SearchQueryTarget::Contents => Searcher::new().search_path(
+                    &self.matcher,
+                    entry.path(),
+                    SearchQueryContentsSink {
+                        search_id: id,
+                        path: entry.path(),
+                        matcher: &self.matcher,
+                        callback: |m| Ok(tx.send(m).is_ok()),
+                    },
+                ),
+            };
+
+            if let Err(x) = res {
+                error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
+            }
+        }
+    }
+}
+
+struct SearchQueryPathFilter {
+    matcher: Option<RegexMatcher>,
+    default_value: bool,
+}
+
+impl SearchQueryPathFilter {
+    pub fn new(regex: &str) -> io::Result<Self> {
+        Ok(Self {
+            matcher: Some(
+                RegexMatcher::new(regex)
+                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+            ),
+            default_value: false,
+        })
+    }
+
+    /// Returns a filter that always returns `value`
+    pub fn fixed(value: bool) -> Self {
+        Self {
+            matcher: None,
+            default_value: value,
+        }
+    }
+
+    /// Returns true if path passes the filter
+    pub fn filter(&self, path: impl AsRef<Path>) -> bool {
+        self.try_filter(path).unwrap_or(false)
+    }
+
+    fn try_filter(&self, path: impl AsRef<Path>) -> io::Result<bool> {
+        match &self.matcher {
+            Some(matcher) => matcher
+                .is_match(path.as_ref().to_string_lossy().as_bytes())
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x)),
+            None => Ok(self.default_value),
+        }
+    }
+}
+
+struct SearchQueryOptionsFilter {
+    target: SearchQueryTarget,
+    options: SearchQueryOptions,
+}
+
+impl SearchQueryOptionsFilter {
+    pub fn filter(&self, entry: &DirEntry) -> bool {
+        // Check if filetype is allowed
+        let file_type_allowed = self.options.allowed_file_types.is_empty()
+            || self
+                .options
+                .allowed_file_types
+                .contains(&entry.file_type().into());
+
+        // Check if target is appropriate
+        let targeted = match self.target {
+            SearchQueryTarget::Contents => entry.file_type().is_file(),
+            _ => true,
+        };
+
+        file_type_allowed && targeted
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SearchQueryPathSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    search_id: SearchId,
+    path: &'a Path,
+    matcher: &'a M,
+    callback: F,
+}
+
+impl<'a, M, F> Sink for SearchQueryPathSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        let mut submatches = Vec::new();
+
+        // Find all matches within the line
+        let res = self.matcher.find_iter(mat.bytes(), |m| {
+            let bytes = &mat.bytes()[m];
+            submatches.push(SearchQuerySubmatch {
+                r#match: match std::str::from_utf8(bytes) {
+                    Ok(s) => SearchQueryMatchData::Text(s.to_string()),
+                    Err(_) => SearchQueryMatchData::Bytes(bytes.to_vec()),
+                },
+                start: m.start() as u64,
+                end: m.end() as u64,
+            });
+
+            true
+        });
+
+        if let Err(x) = res {
+            error!(
+                "[Query {}] SearchQueryPathSink encountered matcher error: {x}",
+                self.search_id
+            );
+        }
+
+        // If we have at least one submatch, then we have a match
+        let should_continue = if !submatches.is_empty() {
+            let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
+                path: self.path.to_path_buf(),
+                submatches,
+            });
+
+            (self.callback)(r#match)?
+        } else {
+            true
+        };
+
+        Ok(should_continue)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SearchQueryContentsSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    search_id: SearchId,
+    path: &'a Path,
+    matcher: &'a M,
+    callback: F,
+}
+
+impl<'a, M, F> Sink for SearchQueryContentsSink<'a, M, F>
+where
+    M: Matcher,
+    F: FnMut(SearchQueryMatch) -> Result<bool, io::Error>,
+{
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
+        let mut submatches = Vec::new();
+
+        // Find all matches within the line
+        let res = self.matcher.find_iter(mat.bytes(), |m| {
+            let bytes = &mat.bytes()[m];
+            submatches.push(SearchQuerySubmatch {
+                r#match: match std::str::from_utf8(bytes) {
+                    Ok(s) => SearchQueryMatchData::Text(s.to_string()),
+                    Err(_) => SearchQueryMatchData::Bytes(bytes.to_vec()),
+                },
+                start: m.start() as u64,
+                end: m.end() as u64,
+            });
+
+            true
+        });
+
+        if let Err(x) = res {
+            error!(
+                "[Query {}] SearchQueryContentsSink encountered matcher error: {x}",
+                self.search_id
+            );
+        }
+
+        // If we have at least one submatch, then we have a match
+        let should_continue = if !submatches.is_empty() {
+            let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                path: self.path.to_path_buf(),
+                lines: match std::str::from_utf8(mat.bytes()) {
+                    Ok(s) => SearchQueryMatchData::Text(s.to_string()),
+                    Err(_) => SearchQueryMatchData::Bytes(mat.bytes().to_vec()),
+                },
+
+                // NOTE: Since we are defining the searcher, we control always including the line
+                //       number, so we can safely unwrap here
+                line_number: mat.line_number().unwrap(),
+
+                // NOTE: absolute_byte_offset from grep tells us where the bytes start for the
+                //       match, but not inclusive of where within the match
+                absolute_offset: mat.absolute_byte_offset(),
+                submatches,
+            });
+
+            (self.callback)(r#match)?
+        } else {
+            true
+        };
+
+        Ok(should_continue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{FileType, SearchQueryCondition, SearchQueryMatchData};
+    use assert_fs::prelude::*;
+    use std::path::PathBuf;
+
+    fn make_path(path: &str) -> PathBuf {
+        use std::path::MAIN_SEPARATOR;
+
+        // Ensure that our path is compliant with the current platform
+        let path = path.replace('/', &MAIN_SEPARATOR.to_string());
+
+        PathBuf::from(path)
+    }
+
+    fn setup_dir(files: Vec<(&str, &str)>) -> assert_fs::TempDir {
+        let root = assert_fs::TempDir::new().unwrap();
+
+        for (path, contents) in files {
+            root.child(make_path(path)).write_str(contents).unwrap();
+        }
+
+        root
+    }
+
+    fn get_matches(data: DistantResponseData) -> Vec<SearchQueryMatch> {
+        match data {
+            DistantResponseData::SearchResults { matches, .. } => matches,
+            x => panic!("Did not get search results: {x:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_send_event_when_query_finished() {
+        let root = setup_dir(Vec::new());
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::equals(""),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_send_all_matches_at_once_by_default() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", ""),
+            ("path/to/file2.txt", ""),
+            ("other/file.txt", ""),
+            ("dir/other/bin", ""),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex("other"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_path_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        // Root path len (including trailing separator) + 1 to be at start of child path
+        let child_start = (root.path().to_string_lossy().len() + 1) as u64;
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryPathMatch {
+                    path: root.child(make_path("dir/other")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("other".to_string()),
+                        start: child_start + 4,
+                        end: child_start + 9,
+                    }]
+                },
+                SearchQueryPathMatch {
+                    path: root.child(make_path("dir/other/bin")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("other".to_string()),
+                        start: child_start + 4,
+                        end: child_start + 9,
+                    }]
+                },
+                SearchQueryPathMatch {
+                    path: root.child(make_path("other")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("other".to_string()),
+                        start: child_start,
+                        end: child_start + 5,
+                    }]
+                },
+                SearchQueryPathMatch {
+                    path: root.child(make_path("other/file.txt")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("other".to_string()),
+                        start: child_start,
+                        end: child_start + 5,
+                    }]
+                },
+            ]
+        );
+
+        assert_eq!(
+            rx.recv().await,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_support_targeting_paths() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", ""),
+            ("path/to/file2.txt", ""),
+            ("other/file.txt", ""),
+            ("other/dir/bin", ""),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex("path"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_path_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        // Root path len (including trailing separator) + 1 to be at start of child path
+        let child_start = (root.path().to_string_lossy().len() + 1) as u64;
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryPathMatch {
+                    path: root.child(make_path("path")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("path".to_string()),
+                        start: child_start,
+                        end: child_start + 4,
+                    }]
+                },
+                SearchQueryPathMatch {
+                    path: root.child(make_path("path/to")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("path".to_string()),
+                        start: child_start,
+                        end: child_start + 4,
+                    }]
+                },
+                SearchQueryPathMatch {
+                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("path".to_string()),
+                        start: child_start,
+                        end: child_start + 4,
+                    }]
+                },
+                SearchQueryPathMatch {
+                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("path".to_string()),
+                        start: child_start,
+                        end: child_start + 4,
+                    }]
+                }
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_support_targeting_contents() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+            ("other/file.txt", "some other file with text"),
+            ("other/dir/bin", "asdfasdfasdfasdfasdfasdfasdfasdfasdf"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("other/file.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("some other file with text"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 21,
+                        end: 25,
+                    }]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("lines of text in\n"),
+                    line_number: 2,
+                    absolute_offset: 5,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 9,
+                        end: 13,
+                    }]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("more text"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 5,
+                        end: 9,
+                    }]
+                }
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_support_multiple_submatches() {
+        let root = setup_dir(vec![("path/to/file.txt", "aa ab ac\nba bb bc\nca cb cc")]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex(r"[abc][ab]"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.line_number);
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("aa ab ac\n"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![
+                        SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("aa".to_string()),
+                            start: 0,
+                            end: 2,
+                        },
+                        SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("ab".to_string()),
+                            start: 3,
+                            end: 5,
+                        }
+                    ]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("ba bb bc\n"),
+                    line_number: 2,
+                    absolute_offset: 9,
+                    submatches: vec![
+                        SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("ba".to_string()),
+                            start: 0,
+                            end: 2,
+                        },
+                        SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("bb".to_string()),
+                            start: 3,
+                            end: 5,
+                        }
+                    ]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("ca cb cc"),
+                    line_number: 3,
+                    absolute_offset: 18,
+                    submatches: vec![
+                        SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("ca".to_string()),
+                            start: 0,
+                            end: 2,
+                        },
+                        SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("cb".to_string()),
+                            start: 3,
+                            end: 5,
+                        }
+                    ]
+                },
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_send_paginated_results_if_specified() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+            ("other/file.txt", "some other file with text"),
+            ("other/dir/bin", "asdfasdfasdfasdfasdfasdfasdfasdfasdf"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: SearchQueryOptions {
+                pagination: Some(2),
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        // Collect all matches here
+        let mut matches = Vec::new();
+
+        // Get first two matches
+        let paginated_matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paginated_matches.len(), 2);
+        matches.extend(paginated_matches);
+
+        // Get last match
+        let paginated_matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paginated_matches.len(), 1);
+        matches.extend(paginated_matches);
+
+        // Sort our matches so we can check them all
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("other/file.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("some other file with text"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 21,
+                        end: 25,
+                    }]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("lines of text in\n"),
+                    line_number: 2,
+                    absolute_offset: 5,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 9,
+                        end: 13,
+                    }]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("more text"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 5,
+                        end: 9,
+                    }]
+                }
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_send_maximum_of_limit_results_if_specified() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+            ("other/file.txt", "some other file with text"),
+            ("other/dir/bin", "asdfasdfasdfasdfasdfasdfasdfasdfasdf"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: SearchQueryOptions {
+                limit: Some(2),
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        // Get all matches and verify the len
+        let matches = get_matches(rx.recv().await.unwrap());
+        assert_eq!(matches.len(), 2);
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_send_maximum_of_limit_results_with_pagination_if_specified() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+            ("other/file.txt", "some other file with text"),
+            ("other/dir/bin", "asdfasdfasdfasdfasdfasdfasdfasdfasdf"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: SearchQueryOptions {
+                pagination: Some(1),
+                limit: Some(2),
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        // Verify that we get one match at a time up to the limit
+        let matches = get_matches(rx.recv().await.unwrap());
+        assert_eq!(matches.len(), 1);
+
+        let matches = get_matches(rx.recv().await.unwrap());
+        assert_eq!(matches.len(), 1);
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_traverse_starting_from_min_depth_if_specified() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", ""),
+            ("path/to/file2.txt", ""),
+            ("other/file.txt", ""),
+            ("other/dir/bin", ""),
+        ]);
+
+        async fn test_min_depth(
+            root: &assert_fs::TempDir,
+            depth: u64,
+            expected_paths: Vec<PathBuf>,
+        ) {
+            let state = SearchState::new();
+            let (reply, mut rx) = mpsc::channel(100);
+            let query = SearchQuery {
+                path: root.path().to_path_buf(),
+                target: SearchQueryTarget::Path,
+                condition: SearchQueryCondition::regex(".*"),
+                options: SearchQueryOptions {
+                    min_depth: Some(depth),
+                    ..Default::default()
+                },
+            };
+
+            let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+            let mut paths = get_matches(rx.recv().await.unwrap())
+                .into_iter()
+                .filter_map(|m| m.into_path_match())
+                .map(|m| m.path)
+                .collect::<Vec<_>>();
+
+            paths.sort_unstable();
+
+            assert_eq!(paths, expected_paths);
+
+            let data = rx.recv().await;
+            assert_eq!(
+                data,
+                Some(DistantResponseData::SearchDone { id: search_id })
+            );
+
+            assert_eq!(rx.recv().await, None);
+        }
+
+        // Minimum depth of 0 should include root search path
+        test_min_depth(
+            &root,
+            0,
+            vec![
+                root.to_path_buf(),
+                root.child(make_path("other")).to_path_buf(),
+                root.child(make_path("other/dir")).to_path_buf(),
+                root.child(make_path("other/dir/bin")).to_path_buf(),
+                root.child(make_path("other/file.txt")).to_path_buf(),
+                root.child(make_path("path")).to_path_buf(),
+                root.child(make_path("path/to")).to_path_buf(),
+                root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                root.child(make_path("path/to/file2.txt")).to_path_buf(),
+            ],
+        )
+        .await;
+
+        // Minimum depth of 1 should not root search path
+        test_min_depth(
+            &root,
+            1,
+            vec![
+                root.child(make_path("other")).to_path_buf(),
+                root.child(make_path("other/dir")).to_path_buf(),
+                root.child(make_path("other/dir/bin")).to_path_buf(),
+                root.child(make_path("other/file.txt")).to_path_buf(),
+                root.child(make_path("path")).to_path_buf(),
+                root.child(make_path("path/to")).to_path_buf(),
+                root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                root.child(make_path("path/to/file2.txt")).to_path_buf(),
+            ],
+        )
+        .await;
+
+        // Minimum depth of 2 should not include root or children
+        test_min_depth(
+            &root,
+            2,
+            vec![
+                root.child(make_path("other/dir")).to_path_buf(),
+                root.child(make_path("other/dir/bin")).to_path_buf(),
+                root.child(make_path("other/file.txt")).to_path_buf(),
+                root.child(make_path("path/to")).to_path_buf(),
+                root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                root.child(make_path("path/to/file2.txt")).to_path_buf(),
+            ],
+        )
+        .await;
+
+        // Minimum depth of 3 should not include root or children or grandchildren
+        test_min_depth(
+            &root,
+            3,
+            vec![
+                root.child(make_path("other/dir/bin")).to_path_buf(),
+                root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                root.child(make_path("path/to/file2.txt")).to_path_buf(),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn should_traverse_no_deeper_than_max_depth_if_specified() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", ""),
+            ("path/to/file2.txt", ""),
+            ("other/file.txt", ""),
+            ("other/dir/bin", ""),
+        ]);
+
+        async fn test_max_depth(
+            root: &assert_fs::TempDir,
+            depth: u64,
+            expected_paths: Vec<PathBuf>,
+        ) {
+            let state = SearchState::new();
+            let (reply, mut rx) = mpsc::channel(100);
+            let query = SearchQuery {
+                path: root.path().to_path_buf(),
+                target: SearchQueryTarget::Path,
+                condition: SearchQueryCondition::regex(".*"),
+                options: SearchQueryOptions {
+                    max_depth: Some(depth),
+                    ..Default::default()
+                },
+            };
+
+            let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+            let mut paths = get_matches(rx.recv().await.unwrap())
+                .into_iter()
+                .filter_map(|m| m.into_path_match())
+                .map(|m| m.path)
+                .collect::<Vec<_>>();
+
+            paths.sort_unstable();
+
+            assert_eq!(paths, expected_paths);
+
+            let data = rx.recv().await;
+            assert_eq!(
+                data,
+                Some(DistantResponseData::SearchDone { id: search_id })
+            );
+
+            assert_eq!(rx.recv().await, None);
+        }
+
+        // Maximum depth of 0 should only include root
+        test_max_depth(&root, 0, vec![root.to_path_buf()]).await;
+
+        // Maximum depth of 1 should only include root and children
+        test_max_depth(
+            &root,
+            1,
+            vec![
+                root.to_path_buf(),
+                root.child(make_path("other")).to_path_buf(),
+                root.child(make_path("path")).to_path_buf(),
+            ],
+        )
+        .await;
+
+        // Maximum depth of 2 should only include root and children and grandchildren
+        test_max_depth(
+            &root,
+            2,
+            vec![
+                root.to_path_buf(),
+                root.child(make_path("other")).to_path_buf(),
+                root.child(make_path("other/dir")).to_path_buf(),
+                root.child(make_path("other/file.txt")).to_path_buf(),
+                root.child(make_path("path")).to_path_buf(),
+                root.child(make_path("path/to")).to_path_buf(),
+            ],
+        )
+        .await;
+
+        // Maximum depth of 3 should include everything we have in our test
+        test_max_depth(
+            &root,
+            3,
+            vec![
+                root.to_path_buf(),
+                root.child(make_path("other")).to_path_buf(),
+                root.child(make_path("other/dir")).to_path_buf(),
+                root.child(make_path("other/dir/bin")).to_path_buf(),
+                root.child(make_path("other/file.txt")).to_path_buf(),
+                root.child(make_path("path")).to_path_buf(),
+                root.child(make_path("path/to")).to_path_buf(),
+                root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                root.child(make_path("path/to/file2.txt")).to_path_buf(),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn should_filter_searched_paths_to_only_those_that_match_include_regex() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+            ("other/file.txt", "some other file with text"),
+            ("other/dir/bin", "asdfasdfasdfasdfasdfasdfasdfasdfasdf"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: SearchQueryOptions {
+                include: Some(SearchQueryCondition::regex("other")),
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        assert_eq!(
+            matches,
+            vec![SearchQueryContentsMatch {
+                path: root.child(make_path("other/file.txt")).to_path_buf(),
+                lines: SearchQueryMatchData::text("some other file with text"),
+                line_number: 1,
+                absolute_offset: 0,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text("text".to_string()),
+                    start: 21,
+                    end: 25,
+                }]
+            }]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_filter_searched_paths_to_only_those_that_do_not_match_exclude_regex() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
+            ("path/to/file2.txt", "more text"),
+            ("other/file.txt", "some other file with text"),
+            ("other/dir/bin", "asdfasdfasdfasdfasdfasdfasdfasdfasdf"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("text"),
+            options: SearchQueryOptions {
+                exclude: Some(SearchQueryCondition::regex("other")),
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+
+        assert_eq!(
+            matches,
+            vec![
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("lines of text in\n"),
+                    line_number: 2,
+                    absolute_offset: 5,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 9,
+                        end: 13,
+                    }]
+                },
+                SearchQueryContentsMatch {
+                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    lines: SearchQueryMatchData::text("more text"),
+                    line_number: 1,
+                    absolute_offset: 0,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text("text".to_string()),
+                        start: 5,
+                        end: 9,
+                    }]
+                }
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_return_binary_match_data_if_match_is_not_utf8() {
+        let root = assert_fs::TempDir::new().unwrap();
+        let bin_file = root.child(make_path("file.bin"));
+
+        // Write some invalid bytes, a newline, and then "hello"
+        bin_file
+            .write_binary(&[0, 159, 146, 150, 10, 72, 69, 76, 76, 79])
+            .unwrap();
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
+        //       and checking for 0x9F (159)
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex(r"(?-u:\x9F)"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            matches,
+            vec![SearchQueryContentsMatch {
+                path: root.child(make_path("file.bin")).to_path_buf(),
+                lines: SearchQueryMatchData::bytes([0, 159, 146, 150, 10]),
+                line_number: 1,
+                absolute_offset: 0,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::bytes([159]),
+                    start: 1,
+                    end: 2,
+                }]
+            },]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_filter_searched_paths_to_only_those_are_an_allowed_file_type() {
+        let root = assert_fs::TempDir::new().unwrap();
+        let file = root.child(make_path("file"));
+        file.touch().unwrap();
+        root.child(make_path("dir")).create_dir_all().unwrap();
+        root.child(make_path("symlink"))
+            .symlink_to_file(file.path())
+            .unwrap();
+
+        async fn test_allowed_file_types(
+            root: &assert_fs::TempDir,
+            allowed_file_types: Vec<FileType>,
+            expected_paths: Vec<PathBuf>,
+        ) {
+            let state = SearchState::new();
+            let (reply, mut rx) = mpsc::channel(100);
+
+            let query = SearchQuery {
+                path: root.path().to_path_buf(),
+                target: SearchQueryTarget::Path,
+                condition: SearchQueryCondition::regex(".*"),
+                options: SearchQueryOptions {
+                    allowed_file_types: allowed_file_types.iter().copied().collect(),
+                    ..Default::default()
+                },
+            };
+
+            let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+            let mut paths = get_matches(rx.recv().await.unwrap())
+                .into_iter()
+                .filter_map(|m| m.into_path_match())
+                .map(|m| m.path)
+                .collect::<Vec<_>>();
+
+            paths.sort_unstable();
+
+            assert_eq!(
+                paths, expected_paths,
+                "Path types did not match allowed: {allowed_file_types:?}"
+            );
+
+            let data = rx.recv().await;
+            assert_eq!(
+                data,
+                Some(DistantResponseData::SearchDone { id: search_id })
+            );
+
+            assert_eq!(rx.recv().await, None);
+        }
+
+        // Empty set of allowed types falls back to allowing everything
+        test_allowed_file_types(
+            &root,
+            vec![],
+            vec![
+                root.to_path_buf(),
+                root.child("dir").to_path_buf(),
+                root.child("file").to_path_buf(),
+                root.child("symlink").to_path_buf(),
+            ],
+        )
+        .await;
+
+        test_allowed_file_types(
+            &root,
+            vec![FileType::File],
+            vec![root.child("file").to_path_buf()],
+        )
+        .await;
+
+        test_allowed_file_types(
+            &root,
+            vec![FileType::Dir],
+            vec![root.to_path_buf(), root.child("dir").to_path_buf()],
+        )
+        .await;
+
+        test_allowed_file_types(
+            &root,
+            vec![FileType::Symlink],
+            vec![root.child("symlink").to_path_buf()],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn should_follow_not_symbolic_links_if_specified_in_options() {
+        let root = assert_fs::TempDir::new().unwrap();
+
+        let file = root.child(make_path("file"));
+        file.touch().unwrap();
+        let dir = root.child(make_path("dir"));
+        dir.create_dir_all().unwrap();
+        root.child(make_path("file_symlink"))
+            .symlink_to_file(file.path())
+            .unwrap();
+        root.child(make_path("dir_symlink"))
+            .symlink_to_dir(dir.path())
+            .unwrap();
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex(".*"),
+            options: SearchQueryOptions {
+                follow_symbolic_links: true,
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut paths = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_path_match())
+            .map(|m| m.path)
+            .collect::<Vec<_>>();
+
+        paths.sort_unstable();
+
+        assert_eq!(
+            paths,
+            vec![
+                root.to_path_buf(),
+                root.child("dir").to_path_buf(),
+                root.child("dir_symlink").to_path_buf(),
+                root.child("file").to_path_buf(),
+                root.child("file_symlink").to_path_buf(),
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_follow_symbolic_links_if_specified_in_options() {
+        let root = assert_fs::TempDir::new().unwrap();
+
+        let file = root.child(make_path("file"));
+        file.touch().unwrap();
+        let dir = root.child(make_path("dir"));
+        dir.create_dir_all().unwrap();
+        root.child(make_path("file_symlink"))
+            .symlink_to_file(file.path())
+            .unwrap();
+        root.child(make_path("dir_symlink"))
+            .symlink_to_dir(dir.path())
+            .unwrap();
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        // NOTE: Following symlobic links on its own does nothing, but when combined with a file
+        //       type filter, it will evaluate the underlying type of symbolic links and filter
+        //       based on that instead of the the symbolic link
+        let query = SearchQuery {
+            path: root.path().to_path_buf(),
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex(".*"),
+            options: SearchQueryOptions {
+                allowed_file_types: vec![FileType::File].into_iter().collect(),
+                follow_symbolic_links: true,
+                ..Default::default()
+            },
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let mut paths = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_path_match())
+            .map(|m| m.path)
+            .collect::<Vec<_>>();
+
+        paths.sort_unstable();
+
+        assert_eq!(
+            paths,
+            vec![
+                root.child("file").to_path_buf(),
+                root.child("file_symlink").to_path_buf(),
+            ]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+}

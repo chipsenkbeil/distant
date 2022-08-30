@@ -1,10 +1,11 @@
 use crate::{
     client::{
-        RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Watcher,
+        RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
+        Watcher,
     },
     data::{
         Capabilities, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData,
-        Environment, Error as Failure, Metadata, PtySize, SystemInfo,
+        Environment, Error as Failure, Metadata, PtySize, SearchId, SearchQuery, SystemInfo,
     },
     DistantMsg,
 };
@@ -18,7 +19,7 @@ fn mismatched_response() -> io::Error {
     io::Error::new(io::ErrorKind::Other, "Mismatched response")
 }
 
-/// Provides convenience functions on top of a [`SessionChannel`]
+/// Provides convenience functions on top of a [`Channel`]
 pub trait DistantChannelExt {
     /// Appends to a remote file using the data from a collection of bytes
     fn append_file(
@@ -52,6 +53,12 @@ pub trait DistantChannelExt {
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> AsyncReturn<'_, Metadata>;
+
+    /// Perform a search
+    fn search(&mut self, query: impl Into<SearchQuery>) -> AsyncReturn<'_, Searcher>;
+
+    /// Cancel an active search query
+    fn cancel_search(&mut self, id: SearchId) -> AsyncReturn<'_, ()>;
 
     /// Reads entries from a directory, returning a tuple of directory entries and failures
     fn read_dir(
@@ -246,6 +253,19 @@ impl DistantChannelExt
                 DistantResponseData::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
+        )
+    }
+
+    fn search(&mut self, query: impl Into<SearchQuery>) -> AsyncReturn<'_, Searcher> {
+        let query = query.into();
+        Box::pin(async move { Searcher::search(self.clone(), query).await })
+    }
+
+    fn cancel_search(&mut self, id: SearchId) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            DistantRequestData::CancelSearch { id },
+            @ok
         )
     }
 

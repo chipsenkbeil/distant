@@ -57,6 +57,15 @@ impl ManagerCapabilities {
         self.0.take(&cap)
     }
 
+    /// Removes the capability with the described kind, returning true if it existed
+    pub fn remove(&mut self, kind: impl AsRef<str>) -> bool {
+        let cap = ManagerCapability {
+            kind: kind.as_ref().to_string(),
+            description: String::new(),
+        };
+        self.0.remove(&cap)
+    }
+
     /// Converts into vec of capabilities sorted by kind
     pub fn into_sorted_vec(self) -> Vec<ManagerCapability> {
         let mut this = self.0.into_iter().collect::<Vec<_>>();
