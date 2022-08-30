@@ -5,6 +5,7 @@ use distant_net::Request;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, EnumDiscriminants, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[strum_discriminants(derive(

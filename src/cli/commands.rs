@@ -5,6 +5,7 @@ mod generate;
 mod manager;
 mod server;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum DistantSubcommand {
     /// Perform client commands
