@@ -7,6 +7,8 @@ const EXPECTED_TABLE: &str = indoc! {"
 +------------------+------------------------------------------------------------------+
 | kind             | description                                                      |
 +------------------+------------------------------------------------------------------+
+| cancel_search    | Supports canceling an active search against the filesystem       |
++------------------+------------------------------------------------------------------+
 | capabilities     | Supports retrieving capabilities                                 |
 +------------------+------------------------------------------------------------------+
 | copy             | Supports copying files, directories, and symlinks                |
@@ -42,6 +44,8 @@ const EXPECTED_TABLE: &str = indoc! {"
 | remove           | Supports removing files, directories, and symlinks               |
 +------------------+------------------------------------------------------------------+
 | rename           | Supports renaming files, directories, and symlinks               |
++------------------+------------------------------------------------------------------+
+| search           | Supports searching filesystem using queries                      |
 +------------------+------------------------------------------------------------------+
 | system_info      | Supports retrieving system information                           |
 +------------------+------------------------------------------------------------------+

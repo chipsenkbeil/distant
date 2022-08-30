@@ -284,7 +284,12 @@ impl SearchQuerySubmatch {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
+#[serde(
+    rename_all = "snake_case",
+    deny_unknown_fields,
+    tag = "type",
+    content = "value"
+)]
 pub enum SearchQueryMatchData {
     /// Match represented as UTF-8 text
     Text(String),
