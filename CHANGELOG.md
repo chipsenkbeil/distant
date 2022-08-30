@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2022-08-30
 ### Added
 
 - `SystemInfo` via ssh backend now detects and reports username and shell
@@ -297,7 +298,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.17.6...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/chipsenkbeil/distant/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/chipsenkbeil/distant/compare/v0.17.6...v0.18.0
 [0.17.6]: https://github.com/chipsenkbeil/distant/compare/v0.17.5...v0.17.6
 [0.17.5]: https://github.com/chipsenkbeil/distant/compare/v0.17.4...v0.17.5
 [0.17.4]: https://github.com/chipsenkbeil/distant/compare/v0.17.3...v0.17.4

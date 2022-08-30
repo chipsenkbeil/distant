@@ -25,7 +25,7 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-net = "0.18"
+distant-net = "0.19"
 ```
 
 ## Features

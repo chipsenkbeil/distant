@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "assert_fs",
  "async-trait",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "distant-net"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -811,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh2"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "assert_fs",
