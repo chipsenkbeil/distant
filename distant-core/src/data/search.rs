@@ -77,12 +77,40 @@ pub enum SearchQueryCondition {
 }
 
 impl SearchQueryCondition {
+    /// Creates a new instance with `EndsWith` variant
+    pub fn ends_with(value: impl Into<String>) -> Self {
+        Self::EndsWith {
+            value: value.into(),
+        }
+    }
+
+    /// Creates a new instance with `Equals` variant
+    pub fn equals(value: impl Into<String>) -> Self {
+        Self::Equals {
+            value: value.into(),
+        }
+    }
+
+    /// Creates a new instance with `Regex` variant
+    pub fn regex(value: impl Into<String>) -> Self {
+        Self::Regex {
+            value: value.into(),
+        }
+    }
+
+    /// Creates a new instance with `StartsWith` variant
+    pub fn starts_with(value: impl Into<String>) -> Self {
+        Self::StartsWith {
+            value: value.into(),
+        }
+    }
+
     /// Converts the condition in a regex string
-    pub fn into_regex_string(self) -> String {
+    pub fn to_regex_string(&self) -> String {
         match self {
             Self::EndsWith { value } => format!(r"{value}$"),
             Self::Equals { value } => format!(r"^{value}$"),
-            Self::Regex { value } => value,
+            Self::Regex { value } => value.to_string(),
             Self::StartsWith { value } => format!(r"^{value}"),
         }
     }
@@ -103,10 +131,14 @@ pub struct SearchQueryOptions {
     #[serde(default)]
     pub allowed_file_types: HashSet<FileType>,
 
-    /// Regex to use to filter paths being searched; will prevent recursing into directories that
-    /// fail the regex
+    /// Regex to use to filter paths being searched to only those that match the include condition
     #[serde(default)]
-    pub path_regex: Option<String>,
+    pub include: Option<SearchQueryCondition>,
+
+    /// Regex to use to filter paths being searched to only those that do not match the exclude
+    /// condition
+    #[serde(default)]
+    pub exclude: Option<SearchQueryCondition>,
 
     /// Search should follow symbolic links
     #[serde(default)]
@@ -115,6 +147,25 @@ pub struct SearchQueryOptions {
     /// Maximum results to return before stopping the query
     #[serde(default)]
     pub limit: Option<u64>,
+
+    /// Minimum depth (directories) to search
+    ///
+    /// The smallest depth is 0 and always corresponds to the path given to the new function on
+    /// this type. Its direct descendents have depth 1, and their descendents have depth 2, and so
+    /// on.
+    #[serde(default)]
+    pub min_depth: Option<u64>,
+
+    /// Maximum depth (directories) to search
+    ///
+    /// The smallest depth is 0 and always corresponds to the path given to the new function on
+    /// this type. Its direct descendents have depth 1, and their descendents have depth 2, and so
+    /// on.
+    ///
+    /// Note that this will not simply filter the entries of the iterator, but it will actually
+    /// avoid descending into directories when the depth is exceeded.
+    #[serde(default)]
+    pub max_depth: Option<u64>,
 
     /// Amount of results to batch before sending back excluding final submission that will always
     /// include the remaining results even if less than pagination request
@@ -139,6 +190,22 @@ pub enum SearchQueryMatch {
 
     /// Matches part of a file's contents
     Contents(SearchQueryContentsMatch),
+}
+
+impl SearchQueryMatch {
+    pub fn into_path_match(self) -> Option<SearchQueryPathMatch> {
+        match self {
+            Self::Path(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    pub fn into_contents_match(self) -> Option<SearchQueryContentsMatch> {
+        match self {
+            Self::Contents(x) => Some(x),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(feature = "schemars")]
@@ -227,6 +294,16 @@ pub enum SearchQueryMatchData {
 }
 
 impl SearchQueryMatchData {
+    /// Creates a new instance with `Text` variant
+    pub fn text(value: impl Into<String>) -> Self {
+        Self::Text(value.into())
+    }
+
+    /// Creates a new instance with `Bytes` variant
+    pub fn bytes(value: impl Into<Vec<u8>>) -> Self {
+        Self::Bytes(value.into())
+    }
+
     /// Returns the UTF-8 str reference to the data, if is valid UTF-8
     pub fn to_str(&self) -> Option<&str> {
         match self {
