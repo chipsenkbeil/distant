@@ -170,15 +170,6 @@ pub struct SearchQueryOptions {
     #[serde(default)]
     pub limit: Option<u64>,
 
-    /// Minimum depth (directories) to search
-    ///
-    /// The smallest depth is 0 and always corresponds to the path given to the new function on
-    /// this type. Its direct descendents have depth 1, and their descendents have depth 2, and so
-    /// on.
-    #[cfg_attr(feature = "clap", clap(long))]
-    #[serde(default)]
-    pub min_depth: Option<u64>,
-
     /// Maximum depth (directories) to search
     ///
     /// The smallest depth is 0 and always corresponds to the path given to the new function on
