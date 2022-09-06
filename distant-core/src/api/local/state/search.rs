@@ -285,9 +285,11 @@ impl SearchQueryExecutor {
             walker_builder.add(path);
         }
 
+        // TODO: Use something like num_cpus to determine thread count
         walker_builder
             .skip_stdout(true)
             .follow_links(query.options.follow_symbolic_links)
+            .threads(8)
             .max_depth(
                 query
                     .options
