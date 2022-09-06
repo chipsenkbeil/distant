@@ -9,13 +9,13 @@ use grep::{
     regex::RegexMatcher,
     searcher::{Searcher, Sink, SinkMatch},
 };
+use ignore::{DirEntry, WalkBuilder, WalkParallel};
 use log::*;
 use std::{collections::HashMap, io, ops::Deref, path::Path};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
-use walkdir::{DirEntry, WalkDir};
 
 /// Holds information related to active searches on the server
 pub struct SearchState {
@@ -256,7 +256,7 @@ impl SearchQueryReporter {
 struct SearchQueryExecutor {
     id: SearchId,
     query: SearchQuery,
-    walk_dirs: Vec<WalkDir>,
+    walker: WalkParallel,
     matcher: RegexMatcher,
 
     cancel_tx: Option<oneshot::Sender<()>>,
@@ -276,30 +276,38 @@ impl SearchQueryExecutor {
         let matcher = RegexMatcher::new(&regex)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        let mut walk_dirs = Vec::new();
+        let mut walker_builder: Option<WalkBuilder> = None;
         for path in query.paths.iter() {
             let path = path.as_path();
             let follow_links = query.options.follow_symbolic_links;
-            let walk_dir = WalkDir::new(path).follow_links(follow_links);
 
-            let walk_dir = match query.options.min_depth.as_ref().copied() {
-                Some(depth) => walk_dir.min_depth(depth as usize),
-                None => walk_dir,
+            walker_builder = match walker_builder {
+                Some(builder) => {
+                    builder.add(path);
+                    Some(builder)
+                }
+                None => {
+                    let mut builder = WalkBuilder::new(path);
+                    builder.hidden(false).follow_links(follow_links);
+                    Some(builder)
+                }
             };
 
-            let walk_dir = match query.options.max_depth.as_ref().copied() {
-                Some(depth) => walk_dir.max_depth(depth as usize),
-                None => walk_dir,
-            };
-
-            walk_dirs.push(walk_dir);
+            if let Some(depth) = query.options.max_depth.as_ref().copied() {
+                walker_builder
+                    .as_mut()
+                    .unwrap()
+                    .max_depth(Some(depth as usize));
+            }
         }
 
         Ok(Self {
             id: rand::random(),
             query,
             matcher,
-            walk_dirs,
+            walker: walker_builder
+                .map(|builder| builder.build_parallel())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing paths"))?,
 
             cancel_tx: Some(cancel_tx),
             cancel_rx,
@@ -334,7 +342,7 @@ impl SearchQueryExecutor {
 
     fn run(self) {
         let id = self.id;
-        let walk_dirs = self.walk_dirs;
+        let walker = self.walker;
         let tx = self.match_tx;
         let mut cancel = self.cancel_rx;
 
@@ -379,21 +387,33 @@ impl SearchQueryExecutor {
             options: self.query.options.clone(),
         };
 
-        for walk_dir in walk_dirs {
-            // Search all entries for matches and report them
-            for entry in walk_dir
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .filter(|e| include_path_filter.filter(e.path()))
-                .filter(|e| !exclude_path_filter.filter(e.path()))
-                .filter(|e| options_filter.filter(e))
-            {
+        // Search all entries for matches and report them
+        walker.run(|| {
+            let tx = tx.clone();
+            Box::new(move |result| {
+                use ignore::WalkState;
+
+                // Get the entry, skipping errors with directories, and continuing on
+                // errors with non-directories
+                let entry = match result {
+                    Ok(entry) => entry,
+                    Err(_) => return WalkState::Skip,
+                };
+
+                // Validate the path of the entry should be processed
+                if !include_path_filter.filter(entry.path())
+                    || exclude_path_filter.filter(entry.path())
+                    || !options_filter.filter(&entry)
+                {
+                    return WalkState::Skip;
+                }
+
                 // Check if we are being interrupted, and if so exit our loop early
                 match cancel.try_recv() {
                     Err(oneshot::error::TryRecvError::Empty) => (),
                     _ => {
                         debug!("[Query {id}] Cancelled");
-                        break;
+                        return WalkState::Quit;
                     }
                 }
 
@@ -429,8 +449,10 @@ impl SearchQueryExecutor {
                 if let Err(x) = res {
                     error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
                 }
-            }
-        }
+
+                WalkState::Continue
+            })
+        })
     }
 }
 
@@ -482,14 +504,16 @@ impl SearchQueryOptionsFilter {
     pub fn filter(&self, entry: &DirEntry) -> bool {
         // Check if filetype is allowed
         let file_type_allowed = self.options.allowed_file_types.is_empty()
-            || self
-                .options
-                .allowed_file_types
-                .contains(&entry.file_type().into());
+            || entry
+                .file_type()
+                .map(|ft| self.options.allowed_file_types.contains(&ft.into()))
+                .unwrap_or_default();
 
         // Check if target is appropriate
         let targeted = match self.target {
-            SearchQueryTarget::Contents => entry.file_type().is_file(),
+            SearchQueryTarget::Contents => {
+                entry.file_type().map(|ft| ft.is_file()).unwrap_or_default()
+            }
             _ => true,
         };
 

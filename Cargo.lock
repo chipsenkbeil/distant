@@ -763,6 +763,7 @@ dependencies = [
  "futures",
  "grep",
  "hex",
+ "ignore",
  "indoc",
  "log",
  "notify",
