@@ -1533,7 +1533,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_return_binary_match_data_if_match_is_not_utf8() {
+    async fn should_return_binary_match_data_if_match_is_not_utf8_but_path_is_explicit() {
+        let root = assert_fs::TempDir::new().unwrap();
+        let bin_file = root.child(make_path("file.bin"));
+
+        // Write some invalid bytes, a newline, and then "hello"
+        bin_file
+            .write_binary(&[0, 159, 146, 150, 10, 72, 69, 76, 76, 79])
+            .unwrap();
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
+        //       and checking for 0x9F (159)
+        let query = SearchQuery {
+            paths: vec![bin_file.path().to_path_buf()],
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex(r"(?-u:\x9F)"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        // NOTE: Null bytes are treated as newlines, so that shifts us to being on "line 2"
+        //       and associated other shifts
+        assert_eq!(
+            matches,
+            vec![SearchQueryContentsMatch {
+                path: root.child(make_path("file.bin")).to_path_buf(),
+                lines: SearchQueryMatchData::bytes([159, 146, 150, 10]),
+                line_number: 2,
+                absolute_offset: 1,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::bytes([159]),
+                    start: 0,
+                    end: 1,
+                }]
+            },]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_not_return_binary_match_data_if_match_is_not_utf8_and_not_explicit_path() {
         let root = assert_fs::TempDir::new().unwrap();
         let bin_file = root.child(make_path("file.bin"));
 
@@ -1556,26 +1611,7 @@ mod tests {
 
         let search_id = state.start(query, Box::new(reply)).await.unwrap();
 
-        let matches = get_matches(rx.recv().await.unwrap())
-            .into_iter()
-            .filter_map(|m| m.into_contents_match())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            matches,
-            vec![SearchQueryContentsMatch {
-                path: root.child(make_path("file.bin")).to_path_buf(),
-                lines: SearchQueryMatchData::bytes([0, 159, 146, 150, 10]),
-                line_number: 1,
-                absolute_offset: 0,
-                submatches: vec![SearchQuerySubmatch {
-                    r#match: SearchQueryMatchData::bytes([159]),
-                    start: 1,
-                    end: 2,
-                }]
-            },]
-        );
-
+        // Get done indicator next as there were no matches
         let data = rx.recv().await;
         assert_eq!(
             data,
