@@ -6,16 +6,21 @@ use crate::data::{
 use distant_net::Reply;
 use grep::{
     matcher::Matcher,
-    regex::RegexMatcher,
-    searcher::{Searcher, Sink, SinkMatch},
+    regex::{RegexMatcher, RegexMatcherBuilder},
+    searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch},
+};
+use ignore::{
+    types::TypesBuilder, DirEntry, ParallelVisitor, ParallelVisitorBuilder, WalkBuilder,
+    WalkParallel,
 };
 use log::*;
-use std::{collections::HashMap, io, ops::Deref, path::Path};
+use std::{cmp, collections::HashMap, io, ops::Deref, path::Path};
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
 };
-use walkdir::{DirEntry, WalkDir};
+
+const MAXIMUM_SEARCH_THREADS: usize = 12;
 
 /// Holds information related to active searches on the server
 pub struct SearchState {
@@ -122,7 +127,7 @@ enum InnerSearchMsg {
 }
 
 async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<InnerSearchMsg>) {
-    let mut searches: HashMap<SearchId, oneshot::Sender<()>> = HashMap::new();
+    let mut searches: HashMap<SearchId, broadcast::Sender<()>> = HashMap::new();
 
     while let Some(msg) = rx.recv().await {
         match msg {
@@ -256,11 +261,11 @@ impl SearchQueryReporter {
 struct SearchQueryExecutor {
     id: SearchId,
     query: SearchQuery,
-    walk_dirs: Vec<WalkDir>,
+    walker: WalkParallel,
     matcher: RegexMatcher,
 
-    cancel_tx: Option<oneshot::Sender<()>>,
-    cancel_rx: oneshot::Receiver<()>,
+    cancel_tx: Option<broadcast::Sender<()>>,
+    cancel_rx: broadcast::Receiver<()>,
 
     match_tx: mpsc::UnboundedSender<SearchQueryMatch>,
     match_rx: Option<mpsc::UnboundedReceiver<SearchQueryMatch>>,
@@ -269,38 +274,58 @@ struct SearchQueryExecutor {
 impl SearchQueryExecutor {
     /// Creates a new executor
     pub fn new(query: SearchQuery) -> io::Result<Self> {
-        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = broadcast::channel(1);
         let (match_tx, match_rx) = mpsc::unbounded_channel();
 
         let regex = query.condition.to_regex_string();
-        let matcher = RegexMatcher::new(&regex)
+        let mut matcher_builder = RegexMatcherBuilder::new();
+        matcher_builder
+            .case_insensitive(false)
+            .case_smart(false)
+            .multi_line(true)
+            .dot_matches_new_line(false)
+            .swap_greed(false)
+            .ignore_whitespace(false)
+            .unicode(true)
+            .octal(false)
+            .line_terminator(Some(b'\n'));
+        let matcher = matcher_builder
+            .build(&regex)
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        let mut walk_dirs = Vec::new();
-        for path in query.paths.iter() {
-            let path = path.as_path();
-            let follow_links = query.options.follow_symbolic_links;
-            let walk_dir = WalkDir::new(path).follow_links(follow_links);
-
-            let walk_dir = match query.options.min_depth.as_ref().copied() {
-                Some(depth) => walk_dir.min_depth(depth as usize),
-                None => walk_dir,
-            };
-
-            let walk_dir = match query.options.max_depth.as_ref().copied() {
-                Some(depth) => walk_dir.max_depth(depth as usize),
-                None => walk_dir,
-            };
-
-            walk_dirs.push(walk_dir);
+        if query.paths.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "missing paths"));
         }
+
+        let mut walker_builder = WalkBuilder::new(&query.paths[0]);
+        for path in &query.paths[1..] {
+            walker_builder.add(path);
+        }
+
+        walker_builder
+            .follow_links(query.options.follow_symbolic_links)
+            .max_depth(
+                query
+                    .options
+                    .max_depth
+                    .as_ref()
+                    .copied()
+                    .map(|d| d as usize),
+            )
+            .threads(cmp::min(MAXIMUM_SEARCH_THREADS, num_cpus::get()))
+            .types(
+                TypesBuilder::new()
+                    .add_defaults()
+                    .build()
+                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
+            )
+            .skip_stdout(true);
 
         Ok(Self {
             id: rand::random(),
             query,
             matcher,
-            walk_dirs,
-
+            walker: walker_builder.build_parallel(),
             cancel_tx: Some(cancel_tx),
             cancel_rx,
 
@@ -313,7 +338,7 @@ impl SearchQueryExecutor {
         self.id
     }
 
-    pub fn take_cancel_tx(&mut self) -> Option<oneshot::Sender<()>> {
+    pub fn take_cancel_tx(&mut self) -> Option<broadcast::Sender<()>> {
         self.cancel_tx.take()
     }
 
@@ -334,9 +359,10 @@ impl SearchQueryExecutor {
 
     fn run(self) {
         let id = self.id;
-        let walk_dirs = self.walk_dirs;
+        let walker = self.walker;
         let tx = self.match_tx;
-        let mut cancel = self.cancel_rx;
+        let cancel = self.cancel_rx;
+        let matcher = self.matcher;
 
         // Create our path filter we will use to filter out entries that do not match filter
         let include_path_filter = match self.query.options.include.as_ref() {
@@ -379,58 +405,159 @@ impl SearchQueryExecutor {
             options: self.query.options.clone(),
         };
 
-        for walk_dir in walk_dirs {
-            // Search all entries for matches and report them
-            for entry in walk_dir
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .filter(|e| include_path_filter.filter(e.path()))
-                .filter(|e| !exclude_path_filter.filter(e.path()))
-                .filter(|e| options_filter.filter(e))
-            {
-                // Check if we are being interrupted, and if so exit our loop early
-                match cancel.try_recv() {
-                    Err(oneshot::error::TryRecvError::Empty) => (),
-                    _ => {
-                        debug!("[Query {id}] Cancelled");
-                        break;
-                    }
-                }
+        let mut builder = SearchQueryExecutorParallelVistorBuilder {
+            search_id: self.id,
+            target: self.query.target,
+            cancel,
+            tx,
+            matcher: &matcher,
+            include_path_filter: &include_path_filter,
+            exclude_path_filter: &exclude_path_filter,
+            options_filter: &options_filter,
+        };
 
-                let res = match self.query.target {
-                    // Perform the search against the path itself
-                    SearchQueryTarget::Path => {
-                        let path_str = entry.path().to_string_lossy();
-                        Searcher::new().search_slice(
-                            &self.matcher,
-                            path_str.as_bytes(),
-                            SearchQueryPathSink {
-                                search_id: id,
-                                path: entry.path(),
-                                matcher: &self.matcher,
-                                callback: |m| Ok(tx.send(m).is_ok()),
-                            },
-                        )
-                    }
+        // Search all entries for matches and report them
+        //
+        // NOTE: This should block waiting for all threads to complete
+        walker.visit(&mut builder);
+    }
+}
 
-                    // Perform the search against the file's contents
-                    SearchQueryTarget::Contents => Searcher::new().search_path(
-                        &self.matcher,
-                        entry.path(),
-                        SearchQueryContentsSink {
-                            search_id: id,
-                            path: entry.path(),
-                            matcher: &self.matcher,
-                            callback: |m| Ok(tx.send(m).is_ok()),
-                        },
-                    ),
-                };
+struct SearchQueryExecutorParallelVistorBuilder<'a> {
+    search_id: SearchId,
+    target: SearchQueryTarget,
+    cancel: broadcast::Receiver<()>,
+    tx: mpsc::UnboundedSender<SearchQueryMatch>,
+    matcher: &'a RegexMatcher,
+    include_path_filter: &'a SearchQueryPathFilter,
+    exclude_path_filter: &'a SearchQueryPathFilter,
+    options_filter: &'a SearchQueryOptionsFilter,
+}
 
-                if let Err(x) = res {
-                    error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
-                }
+impl<'a> ParallelVisitorBuilder<'a> for SearchQueryExecutorParallelVistorBuilder<'a> {
+    fn build(&mut self) -> Box<dyn ParallelVisitor + 'a> {
+        // For files that are searched as part of a recursive search
+        //
+        // Details:
+        //     * Will quit early if detecting binary file due to null byte
+        //
+        // NOTE: Searchers are not Send/Sync so we must create them here
+        let implicit_searcher = SearcherBuilder::new()
+            .binary_detection(BinaryDetection::quit(0))
+            .build();
+
+        // For files that are searched because they are provided as one of our initial paths
+        // (so explicitly by the user)
+        //
+        // Details:
+        //     * Will convert binary data with null bytes into newlines
+        //
+        // NOTE: Searchers are not Send/Sync so we must create them here
+        let explicit_searcher = SearcherBuilder::new()
+            .binary_detection(BinaryDetection::convert(0))
+            .build();
+
+        Box::new(SearchQueryExecutorParallelVistor {
+            search_id: self.search_id,
+            target: self.target,
+            cancel: self.cancel.resubscribe(),
+            tx: self.tx.clone(),
+            matcher: self.matcher,
+            implicit_searcher,
+            explicit_searcher,
+            include_path_filter: self.include_path_filter,
+            exclude_path_filter: self.exclude_path_filter,
+            options_filter: self.options_filter,
+        })
+    }
+}
+
+struct SearchQueryExecutorParallelVistor<'a> {
+    search_id: SearchId,
+    target: SearchQueryTarget,
+    cancel: broadcast::Receiver<()>,
+    tx: mpsc::UnboundedSender<SearchQueryMatch>,
+    matcher: &'a RegexMatcher,
+    implicit_searcher: Searcher,
+    explicit_searcher: Searcher,
+    include_path_filter: &'a SearchQueryPathFilter,
+    exclude_path_filter: &'a SearchQueryPathFilter,
+    options_filter: &'a SearchQueryOptionsFilter,
+}
+
+impl<'a> ParallelVisitor for SearchQueryExecutorParallelVistor<'a> {
+    fn visit(&mut self, entry: Result<DirEntry, ignore::Error>) -> ignore::WalkState {
+        use ignore::WalkState;
+        let id = self.search_id;
+
+        // Get the entry, skipping errors with directories, and continuing on
+        // errors with non-directories
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return WalkState::Skip,
+        };
+
+        // Validate the path of the entry should be processed
+        //
+        // NOTE: We do not SKIP here as we cannot cancel a directory traversal early as this can
+        //       cause us to miss relevant submatches deeper in the traversal
+        if !self.include_path_filter.filter(entry.path())
+            || self.exclude_path_filter.filter(entry.path())
+            || !self.options_filter.filter(&entry)
+        {
+            return WalkState::Continue;
+        }
+
+        // Check if we are being interrupted, and if so exit our loop early
+        match self.cancel.try_recv() {
+            Err(broadcast::error::TryRecvError::Empty) => (),
+            _ => {
+                debug!("[Query {id}] Cancelled");
+                return WalkState::Quit;
             }
         }
+
+        // Pick searcher based on whether this was an explicit or recursive path
+        let searcher = if entry.depth() == 0 {
+            &mut self.explicit_searcher
+        } else {
+            &mut self.implicit_searcher
+        };
+
+        let res = match self.target {
+            // Perform the search against the path itself
+            SearchQueryTarget::Path => {
+                let path_str = entry.path().to_string_lossy();
+                searcher.search_slice(
+                    self.matcher,
+                    path_str.as_bytes(),
+                    SearchQueryPathSink {
+                        search_id: id,
+                        path: entry.path(),
+                        matcher: self.matcher,
+                        callback: |m| Ok(self.tx.send(m).is_ok()),
+                    },
+                )
+            }
+
+            // Perform the search against the file's contents
+            SearchQueryTarget::Contents => searcher.search_path(
+                self.matcher,
+                entry.path(),
+                SearchQueryContentsSink {
+                    search_id: id,
+                    path: entry.path(),
+                    matcher: self.matcher,
+                    callback: |m| Ok(self.tx.send(m).is_ok()),
+                },
+            ),
+        };
+
+        if let Err(x) = res {
+            error!("[Query {id}] Search failed for {:?}: {x}", entry.path());
+        }
+
+        WalkState::Continue
     }
 }
 
@@ -482,14 +609,16 @@ impl SearchQueryOptionsFilter {
     pub fn filter(&self, entry: &DirEntry) -> bool {
         // Check if filetype is allowed
         let file_type_allowed = self.options.allowed_file_types.is_empty()
-            || self
-                .options
-                .allowed_file_types
-                .contains(&entry.file_type().into());
+            || entry
+                .file_type()
+                .map(|ft| self.options.allowed_file_types.contains(&ft.into()))
+                .unwrap_or_default();
 
         // Check if target is appropriate
         let targeted = match self.target {
-            SearchQueryTarget::Contents => entry.file_type().is_file(),
+            SearchQueryTarget::Contents => {
+                entry.file_type().map(|ft| ft.is_file()).unwrap_or_default()
+            }
             _ => true,
         };
 
@@ -1185,116 +1314,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_traverse_starting_from_min_depth_if_specified() {
-        let root = setup_dir(vec![
-            ("path/to/file1.txt", ""),
-            ("path/to/file2.txt", ""),
-            ("other/file.txt", ""),
-            ("other/dir/bin", ""),
-        ]);
-
-        async fn test_min_depth(
-            root: &assert_fs::TempDir,
-            depth: u64,
-            expected_paths: Vec<PathBuf>,
-        ) {
-            let state = SearchState::new();
-            let (reply, mut rx) = mpsc::channel(100);
-            let query = SearchQuery {
-                paths: vec![root.path().to_path_buf()],
-                target: SearchQueryTarget::Path,
-                condition: SearchQueryCondition::regex(".*"),
-                options: SearchQueryOptions {
-                    min_depth: Some(depth),
-                    ..Default::default()
-                },
-            };
-
-            let search_id = state.start(query, Box::new(reply)).await.unwrap();
-
-            let mut paths = get_matches(rx.recv().await.unwrap())
-                .into_iter()
-                .filter_map(|m| m.into_path_match())
-                .map(|m| m.path)
-                .collect::<Vec<_>>();
-
-            paths.sort_unstable();
-
-            assert_eq!(paths, expected_paths);
-
-            let data = rx.recv().await;
-            assert_eq!(
-                data,
-                Some(DistantResponseData::SearchDone { id: search_id })
-            );
-
-            assert_eq!(rx.recv().await, None);
-        }
-
-        // Minimum depth of 0 should include root search path
-        test_min_depth(
-            &root,
-            0,
-            vec![
-                root.to_path_buf(),
-                root.child(make_path("other")).to_path_buf(),
-                root.child(make_path("other/dir")).to_path_buf(),
-                root.child(make_path("other/dir/bin")).to_path_buf(),
-                root.child(make_path("other/file.txt")).to_path_buf(),
-                root.child(make_path("path")).to_path_buf(),
-                root.child(make_path("path/to")).to_path_buf(),
-                root.child(make_path("path/to/file1.txt")).to_path_buf(),
-                root.child(make_path("path/to/file2.txt")).to_path_buf(),
-            ],
-        )
-        .await;
-
-        // Minimum depth of 1 should not root search path
-        test_min_depth(
-            &root,
-            1,
-            vec![
-                root.child(make_path("other")).to_path_buf(),
-                root.child(make_path("other/dir")).to_path_buf(),
-                root.child(make_path("other/dir/bin")).to_path_buf(),
-                root.child(make_path("other/file.txt")).to_path_buf(),
-                root.child(make_path("path")).to_path_buf(),
-                root.child(make_path("path/to")).to_path_buf(),
-                root.child(make_path("path/to/file1.txt")).to_path_buf(),
-                root.child(make_path("path/to/file2.txt")).to_path_buf(),
-            ],
-        )
-        .await;
-
-        // Minimum depth of 2 should not include root or children
-        test_min_depth(
-            &root,
-            2,
-            vec![
-                root.child(make_path("other/dir")).to_path_buf(),
-                root.child(make_path("other/dir/bin")).to_path_buf(),
-                root.child(make_path("other/file.txt")).to_path_buf(),
-                root.child(make_path("path/to")).to_path_buf(),
-                root.child(make_path("path/to/file1.txt")).to_path_buf(),
-                root.child(make_path("path/to/file2.txt")).to_path_buf(),
-            ],
-        )
-        .await;
-
-        // Minimum depth of 3 should not include root or children or grandchildren
-        test_min_depth(
-            &root,
-            3,
-            vec![
-                root.child(make_path("other/dir/bin")).to_path_buf(),
-                root.child(make_path("path/to/file1.txt")).to_path_buf(),
-                root.child(make_path("path/to/file2.txt")).to_path_buf(),
-            ],
-        )
-        .await;
-    }
-
-    #[tokio::test]
     async fn should_traverse_no_deeper_than_max_depth_if_specified() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", ""),
@@ -1514,7 +1533,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_return_binary_match_data_if_match_is_not_utf8() {
+    async fn should_return_binary_match_data_if_match_is_not_utf8_but_path_is_explicit() {
+        let root = assert_fs::TempDir::new().unwrap();
+        let bin_file = root.child(make_path("file.bin"));
+
+        // Write some invalid bytes, a newline, and then "hello"
+        bin_file
+            .write_binary(&[0, 159, 146, 150, 10, 72, 69, 76, 76, 79])
+            .unwrap();
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::channel(100);
+
+        // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
+        //       and checking for 0x9F (159)
+        let query = SearchQuery {
+            paths: vec![bin_file.path().to_path_buf()],
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex(r"(?-u:\x9F)"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        // NOTE: Null bytes are treated as newlines, so that shifts us to being on "line 2"
+        //       and associated other shifts
+        assert_eq!(
+            matches,
+            vec![SearchQueryContentsMatch {
+                path: root.child(make_path("file.bin")).to_path_buf(),
+                lines: SearchQueryMatchData::bytes([159, 146, 150, 10]),
+                line_number: 2,
+                absolute_offset: 1,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::bytes([159]),
+                    start: 0,
+                    end: 1,
+                }]
+            },]
+        );
+
+        let data = rx.recv().await;
+        assert_eq!(
+            data,
+            Some(DistantResponseData::SearchDone { id: search_id })
+        );
+
+        assert_eq!(rx.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn should_not_return_binary_match_data_if_match_is_not_utf8_and_not_explicit_path() {
         let root = assert_fs::TempDir::new().unwrap();
         let bin_file = root.child(make_path("file.bin"));
 
@@ -1537,26 +1611,7 @@ mod tests {
 
         let search_id = state.start(query, Box::new(reply)).await.unwrap();
 
-        let matches = get_matches(rx.recv().await.unwrap())
-            .into_iter()
-            .filter_map(|m| m.into_contents_match())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            matches,
-            vec![SearchQueryContentsMatch {
-                path: root.child(make_path("file.bin")).to_path_buf(),
-                lines: SearchQueryMatchData::bytes([0, 159, 146, 150, 10]),
-                line_number: 1,
-                absolute_offset: 0,
-                submatches: vec![SearchQuerySubmatch {
-                    r#match: SearchQueryMatchData::bytes([159]),
-                    start: 1,
-                    end: 2,
-                }]
-            },]
-        );
-
+        // Get done indicator next as there were no matches
         let data = rx.recv().await;
         assert_eq!(
             data,

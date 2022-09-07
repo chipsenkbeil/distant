@@ -121,7 +121,7 @@ where
                 match result {
                     Ok(x) => x,
                     Err(x) => {
-                        error!("Server no longer accepting connections: {}", x);
+                        error!("Server no longer accepting connections: {x}");
                         if let Some(timer) = shutdown_timer.take() {
                             timer.lock().await.abort();
                         }
@@ -160,9 +160,8 @@ where
         let (tx, mut rx) = mpsc::channel::<Response<Res>>(1);
         connection.writer_task = Some(tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
-                // trace!("[Conn {}] Sending {:?}", connection_id, data.payload);
                 if let Err(x) = writer.write(data).await {
-                    error!("[Conn {}] Failed to send {:?}", connection_id, x);
+                    error!("[Conn {connection_id}] Failed to send {x}");
                     break;
                 }
             }
@@ -194,7 +193,7 @@ where
                         server.on_request(ctx).await;
                     }
                     Ok(None) => {
-                        debug!("[Conn {}] Connection closed", connection_id);
+                        debug!("[Conn {connection_id}] Connection closed");
 
                         // Remove the connection from our state if it has closed
                         if let Some(state) = Weak::upgrade(&weak_state) {
@@ -214,7 +213,7 @@ where
                         //       if someone sends bad data at any point, but does not
                         //       mean that the reader itself has failed. This can
                         //       happen from getting non-compliant typed data
-                        error!("[Conn {}] {}", connection_id, x);
+                        error!("[Conn {connection_id}] {x}");
                     }
                 }
             }
