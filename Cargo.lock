@@ -767,6 +767,7 @@ dependencies = [
  "indoc",
  "log",
  "notify",
+ "num_cpus",
  "once_cell",
  "portable-pty",
  "predicates",

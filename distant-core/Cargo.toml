@@ -26,6 +26,7 @@ hex = "0.4.3"
 ignore = "0.4.18"
 log = "0.4.17"
 notify = { version = "=5.0.0-pre.15", features = ["serde"] }
+num_cpus = "1.13.1"
 once_cell = "1.13.0"
 portable-pty = "0.7.0"
 rand = { version = "0.8.5", features = ["getrandom"] }
