@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed `min_depth` option from search
+- Updated search to properly use binary detection, filter out common ignore
+  file patterns, and execute in parallel via the `ignore` crate and `num_cpus`
+  crate to calculate thread count
+
 ## [0.19.0] - 2022-08-30
 ### Added
 
