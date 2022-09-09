@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `contains` and `or` types for `SearchQueryCondition`
+
 ### Changed
 
+- `SearchQueryCondition` now escapes regex for all types except `regex`
 - Removed `min_depth` option from search
 - Updated search to properly use binary detection, filter out common ignore
   file patterns, and execute in parallel via the `ignore` crate and `num_cpus`

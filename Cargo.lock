@@ -772,6 +772,7 @@ dependencies = [
  "portable-pty",
  "predicates",
  "rand 0.8.5",
+ "regex",
  "rstest",
  "schemars",
  "serde",

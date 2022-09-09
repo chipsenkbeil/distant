@@ -70,20 +70,33 @@ impl SearchQueryTarget {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum SearchQueryCondition {
-    /// Begins with some text
+    /// Text is found anywhere (all regex patterns are escaped)
+    Contains { value: String },
+
+    /// Begins with some text (all regex patterns are escaped)
     EndsWith { value: String },
 
-    /// Matches some text exactly
+    /// Matches some text exactly (all regex patterns are escaped)
     Equals { value: String },
+
+    /// Any of the conditions match
+    Or { value: Vec<SearchQueryCondition> },
 
     /// Matches some regex
     Regex { value: String },
 
-    /// Begins with some text
+    /// Begins with some text (all regex patterns are escaped)
     StartsWith { value: String },
 }
 
 impl SearchQueryCondition {
+    /// Creates a new instance with `Contains` variant
+    pub fn contains(value: impl Into<String>) -> Self {
+        Self::Contains {
+            value: value.into(),
+        }
+    }
+
     /// Creates a new instance with `EndsWith` variant
     pub fn ends_with(value: impl Into<String>) -> Self {
         Self::EndsWith {
@@ -95,6 +108,17 @@ impl SearchQueryCondition {
     pub fn equals(value: impl Into<String>) -> Self {
         Self::Equals {
             value: value.into(),
+        }
+    }
+
+    /// Creates a new instance with `Or` variant
+    pub fn or<I, C>(value: I) -> Self
+    where
+        I: IntoIterator<Item = C>,
+        C: Into<SearchQueryCondition>,
+    {
+        Self::Or {
+            value: value.into_iter().map(|s| s.into()).collect(),
         }
     }
 
@@ -115,10 +139,21 @@ impl SearchQueryCondition {
     /// Converts the condition in a regex string
     pub fn to_regex_string(&self) -> String {
         match self {
-            Self::EndsWith { value } => format!(r"{value}$"),
-            Self::Equals { value } => format!(r"^{value}$"),
+            Self::Contains { value } => regex::escape(value),
+            Self::EndsWith { value } => format!(r"{}$", regex::escape(value)),
+            Self::Equals { value } => format!(r"^{}$", regex::escape(value)),
             Self::Regex { value } => value.to_string(),
-            Self::StartsWith { value } => format!(r"^{value}"),
+            Self::StartsWith { value } => format!(r"^{}", regex::escape(value)),
+            Self::Or { value } => {
+                let mut s = String::new();
+                for (i, condition) in value.iter().enumerate() {
+                    if i > 0 {
+                        s.push('|');
+                    }
+                    s.push_str(&condition.to_regex_string());
+                }
+                s
+            }
         }
     }
 }
@@ -347,5 +382,47 @@ impl SearchQueryMatchData {
 impl SearchQueryMatchData {
     pub fn root_schema() -> schemars::schema::RootSchema {
         schemars::schema_for!(SearchQueryMatchData)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod search_query_condition {
+        use super::*;
+
+        #[test]
+        fn to_regex_string_should_convert_to_appropriate_regex_and_escape_as_needed() {
+            assert_eq!(
+                SearchQueryCondition::contains("t^es$t").to_regex_string(),
+                r"t\^es\$t"
+            );
+            assert_eq!(
+                SearchQueryCondition::ends_with("t^es$t").to_regex_string(),
+                r"t\^es\$t$"
+            );
+            assert_eq!(
+                SearchQueryCondition::equals("t^es$t").to_regex_string(),
+                r"^t\^es\$t$"
+            );
+            assert_eq!(
+                SearchQueryCondition::or([
+                    SearchQueryCondition::contains("t^es$t"),
+                    SearchQueryCondition::equals("t^es$t"),
+                    SearchQueryCondition::regex("^test$"),
+                ])
+                .to_regex_string(),
+                r"t\^es\$t|^t\^es\$t$|^test$"
+            );
+            assert_eq!(
+                SearchQueryCondition::regex("test").to_regex_string(),
+                "test"
+            );
+            assert_eq!(
+                SearchQueryCondition::starts_with("t^es$t").to_regex_string(),
+                r"^t\^es\$t"
+            );
+        }
     }
 }
