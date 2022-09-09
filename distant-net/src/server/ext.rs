@@ -160,6 +160,17 @@ where
         let (tx, mut rx) = mpsc::channel::<Response<Res>>(1);
         connection.writer_task = Some(tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
+                // Log our message as a string, which can be expensive
+                if log_enabled!(Level::Trace) {
+                    trace!(
+                        "[Conn {connection_id}] Sending {}",
+                        &data
+                            .to_vec()
+                            .map(|x| String::from_utf8_lossy(&x).to_string())
+                            .unwrap_or_else(|_| "<Cannot serialize>".to_string())
+                    );
+                }
+
                 if let Err(x) = writer.write(data).await {
                     error!("[Conn {connection_id}] Failed to send {x}");
                     break;
