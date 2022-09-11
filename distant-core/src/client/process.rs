@@ -609,13 +609,13 @@ mod tests {
         data::{Error, ErrorKind},
     };
     use distant_net::{
-        Client, FramedTransport, InmemoryRawTransport, IntoSplit, PlainCodec, Response,
+        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
         TypedAsyncRead, TypedAsyncWrite,
     };
     use std::time::Duration;
 
     fn make_session() -> (
-        FramedTransport<InmemoryRawTransport, PlainCodec>,
+        FramedTransport<InmemoryTransport, PlainCodec>,
         DistantClient,
     ) {
         let (t1, t2) = FramedTransport::pair(100);

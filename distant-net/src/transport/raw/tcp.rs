@@ -46,6 +46,9 @@ impl fmt::Debug for TcpTransport {
 #[async_trait]
 impl Reconnectable for TcpTransport {
     async fn reconnect(&mut self) -> io::Result<()> {
+        // Drop the existing connection to ensure we are disconnected before trying again
+        drop(self.inner);
+
         self.inner = TcpStream::connect((self.addr, self.port)).await?;
         Ok(())
     }

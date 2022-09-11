@@ -11,7 +11,7 @@ use tokio::sync::mpsc::{
 
 /// Represents a [`RawTransport`] comprised of two inmemory channels
 #[derive(Debug)]
-pub struct InmemoryRawTransport {
+pub struct InmemoryTransport {
     tx: mpsc::Sender<Vec<u8>>,
     rx: mpsc::Receiver<Vec<u8>>,
 
@@ -19,7 +19,7 @@ pub struct InmemoryRawTransport {
     buf: Mutex<Option<Vec<u8>>>,
 }
 
-impl InmemoryRawTransport {
+impl InmemoryTransport {
     pub fn new(tx: mpsc::Sender<Vec<u8>>, rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
             tx,
@@ -80,7 +80,7 @@ impl InmemoryRawTransport {
 }
 
 #[async_trait]
-impl Reconnectable for InmemoryRawTransport {
+impl Reconnectable for InmemoryTransport {
     /// Once the underlying channels have closed, there is no way for this transport to
     /// re-establish those channels; therefore, reconnecting will always fail with
     /// [`ErrorKind::Unsupported`]
@@ -92,7 +92,7 @@ impl Reconnectable for InmemoryRawTransport {
 }
 
 #[async_trait]
-impl RawTransport for InmemoryRawTransport {
+impl RawTransport for InmemoryTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         // Lock our internal storage to ensure that nothing else mutates it for the lifetime of
         // this call as we want to make sure that data is read and stored in order
@@ -170,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn make_should_return_sender_that_sends_data_to_transport() {
-        let (tx, _, mut transport) = InmemoryRawTransport::make(3);
+        let (tx, _, mut transport) = InmemoryTransport::make(3);
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
         tx.send(b"test msg 2".to_vec()).await.unwrap();
@@ -199,7 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn make_should_return_receiver_that_receives_data_from_transport() {
-        let (_, mut rx, mut transport) = InmemoryRawTransport::make(3);
+        let (_, mut rx, mut transport) = InmemoryTransport::make(3);
 
         transport.write_all(b"test msg 1").await.unwrap();
         transport.write_all(b"test msg 2").await.unwrap();

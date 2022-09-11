@@ -39,6 +39,9 @@ impl fmt::Debug for UnixSocketTransport {
 #[async_trait]
 impl Reconnectable for UnixSocketTransport {
     async fn reconnect(&mut self) -> io::Result<()> {
+        // Drop the existing connection to ensure we are disconnected before trying again
+        drop(self.inner);
+
         self.inner = UnixStream::connect(self.path.as_path()).await?;
         Ok(())
     }

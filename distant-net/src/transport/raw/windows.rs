@@ -61,6 +61,9 @@ impl Reconnectable for WindowsPipeTransport {
             return Err(io::Error::from(io::ErrorKind::Unsupported));
         }
 
+        // Drop the existing connection to ensure we are disconnected before trying again
+        drop(self.inner);
+
         self.inner = NamedPipe::connect_as_client(&self.addr).await?;
         Ok(())
     }

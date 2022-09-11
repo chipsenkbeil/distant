@@ -47,7 +47,7 @@ where
     }
 }
 
-impl FramedRawTransport<super::InmemoryRawTransport, PlainCodec> {
+impl FramedRawTransport<super::InmemoryTransport, PlainCodec> {
     /// Produces a pair of inmemory transports that are connected to each other using
     /// a standard codec
     ///
@@ -55,10 +55,10 @@ impl FramedRawTransport<super::InmemoryRawTransport, PlainCodec> {
     pub fn pair(
         buffer: usize,
     ) -> (
-        FramedRawTransport<super::InmemoryRawTransport, PlainCodec>,
-        FramedRawTransport<super::InmemoryRawTransport, PlainCodec>,
+        FramedRawTransport<super::InmemoryTransport, PlainCodec>,
+        FramedRawTransport<super::InmemoryTransport, PlainCodec>,
     ) {
-        let (a, b) = super::InmemoryRawTransport::pair(buffer);
+        let (a, b) = super::InmemoryTransport::pair(buffer);
         let a = FramedRawTransport::new(a, PlainCodec::new());
         let b = FramedRawTransport::new(b, PlainCodec::new());
         (a, b)

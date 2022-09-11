@@ -411,7 +411,7 @@ mod tests {
     use super::*;
     use crate::data::{DistantRequestData, DistantResponseData};
     use distant_net::{
-        Client, FramedTransport, InmemoryRawTransport, IntoSplit, PlainCodec, Request, Response,
+        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Request, Response,
         TypedAsyncRead, TypedAsyncWrite,
     };
     use std::{future::Future, time::Duration};
@@ -421,7 +421,7 @@ mod tests {
 
     // Configures an lsp process with a means to send & receive data from outside
     async fn spawn_lsp_process() -> (
-        FramedTransport<InmemoryRawTransport, PlainCodec>,
+        FramedTransport<InmemoryTransport, PlainCodec>,
         RemoteLspProcess,
     ) {
         let (mut t1, t2) = FramedTransport::pair(100);

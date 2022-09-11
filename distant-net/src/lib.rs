@@ -1,7 +1,6 @@
 mod any;
 mod auth;
 mod client;
-mod codec;
 mod id;
 mod key;
 mod listener;
@@ -14,7 +13,6 @@ mod utils;
 pub use any::*;
 pub use auth::*;
 pub use client::*;
-pub use codec::*;
 pub use id::*;
 pub use key::*;
 pub use listener::*;

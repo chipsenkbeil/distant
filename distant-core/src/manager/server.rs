@@ -426,8 +426,8 @@ impl Server for DistantManager {
 mod tests {
     use super::*;
     use distant_net::{
-        AuthClient, FramedTransport, HeapAuthServer, InmemoryRawTransport, IntoSplit,
-        MappedListener, OneshotListener, PlainCodec, ServerExt, ServerRef,
+        AuthClient, FramedTransport, HeapAuthServer, InmemoryTransport, IntoSplit, MappedListener,
+        OneshotListener, PlainCodec, ServerExt, ServerRef,
     };
 
     /// Create a new server, bypassing the start loop
@@ -470,7 +470,7 @@ mod tests {
     /// Creates a writer & reader with a connected transport
     fn setup_distant_writer_reader() -> (
         (BoxedDistantWriter, BoxedDistantReader),
-        FramedTransport<InmemoryRawTransport, PlainCodec>,
+        FramedTransport<InmemoryTransport, PlainCodec>,
     ) {
         let (t1, t2) = FramedTransport::pair(1);
         let (writer, reader) = t1.into_split();

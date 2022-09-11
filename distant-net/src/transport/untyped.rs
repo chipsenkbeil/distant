@@ -1,4 +1,4 @@
-use super::{Interest, Ready, TypedTransport};
+use super::{Interest, Ready, Reconnectable, TypedTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
@@ -6,7 +6,7 @@ use std::io;
 /// Interface representing a transport that uses [`serde`] to serialize and deserialize data
 /// as it is sent and received
 #[async_trait]
-pub trait UntypedTransport {
+pub trait UntypedTransport: Reconnectable {
     /// Attempts to read some data as `T`, returning [`io::Error`] if unable to deserialize
     /// or some other error occurs. `Some(T)` is returned if successful. `None` is
     /// returned if no more data is available.
@@ -39,7 +39,7 @@ pub trait UntypedTransport {
         Ok(())
     }
 
-    /// Waits for the transport to be readable to follow up with `try_write`
+    /// Waits for the transport to be writable to follow up with `try_write`
     async fn writeable(&self) -> io::Result<()> {
         let _ = self.ready(Interest::WRITABLE).await?;
         Ok(())

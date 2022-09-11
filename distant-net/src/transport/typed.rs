@@ -41,7 +41,7 @@ pub trait TypedTransport: Reconnectable {
         Ok(())
     }
 
-    /// Waits for the transport to be readable to follow up with `try_write`
+    /// Waits for the transport to be writable to follow up with `try_write`
     async fn writeable(&self) -> io::Result<()> {
         let _ = self.ready(Interest::WRITABLE).await?;
         Ok(())

@@ -378,13 +378,12 @@ mod tests {
     use super::*;
     use crate::data::{Error, ErrorKind};
     use distant_net::{
-        FramedTransport, InmemoryRawTransport, PlainCodec, UntypedTransportRead,
-        UntypedTransportWrite,
+        FramedTransport, InmemoryTransport, PlainCodec, UntypedTransportRead, UntypedTransportWrite,
     };
 
     fn setup() -> (
         DistantManagerClient,
-        FramedTransport<InmemoryRawTransport, PlainCodec>,
+        FramedTransport<InmemoryTransport, PlainCodec>,
     ) {
         let (t1, t2) = FramedTransport::pair(100);
         let client =
