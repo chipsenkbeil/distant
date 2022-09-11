@@ -64,21 +64,21 @@ impl Reconnectable for WindowsPipeTransport {
 #[async_trait]
 impl RawTransport for WindowsPipeTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
-        match self.inner {
+        match &self.inner {
             NamedPipe::Client(x) => x.try_read(buf),
             NamedPipe::Server(x) => x.try_read(buf),
         }
     }
 
     fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
-        match self.inner {
+        match &self.inner {
             NamedPipe::Client(x) => x.try_write(buf),
             NamedPipe::Server(x) => x.try_write(buf),
         }
     }
 
     async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        match self.inner {
+        match &self.inner {
             NamedPipe::Client(x) => x.ready(interest).await,
             NamedPipe::Server(x) => x.ready(interest).await,
         }
@@ -145,7 +145,7 @@ mod tests {
         // Connect to the pipe, send some bytes, and get some bytes
         let mut buf: [u8; 10] = [0; 10];
 
-        let mut conn = WindowsPipeTransport::connect(&address)
+        let conn = WindowsPipeTransport::connect(&address)
             .await
             .expect("Conn failed to connect");
         conn.read_exact(&mut buf)
