@@ -90,18 +90,6 @@ where
         })
     }
 
-    /// Initializes a client using the provided framed transport
-    pub fn from_framed_transport<TR, C>(transport: FramedTransport<TR, C>) -> io::Result<Self>
-    where
-        TR: RawTransport + IntoSplit + 'static,
-        <TR as IntoSplit>::Read: RawTransportRead,
-        <TR as IntoSplit>::Write: RawTransportWrite,
-        C: Codec + Send + 'static,
-    {
-        let (writer, reader) = transport.into_split();
-        Self::new(writer, reader)
-    }
-
     /// Convert into underlying channel
     pub fn into_channel(self) -> Channel<T, U> {
         self.channel
