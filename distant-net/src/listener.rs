@@ -19,10 +19,10 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
-// #[cfg(windows)]
+#[cfg(windows)]
 mod windows;
 
-// #[cfg(windows)]
+#[cfg(windows)]
 pub use windows::*;
 
 /// Represents a type that has a listen interface for receiving raw streams

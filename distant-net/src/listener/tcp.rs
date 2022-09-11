@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_be_able_to_receive_connections_and_send_and_receive_data_with_them() {
+    async fn should_be_able_to_receive_connections_and_read_and_write_data_with_them() {
         let (tx, rx) = oneshot::channel();
 
         // Spawn a task that will wait for two connections and then
