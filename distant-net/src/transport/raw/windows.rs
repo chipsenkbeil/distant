@@ -106,7 +106,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_be_able_to_send_and_receive_data() {
+    async fn should_be_able_to_read_and_write_data() {
         let (tx, rx) = oneshot::channel();
 
         // Spawn a task that will wait for a connection, send data,

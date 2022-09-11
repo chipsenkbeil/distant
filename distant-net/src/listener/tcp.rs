@@ -64,12 +64,9 @@ impl Listener for TcpListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RawTransport;
     use std::net::{Ipv6Addr, SocketAddr};
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        sync::oneshot,
-        task::JoinHandle,
-    };
+    use tokio::{sync::oneshot, task::JoinHandle};
 
     #[tokio::test]
     async fn should_fail_to_bind_if_port_already_bound() {
@@ -109,7 +106,7 @@ mod tests {
                 .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))?;
 
             // Get first connection
-            let mut conn_1 = listener.accept().await?;
+            let conn_1 = listener.accept().await?;
 
             // Send some data to the first connection (12 bytes)
             conn_1.write_all(b"hello conn 1").await?;
@@ -120,7 +117,7 @@ mod tests {
             assert_eq!(&buf, b"hello server 1");
 
             // Get second connection
-            let mut conn_2 = listener.accept().await?;
+            let conn_2 = listener.accept().await?;
 
             // Send some data on to second connection (12 bytes)
             conn_2.write_all(b"hello conn 2").await?;
@@ -139,7 +136,7 @@ mod tests {
         // Connect to the listener twice, sending some bytes and receiving some bytes from each
         let mut buf: [u8; 12] = [0; 12];
 
-        let mut conn = TcpTransport::connect(&address)
+        let conn = TcpTransport::connect(&address)
             .await
             .expect("Conn 1 failed to connect");
         conn.write_all(b"hello server 1")
@@ -150,7 +147,7 @@ mod tests {
             .expect("Conn 1 failed to read");
         assert_eq!(&buf, b"hello conn 1");
 
-        let mut conn = TcpTransport::connect(&address)
+        let conn = TcpTransport::connect(&address)
             .await
             .expect("Conn 2 failed to connect");
         conn.write_all(b"hello server 2")

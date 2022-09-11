@@ -46,9 +46,6 @@ impl fmt::Debug for TcpTransport {
 #[async_trait]
 impl Reconnectable for TcpTransport {
     async fn reconnect(&mut self) -> io::Result<()> {
-        // Drop the existing connection to ensure we are disconnected before trying again
-        drop(self.inner);
-
         self.inner = TcpStream::connect((self.addr, self.port)).await?;
         Ok(())
     }
@@ -106,12 +103,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_be_able_to_send_and_receive_data() {
+    async fn should_be_able_to_read_and_write_data() {
         let (tx, rx) = oneshot::channel();
 
         // Spawn a task that will wait for a connection, send data,
         // and receive data that it will return in the task
         let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let addr = find_ephemeral_addr().await;
 
             // Start listening at the distinct address
@@ -141,9 +139,11 @@ mod tests {
         // Connect to the socket, send some bytes, and get some bytes
         let mut buf: [u8; 10] = [0; 10];
 
-        let mut conn = TcpTransport::connect(&addr)
+        let conn = TcpTransport::connect(&addr)
             .await
             .expect("Conn failed to connect");
+
+        // Continually read until we get all of the data
         conn.read_exact(&mut buf)
             .await
             .expect("Conn failed to read");

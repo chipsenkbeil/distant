@@ -39,9 +39,6 @@ impl fmt::Debug for UnixSocketTransport {
 #[async_trait]
 impl Reconnectable for UnixSocketTransport {
     async fn reconnect(&mut self) -> io::Result<()> {
-        // Drop the existing connection to ensure we are disconnected before trying again
-        drop(self.inner);
-
         self.inner = UnixStream::connect(self.path.as_path()).await?;
         Ok(())
     }
@@ -101,7 +98,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_be_able_to_send_and_receive_data() {
+    async fn should_be_able_to_read_and_write_data() {
         let (tx, rx) = oneshot::channel();
 
         // Spawn a task that will wait for a connection, send data,
@@ -140,7 +137,7 @@ mod tests {
         // Connect to the socket, send some bytes, and get some bytes
         let mut buf: [u8; 10] = [0; 10];
 
-        let mut conn = UnixSocketTransport::connect(&path)
+        let conn = UnixSocketTransport::connect(&path)
             .await
             .expect("Conn failed to connect");
         conn.read_exact(&mut buf)
