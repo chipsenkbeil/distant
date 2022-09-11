@@ -1,4 +1,5 @@
 use super::{Interest, RawTransport, Ready, Reconnectable};
+use async_trait::async_trait;
 use std::{
     ffi::{OsStr, OsString},
     fmt, io,
