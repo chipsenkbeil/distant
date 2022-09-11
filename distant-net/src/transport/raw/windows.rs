@@ -2,9 +2,6 @@ use super::{Interest, RawTransport, Ready, Reconnectable};
 use std::{
     ffi::{OsStr, OsString},
     fmt, io,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
 };
 
 mod pipe;
@@ -33,10 +30,7 @@ impl WindowsPipeTransport {
         let addr = addr.into();
         let inner = NamedPipe::connect_as_client(&addr).await?;
 
-        Ok(Self {
-            addr,
-            inner,
-        })
+        Ok(Self { addr, inner })
     }
 
     /// Returns the addr that the listener is bound to
@@ -61,9 +55,6 @@ impl Reconnectable for WindowsPipeTransport {
             return Err(io::Error::from(io::ErrorKind::Unsupported));
         }
 
-        // Drop the existing connection to ensure we are disconnected before trying again
-        drop(self.inner);
-
         self.inner = NamedPipe::connect_as_client(&self.addr).await?;
         Ok(())
     }
@@ -72,27 +63,31 @@ impl Reconnectable for WindowsPipeTransport {
 #[async_trait]
 impl RawTransport for WindowsPipeTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
-        self.inner.try_read(buf)
+        match self.inner {
+            NamedPipe::Client(x) => x.try_read(buf),
+            NamedPipe::Server(x) => x.try_read(buf),
+        }
     }
 
     fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.try_write(buf)
+        match self.inner {
+            NamedPipe::Client(x) => x.try_write(buf),
+            NamedPipe::Server(x) => x.try_write(buf),
+        }
     }
 
     async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        self.inner.ready(interest).await
+        match self.inner {
+            NamedPipe::Client(x) => x.ready(interest).await,
+            NamedPipe::Server(x) => x.ready(interest).await,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::windows::named_pipe::ServerOptions,
-        sync::oneshot,
-        task::JoinHandle,
-    };
+    use tokio::{net::windows::named_pipe::ServerOptions, sync::oneshot, task::JoinHandle};
 
     #[tokio::test]
     async fn should_fail_to_connect_if_pipe_does_not_exist() {
@@ -112,6 +107,8 @@ mod tests {
         // Spawn a task that will wait for a connection, send data,
         // and receive data that it will return in the task
         let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
             // Generate a pipe address (not just a name)
             let addr = format!(r"\\.\pipe\test_pipe_{}", rand::random::<usize>());
 

@@ -1,5 +1,5 @@
 use derive_more::{From, TryInto};
-use std::io;
+use std::{ffi::OsStr, io, time::Duration};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer};
 
 // Equivalent to winapi::shared::winerror::ERROR_PIPE_BUSY
@@ -7,7 +7,7 @@ use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeS
 const ERROR_PIPE_BUSY: u32 = 231;
 
 // Time between attempts to connect to a busy pipe
-const BUSY_PIPE_SLEEP_MILLIS: u64 = 50;
+const BUSY_PIPE_SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 /// Represents a named pipe from either a client or server perspective
 #[derive(From, TryInto)]
@@ -17,6 +17,11 @@ pub enum NamedPipe {
 }
 
 impl NamedPipe {
+    /// Returns true if the underlying named pipe is a client named pipe
+    pub fn is_client(&self) -> bool {
+        matches!(self, Self::Client(_))
+    }
+
     /// Returns a reference to the underlying named client pipe
     pub fn as_client(&self) -> Option<&NamedPipeClient> {
         match self {
@@ -39,6 +44,11 @@ impl NamedPipe {
             Self::Client(x) => Some(x),
             _ => None,
         }
+    }
+
+    /// Returns true if the underlying named pipe is a server named pipe
+    pub fn is_server(&self) -> bool {
+        matches!(self, Self::Server(_))
     }
 
     /// Returns a reference to the underlying named server pipe
@@ -66,7 +76,7 @@ impl NamedPipe {
     }
 
     /// Attempts to connect as a client pipe
-    pub(super) fn connect_as_client(addr: &OsStr) -> io::Result<Self> {
+    pub(super) async fn connect_as_client(addr: &OsStr) -> io::Result<Self> {
         let pipe = loop {
             match ClientOptions::new().open(addr) {
                 Ok(client) => break client,
@@ -74,7 +84,7 @@ impl NamedPipe {
                 Err(e) => return Err(e),
             }
 
-            tokio::time::sleep(Duration::from_millis(BUSY_PIPE_SLEEP_MILLIS)).await;
+            tokio::time::sleep(BUSY_PIPE_SLEEP_DURATION).await;
         };
 
         Ok(NamedPipe::from(pipe))

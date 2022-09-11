@@ -66,11 +66,8 @@ impl Listener for WindowsPipeListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        sync::oneshot,
-        task::JoinHandle,
-    };
+    use crate::RawTransport;
+    use tokio::{sync::oneshot, task::JoinHandle};
 
     #[tokio::test]
     async fn should_fail_to_bind_if_pipe_already_bound() {
