@@ -1,5 +1,5 @@
 use crate::{
-    Codec, FramedTransport, IntoSplit, MappedListener, Server, ServerExt, WindowsPipeListener,
+    Codec, MappedListener, Server, ServerExt, WindowsPipeListener,
     WindowsPipeServerRef,
 };
 use async_trait::async_trait;
@@ -36,12 +36,12 @@ pub trait WindowsPipeServerExt {
 }
 
 #[async_trait]
-impl<S, Req, Res, Data> WindowsPipeServerExt for S
+impl<S> WindowsPipeServerExt for S
 where
-    S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
-    Req: DeserializeOwned + Send + Sync + 'static,
-    Res: Serialize + Send + 'static,
-    Data: Default + Send + Sync + 'static,
+    S: Server + Sync + 'static,
+    S::Request: DeserializeOwned + Send + Sync + 'static,
+    S::Response: Serialize + Send + 'static,
+    S::LocalData: Default + Send + Sync + 'static,
 {
     type Request = Req;
     type Response = Res;

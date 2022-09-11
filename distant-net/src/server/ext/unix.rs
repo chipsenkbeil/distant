@@ -1,7 +1,4 @@
-use crate::{
-    Codec, FramedTransport, IntoSplit, MappedListener, Server, ServerExt, UnixSocketListener,
-    UnixSocketServerRef,
-};
+use crate::{Codec, MappedListener, Server, ServerExt, UnixSocketListener, UnixSocketServerRef};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, path::Path};
@@ -21,15 +18,15 @@ pub trait UnixSocketServerExt {
 }
 
 #[async_trait]
-impl<S, Req, Res, Data> UnixSocketServerExt for S
+impl<S> UnixSocketServerExt for S
 where
-    S: Server<Request = Req, Response = Res, LocalData = Data> + Sync + 'static,
-    Req: DeserializeOwned + Send + Sync + 'static,
-    Res: Serialize + Send + 'static,
-    Data: Default + Send + Sync + 'static,
+    S: Server + Sync + 'static,
+    S::Request: DeserializeOwned + Send + Sync + 'static,
+    S::Response: Serialize + Send + 'static,
+    S::LocalData: Default + Send + Sync + 'static,
 {
-    type Request = Req;
-    type Response = Res;
+    type Request = S::Request;
+    type Response = S::Response;
 
     async fn start<P, C>(self, path: P, codec: C) -> io::Result<UnixSocketServerRef>
     where
