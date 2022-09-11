@@ -185,14 +185,14 @@ mod tests {
     use crate::data::ChangeKind;
     use crate::DistantClient;
     use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
+        Client, FramedTransport, InmemoryRawTransport, IntoSplit, PlainCodec, Response,
         TypedAsyncRead, TypedAsyncWrite,
     };
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn make_session() -> (
-        FramedTransport<InmemoryTransport, PlainCodec>,
+        FramedTransport<InmemoryRawTransport, PlainCodec>,
         DistantClient,
     ) {
         let (t1, t2) = FramedTransport::pair(100);

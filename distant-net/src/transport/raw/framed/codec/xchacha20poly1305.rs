@@ -1,8 +1,7 @@
 use crate::{Codec, SecretKey, SecretKey32};
 use bytes::{Buf, BufMut, BytesMut};
 use chacha20poly1305::{aead::Aead, Key, KeyInit, XChaCha20Poly1305, XNonce};
-use std::{convert::TryInto, fmt};
-use tokio::io;
+use std::{convert::TryInto, fmt, io};
 
 /// Total bytes to use as the len field denoting a frame's size
 const LEN_SIZE: usize = 8;
@@ -17,7 +16,6 @@ const NONCE_SIZE: usize = 24;
 pub struct XChaCha20Poly1305Codec {
     cipher: XChaCha20Poly1305,
 }
-impl_traits_for_codec!(XChaCha20Poly1305Codec);
 
 impl XChaCha20Poly1305Codec {
     pub fn new(key: &[u8]) -> Self {

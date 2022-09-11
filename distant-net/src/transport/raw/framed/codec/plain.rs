@@ -1,7 +1,6 @@
 use crate::Codec;
 use bytes::{Buf, BufMut, BytesMut};
-use std::convert::TryInto;
-use tokio::io;
+use std::{convert::TryInto, io};
 
 /// Total bytes to use as the len field denoting a frame's size
 const LEN_SIZE: usize = 8;
@@ -9,7 +8,6 @@ const LEN_SIZE: usize = 8;
 /// Represents a codec that just ships messages back and forth with no encryption or authentication
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlainCodec;
-impl_traits_for_codec!(PlainCodec);
 
 impl PlainCodec {
     pub fn new() -> Self {

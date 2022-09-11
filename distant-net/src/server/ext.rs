@@ -242,8 +242,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        IntoSplit, MpscListener, MpscTransport, MpscTransportReadHalf, MpscTransportWriteHalf,
-        ServerConfig,
+        InmemoryTypedTransport, IntoSplit, MpscListener, MpscTransportReadHalf,
+        MpscTransportWriteHalf, ServerConfig,
     };
     use async_trait::async_trait;
     use std::time::Duration;
@@ -289,7 +289,7 @@ mod tests {
 
         // Make bounded transport pair and send off one of them to act as our connection
         let (mut transport, connection) =
-            MpscTransport::<Request<u16>, Response<String>>::pair(100);
+            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
         tx.send(connection.into_split())
             .await
             .expect("Failed to feed listener a connection");
@@ -331,7 +331,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (transport, connection) = MpscTransport::<Request<u16>, Response<String>>::pair(100);
+        let (transport, connection) =
+            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
         tx.send(connection.into_split())
             .await
             .expect("Failed to feed listener a connection");
@@ -359,7 +360,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (_transport, connection) = MpscTransport::<Request<u16>, Response<String>>::pair(100);
+        let (_transport, connection) =
+            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
         tx.send(connection.into_split())
             .await
             .expect("Failed to feed listener a connection");
@@ -383,7 +385,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (_transport, connection) = MpscTransport::<Request<u16>, Response<String>>::pair(100);
+        let (_transport, connection) =
+            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
         tx.send(connection.into_split())
             .await
             .expect("Failed to feed listener a connection");

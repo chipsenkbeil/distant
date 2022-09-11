@@ -1,17 +1,10 @@
-use crate::{IntoSplit, RawTransport, RawTransportRead, RawTransportWrite};
+use super::{Interest, RawTransport, Ready, Reconnectable};
+use async_trait::async_trait;
 use std::{
     fmt, io,
     path::{Path, PathBuf},
-    pin::Pin,
-    task::{Context, Poll},
 };
-use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::{
-        unix::{OwnedReadHalf, OwnedWriteHalf},
-        UnixStream,
-    },
-};
+use tokio::net::UnixStream;
 
 /// Represents a [`RawTransport`] that leverages a Unix socket
 pub struct UnixSocketTransport {
@@ -43,51 +36,26 @@ impl fmt::Debug for UnixSocketTransport {
     }
 }
 
-impl RawTransport for UnixSocketTransport {}
-impl RawTransportRead for UnixSocketTransport {}
-impl RawTransportWrite for UnixSocketTransport {}
-
-impl RawTransportRead for OwnedReadHalf {}
-impl RawTransportWrite for OwnedWriteHalf {}
-
-impl IntoSplit for UnixSocketTransport {
-    type Read = OwnedReadHalf;
-    type Write = OwnedWriteHalf;
-
-    fn into_split(self) -> (Self::Write, Self::Read) {
-        let (r, w) = UnixStream::into_split(self.inner);
-        (w, r)
+#[async_trait]
+impl Reconnectable for UnixSocketTransport {
+    async fn reconnect(&mut self) -> io::Result<()> {
+        self.inner = UnixStream::connect(self.path.as_path()).await?;
+        Ok(())
     }
 }
 
-impl AsyncRead for UnixSocketTransport {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for UnixSocketTransport {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
+#[async_trait]
+impl RawTransport for UnixSocketTransport {
+    fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.try_read(buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
+    fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.try_write(buf)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
+    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
+        self.inner.ready(interest).await
     }
 }
 

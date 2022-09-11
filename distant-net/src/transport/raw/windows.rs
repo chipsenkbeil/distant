@@ -1,4 +1,4 @@
-use crate::{IntoSplit, RawTransport, RawTransportRead, RawTransportWrite};
+use super::{Interest, RawTransport, Ready, Reconnectable};
 use std::{
     ffi::{OsStr, OsString},
     fmt, io,
@@ -6,17 +6,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf},
-    net::windows::named_pipe::ClientOptions,
-};
-
-// Equivalent to winapi::shared::winerror::ERROR_PIPE_BUSY
-// DWORD -> c_uLong -> u32
-const ERROR_PIPE_BUSY: u32 = 231;
-
-// Time between attempts to connect to a busy pipe
-const BUSY_PIPE_SLEEP_MILLIS: u64 = 50;
 
 mod pipe;
 pub use pipe::NamedPipe;
@@ -42,20 +31,11 @@ impl WindowsPipeTransport {
     /// Address may be something like `\.\pipe\my_pipe_name`
     pub async fn connect(addr: impl Into<OsString>) -> io::Result<Self> {
         let addr = addr.into();
-
-        let pipe = loop {
-            match ClientOptions::new().open(&addr) {
-                Ok(client) => break client,
-                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => (),
-                Err(e) => return Err(e),
-            }
-
-            tokio::time::sleep(Duration::from_millis(BUSY_PIPE_SLEEP_MILLIS)).await;
-        };
+        let inner = NamedPipe::connect_as_client(&addr).await?;
 
         Ok(Self {
             addr,
-            inner: NamedPipe::from(pipe),
+            inner,
         })
     }
 
@@ -73,51 +53,31 @@ impl fmt::Debug for WindowsPipeTransport {
     }
 }
 
-impl RawTransport for WindowsPipeTransport {}
-impl RawTransportRead for WindowsPipeTransport {}
-impl RawTransportWrite for WindowsPipeTransport {}
+#[async_trait]
+impl Reconnectable for WindowsPipeTransport {
+    async fn reconnect(&mut self) -> io::Result<()> {
+        // We cannot reconnect from server-side
+        if self.inner.is_server() {
+            return Err(io::Error::from(io::ErrorKind::Unsupported));
+        }
 
-impl RawTransportRead for ReadHalf<WindowsPipeTransport> {}
-impl RawTransportWrite for WriteHalf<WindowsPipeTransport> {}
-
-impl IntoSplit for WindowsPipeTransport {
-    type Read = ReadHalf<WindowsPipeTransport>;
-    type Write = WriteHalf<WindowsPipeTransport>;
-
-    fn into_split(self) -> (Self::Write, Self::Read) {
-        let (reader, writer) = tokio::io::split(self);
-        (writer, reader)
+        self.inner = NamedPipe::connect_as_client(&self.addr).await?;
+        Ok(())
     }
 }
 
-impl AsyncRead for WindowsPipeTransport {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for WindowsPipeTransport {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
+#[async_trait]
+impl RawTransport for WindowsPipeTransport {
+    fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.try_read(buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
+    fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.try_write(buf)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
+    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
+        self.inner.ready(interest).await
     }
 }
 

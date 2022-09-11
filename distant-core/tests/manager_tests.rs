@@ -1,5 +1,5 @@
 use distant_core::{
-    net::{FramedTransport, InmemoryTransport, IntoSplit, OneshotListener, PlainCodec},
+    net::{FramedTransport, InmemoryRawTransport, IntoSplit, OneshotListener, PlainCodec},
     BoxedDistantReader, BoxedDistantWriter, Destination, DistantApiServer, DistantChannelExt,
     DistantManager, DistantManagerClient, DistantManagerClientConfig, DistantManagerConfig, Map,
 };
@@ -8,10 +8,10 @@ use std::io;
 /// Creates a client transport and server listener for our tests
 /// that are connected together
 async fn setup() -> (
-    FramedTransport<InmemoryTransport, PlainCodec>,
-    OneshotListener<FramedTransport<InmemoryTransport, PlainCodec>>,
+    FramedTransport<InmemoryRawTransport, PlainCodec>,
+    OneshotListener<FramedTransport<InmemoryRawTransport, PlainCodec>>,
 ) {
-    let (t1, t2) = InmemoryTransport::pair(100);
+    let (t1, t2) = InmemoryRawTransport::pair(100);
 
     let listener = OneshotListener::from_value(FramedTransport::new(t2, PlainCodec));
     let transport = FramedTransport::new(t1, PlainCodec);

@@ -6,8 +6,8 @@ use crate::{
     DistantChannel, DistantClient, DistantMsg, DistantRequestData, DistantResponseData, Map,
 };
 use distant_net::{
-    router, Auth, AuthServer, Client, IntoSplit, MpscTransport, OneshotListener, Request, Response,
-    ServerExt, ServerRef, UntypedTransportRead, UntypedTransportWrite,
+    router, Auth, AuthServer, Client, InmemoryTypedTransport, IntoSplit, OneshotListener, Request,
+    Response, ServerExt, ServerRef, UntypedTransportRead, UntypedTransportWrite,
 };
 use log::*;
 use std::{
@@ -44,7 +44,7 @@ impl Drop for DistantManagerClient {
 
 /// Represents a raw channel between a manager client and some remote server
 pub struct RawDistantChannel {
-    pub transport: MpscTransport<
+    pub transport: InmemoryTypedTransport<
         Request<DistantMsg<DistantRequestData>>,
         Response<DistantMsg<DistantResponseData>>,
     >,
@@ -60,7 +60,7 @@ impl RawDistantChannel {
 }
 
 impl Deref for RawDistantChannel {
-    type Target = MpscTransport<
+    type Target = InmemoryTypedTransport<
         Request<DistantMsg<DistantRequestData>>,
         Response<DistantMsg<DistantResponseData>>,
     >;
@@ -251,7 +251,7 @@ impl DistantManagerClient {
 
         // Spawn reader and writer tasks to forward requests and replies
         // using our opened channel
-        let (t1, t2) = MpscTransport::pair(1);
+        let (t1, t2) = InmemoryTypedTransport::pair(1);
         let (mut writer, mut reader) = t1.into_split();
         let mailbox_task = tokio::spawn(async move {
             use distant_net::TypedAsyncWrite;
@@ -378,12 +378,13 @@ mod tests {
     use super::*;
     use crate::data::{Error, ErrorKind};
     use distant_net::{
-        FramedTransport, InmemoryTransport, PlainCodec, UntypedTransportRead, UntypedTransportWrite,
+        FramedTransport, InmemoryRawTransport, PlainCodec, UntypedTransportRead,
+        UntypedTransportWrite,
     };
 
     fn setup() -> (
         DistantManagerClient,
-        FramedTransport<InmemoryTransport, PlainCodec>,
+        FramedTransport<InmemoryRawTransport, PlainCodec>,
     ) {
         let (t1, t2) = FramedTransport::pair(100);
         let client =

@@ -795,7 +795,6 @@ dependencies = [
  "bytes",
  "chacha20poly1305",
  "derive_more",
- "futures",
  "hex",
  "hkdf",
  "log",
@@ -809,7 +808,6 @@ dependencies = [
  "sha2 0.10.2",
  "tempfile",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

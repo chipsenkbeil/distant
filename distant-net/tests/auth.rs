@@ -1,6 +1,6 @@
 use distant_net::{
     AuthClient, AuthErrorKind, AuthQuestion, AuthRequest, AuthServer, AuthVerifyKind, Client,
-    IntoSplit, MpscListener, MpscTransport, ServerExt,
+    InmemoryTypedTransport, IntoSplit, MpscListener, ServerExt,
 };
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 /// Spawns a server and client connected together, returning the client
 fn setup() -> (AuthClient, mpsc::Receiver<AuthRequest>) {
     // Make a pair of inmemory transports that we can use to test client and server connected
-    let (t1, t2) = MpscTransport::pair(100);
+    let (t1, t2) = InmemoryTypedTransport::pair(100);
 
     // Create the client
     let (writer, reader) = t1.into_split();

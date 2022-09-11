@@ -199,7 +199,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        IntoSplit, MpscListener, MpscTransport, Request, Response, ServerExt, ServerRef,
+        InmemoryTypedTransport, IntoSplit, MpscListener, Request, Response, ServerExt, ServerRef,
         TypedAsyncRead, TypedAsyncWrite,
     };
     use tokio::sync::mpsc;
@@ -621,7 +621,7 @@ mod tests {
         on_info: InfoFn,
         on_error: ErrorFn,
     ) -> io::Result<(
-        MpscTransport<Request<Auth>, Response<Auth>>,
+        InmemoryTypedTransport<Request<Auth>, Response<Auth>>,
         Box<dyn ServerRef>,
     )>
     where
@@ -642,7 +642,8 @@ mod tests {
         let (tx, listener) = MpscListener::channel(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (transport, connection) = MpscTransport::<Request<Auth>, Response<Auth>>::pair(100);
+        let (transport, connection) =
+            InmemoryTypedTransport::<Request<Auth>, Response<Auth>>::pair(100);
         tx.send(connection.into_split())
             .await
             .expect("Failed to feed listener a connection");
