@@ -1,4 +1,4 @@
-use super::{Interest, RawTransport, Ready, Reconnectable};
+use super::{Interest, Transport, Ready, Reconnectable};
 use async_trait::async_trait;
 use std::{
     ffi::{OsStr, OsString},
@@ -8,7 +8,7 @@ use std::{
 mod pipe;
 pub use pipe::NamedPipe;
 
-/// Represents a [`RawTransport`] that leverages a named Windows pipe (client or server)
+/// Represents a [`Transport`] that leverages a named Windows pipe (client or server)
 pub struct WindowsPipeTransport {
     pub(crate) addr: OsString,
     pub(crate) inner: NamedPipe,
@@ -62,7 +62,7 @@ impl Reconnectable for WindowsPipeTransport {
 }
 
 #[async_trait]
-impl RawTransport for WindowsPipeTransport {
+impl Transport for WindowsPipeTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         match &self.inner {
             NamedPipe::Client(x) => x.try_read(buf),

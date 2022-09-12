@@ -1,16 +1,16 @@
-use super::{Interest, RawTransport, Ready, Reconnectable};
+use super::{Interest, Transport, Ready, Reconnectable};
 use async_trait::async_trait;
 use std::io;
 
 mod codec;
 pub use codec::*;
 
-/// Represents a [`RawTransport`] that reads and writes using frames defined by a [`Codec`],
+/// Represents a [`Transport`] that reads and writes using frames defined by a [`Codec`],
 /// which provides the ability to guarantee that data is read and written completely and also
 /// follows the format of the given codec such as encryption and authentication of bytes
-pub struct FramedRawTransport<T, C>
+pub struct FramedTransport<T, C>
 where
-    T: RawTransport,
+    T: Transport,
     C: Codec,
 {
     inner: T,
@@ -18,9 +18,9 @@ where
 }
 
 #[async_trait]
-impl<T, C> Reconnectable for FramedRawTransport<T, C>
+impl<T, C> Reconnectable for FramedTransport<T, C>
 where
-    T: RawTransport,
+    T: Transport,
     C: Codec,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
@@ -29,9 +29,9 @@ where
 }
 
 #[async_trait]
-impl<T, C> RawTransport for FramedRawTransport<T, C>
+impl<T, C> Transport for FramedTransport<T, C>
 where
-    T: RawTransport,
+    T: Transport,
     C: Codec,
 {
     /// Tries to read a frame of data into `buf`
@@ -49,7 +49,7 @@ where
     }
 }
 
-impl FramedRawTransport<super::InmemoryTransport, PlainCodec> {
+impl FramedTransport<super::InmemoryTransport, PlainCodec> {
     /// Produces a pair of inmemory transports that are connected to each other using
     /// a standard codec
     ///
@@ -57,12 +57,12 @@ impl FramedRawTransport<super::InmemoryTransport, PlainCodec> {
     pub fn pair(
         buffer: usize,
     ) -> (
-        FramedRawTransport<super::InmemoryTransport, PlainCodec>,
-        FramedRawTransport<super::InmemoryTransport, PlainCodec>,
+        FramedTransport<super::InmemoryTransport, PlainCodec>,
+        FramedTransport<super::InmemoryTransport, PlainCodec>,
     ) {
         let (a, b) = super::InmemoryTransport::pair(buffer);
-        let a = FramedRawTransport::new(a, PlainCodec::new());
-        let b = FramedRawTransport::new(b, PlainCodec::new());
+        let a = FramedTransport::new(a, PlainCodec::new());
+        let b = FramedTransport::new(b, PlainCodec::new());
         (a, b)
     }
 }

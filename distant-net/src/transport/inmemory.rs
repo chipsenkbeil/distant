@@ -1,4 +1,4 @@
-use super::{Interest, RawTransport, Ready, Reconnectable};
+use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
 use std::{
     io,
@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
 };
 
-/// Represents a [`RawTransport`] comprised of two inmemory channels
+/// Represents a [`Transport`] comprised of two inmemory channels
 #[derive(Debug)]
 pub struct InmemoryTransport {
     tx: mpsc::Sender<Vec<u8>>,
@@ -92,7 +92,7 @@ impl Reconnectable for InmemoryTransport {
 }
 
 #[async_trait]
-impl RawTransport for InmemoryTransport {
+impl Transport for InmemoryTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         // Lock our internal storage to ensure that nothing else mutates it for the lifetime of
         // this call as we want to make sure that data is read and stored in order

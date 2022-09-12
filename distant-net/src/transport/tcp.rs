@@ -1,51 +1,58 @@
-use super::{Interest, RawTransport, Ready, Reconnectable};
+use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
-use std::{
-    fmt, io,
-    path::{Path, PathBuf},
-};
-use tokio::net::UnixStream;
+use std::{fmt, io, net::IpAddr};
+use tokio::net::{TcpStream, ToSocketAddrs};
 
-/// Represents a [`RawTransport`] that leverages a Unix socket
-pub struct UnixSocketTransport {
-    pub(crate) path: PathBuf,
-    pub(crate) inner: UnixStream,
+/// Represents a [`Transport`] that leverages a TCP stream
+pub struct TcpTransport {
+    pub(crate) addr: IpAddr,
+    pub(crate) port: u16,
+    pub(crate) inner: TcpStream,
 }
 
-impl UnixSocketTransport {
-    /// Creates a new stream by connecting to the specified path
-    pub async fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
-        let stream = UnixStream::connect(path.as_ref()).await?;
+impl TcpTransport {
+    /// Creates a new stream by connecting to a remote machine at the specified
+    /// IP address and port
+    pub async fn connect(addrs: impl ToSocketAddrs) -> io::Result<Self> {
+        let stream = TcpStream::connect(addrs).await?;
+        let addr = stream.peer_addr()?;
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            addr: addr.ip(),
+            port: addr.port(),
             inner: stream,
         })
     }
 
-    /// Returns the path to the socket
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// Returns the IP address that the stream is connected to
+    pub fn ip_addr(&self) -> IpAddr {
+        self.addr
+    }
+
+    /// Returns the port that the stream is connected to
+    pub fn port(&self) -> u16 {
+        self.port
     }
 }
 
-impl fmt::Debug for UnixSocketTransport {
+impl fmt::Debug for TcpTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnixSocketTransport")
-            .field("path", &self.path)
+        f.debug_struct("TcpTransport")
+            .field("addr", &self.addr)
+            .field("port", &self.port)
             .finish()
     }
 }
 
 #[async_trait]
-impl Reconnectable for UnixSocketTransport {
+impl Reconnectable for TcpTransport {
     async fn reconnect(&mut self) -> io::Result<()> {
-        self.inner = UnixStream::connect(self.path.as_path()).await?;
+        self.inner = TcpStream::connect((self.addr, self.port)).await?;
         Ok(())
     }
 }
 
 #[async_trait]
-impl RawTransport for UnixSocketTransport {
+impl Transport for TcpTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.try_read(buf)
     }
@@ -62,32 +69,44 @@ impl RawTransport for UnixSocketTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::UnixListener,
-        sync::oneshot,
-        task::JoinHandle,
-    };
+    use std::net::{Ipv6Addr, SocketAddr};
+    use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
-    async fn start_and_run_server(tx: oneshot::Sender<PathBuf>) -> io::Result<()> {
-        // Generate a socket path and delete the file after so there is nothing there
-        let path = NamedTempFile::new()
-            .expect("Failed to create socket file")
-            .path()
-            .to_path_buf();
+    async fn find_ephemeral_addr() -> SocketAddr {
+        // Start a listener on a distinct port, get its port, and kill it
+        // NOTE: This is a race condition as something else could bind to
+        //       this port inbetween us killing it and us attempting to
+        //       connect to it. We're willing to take that chance
+        let addr = IpAddr::V6(Ipv6Addr::LOCALHOST);
 
-        // Start listening at the socket path
-        let listener = UnixListener::bind(&path)?;
+        let listener = TcpListener::bind((addr, 0))
+            .await
+            .expect("Failed to bind on an ephemeral port");
 
-        // Send the path back to our main test thread
-        tx.send(path)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.display().to_string()))?;
+        let port = listener
+            .local_addr()
+            .expect("Failed to look up ephemeral port")
+            .port();
+
+        SocketAddr::from((addr, port))
+    }
+
+    async fn start_and_run_server(tx: oneshot::Sender<SocketAddr>) -> io::Result<()> {
+        let addr = find_ephemeral_addr().await;
+
+        // Start listening at the distinct address
+        let listener = TcpListener::bind(addr).await?;
+
+        // Send the address back to our main test thread
+        tx.send(addr)
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))?;
 
         run_server(listener).await
     }
 
-    async fn run_server(listener: UnixListener) -> io::Result<()> {
+    async fn run_server(listener: TcpListener) -> io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
         // Get the connection
         let (mut conn, _) = listener.accept().await?;
 
@@ -103,30 +122,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_fail_to_connect_if_socket_does_not_exist() {
-        // Generate a socket path and delete the file after so there is nothing there
-        let path = NamedTempFile::new()
-            .expect("Failed to create socket file")
-            .path()
-            .to_path_buf();
+    async fn should_fail_to_connect_if_nothing_listening() {
+        let addr = find_ephemeral_addr().await;
 
-        // Now this should fail as we're already bound to the name
-        UnixSocketTransport::connect(&path)
-            .await
-            .expect_err("Unexpectedly succeeded in connecting to missing socket");
-    }
-
-    #[tokio::test]
-    async fn should_fail_to_connect_if_path_is_not_a_socket() {
-        // Generate a regular file
-        let path = NamedTempFile::new()
-            .expect("Failed to create socket file")
-            .into_temp_path();
-
-        // Now this should fail as this file is not a socket
-        UnixSocketTransport::connect(&path)
-            .await
-            .expect_err("Unexpectedly succeeded in connecting to regular file");
+        // Now this should fail as we've stopped what was listening
+        TcpTransport::connect(addr).await.expect_err(&format!(
+            "Unexpectedly succeeded in connecting to ghost address: {}",
+            addr
+        ));
     }
 
     #[tokio::test]
@@ -138,14 +141,16 @@ mod tests {
         let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
 
         // Wait for the server to be ready
-        let path = rx.await.expect("Failed to get server socket path");
+        let addr = rx.await.expect("Failed to get server server address");
 
         // Connect to the socket, send some bytes, and get some bytes
         let mut buf: [u8; 10] = [0; 10];
 
-        let conn = UnixSocketTransport::connect(&path)
+        let conn = TcpTransport::connect(&addr)
             .await
             .expect("Conn failed to connect");
+
+        // Continually read until we get all of the data
         conn.read_exact(&mut buf)
             .await
             .expect("Conn failed to read");
@@ -168,10 +173,10 @@ mod tests {
         let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
 
         // Wait for the server to be ready
-        let path = rx.await.expect("Failed to get server socket path");
+        let addr = rx.await.expect("Failed to get server server address");
 
         // Connect to the server
-        let mut conn = UnixSocketTransport::connect(&path)
+        let mut conn = TcpTransport::connect(&addr)
             .await
             .expect("Conn failed to connect");
 
@@ -188,10 +193,11 @@ mod tests {
             "Unexpected read result: {res:?}"
         );
 
-        // Restart the server (need to remove the socket file)
-        let _ = tokio::fs::remove_file(&path).await;
+        // Restart the server
         let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(
-            UnixListener::bind(&path).expect("Failed to rebind server"),
+            TcpListener::bind(addr)
+                .await
+                .expect("Failed to rebind server"),
         ));
 
         // Reconnect to the socket, send some bytes, and get some bytes

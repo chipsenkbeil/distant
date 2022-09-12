@@ -94,7 +94,7 @@ impl Listener for UnixSocketListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RawTransport;
+    use crate::Transport;
     use tempfile::NamedTempFile;
     use tokio::{sync::oneshot, task::JoinHandle};
 

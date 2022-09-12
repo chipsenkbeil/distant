@@ -64,7 +64,7 @@ impl Listener for TcpListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RawTransport;
+    use crate::Transport;
     use std::net::{Ipv6Addr, SocketAddr};
     use tokio::{sync::oneshot, task::JoinHandle};
 

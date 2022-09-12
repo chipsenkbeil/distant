@@ -1,5 +1,5 @@
 use crate::{
-    Codec, FramedTransport, IntoSplit, RawTransport, RawTransportRead, RawTransportWrite, Request,
+    Codec, FramedTransport, IntoSplit, Transport, TransportRead, TransportWrite, Request,
     Response, TypedAsyncRead, TypedAsyncWrite,
 };
 use serde::{de::DeserializeOwned, Serialize};
