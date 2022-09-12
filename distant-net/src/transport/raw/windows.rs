@@ -88,7 +88,47 @@ impl RawTransport for WindowsPipeTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{net::windows::named_pipe::ServerOptions, sync::oneshot, task::JoinHandle};
+    use tokio::{
+        net::windows::named_pipe::{NamedPipeServer, ServerOptions},
+        sync::oneshot,
+        task::JoinHandle,
+    };
+
+    async fn start_and_run_server(tx: oneshot::Sender<String>) -> io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Generate a pipe address (not just a name)
+        let addr = format!(r"\\.\pipe\test_pipe_{}", rand::random::<usize>());
+
+        // Listen at the pipe
+        let pipe = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&addr)?;
+
+        // Send the address back to our main test thread
+        tx.send(addr)
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+
+        run_server(pipe).await
+    }
+
+    async fn run_server(pipe: NamedPipeServer) -> io::Result<()> {
+        // Get the connection
+        let mut conn = {
+            pipe.connect().await?;
+            pipe
+        };
+
+        // Send some data to the connection (10 bytes)
+        conn.write_all(b"hello conn").await?;
+
+        // Receive some data from the connection (12 bytes)
+        let mut buf: [u8; 12] = [0; 12];
+        let _ = conn.read_exact(&mut buf).await?;
+        assert_eq!(&buf, b"hello server");
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn should_fail_to_connect_if_pipe_does_not_exist() {
@@ -107,37 +147,7 @@ mod tests {
 
         // Spawn a task that will wait for a connection, send data,
         // and receive data that it will return in the task
-        let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-            // Generate a pipe address (not just a name)
-            let addr = format!(r"\\.\pipe\test_pipe_{}", rand::random::<usize>());
-
-            // Listen at the pipe
-            let pipe = ServerOptions::new()
-                .first_pipe_instance(true)
-                .create(&addr)?;
-
-            // Send the address back to our main test thread
-            tx.send(addr)
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-
-            // Get the connection
-            let mut conn = {
-                pipe.connect().await?;
-                pipe
-            };
-
-            // Send some data to the connection (10 bytes)
-            conn.write_all(b"hello conn").await?;
-
-            // Receive some data from the connection (12 bytes)
-            let mut buf: [u8; 12] = [0; 12];
-            let _ = conn.read_exact(&mut buf).await?;
-            assert_eq!(&buf, b"hello server");
-
-            Ok(())
-        });
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
 
         // Wait for the server to be ready
         let address = rx.await.expect("Failed to get server address");
@@ -148,6 +158,59 @@ mod tests {
         let conn = WindowsPipeTransport::connect(&address)
             .await
             .expect("Conn failed to connect");
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn should_be_able_to_reconnect() {
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
+
+        // Wait for the server to be ready
+        let address = rx.await.expect("Failed to get server address");
+
+        // Connect to the server
+        let mut conn = WindowsPipeTransport::connect(&address)
+            .await
+            .expect("Conn failed to connect");
+
+        // Kill the server to make the connection fail
+        task.abort();
+
+        // Verify the connection fails by trying to read from it (should get connection reset)
+        conn.readable()
+            .await
+            .expect("Failed to wait for conn to be readable");
+        let res = conn.read_exact(&mut [0; 10]).await;
+        assert!(
+            matches!(res, Ok(0) | Err(_)),
+            "Unexpected read result: {res:?}"
+        );
+
+        // Restart the server
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(
+            ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&address)?,
+        ));
+
+        // Reconnect to the pipe, send some bytes, and get some bytes
+        let mut buf: [u8; 10] = [0; 10];
+        conn.reconnect().await.expect("Conn failed to reconnect");
+
         conn.read_exact(&mut buf)
             .await
             .expect("Conn failed to read");

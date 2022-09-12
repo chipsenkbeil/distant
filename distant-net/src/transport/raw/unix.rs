@@ -70,6 +70,38 @@ mod tests {
         task::JoinHandle,
     };
 
+    async fn start_and_run_server(tx: oneshot::Sender<PathBuf>) -> io::Result<()> {
+        // Generate a socket path and delete the file after so there is nothing there
+        let path = NamedTempFile::new()
+            .expect("Failed to create socket file")
+            .path()
+            .to_path_buf();
+
+        // Start listening at the socket path
+        let listener = UnixListener::bind(&path)?;
+
+        // Send the path back to our main test thread
+        tx.send(path)
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.display().to_string()))?;
+
+        run_server(listener).await
+    }
+
+    async fn run_server(listener: UnixListener) -> io::Result<()> {
+        // Get the connection
+        let (mut conn, _) = listener.accept().await?;
+
+        // Send some data to the connection (10 bytes)
+        conn.write_all(b"hello conn").await?;
+
+        // Receive some data from the connection (12 bytes)
+        let mut buf: [u8; 12] = [0; 12];
+        let _ = conn.read_exact(&mut buf).await?;
+        assert_eq!(&buf, b"hello server");
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn should_fail_to_connect_if_socket_does_not_exist() {
         // Generate a socket path and delete the file after so there is nothing there
@@ -103,33 +135,7 @@ mod tests {
 
         // Spawn a task that will wait for a connection, send data,
         // and receive data that it will return in the task
-        let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
-            // Generate a socket path and delete the file after so there is nothing there
-            let path = NamedTempFile::new()
-                .expect("Failed to create socket file")
-                .path()
-                .to_path_buf();
-
-            // Start listening at the socket path
-            let socket = UnixListener::bind(&path)?;
-
-            // Send the path back to our main test thread
-            tx.send(path)
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x.display().to_string()))?;
-
-            // Get the connection
-            let (mut conn, _) = socket.accept().await?;
-
-            // Send some data to the connection (10 bytes)
-            conn.write_all(b"hello conn").await?;
-
-            // Receive some data from the connection (12 bytes)
-            let mut buf: [u8; 12] = [0; 12];
-            let _ = conn.read_exact(&mut buf).await?;
-            assert_eq!(&buf, b"hello server");
-
-            Ok(())
-        });
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
 
         // Wait for the server to be ready
         let path = rx.await.expect("Failed to get server socket path");
@@ -140,6 +146,59 @@ mod tests {
         let conn = UnixSocketTransport::connect(&path)
             .await
             .expect("Conn failed to connect");
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn should_be_able_to_reconnect() {
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
+
+        // Wait for the server to be ready
+        let path = rx.await.expect("Failed to get server socket path");
+
+        // Connect to the server
+        let mut conn = UnixSocketTransport::connect(&path)
+            .await
+            .expect("Conn failed to connect");
+
+        // Kill the server to make the connection fail
+        task.abort();
+
+        // Verify the connection fails by trying to read from it (should get connection reset)
+        conn.readable()
+            .await
+            .expect("Failed to wait for conn to be readable");
+        let res = conn.read_exact(&mut [0; 10]).await;
+        assert!(
+            matches!(res, Ok(0) | Err(_)),
+            "Unexpected read result: {res:?}"
+        );
+
+        // Restart the server (need to remove the socket file)
+        let _ = tokio::fs::remove_file(&path).await;
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(
+            UnixListener::bind(&path).expect("Failed to rebind server"),
+        ));
+
+        // Reconnect to the socket, send some bytes, and get some bytes
+        let mut buf: [u8; 10] = [0; 10];
+        conn.reconnect().await.expect("Conn failed to reconnect");
+
+        // Continually read until we get all of the data
         conn.read_exact(&mut buf)
             .await
             .expect("Conn failed to read");

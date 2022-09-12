@@ -91,6 +91,36 @@ mod tests {
         SocketAddr::from((addr, port))
     }
 
+    async fn start_and_run_server(tx: oneshot::Sender<SocketAddr>) -> io::Result<()> {
+        let addr = find_ephemeral_addr().await;
+
+        // Start listening at the distinct address
+        let listener = TcpListener::bind(addr).await?;
+
+        // Send the address back to our main test thread
+        tx.send(addr)
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))?;
+
+        run_server(listener).await
+    }
+
+    async fn run_server(listener: TcpListener) -> io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Get the connection
+        let (mut conn, _) = listener.accept().await?;
+
+        // Send some data to the connection (10 bytes)
+        conn.write_all(b"hello conn").await?;
+
+        // Receive some data from the connection (12 bytes)
+        let mut buf: [u8; 12] = [0; 12];
+        let _ = conn.read_exact(&mut buf).await?;
+        assert_eq!(&buf, b"hello server");
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn should_fail_to_connect_if_nothing_listening() {
         let addr = find_ephemeral_addr().await;
@@ -108,30 +138,7 @@ mod tests {
 
         // Spawn a task that will wait for a connection, send data,
         // and receive data that it will return in the task
-        let task: JoinHandle<io::Result<()>> = tokio::spawn(async move {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            let addr = find_ephemeral_addr().await;
-
-            // Start listening at the distinct address
-            let listener = TcpListener::bind(addr).await?;
-
-            // Send the address back to our main test thread
-            tx.send(addr)
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))?;
-
-            // Get the connection
-            let (mut conn, _) = listener.accept().await?;
-
-            // Send some data to the connection (10 bytes)
-            conn.write_all(b"hello conn").await?;
-
-            // Receive some data from the connection (12 bytes)
-            let mut buf: [u8; 12] = [0; 12];
-            let _ = conn.read_exact(&mut buf).await?;
-            assert_eq!(&buf, b"hello server");
-
-            Ok(())
-        });
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
 
         // Wait for the server to be ready
         let addr = rx.await.expect("Failed to get server server address");
@@ -142,6 +149,60 @@ mod tests {
         let conn = TcpTransport::connect(&addr)
             .await
             .expect("Conn failed to connect");
+
+        // Continually read until we get all of the data
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
+    }
+
+    #[tokio::test]
+    async fn should_be_able_to_reconnect() {
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
+
+        // Wait for the server to be ready
+        let addr = rx.await.expect("Failed to get server server address");
+
+        // Connect to the server
+        let mut conn = TcpTransport::connect(&addr)
+            .await
+            .expect("Conn failed to connect");
+
+        // Kill the server to make the connection fail
+        task.abort();
+
+        // Verify the connection fails by trying to read from it (should get connection reset)
+        conn.readable()
+            .await
+            .expect("Failed to wait for conn to be readable");
+        let res = conn.read_exact(&mut [0; 10]).await;
+        assert!(
+            matches!(res, Ok(0) | Err(_)),
+            "Unexpected read result: {res:?}"
+        );
+
+        // Restart the server
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(
+            TcpListener::bind(addr)
+                .await
+                .expect("Failed to rebind server"),
+        ));
+
+        // Reconnect to the socket, send some bytes, and get some bytes
+        let mut buf: [u8; 10] = [0; 10];
+        conn.reconnect().await.expect("Conn failed to reconnect");
 
         // Continually read until we get all of the data
         conn.read_exact(&mut buf)
