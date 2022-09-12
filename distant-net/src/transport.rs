@@ -5,11 +5,11 @@ use std::io;
 
 mod raw;
 pub use raw::*;
+/*
+mod typed;
+pub use typed::*;
 
-/* mod typed;
-pub use typed::*; */
-
-/* mod untyped;
+mod untyped;
 pub use untyped::*; */
 
 pub use tokio::io::{Interest, Ready};

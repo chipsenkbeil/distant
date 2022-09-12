@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{
 #[derive(Debug)]
 pub struct InmemoryTransport {
     tx: mpsc::Sender<Vec<u8>>,
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: Mutex<mpsc::Receiver<Vec<u8>>>,
 
     /// Internal storage used when we get more data from a `try_read` than can be returned
     buf: Mutex<Option<Vec<u8>>>,
@@ -23,7 +23,7 @@ impl InmemoryTransport {
     pub fn new(tx: mpsc::Sender<Vec<u8>>, rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
             tx,
-            rx,
+            rx: Mutex::new(rx),
             buf: Mutex::new(None),
         }
     }
@@ -57,12 +57,12 @@ impl InmemoryTransport {
     ///
     /// Track https://github.com/tokio-rs/tokio/issues/4638 for future `is_closed` on rx
     fn is_rx_closed(&self) -> bool {
-        match self.rx.try_recv() {
+        match self.rx.lock().unwrap().try_recv() {
             Ok(mut data) => {
-                let buf_lock = self.buf.lock().unwrap();
+                let mut buf_lock = self.buf.lock().unwrap();
 
                 let data = match buf_lock.take() {
-                    Some(existing) => {
+                    Some(mut existing) => {
                         existing.append(&mut data);
                         existing
                     }
@@ -71,7 +71,7 @@ impl InmemoryTransport {
 
                 *buf_lock = Some(data);
 
-                true
+                false
             }
             Err(TryRecvError::Empty) => false,
             Err(TryRecvError::Disconnected) => true,
@@ -96,17 +96,17 @@ impl RawTransport for InmemoryTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         // Lock our internal storage to ensure that nothing else mutates it for the lifetime of
         // this call as we want to make sure that data is read and stored in order
-        let buf_lock = self.buf.lock().unwrap();
+        let mut buf_lock = self.buf.lock().unwrap();
 
         // Check if we have data in our internal buffer, and if so feed it into the outgoing buf
         if let Some(data) = buf_lock.take() {
             return Ok(copy_and_store(buf_lock, data, buf));
         }
 
-        match self.rx.try_recv() {
+        match self.rx.lock().unwrap().try_recv() {
             Ok(data) => Ok(copy_and_store(buf_lock, data, buf)),
             Err(TryRecvError::Empty) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
-            Err(TryRecvError::Disconnected) => Ok(None),
+            Err(TryRecvError::Disconnected) => Ok(0),
         }
     }
 
@@ -114,7 +114,7 @@ impl RawTransport for InmemoryTransport {
         match self.tx.try_send(buf.to_vec()) {
             Ok(()) => Ok(buf.len()),
             Err(TrySendError::Full(_)) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
-            Err(TryRecvError::Closed(_)) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+            Err(TrySendError::Closed(_)) => Ok(0),
         }
     }
 
@@ -133,7 +133,7 @@ impl RawTransport for InmemoryTransport {
             };
         }
 
-        if interest.is_writeable() {
+        if interest.is_writable() {
             status |= if self.tx.is_closed() {
                 Ready::WRITE_CLOSED
             } else {
@@ -147,7 +147,11 @@ impl RawTransport for InmemoryTransport {
 
 /// Copies `data` into `out`, storing any overflow from `data` into the storage pointed to by the
 /// mutex `buf_lock`
-fn copy_and_store(buf_lock: MutexGuard<Option<Vec<u8>>>, data: Vec<u8>, out: &mut [u8]) -> usize {
+fn copy_and_store(
+    mut buf_lock: MutexGuard<Option<Vec<u8>>>,
+    mut data: Vec<u8>,
+    out: &mut [u8],
+) -> usize {
     // NOTE: We can get data that is larger than the destination buf; so,
     //       we store as much as we can and queue up the rest in our temporary
     //       storage for future retrievals
@@ -166,11 +170,15 @@ fn copy_and_store(buf_lock: MutexGuard<Option<Vec<u8>>>, data: Vec<u8>, out: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn ready_should_properly_report_if_channels_are_open() {
+        todo!();
+    }
 
     #[tokio::test]
     async fn make_should_return_sender_that_sends_data_to_transport() {
-        let (tx, _, mut transport) = InmemoryTransport::make(3);
+        let (tx, _, transport) = InmemoryTransport::make(3);
 
         tx.send(b"test msg 1".to_vec()).await.unwrap();
         tx.send(b"test msg 2".to_vec()).await.unwrap();
@@ -178,11 +186,11 @@ mod tests {
 
         // Should get data matching a singular message
         let mut buf = [0; 256];
-        let len = transport.read(&mut buf).await.unwrap();
+        let len = transport.try_read(&mut buf).unwrap();
         assert_eq!(&buf[..len], b"test msg 1");
 
         // Next call would get the second message
-        let len = transport.read(&mut buf).await.unwrap();
+        let len = transport.try_read(&mut buf).unwrap();
         assert_eq!(&buf[..len], b"test msg 2");
 
         // When the last of the senders is dropped, we should still get
@@ -190,16 +198,16 @@ mod tests {
         // an indicator that there is no more data
         drop(tx);
 
-        let len = transport.read(&mut buf).await.unwrap();
+        let len = transport.try_read(&mut buf).unwrap();
         assert_eq!(&buf[..len], b"test msg 3");
 
-        let len = transport.read(&mut buf).await.unwrap();
+        let len = transport.try_read(&mut buf).unwrap();
         assert_eq!(len, 0, "Unexpectedly got more data");
     }
 
     #[tokio::test]
     async fn make_should_return_receiver_that_receives_data_from_transport() {
-        let (_, mut rx, mut transport) = InmemoryTransport::make(3);
+        let (_, mut rx, transport) = InmemoryTransport::make(3);
 
         transport.write_all(b"test msg 1").await.unwrap();
         transport.write_all(b"test msg 2").await.unwrap();

@@ -5,8 +5,8 @@ use std::io;
 /* mod framed;
 pub use framed::*; */
 
-/* mod inmemory;
-pub use inmemory::*; */
+mod inmemory;
+pub use inmemory::*;
 
 mod tcp;
 pub use tcp::*;

@@ -1,6 +1,6 @@
 use super::{Interest, Ready, Reconnectable, TypedTransport};
 use async_trait::async_trait;
-use std::io;
+use std::{io, sync::Mutex};
 use tokio::sync::mpsc::{
     self,
     error::{TryRecvError, TrySendError},
@@ -14,12 +14,15 @@ use tokio::sync::mpsc::{
 #[derive(Debug)]
 pub struct InmemoryTypedTransport<T, U> {
     tx: mpsc::Sender<T>,
-    rx: mpsc::Receiver<U>,
+    rx: Mutex<mpsc::Receiver<U>>,
 }
 
 impl<T, U> InmemoryTypedTransport<T, U> {
     pub fn new(tx: mpsc::Sender<T>, rx: mpsc::Receiver<U>) -> Self {
-        Self { tx, rx }
+        Self {
+            tx,
+            rx: Mutex::new(rx),
+        }
     }
 
     /// Creates a pair of connected transports using `buffer` as maximum
@@ -35,7 +38,11 @@ impl<T, U> InmemoryTypedTransport<T, U> {
 }
 
 #[async_trait]
-impl<T, U> Reconnectable for InmemoryTypedTransport<T, U> {
+impl<T, U> Reconnectable for InmemoryTypedTransport<T, U>
+where
+    T: Send,
+    U: Send,
+{
     /// Once the underlying channels have closed, there is no way for this transport to
     /// re-establish those channels; therefore, reconnecting will always fail with
     /// [`ErrorKind::Unsupported`]
@@ -47,12 +54,16 @@ impl<T, U> Reconnectable for InmemoryTypedTransport<T, U> {
 }
 
 #[async_trait]
-impl<T, U> TypedTransport<T, U> for InmemoryTypedTransport<T, U> {
+impl<T, U> TypedTransport for InmemoryTypedTransport<T, U>
+where
+    T: Send,
+    U: Send,
+{
     type Input = U;
     type Output = T;
 
     fn try_read(&self) -> io::Result<Option<Self::Input>> {
-        match self.rx.try_recv() {
+        match self.rx.lock().unwrap().try_recv() {
             Ok(x) => Ok(Some(x)),
             Err(TryRecvError::Empty) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
             Err(TryRecvError::Disconnected) => Ok(None),
@@ -63,11 +74,33 @@ impl<T, U> TypedTransport<T, U> for InmemoryTypedTransport<T, U> {
         match self.tx.try_send(value) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
-            Err(TryRecvError::Closed(_)) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+            Err(TrySendError::Closed(_)) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
         }
     }
 
     async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        todo!();
+        let mut status = Ready::EMPTY;
+
+        if interest.is_readable() {
+            // TODO: Replace `self.is_rx_closed()` with `self.rx.is_closed()` once the tokio issue
+            //       is resolved that adds `is_closed` to the `mpsc::Receiver`
+            //
+            // See https://github.com/tokio-rs/tokio/issues/4638
+            status |= if self.is_rx_closed() && self.buf.lock().unwrap().is_none() {
+                Ready::READ_CLOSED
+            } else {
+                Ready::READABLE
+            };
+        }
+
+        if interest.is_writable() {
+            status |= if self.tx.is_closed() {
+                Ready::WRITE_CLOSED
+            } else {
+                Ready::WRITABLE
+            };
+        }
+
+        Ok(status)
     }
 }

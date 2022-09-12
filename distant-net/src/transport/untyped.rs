@@ -45,26 +45,3 @@ pub trait UntypedTransport: Reconnectable {
         Ok(())
     }
 }
-
-#[async_trait]
-impl<T, I, O> TypedTransport<I, O> for T
-where
-    T: UntypedTransport,
-    I: DeserializeOwned,
-    O: Serialize,
-{
-    /// Tries to read a value from the transport
-    fn try_read(&self) -> io::Result<Option<I>> {
-        UntypedTransport::try_read(self)
-    }
-
-    /// Try to write a value to the transport
-    fn try_write(&self, value: O) -> io::Result<()> {
-        UntypedTransport::try_write(self, &value)
-    }
-
-    /// Waits for the transport to be ready based on the given interest, returning the ready status
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        UntypedTransport::ready(self, interest).await
-    }
-}

@@ -34,10 +34,12 @@ where
     T: RawTransport,
     C: Codec,
 {
+    /// Tries to read a frame of data into `buf`
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         todo!();
     }
 
+    /// Tries to write `buf` as a frame of data
     fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
         todo!();
     }
