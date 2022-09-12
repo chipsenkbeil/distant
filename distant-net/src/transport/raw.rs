@@ -17,10 +17,10 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
-// #[cfg(windows)]
+#[cfg(windows)]
 mod windows;
 
-// #[cfg(windows)]
+#[cfg(windows)]
 pub use windows::*;
 
 /// Interface representing a transport of raw bytes into and out of the system
