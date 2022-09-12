@@ -204,7 +204,8 @@ mod tests {
         let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(
             ServerOptions::new()
                 .first_pipe_instance(true)
-                .create(&address)?,
+                .create(&address)
+                .expect("Failed to rebind server"),
         ));
 
         // Reconnect to the pipe, send some bytes, and get some bytes
