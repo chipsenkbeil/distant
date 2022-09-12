@@ -189,10 +189,12 @@ mod tests {
             // Get first connection
             pipe.connect().await?;
 
-            let addr = rx.await.expect("Failed to get address");
+            let addr = inner_rx.await.expect("Failed to get address");
 
             // Listen for second connection
             let pipe = ServerOptions::new().create(&addr)?;
+
+            tx.send(addr).expect("Failed to send address");
 
             run_server(pipe).await
         });
