@@ -171,9 +171,124 @@ fn copy_and_store(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn ready_should_properly_report_if_channels_are_open() {
+    #[test]
+    fn is_rx_closed_should_properly_reflect_if_internal_rx_channel_is_closed() {
         todo!();
+    }
+
+    #[test]
+    fn try_read_should_succeed_if_able_to_read_entire_data_through_channel() {
+        todo!();
+    }
+
+    #[test]
+    fn try_read_should_succeed_if_reading_cached_data_from_previous_read() {
+        todo!();
+    }
+
+    #[test]
+    fn try_read_should_fail_with_would_block_if_channel_capacity_has_been_reached() {
+        todo!();
+    }
+
+    #[test]
+    fn try_read_should_succeed_with_zero_bytes_read_if_channel_closed() {
+        todo!();
+    }
+
+    #[test]
+    fn try_write_should_succeed_if_able_to_send_data_through_channel() {
+        todo!();
+    }
+
+    #[test]
+    fn try_write_should_fail_with_would_block_if_channel_capacity_has_been_reached() {
+        todo!();
+    }
+
+    #[test]
+    fn try_write_should_succeed_with_zero_bytes_written_if_channel_closed() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn reconnect_should_fail_as_unsupported() {
+        let (write_tx, _write_rx) = mpsc::channel(1);
+        let (_read_tx, read_rx) = mpsc::channel(1);
+        let mut transport = InmemoryTransport::new(write_tx, read_rx);
+
+        assert_eq!(
+            transport.reconnect().await.unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+    }
+
+    #[tokio::test]
+    async fn ready_should_report_read_closed_if_channel_closed_and_internal_buf_empty() {
+        let (write_tx, _write_rx) = mpsc::channel(1);
+        let (read_tx, read_rx) = mpsc::channel(1);
+
+        // Drop to close the read channel
+        drop(read_tx);
+
+        let transport = InmemoryTransport::new(write_tx, read_rx);
+        let ready = transport.ready(Interest::READABLE).await.unwrap();
+        assert!(ready.is_readable());
+        assert!(ready.is_read_closed());
+    }
+
+    #[tokio::test]
+    async fn ready_should_report_readable_if_channel_not_closed() {
+        let (write_tx, _write_rx) = mpsc::channel(1);
+        let (_read_tx, read_rx) = mpsc::channel(1);
+
+        let transport = InmemoryTransport::new(write_tx, read_rx);
+        let ready = transport.ready(Interest::READABLE).await.unwrap();
+        assert!(ready.is_readable());
+        assert!(!ready.is_read_closed());
+    }
+
+    #[tokio::test]
+    async fn ready_should_report_readable_if_internal_buf_not_empty() {
+        let (write_tx, _write_rx) = mpsc::channel(1);
+        let (read_tx, read_rx) = mpsc::channel(1);
+
+        // Drop to close the read channel
+        drop(read_tx);
+
+        let transport = InmemoryTransport::new(write_tx, read_rx);
+
+        // Assign some data to our buffer to ensure that we test this condition
+        *transport.buf.lock().unwrap() = Some(vec![1]);
+
+        let ready = transport.ready(Interest::READABLE).await.unwrap();
+        assert!(ready.is_readable());
+        assert!(!ready.is_read_closed());
+    }
+
+    #[tokio::test]
+    async fn ready_should_report_writable_if_channel_not_closed() {
+        let (write_tx, _write_rx) = mpsc::channel(1);
+        let (_read_tx, read_rx) = mpsc::channel(1);
+
+        let transport = InmemoryTransport::new(write_tx, read_rx);
+        let ready = transport.ready(Interest::WRITABLE).await.unwrap();
+        assert!(ready.is_writable());
+        assert!(!ready.is_write_closed());
+    }
+
+    #[tokio::test]
+    async fn ready_should_report_write_closed_if_channel_closed() {
+        let (write_tx, write_rx) = mpsc::channel(1);
+        let (_read_tx, read_rx) = mpsc::channel(1);
+
+        // Drop to close the write channel
+        drop(write_rx);
+
+        let transport = InmemoryTransport::new(write_tx, read_rx);
+        let ready = transport.ready(Interest::WRITABLE).await.unwrap();
+        assert!(ready.is_writable());
+        assert!(ready.is_write_closed());
     }
 
     #[tokio::test]
