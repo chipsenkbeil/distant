@@ -95,8 +95,6 @@ mod tests {
     };
 
     async fn start_and_run_server(tx: oneshot::Sender<String>) -> io::Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
         // Generate a pipe address (not just a name)
         let addr = format!(r"\\.\pipe\test_pipe_{}", rand::random::<usize>());
 
@@ -113,6 +111,8 @@ mod tests {
     }
 
     async fn run_server(pipe: NamedPipeServer) -> io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
         // Get the connection
         let mut conn = {
             pipe.connect().await?;
