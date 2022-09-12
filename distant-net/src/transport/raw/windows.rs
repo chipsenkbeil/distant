@@ -189,6 +189,7 @@ mod tests {
 
         // Kill the server to make the connection fail
         task.abort();
+        let _ = task.await;
 
         // Verify the connection fails by trying to read from it (should get connection reset)
         // TODO: Killing the pipe doesn't actually send any confirmation, so reading hangs. Need
