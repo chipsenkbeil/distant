@@ -16,7 +16,7 @@ impl PlainCodec {
 }
 
 impl Codec for PlainCodec {
-    fn encode(&self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
+    fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
         // Validate that we can fit the message plus nonce +
         if item.is_empty() {
             return Err(io::Error::new(
@@ -34,7 +34,7 @@ impl Codec for PlainCodec {
         Ok(())
     }
 
-    fn decode(&self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
+    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
         // First, check if we have more data than just our frame's message length
         if src.len() <= LEN_SIZE {
             return Ok(None);
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn encode_should_fail_when_item_is_zero_bytes() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         let result = codec.encode(&[], &mut buf);
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn encode_should_build_a_frame_containing_a_length_and_item() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         codec
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn decode_should_return_none_if_data_smaller_than_or_equal_to_item_length_field() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         buf.put_bytes(0, LEN_SIZE);
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn decode_should_return_none_if_not_enough_data_for_frame() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         buf.put_u64(0);
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn decode_should_fail_if_encoded_item_length_is_zero() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         buf.put_u64(0);
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn decode_should_advance_src_by_frame_size_even_if_item_length_is_zero() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         buf.put_u64(0);
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn decode_should_advance_src_by_frame_size_when_successful() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         // Add 3 extra bytes after a full frame
         let mut buf = BytesMut::new();
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn decode_should_return_some_byte_vec_when_successful() {
-        let codec = PlainCodec::new();
+        let mut codec = PlainCodec::new();
 
         let mut buf = BytesMut::new();
         codec

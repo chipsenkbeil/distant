@@ -41,7 +41,7 @@ impl fmt::Debug for XChaCha20Poly1305Codec {
 }
 
 impl Codec for XChaCha20Poly1305Codec {
-    fn encode(&self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
+    fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
         // Validate that we can fit the message plus nonce +
         if item.is_empty() {
             return Err(io::Error::new(
@@ -70,7 +70,7 @@ impl Codec for XChaCha20Poly1305Codec {
         Ok(())
     }
 
-    fn decode(&self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
+    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
         // First, check if we have more data than just our frame's message length
         if src.len() <= LEN_SIZE {
             return Ok(None);
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn encode_should_fail_when_item_is_zero_bytes() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         let mut buf = BytesMut::new();
         let result = codec.encode(&[], &mut buf);
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn encode_should_build_a_frame_containing_a_length_nonce_and_ciphertext() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         let mut buf = BytesMut::new();
         codec
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn decode_should_return_none_if_data_smaller_than_or_equal_to_frame_length_field() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         let mut buf = BytesMut::new();
         buf.put_bytes(0, LEN_SIZE);
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn decode_should_return_none_if_not_enough_data_for_frame() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         let mut buf = BytesMut::new();
         buf.put_u64(0);
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn decode_should_fail_if_encoded_frame_length_is_smaller_than_nonce_plus_data() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         // NONCE_SIZE + 1 is minimum for frame length
         let mut buf = BytesMut::new();
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn decode_should_advance_src_by_frame_size_even_if_frame_length_is_too_small() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         // LEN_SIZE + NONCE_SIZE + msg not matching encryption + 3 more bytes
         let mut buf = BytesMut::new();
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn decode_should_advance_src_by_frame_size_even_if_decryption_fails() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         // LEN_SIZE + NONCE_SIZE + msg not matching encryption + 3 more bytes
         let mut buf = BytesMut::new();
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn decode_should_advance_src_by_frame_size_when_successful() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         // Add 3 extra bytes after a full frame
         let mut buf = BytesMut::new();
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn decode_should_return_some_byte_vec_when_successful() {
         let key = SecretKey32::default();
-        let codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key);
 
         let mut buf = BytesMut::new();
         codec

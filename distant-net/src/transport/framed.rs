@@ -6,8 +6,8 @@ use std::io;
 mod codec;
 pub use codec::*;
 
-/// By default, framed transport's initial capacity will be 64 KiB
-const DEFAULT_CAPACITY: usize = 64 * 1024;
+/// By default, framed transport's initial capacity (and max single-read) will be 8 KiB
+const DEFAULT_CAPACITY: usize = 8 * 1024;
 
 /// Represents a wrapper around a [`Transport`] that reads and writes using frames defined by a
 /// [`Codec`]
@@ -175,10 +175,77 @@ impl FramedTransport<super::InmemoryTransport, PlainCodec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TestTransport;
+    use bytes::BufMut;
+
+    /// Test codec makes a frame be {len}{bytes}, where len has a max size of 255
+    #[derive(Clone)]
+    struct TestCodec;
+
+    impl Codec for TestCodec {
+        fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
+            dst.put_u8(item.len() as u8);
+            dst.extend_from_slice(item);
+            Ok(())
+        }
+
+        fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
+            if src.is_empty() {
+                return Ok(None);
+            }
+
+            let len = src[0] as usize;
+            if src.len() - 1 < len {
+                return Ok(None);
+            }
+
+            let frame = src.split_to(len + 1);
+            let frame = frame[1..].to_vec();
+            Ok(Some(frame))
+        }
+    }
 
     #[test]
     fn try_read_frame_should_return_would_block_if_fails_to_read_frame_before_blocking() {
-        todo!();
+        // Should fail if immediately blocks
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::WouldBlock))),
+                f_ready: Box::new(|_| Ok(Ready::READABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+        assert_eq!(
+            transport.try_read_frame().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+
+        // Should fail if not read enough bytes before blocking
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_read: Box::new(|buf| {
+                    static mut CNT: u8 = 0;
+                    unsafe {
+                        CNT += 1;
+
+                        if CNT == 2 {
+                            Err(io::Error::from(io::ErrorKind::WouldBlock))
+                        } else {
+                            buf[0] = CNT;
+                            Ok(1)
+                        }
+                    }
+                }),
+                f_ready: Box::new(|_| Ok(Ready::READABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+        assert_eq!(
+            transport.try_read_frame().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]

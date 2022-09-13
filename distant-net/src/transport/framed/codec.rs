@@ -12,9 +12,9 @@ pub use xchacha20poly1305::XChaCha20Poly1305Codec;
 /// received by transports.
 pub trait Codec: Clone {
     /// Encodes some `item` as a frame, placing the result at the end of `dst`
-    fn encode(&self, item: &[u8], dst: &mut BytesMut) -> io::Result<()>;
+    fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()>;
 
     /// Attempts to decode a frame from `src`, returning `Some(Frame)` if a frame was found
     /// or `None` if the current `src` does not contain a frame
-    fn decode(&self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>>;
+    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>>;
 }
