@@ -7,8 +7,14 @@ pub use plain::PlainCodec;
 mod xchacha20poly1305;
 pub use xchacha20poly1305::XChaCha20Poly1305Codec;
 
-/// Represents abstraction of a codec that implements specific encoder and decoder for distant
+/// Represents abstraction that implements specific encoder and decoder logic to transform an
+/// arbitrary collection of bytes. This can be used to encrypt and authenticate bytes sent and
+/// received by transports.
 pub trait Codec: Clone {
-    fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()>;
-    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>>;
+    /// Encodes some `item` as a frame, placing the result at the end of `dst`
+    fn encode(&self, item: &[u8], dst: &mut BytesMut) -> io::Result<()>;
+
+    /// Attempts to decode a frame from `src`, returning `Some(Frame)` if a frame was found
+    /// or `None` if the current `src` does not contain a frame
+    fn decode(&self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>>;
 }
