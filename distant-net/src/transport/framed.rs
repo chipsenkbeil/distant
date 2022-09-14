@@ -499,4 +499,94 @@ mod tests {
             std::sync::mpsc::TryRecvError::Empty
         );
     }
+
+    #[test]
+    fn try_flush_should_return_error_if_try_write_fails() {
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        // Set our outgoing buffer to flush
+        transport.outgoing.put_slice(b"hello world");
+
+        // Perform flush and verify error happens
+        assert_eq!(
+            transport.try_flush().unwrap_err().kind(),
+            io::ErrorKind::NotConnected
+        );
+    }
+
+    #[test]
+    fn try_flush_should_return_error_if_try_write_returns_0_bytes_written() {
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(|_| Ok(0)),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        // Set our outgoing buffer to flush
+        transport.outgoing.put_slice(b"hello world");
+
+        // Perform flush and verify error happens
+        assert_eq!(
+            transport.try_flush().unwrap_err().kind(),
+            io::ErrorKind::WriteZero
+        );
+    }
+
+    #[test]
+    fn try_flush_should_be_noop_if_nothing_to_flush() {
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        // Perform flush and verify nothing happens
+        transport.try_flush().unwrap();
+    }
+
+    #[test]
+    fn try_flush_should_continually_call_try_write_until_outgoing_buffer_is_empty() {
+        const STEP_SIZE: usize = 5;
+        let (tx, rx) = std::sync::mpsc::sync_channel(10);
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(move |buf| {
+                    let len = std::cmp::min(STEP_SIZE, buf.len());
+                    tx.send(buf[..len].to_vec()).unwrap();
+                    Ok(len)
+                }),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        // Set our outgoing buffer to flush
+        transport.outgoing.put_slice(b"hello world");
+
+        // Perform flush
+        transport.try_flush().unwrap();
+
+        // Verify outgoing data flushed with N calls to try_write
+        assert_eq!(rx.try_recv().unwrap(), b"hello".as_slice());
+        assert_eq!(rx.try_recv().unwrap(), b" worl".as_slice());
+        assert_eq!(rx.try_recv().unwrap(), b"d".as_slice());
+        assert_eq!(
+            rx.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
+    }
 }
