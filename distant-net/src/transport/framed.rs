@@ -205,6 +205,20 @@ mod tests {
         }
     }
 
+    /// Codec that always fails
+    #[derive(Clone)]
+    struct ErrorCodec;
+
+    impl Codec for ErrorCodec {
+        fn encode(&mut self, _item: &[u8], _dst: &mut BytesMut) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::Other))
+        }
+
+        fn decode(&mut self, _src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
+            Err(io::Error::from(io::ErrorKind::Other))
+        }
+    }
+
     #[test]
     fn try_read_frame_should_return_would_block_if_fails_to_read_frame_before_blocking() {
         // Should fail if immediately blocks
@@ -250,41 +264,239 @@ mod tests {
 
     #[test]
     fn try_read_frame_should_return_error_if_encountered_error_with_reading_bytes() {
-        todo!();
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
+                f_ready: Box::new(|_| Ok(Ready::READABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+        assert_eq!(
+            transport.try_read_frame().unwrap_err().kind(),
+            io::ErrorKind::NotConnected
+        );
     }
 
     #[test]
-    fn try_read_frame_should_return_none_if_encountered_error_during_decode() {
-        todo!();
+    fn try_read_frame_should_return_error_if_encountered_error_during_decode() {
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_read: Box::new(|buf| {
+                    buf[0] = b'a';
+                    Ok(1)
+                }),
+                f_ready: Box::new(|_| Ok(Ready::READABLE)),
+                ..Default::default()
+            },
+            ErrorCodec,
+        );
+        assert_eq!(
+            transport.try_read_frame().unwrap_err().kind(),
+            io::ErrorKind::Other
+        );
     }
 
     #[test]
     fn try_read_frame_should_return_next_available_frame() {
-        todo!();
+        let data = {
+            let mut data = BytesMut::new();
+            TestCodec.encode(b"hello world", &mut data).unwrap();
+            data.freeze()
+        };
+
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_read: Box::new(move |buf| {
+                    buf[..data.len()].copy_from_slice(data.as_ref());
+                    Ok(data.len())
+                }),
+                f_ready: Box::new(|_| Ok(Ready::READABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+        assert_eq!(transport.try_read_frame().unwrap().unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn try_read_frame_should_keep_reading_until_a_frame_is_found() {
+        const STEP_SIZE: usize = 7;
+
+        let data_1 = {
+            let mut data = BytesMut::new();
+            TestCodec.encode(b"hello world", &mut data).unwrap();
+            data.freeze()
+        };
+
+        let data_2 = {
+            let mut data = BytesMut::new();
+            TestCodec.encode(b"test hello", &mut data).unwrap();
+            data.freeze()
+        };
+
+        let data = [data_1, data_2].concat();
+
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_read: Box::new(move |buf| {
+                    static mut IDX: usize = 0;
+                    unsafe {
+                        let len: usize = IDX + STEP_SIZE;
+                        let len = if len > data.len() { data.len() } else { len };
+                        buf[..STEP_SIZE].copy_from_slice(&data[IDX..len]);
+                        IDX += STEP_SIZE;
+                        Ok(STEP_SIZE)
+                    }
+                }),
+                f_ready: Box::new(|_| Ok(Ready::READABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+        assert_eq!(transport.try_read_frame().unwrap().unwrap(), b"hello world");
+
+        // Should have leftover bytes from next frame; for our test encoder
+        // we have a single byte length (10 for "test hello") and the first character
+        assert_eq!(transport.incoming.to_vec(), [10, b't']);
     }
 
     #[test]
     fn try_write_frame_should_return_would_block_if_fails_to_write_frame_before_blocking() {
-        todo!();
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::WouldBlock))),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        // First call will only write part of the frame and then return WouldBlock
+        assert_eq!(
+            transport
+                .try_write_frame(b"hello world")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]
     fn try_write_frame_should_return_error_if_encountered_error_with_writing_bytes() {
-        todo!();
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+        assert_eq!(
+            transport
+                .try_write_frame(b"hello world")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotConnected
+        );
     }
 
     #[test]
     fn try_write_frame_should_return_error_if_encountered_error_during_encode() {
-        todo!();
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(|buf| Ok(buf.len())),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            ErrorCodec,
+        );
+        assert_eq!(
+            transport
+                .try_write_frame(b"hello world")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
     }
 
     #[test]
     fn try_write_frame_should_write_entire_frame_if_possible() {
-        todo!();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(move |buf| {
+                    let len = buf.len();
+                    tx.send(buf.to_vec()).unwrap();
+                    Ok(len)
+                }),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        transport.try_write_frame(b"hello world").unwrap();
+
+        // Transmitted data should be encoded using the framed transport's codec
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            [&[11], b"hello world".as_slice()].concat()
+        );
     }
 
     #[test]
     fn try_write_frame_should_write_any_prior_queued_bytes_before_writing_next_frame() {
-        todo!();
+        const STEP_SIZE: usize = 5;
+        let (tx, rx) = std::sync::mpsc::sync_channel(10);
+        let mut transport = FramedTransport::new(
+            TestTransport {
+                f_try_write: Box::new(move |buf| {
+                    static mut CNT: usize = 0;
+                    unsafe {
+                        CNT += 1;
+                        if CNT == 2 {
+                            Err(io::Error::from(io::ErrorKind::WouldBlock))
+                        } else {
+                            let len = std::cmp::min(STEP_SIZE, buf.len());
+                            tx.send(buf[..len].to_vec()).unwrap();
+                            Ok(len)
+                        }
+                    }
+                }),
+                f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
+                ..Default::default()
+            },
+            TestCodec,
+        );
+
+        // First call will only write part of the frame and then return WouldBlock
+        assert_eq!(
+            transport
+                .try_write_frame(b"hello world")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
+
+        // Transmitted data should be encoded using the framed transport's codec
+        assert_eq!(rx.try_recv().unwrap(), [&[11], b"hell".as_slice()].concat());
+        assert_eq!(
+            rx.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
+
+        // Next call will keep writing successfully until done
+        transport.try_write_frame(b"test").unwrap();
+        assert_eq!(rx.try_recv().unwrap(), b"o wor");
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            [b"ld".as_slice(), &[4], b"te".as_slice()].concat()
+        );
+        assert_eq!(rx.try_recv().unwrap(), b"st");
+        assert_eq!(
+            rx.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
     }
 }
