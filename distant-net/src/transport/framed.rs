@@ -81,7 +81,7 @@ where
         }
     }
 
-    /// Writes an `item` of bytes as a frame by using the [`Codec`] tied to this transport.
+    /// Writes a `frame` of bytes by using the [`Codec`] tied to this transport.
     ///
     /// This is accomplished by continually calling the inner transport's `try_write`. If 0 is
     /// returned from a call to `try_write`, this will fail with [`ErrorKind::WriteZero`].
