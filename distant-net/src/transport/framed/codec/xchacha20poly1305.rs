@@ -1,17 +1,15 @@
-use crate::{Codec, SecretKey, SecretKey32};
-use bytes::{Buf, BufMut, BytesMut};
+use super::{Codec, Frame};
+use crate::{SecretKey, SecretKey32};
 use chacha20poly1305::{aead::Aead, Key, KeyInit, XChaCha20Poly1305, XNonce};
-use std::{convert::TryInto, fmt, io};
-
-/// Total bytes to use as the len field denoting a frame's size
-const LEN_SIZE: usize = 8;
+use std::{fmt, io};
 
 /// Total bytes to use for nonce
 const NONCE_SIZE: usize = 24;
 
-/// Represents the codec to encode & decode data while also encrypting/decrypting it
+/// Represents the codec that encodes & decodes frames by encrypting/decrypting them using
+/// [`XChaCha20Poly1305`].
 ///
-/// Uses a 32-byte key internally
+/// NOTE: Uses a 32-byte key internally.
 #[derive(Clone)]
 pub struct XChaCha20Poly1305Codec {
     cipher: XChaCha20Poly1305,
@@ -41,75 +39,43 @@ impl fmt::Debug for XChaCha20Poly1305Codec {
 }
 
 impl Codec for XChaCha20Poly1305Codec {
-    fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
-        // Validate that we can fit the message plus nonce +
-        if item.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Empty item provided",
-            ));
-        }
+    fn encode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
         // NOTE: As seen in orion, with a 24-bit nonce, it's safe to generate instead of
         //       maintaining a stateful counter due to its size (24-byte secret key generation
         //       will never panic)
         let nonce_key = SecretKey::<NONCE_SIZE>::generate().unwrap();
         let nonce = XNonce::from_slice(nonce_key.unprotected_as_bytes());
 
+        // Encrypt the frame's item as our ciphertext
         let ciphertext = self
             .cipher
-            .encrypt(nonce, item)
+            .encrypt(nonce, frame.as_item())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Encryption failed"))?;
 
-        dst.reserve(8 + nonce.len() + ciphertext.len());
+        // Frame is now comprised of the nonce and ciphertext in sequence
+        let mut frame = Frame::new(nonce.as_slice());
+        frame.extend(ciphertext);
 
-        // Add data in form of {LEN}{NONCE}{CIPHER TEXT}
-        dst.put_u64((nonce_key.len() + ciphertext.len()) as u64);
-        dst.put_slice(nonce.as_slice());
-        dst.extend(ciphertext);
-
-        Ok(())
+        Ok(frame.into_owned())
     }
 
-    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
-        // First, check if we have more data than just our frame's message length
-        if src.len() <= LEN_SIZE {
-            return Ok(None);
-        }
-
-        // Second, retrieve total size of our frame's message
-        let msg_len = u64::from_be_bytes(src[..LEN_SIZE].try_into().unwrap()) as usize;
-        if msg_len <= NONCE_SIZE {
-            // Ensure we advance to remove the frame
-            src.advance(LEN_SIZE + msg_len);
-
+    fn decode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
+        if frame.len() <= NONCE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Frame's msg cannot have length less than 25",
+                format!("Frame cannot have length less than {}", frame.len()),
             ));
         }
 
-        // Third, check if we have all data for our frame; if not, exit early
-        if src.len() < msg_len + LEN_SIZE {
-            return Ok(None);
-        }
+        // Grab the nonce from the front of the frame, and then use it with the remainder
+        // of the frame to tease out the decrypted frame item
+        let nonce = XNonce::from_slice(&frame.as_item()[..NONCE_SIZE]);
+        let item = self
+            .cipher
+            .decrypt(nonce, &frame.as_item()[NONCE_SIZE..])
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Decryption failed"))?;
 
-        // Fourth, retrieve the nonce used with the ciphertext
-        let nonce = XNonce::from_slice(&src[LEN_SIZE..(NONCE_SIZE + LEN_SIZE)]);
-
-        // Fifth, acquire the encrypted & signed ciphertext
-        let ciphertext = &src[(NONCE_SIZE + LEN_SIZE)..(msg_len + LEN_SIZE)];
-
-        // Sixth, convert ciphertext back into our item
-        let item = self.cipher.decrypt(nonce, ciphertext);
-
-        // Seventh, advance so frame is no longer kept around
-        src.advance(LEN_SIZE + msg_len);
-
-        // Eighth, report an error if there is one
-        let item =
-            item.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Decryption failed"))?;
-
-        Ok(Some(item))
+        Ok(Frame::from(item))
     }
 }
 
@@ -118,77 +84,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_should_fail_when_item_is_zero_bytes() {
-        let key = SecretKey32::default();
-        let mut codec = XChaCha20Poly1305Codec::from(key);
-
-        let mut buf = BytesMut::new();
-        let result = codec.encode(&[], &mut buf);
-
-        match result {
-            Err(x) if x.kind() == io::ErrorKind::InvalidInput => {}
-            x => panic!("Unexpected result: {:?}", x),
-        }
-    }
-
-    #[test]
     fn encode_should_build_a_frame_containing_a_length_nonce_and_ciphertext() {
         let key = SecretKey32::default();
-        let mut codec = XChaCha20Poly1305Codec::from(key);
+        let mut codec = XChaCha20Poly1305Codec::from(key.clone());
 
-        let mut buf = BytesMut::new();
-        codec
-            .encode(b"hello, world", &mut buf)
+        let frame = codec
+            .encode(Frame::new(b"hello world"))
             .expect("Failed to encode");
 
-        let len = buf.get_u64() as usize;
-        assert!(buf.len() > NONCE_SIZE, "Msg size not big enough");
-        assert_eq!(len, buf.len(), "Msg size does not match attached size");
+        let nonce = XNonce::from_slice(&frame.as_item()[..NONCE_SIZE]);
+        let ciphertext = &frame.as_item()[NONCE_SIZE..];
+
+        // Manually build our key & cipher so we can decrypt the frame manually to ensure it is
+        // correct
+        let key = Key::from_slice(key.unprotected_as_bytes());
+        let cipher = XChaCha20Poly1305::new(key);
+        let item = cipher
+            .decrypt(nonce, ciphertext)
+            .expect("Failed to decrypt");
+        assert_eq!(item, b"hello world");
     }
 
     #[test]
-    fn decode_should_return_none_if_data_smaller_than_or_equal_to_frame_length_field() {
-        let key = SecretKey32::default();
-        let mut codec = XChaCha20Poly1305Codec::from(key);
-
-        let mut buf = BytesMut::new();
-        buf.put_bytes(0, LEN_SIZE);
-
-        let result = codec.decode(&mut buf);
-        assert!(
-            matches!(result, Ok(None)),
-            "Unexpected result: {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn decode_should_return_none_if_not_enough_data_for_frame() {
-        let key = SecretKey32::default();
-        let mut codec = XChaCha20Poly1305Codec::from(key);
-
-        let mut buf = BytesMut::new();
-        buf.put_u64(0);
-
-        let result = codec.decode(&mut buf);
-        assert!(
-            matches!(result, Ok(None)),
-            "Unexpected result: {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn decode_should_fail_if_encoded_frame_length_is_smaller_than_nonce_plus_data() {
+    fn decode_should_fail_if_frame_length_is_smaller_than_nonce_plus_data() {
         let key = SecretKey32::default();
         let mut codec = XChaCha20Poly1305Codec::from(key);
 
         // NONCE_SIZE + 1 is minimum for frame length
-        let mut buf = BytesMut::new();
-        buf.put_u64(NONCE_SIZE as u64);
-        buf.put_bytes(0, NONCE_SIZE);
+        let frame = Frame::from(b"a".repeat(NONCE_SIZE));
 
-        let result = codec.decode(&mut buf);
+        let result = codec.decode(frame);
         match result {
             Err(x) if x.kind() == io::ErrorKind::InvalidData => {}
             x => panic!("Unexpected result: {:?}", x),
@@ -196,72 +121,30 @@ mod tests {
     }
 
     #[test]
-    fn decode_should_advance_src_by_frame_size_even_if_frame_length_is_too_small() {
+    fn decode_should_fail_if_unable_to_decrypt_frame_item() {
         let key = SecretKey32::default();
         let mut codec = XChaCha20Poly1305Codec::from(key);
 
-        // LEN_SIZE + NONCE_SIZE + msg not matching encryption + 3 more bytes
-        let mut buf = BytesMut::new();
-        buf.put_u64(NONCE_SIZE as u64);
-        buf.put_bytes(0, NONCE_SIZE);
-        buf.put_bytes(0, 3);
+        // NONCE_SIZE + 1 is minimum for frame length
+        let frame = Frame::from(b"a".repeat(NONCE_SIZE + 1));
 
-        assert!(
-            codec.decode(&mut buf).is_err(),
-            "Decode unexpectedly succeeded"
-        );
-        assert_eq!(buf.len(), 3, "Advanced an unexpected amount in src buf");
+        let result = codec.decode(frame);
+        match result {
+            Err(x) if x.kind() == io::ErrorKind::InvalidData => {}
+            x => panic!("Unexpected result: {:?}", x),
+        }
     }
 
     #[test]
-    fn decode_should_advance_src_by_frame_size_even_if_decryption_fails() {
+    fn decode_should_return_decrypted_frame_when_successful() {
         let key = SecretKey32::default();
         let mut codec = XChaCha20Poly1305Codec::from(key);
 
-        // LEN_SIZE + NONCE_SIZE + msg not matching encryption + 3 more bytes
-        let mut buf = BytesMut::new();
-        buf.put_u64((NONCE_SIZE + 12) as u64);
-        buf.put_bytes(0, NONCE_SIZE);
-        buf.put_slice(b"hello, world");
-        buf.put_bytes(0, 3);
-
-        assert!(
-            codec.decode(&mut buf).is_err(),
-            "Decode unexpectedly succeeded"
-        );
-        assert_eq!(buf.len(), 3, "Advanced an unexpected amount in src buf");
-    }
-
-    #[test]
-    fn decode_should_advance_src_by_frame_size_when_successful() {
-        let key = SecretKey32::default();
-        let mut codec = XChaCha20Poly1305Codec::from(key);
-
-        // Add 3 extra bytes after a full frame
-        let mut buf = BytesMut::new();
-        codec
-            .encode(b"hello, world", &mut buf)
-            .expect("Failed to encode");
-        buf.put_bytes(0, 3);
-
-        assert!(codec.decode(&mut buf).is_ok(), "Decode unexpectedly failed");
-        assert_eq!(buf.len(), 3, "Advanced an unexpected amount in src buf");
-    }
-
-    #[test]
-    fn decode_should_return_some_byte_vec_when_successful() {
-        let key = SecretKey32::default();
-        let mut codec = XChaCha20Poly1305Codec::from(key);
-
-        let mut buf = BytesMut::new();
-        codec
-            .encode(b"hello, world", &mut buf)
+        let frame = codec
+            .encode(Frame::new(b"hello, world"))
             .expect("Failed to encode");
 
-        let item = codec
-            .decode(&mut buf)
-            .expect("Failed to decode")
-            .expect("Item not properly captured");
-        assert_eq!(item, b"hello, world");
+        let frame = codec.decode(frame).expect("Failed to decode");
+        assert_eq!(frame, b"hello, world");
     }
 }

@@ -6,11 +6,15 @@ use std::io;
 mod codec;
 pub use codec::*;
 
+mod frame;
+pub use frame::*;
+
 /// By default, framed transport's initial capacity (and max single-read) will be 8 KiB
 const DEFAULT_CAPACITY: usize = 8 * 1024;
 
 /// Represents a wrapper around a [`Transport`] that reads and writes using frames defined by a
 /// [`Codec`]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FramedTransport<T, C> {
     inner: T,
     codec: C,
@@ -41,7 +45,7 @@ where
     /// is not ready to read data or has not received a full frame before waiting.
     ///
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
-    pub fn try_read_frame(&mut self) -> io::Result<Option<Vec<u8>>> {
+    pub fn try_read_frame(&mut self) -> io::Result<Option<OwnedFrame>> {
         // Continually read bytes into the incoming queue and then attempt to tease out a frame
         let mut buf = [0; DEFAULT_CAPACITY];
 
@@ -59,19 +63,16 @@ where
                 Ok(n) => {
                     self.incoming.extend_from_slice(&buf[..n]);
 
-                    // Attempt to decode a frame, returning the frame if we get one, continuing to
-                    // try to read more bytes if we don't find a frame, and returing any error that
-                    // is encountered from the decode call
-                    match self.codec.decode(&mut self.incoming) {
-                        Ok(Some(frame)) => return Ok(Some(frame)),
+                    // Attempt to read a frame, returning the decoded frame if we get one,
+                    // continuing to try to read more bytes if we don't find a frame, and returning
+                    // any error that is encountered from reading frames or failing to decode
+                    let frame = match Frame::read(&mut self.incoming) {
+                        Ok(Some(frame)) => frame,
                         Ok(None) => continue,
-
-                        // TODO: tokio-util's decoder would cause Framed to return Ok(None)
-                        //       if the decoder failed as that indicated a corrupt stream.
-                        //
-                        //       Should we continue mirroring this behavior?
                         Err(x) => return Err(x),
-                    }
+                    };
+
+                    return Ok(Some(self.codec.decode(frame)?.into_owned()));
                 }
 
                 // Any error (including WouldBlock) will get bubbled up
@@ -90,9 +91,10 @@ where
     ///
     /// [`ErrorKind::WriteZero`]: io::ErrorKind::WriteZero
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
-    pub fn try_write_frame(&mut self, item: &[u8]) -> io::Result<()> {
-        // Queue up the item as a new frame of bytes
-        self.codec.encode(item, &mut self.outgoing)?;
+    pub fn try_write_frame<'a>(&mut self, frame: impl Into<Frame<'a>>) -> io::Result<()> {
+        // Encode the frame and store it in our outgoing queue
+        let frame = self.codec.encode(frame.into())?;
+        frame.write(&mut self.outgoing)?;
 
         // Attempt to write everything in our queue
         self.try_flush()
@@ -178,45 +180,74 @@ mod tests {
     use crate::TestTransport;
     use bytes::BufMut;
 
-    /// Test codec makes a frame be {len}{bytes}, where len has a max size of 255
+    /// Codec that always succeeds without altering the frame
     #[derive(Clone)]
-    struct TestCodec;
+    struct OkCodec;
 
-    impl Codec for TestCodec {
-        fn encode(&mut self, item: &[u8], dst: &mut BytesMut) -> io::Result<()> {
-            dst.put_u8(item.len() as u8);
-            dst.extend_from_slice(item);
-            Ok(())
+    impl Codec for OkCodec {
+        fn encode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
+            Ok(frame)
         }
 
-        fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
-            if src.is_empty() {
-                return Ok(None);
-            }
-
-            let len = src[0] as usize;
-            if src.len() - 1 < len {
-                return Ok(None);
-            }
-
-            let frame = src.split_to(len + 1);
-            let frame = frame[1..].to_vec();
-            Ok(Some(frame))
+        fn decode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
+            Ok(frame)
         }
     }
 
     /// Codec that always fails
     #[derive(Clone)]
-    struct ErrorCodec;
+    struct ErrCodec;
 
-    impl Codec for ErrorCodec {
-        fn encode(&mut self, _item: &[u8], _dst: &mut BytesMut) -> io::Result<()> {
+    impl Codec for ErrCodec {
+        fn encode<'a>(&mut self, _frame: Frame<'a>) -> io::Result<Frame<'a>> {
             Err(io::Error::from(io::ErrorKind::Other))
         }
 
-        fn decode(&mut self, _src: &mut BytesMut) -> io::Result<Option<Vec<u8>>> {
+        fn decode<'a>(&mut self, _frame: Frame<'a>) -> io::Result<Frame<'a>> {
             Err(io::Error::from(io::ErrorKind::Other))
         }
+    }
+
+    /// Simulate calls to try_read by feeding back `data` in `step` increments, triggering a block
+    /// if `block_on` returns true where `block_on` is provided a counter value that is incremented
+    /// every time the simulated `try_read` function is called
+    ///
+    /// NOTE: This will inject the frame len in front of the provided data to properly simulate
+    ///       receiving a frame of data
+    fn simulate_try_read(
+        frames: Vec<Frame>,
+        step: usize,
+        block_on: impl Fn(usize) -> bool + Send + Sync + 'static,
+    ) -> Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Stuff all of our frames into a single byte collection
+        let data = {
+            let mut buf = BytesMut::new();
+
+            for frame in frames {
+                frame.write(&mut buf).unwrap();
+            }
+
+            buf.to_vec()
+        };
+
+        let idx = AtomicUsize::new(0);
+        let cnt = AtomicUsize::new(0);
+
+        Box::new(move |buf| {
+            if block_on(cnt.fetch_add(1, Ordering::Relaxed)) {
+                return Err(io::Error::from(io::ErrorKind::WouldBlock));
+            }
+
+            let start = idx.fetch_add(step, Ordering::Relaxed);
+            let end = start + step;
+            let end = if end > data.len() { data.len() } else { end };
+            let len = if start > end { 0 } else { end - start };
+
+            buf[..len].copy_from_slice(&data[start..end]);
+            Ok(len)
+        })
     }
 
     #[test]
@@ -228,7 +259,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -238,23 +269,11 @@ mod tests {
         // Should fail if not read enough bytes before blocking
         let mut transport = FramedTransport::new(
             TestTransport {
-                f_try_read: Box::new(|buf| {
-                    static mut CNT: u8 = 0;
-                    unsafe {
-                        CNT += 1;
-
-                        if CNT == 2 {
-                            Err(io::Error::from(io::ErrorKind::WouldBlock))
-                        } else {
-                            buf[0] = CNT;
-                            Ok(1)
-                        }
-                    }
-                }),
+                f_try_read: simulate_try_read(vec![Frame::new(b"some data")], 1, |cnt| cnt == 1),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -270,7 +289,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -282,14 +301,11 @@ mod tests {
     fn try_read_frame_should_return_error_if_encountered_error_during_decode() {
         let mut transport = FramedTransport::new(
             TestTransport {
-                f_try_read: Box::new(|buf| {
-                    buf[0] = b'a';
-                    Ok(1)
-                }),
+                f_try_read: simulate_try_read(vec![Frame::new(b"some data")], 1, |_| false),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            ErrorCodec,
+            ErrCodec,
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -301,7 +317,7 @@ mod tests {
     fn try_read_frame_should_return_next_available_frame() {
         let data = {
             let mut data = BytesMut::new();
-            TestCodec.encode(b"hello world", &mut data).unwrap();
+            Frame::new(b"hello world").write(&mut data).unwrap();
             data.freeze()
         };
 
@@ -314,51 +330,35 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
         assert_eq!(transport.try_read_frame().unwrap().unwrap(), b"hello world");
     }
 
     #[test]
     fn try_read_frame_should_keep_reading_until_a_frame_is_found() {
-        const STEP_SIZE: usize = 7;
-
-        let data_1 = {
-            let mut data = BytesMut::new();
-            TestCodec.encode(b"hello world", &mut data).unwrap();
-            data.freeze()
-        };
-
-        let data_2 = {
-            let mut data = BytesMut::new();
-            TestCodec.encode(b"test hello", &mut data).unwrap();
-            data.freeze()
-        };
-
-        let data = [data_1, data_2].concat();
+        const STEP_SIZE: usize = Frame::HEADER_SIZE + 7;
 
         let mut transport = FramedTransport::new(
             TestTransport {
-                f_try_read: Box::new(move |buf| {
-                    static mut IDX: usize = 0;
-                    unsafe {
-                        let len: usize = IDX + STEP_SIZE;
-                        let len = if len > data.len() { data.len() } else { len };
-                        buf[..STEP_SIZE].copy_from_slice(&data[IDX..len]);
-                        IDX += STEP_SIZE;
-                        Ok(STEP_SIZE)
-                    }
-                }),
+                f_try_read: simulate_try_read(
+                    vec![Frame::new(b"hello world"), Frame::new(b"test hello")],
+                    STEP_SIZE,
+                    |_| false,
+                ),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
         assert_eq!(transport.try_read_frame().unwrap().unwrap(), b"hello world");
 
-        // Should have leftover bytes from next frame; for our test encoder
-        // we have a single byte length (10 for "test hello") and the first character
-        assert_eq!(transport.incoming.to_vec(), [10, b't']);
+        // Should have leftover bytes from next frame
+        // where len = 10, "tes"
+        assert_eq!(
+            transport.incoming.to_vec(),
+            [0, 0, 0, 0, 0, 0, 0, 10, b't', b'e', b's']
+        );
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         // First call will only write part of the frame and then return WouldBlock
@@ -390,7 +390,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
         assert_eq!(
             transport
@@ -409,7 +409,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            ErrorCodec,
+            ErrCodec,
         );
         assert_eq!(
             transport
@@ -433,7 +433,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         transport.try_write_frame(b"hello world").unwrap();
@@ -441,13 +441,13 @@ mod tests {
         // Transmitted data should be encoded using the framed transport's codec
         assert_eq!(
             rx.try_recv().unwrap(),
-            [&[11], b"hello world".as_slice()].concat()
+            [11u64.to_be_bytes().as_slice(), b"hello world".as_slice()].concat()
         );
     }
 
     #[test]
     fn try_write_frame_should_write_any_prior_queued_bytes_before_writing_next_frame() {
-        const STEP_SIZE: usize = 5;
+        const STEP_SIZE: usize = Frame::HEADER_SIZE + 5;
         let (tx, rx) = std::sync::mpsc::sync_channel(10);
         let mut transport = FramedTransport::new(
             TestTransport {
@@ -467,7 +467,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         // First call will only write part of the frame and then return WouldBlock
@@ -480,7 +480,10 @@ mod tests {
         );
 
         // Transmitted data should be encoded using the framed transport's codec
-        assert_eq!(rx.try_recv().unwrap(), [&[11], b"hell".as_slice()].concat());
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            [11u64.to_be_bytes().as_slice(), b"hello".as_slice()].concat()
+        );
         assert_eq!(
             rx.try_recv().unwrap_err(),
             std::sync::mpsc::TryRecvError::Empty
@@ -488,12 +491,11 @@ mod tests {
 
         // Next call will keep writing successfully until done
         transport.try_write_frame(b"test").unwrap();
-        assert_eq!(rx.try_recv().unwrap(), b"o wor");
         assert_eq!(
             rx.try_recv().unwrap(),
-            [b"ld".as_slice(), &[4], b"te".as_slice()].concat()
+            [b' ', b'w', b'o', b'r', b'l', b'd', 0, 0, 0, 0, 0, 0, 0]
         );
-        assert_eq!(rx.try_recv().unwrap(), b"st");
+        assert_eq!(rx.try_recv().unwrap(), [4, b't', b'e', b's', b't']);
         assert_eq!(
             rx.try_recv().unwrap_err(),
             std::sync::mpsc::TryRecvError::Empty
@@ -508,7 +510,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         // Set our outgoing buffer to flush
@@ -529,7 +531,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         // Set our outgoing buffer to flush
@@ -550,7 +552,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         // Perform flush and verify nothing happens
@@ -571,7 +573,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            TestCodec,
+            OkCodec,
         );
 
         // Set our outgoing buffer to flush
