@@ -1,5 +1,6 @@
 use super::{parse_msg_pack_str, Id};
 use crate::utils;
+use derive_more::{Display, Error};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{borrow::Cow, io, str};
 
@@ -63,7 +64,7 @@ impl<T> From<T> for Request<T> {
 }
 
 /// Error encountered when attempting to parse bytes as an untyped request
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Display, Error, PartialEq, Eq, Hash)]
 pub enum UntypedRequestParseError {
     /// When the bytes do not represent a request
     WrongType,
