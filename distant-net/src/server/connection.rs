@@ -27,7 +27,7 @@ impl ServerConnection {
 
     /// Returns true if connection is still processing incoming or outgoing messages
     pub fn is_active(&self) -> bool {
-        self.reader_task.is_some() && !self.reader_task.as_ref().unwrap().is_finished()
+        self.task.is_some() && !self.task.as_ref().unwrap().is_finished()
     }
 
     /// Aborts the connection

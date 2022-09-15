@@ -1,4 +1,4 @@
-use crate::{Codec, MappedListener, Server, ServerExt, UnixSocketListener, UnixSocketServerRef};
+use crate::{Server, ServerExt, UnixSocketListener, UnixSocketServerRef};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, path::Path};
@@ -11,10 +11,9 @@ pub trait UnixSocketServerExt {
     type Response;
 
     /// Start a new server using the provided listener
-    async fn start<P, C>(self, path: P, codec: C) -> io::Result<UnixSocketServerRef>
+    async fn start<P>(self, path: P) -> io::Result<UnixSocketServerRef>
     where
-        P: AsRef<Path> + Send,
-        C: Codec + Send + Sync + 'static;
+        P: AsRef<Path> + Send;
 }
 
 #[async_trait]
@@ -28,19 +27,14 @@ where
     type Request = S::Request;
     type Response = S::Response;
 
-    async fn start<P, C>(self, path: P, codec: C) -> io::Result<UnixSocketServerRef>
+    async fn start<P>(self, path: P) -> io::Result<UnixSocketServerRef>
     where
         P: AsRef<Path> + Send,
-        C: Codec + Send + Sync + 'static,
     {
         let path = path.as_ref();
         let listener = UnixSocketListener::bind(path).await?;
         let path = listener.path().to_path_buf();
 
-        let listener = MappedListener::new(listener, move |transport| {
-            let transport = FramedTransport::new(transport, codec.clone());
-            transport.into_split()
-        });
         let inner = ServerExt::start(self, listener)?;
         Ok(UnixSocketServerRef { path, inner })
     }
@@ -77,7 +71,7 @@ mod tests {
             .path()
             .to_path_buf();
 
-        let server = UnixSocketServerExt::start(TestServer, path, PlainCodec)
+        let server = UnixSocketServerExt::start(TestServer, path)
             .await
             .expect("Failed to start Unix socket server");
 

@@ -16,6 +16,7 @@ async-trait = "0.1.57"
 bytes = "1.2.1"
 chacha20poly1305 = "0.10.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
+dyn-clone = "1.0.9"
 flate2 = "1.0.24"
 hex = "0.4.3"
 hkdf = "0.12.3"

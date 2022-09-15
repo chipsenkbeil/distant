@@ -1,5 +1,7 @@
+use crate::{BoxedCodec, FramedTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
+use std::io;
 
 mod config;
 pub use config::*;
@@ -39,11 +41,14 @@ pub trait Server: Send {
         ServerConfig::default()
     }
 
-    /// Invoked immediately on server start, being provided the raw listener to use (untyped
-    /// transport), and returning the listener when ready to start (enabling servers that need to
-    /// tweak a listener to do so)
-    /* async fn on_start(&mut self, listener: L) -> Box<dyn Listener<Output = >> {
-    } */
+    /// Invoked to facilitate a handshake between server and client upon establishing a connection,
+    /// returning an updated [`FramedTransport`] once the handshake is complete
+    async fn on_handshake<T: Send>(
+        &self,
+        transport: FramedTransport<T, BoxedCodec>,
+    ) -> io::Result<FramedTransport<T, BoxedCodec>> {
+        Ok(transport)
+    }
 
     /// Invoked upon a new connection becoming established, which provides a mutable reference to
     /// the data created for the connection. This can be useful in performing some additional

@@ -45,8 +45,8 @@ impl<T, U> ChainCodec<T, U> {
 
 impl<T, U> Codec for ChainCodec<T, U>
 where
-    T: Codec,
-    U: Codec,
+    T: Codec + Clone,
+    U: Codec + Clone,
 {
     fn encode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
         Codec::encode(&mut self.left, frame).and_then(|frame| Codec::encode(&mut self.right, frame))

@@ -15,20 +15,16 @@ const DEFAULT_CAPACITY: usize = 8 * 1024;
 /// Represents a wrapper around a [`Transport`] that reads and writes using frames defined by a
 /// [`Codec`]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FramedTransport<T, C> {
+pub struct FramedTransport<T, U> {
     inner: T,
-    codec: C,
+    codec: U,
 
     incoming: BytesMut,
     outgoing: BytesMut,
 }
 
-impl<T, C> FramedTransport<T, C>
-where
-    T: Transport,
-    C: Codec,
-{
-    pub fn new(inner: T, codec: C) -> Self {
+impl<T, U> FramedTransport<T, U> {
+    pub fn new(inner: T, codec: U) -> Self {
         Self {
             inner,
             codec,
@@ -37,6 +33,84 @@ where
         }
     }
 
+    /// Consumes the current transport, replacing it's codec with the provided codec,
+    /// and returning it. Note that any bytes in the incoming or outgoing buffers will
+    /// remain in the transport, meaning that this can cause corruption if the bytes
+    /// in the buffers do not match the new codec.
+    ///
+    /// For safety, use [`clear`] to wipe the buffers before further use.
+    ///
+    /// [`clear`]: FramedTransport::clear
+    pub fn with_codec<C>(self, codec: C) -> FramedTransport<T, C> {
+        FramedTransport {
+            inner: self.inner,
+            codec,
+            incoming: self.incoming,
+            outgoing: self.outgoing,
+        }
+    }
+
+    /// Clears the internal buffers used by the transport
+    pub fn clear(&mut self) {
+        self.incoming.clear();
+        self.outgoing.clear();
+    }
+}
+
+impl<T, U> FramedTransport<T, U>
+where
+    T: Transport,
+{
+    /// Waits for the transport to be ready based on the given interest, returning the ready status
+    pub async fn ready(&self, interest: Interest) -> io::Result<Ready> {
+        Transport::ready(&self.inner, interest).await
+    }
+
+    /// Waits for the transport to be readable to follow up with `try_read`
+    pub async fn readable(&self) -> io::Result<()> {
+        let _ = self.ready(Interest::READABLE).await?;
+        Ok(())
+    }
+
+    /// Waits for the transport to be writeable to follow up with `try_write`
+    pub async fn writeable(&self) -> io::Result<()> {
+        let _ = self.ready(Interest::WRITABLE).await?;
+        Ok(())
+    }
+
+    /// Attempts to flush any remaining bytes in the outgoing queue.
+    ///
+    /// This is accomplished by continually calling the inner transport's `try_write`. If 0 is
+    /// returned from a call to `try_write`, this will fail with [`ErrorKind::WriteZero`].
+    ///
+    /// This call may return an error with [`ErrorKind::WouldBlock`] in the case that the transport
+    /// is not ready to write data.
+    ///
+    /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
+    pub fn try_flush(&mut self) -> io::Result<()> {
+        // Continue to send from the outgoing buffer until we either finish or fail
+        while !self.outgoing.is_empty() {
+            match self.inner.try_write(self.outgoing.as_ref()) {
+                // Getting 0 bytes on write indicates the channel has closed
+                Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+
+                // Successful write will advance the outgoing buffer
+                Ok(n) => self.outgoing.advance(n),
+
+                // Any error (including WouldBlock) will get bubbled up
+                Err(x) => return Err(x),
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<T, U> FramedTransport<T, U>
+where
+    T: Transport,
+    U: Codec,
+{
     /// Reads a frame of bytes by using the [`Codec`] tied to this transport. Returns
     /// `Ok(Some(frame))` upon reading a frame, or `Ok(None)` if the underlying transport has
     /// closed.
@@ -99,57 +173,13 @@ where
         // Attempt to write everything in our queue
         self.try_flush()
     }
-
-    /// Attempts to flush any remaining bytes in the outgoing queue.
-    ///
-    /// This is accomplished by continually calling the inner transport's `try_write`. If 0 is
-    /// returned from a call to `try_write`, this will fail with [`ErrorKind::WriteZero`].
-    ///
-    /// This call may return an error with [`ErrorKind::WouldBlock`] in the case that the transport
-    /// is not ready to write data.
-    ///
-    /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
-    pub fn try_flush(&mut self) -> io::Result<()> {
-        // Continue to send from the outgoing buffer until we either finish or fail
-        while !self.outgoing.is_empty() {
-            match self.inner.try_write(self.outgoing.as_ref()) {
-                // Getting 0 bytes on write indicates the channel has closed
-                Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
-
-                // Successful write will advance the outgoing buffer
-                Ok(n) => self.outgoing.advance(n),
-
-                // Any error (including WouldBlock) will get bubbled up
-                Err(x) => return Err(x),
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Waits for the transport to be ready based on the given interest, returning the ready status
-    pub async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        Transport::ready(&self.inner, interest).await
-    }
-
-    /// Waits for the transport to be readable to follow up with `try_read`
-    pub async fn readable(&self) -> io::Result<()> {
-        let _ = self.ready(Interest::READABLE).await?;
-        Ok(())
-    }
-
-    /// Waits for the transport to be writeable to follow up with `try_write`
-    pub async fn writeable(&self) -> io::Result<()> {
-        let _ = self.ready(Interest::WRITABLE).await?;
-        Ok(())
-    }
 }
 
 #[async_trait]
-impl<T, C> Reconnectable for FramedTransport<T, C>
+impl<T, U> Reconnectable for FramedTransport<T, U>
 where
     T: Transport + Send,
-    C: Codec + Send,
+    U: Codec + Send,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
         Reconnectable::reconnect(&mut self.inner).await

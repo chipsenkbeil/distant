@@ -1,7 +1,4 @@
-use crate::{
-    Codec, MappedListener, Server, ServerExt, WindowsPipeListener,
-    WindowsPipeServerRef,
-};
+use crate::{Server, ServerExt, WindowsPipeListener, WindowsPipeServerRef};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -17,21 +14,19 @@ pub trait WindowsPipeServerExt {
     type Response;
 
     /// Start a new server at the specified address using the given codec
-    async fn start<A, C>(self, addr: A, codec: C) -> io::Result<WindowsPipeServerRef>
+    async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
     where
-        A: AsRef<OsStr> + Send,
-        C: Codec + Send + Sync + 'static;
+        A: AsRef<OsStr> + Send;
 
     /// Start a new server at the specified address via `\\.\pipe\{name}` using the given codec
-    async fn start_local<N, C>(self, name: N, codec: C) -> io::Result<WindowsPipeServerRef>
+    async fn start_local<N>(self, name: N) -> io::Result<WindowsPipeServerRef>
     where
         Self: Sized,
         N: AsRef<OsStr> + Send,
-        C: Codec + Send + Sync + 'static,
     {
         let mut addr = OsString::from(r"\\.\pipe\");
         addr.push(name.as_ref());
-        self.start(addr, codec).await
+        self.start(addr).await
     }
 }
 
@@ -46,19 +41,14 @@ where
     type Request = Req;
     type Response = Res;
 
-    async fn start<A, C>(self, addr: A, codec: C) -> io::Result<WindowsPipeServerRef>
+    async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
     where
         A: AsRef<OsStr> + Send,
-        C: Codec + Send + Sync + 'static,
     {
         let a = addr.as_ref();
         let listener = WindowsPipeListener::bind(a)?;
         let addr = listener.addr().to_os_string();
 
-        let listener = MappedListener::new(listener, move |transport| {
-            let transport = FramedTransport::new(transport, codec.clone());
-            transport.into_split()
-        });
         let inner = ServerExt::start(self, listener)?;
         Ok(WindowsPipeServerRef { addr, inner })
     }
@@ -91,7 +81,6 @@ mod tests {
         let server = WindowsPipeServerExt::start_local(
             TestServer,
             format!("test_pip_{}", rand::random::<usize>()),
-            PlainCodec,
         )
         .await
         .expect("Failed to start Windows pipe server");

@@ -1,4 +1,4 @@
-use crate::{Codec, MappedListener, PortRange, Server, ServerExt, TcpListener, TcpServerRef};
+use crate::{PortRange, Server, ServerExt, TcpListener, TcpServerRef};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, net::IpAddr};
@@ -11,10 +11,9 @@ pub trait TcpServerExt {
     type Response;
 
     /// Start a new server using the provided listener
-    async fn start<P, C>(self, addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
+    async fn start<P>(self, addr: IpAddr, port: P) -> io::Result<TcpServerRef>
     where
-        P: Into<PortRange> + Send,
-        C: Codec + Send + Sync + 'static;
+        P: Into<PortRange> + Send;
 }
 
 #[async_trait]
@@ -28,18 +27,12 @@ where
     type Request = S::Request;
     type Response = S::Response;
 
-    async fn start<P, C>(self, addr: IpAddr, port: P, codec: C) -> io::Result<TcpServerRef>
+    async fn start<P>(self, addr: IpAddr, port: P) -> io::Result<TcpServerRef>
     where
         P: Into<PortRange> + Send,
-        C: Codec + Send + Sync + 'static,
     {
         let listener = TcpListener::bind(addr, port).await?;
         let port = listener.port();
-
-        let listener = MappedListener::new(listener, move |transport| {
-            let transport = FramedTransport::new(transport, codec.clone());
-            transport.into_split()
-        });
         let inner = ServerExt::start(self, listener)?;
         Ok(TcpServerRef { addr, port, inner })
     }
@@ -70,10 +63,9 @@ mod tests {
 
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
-        let server =
-            TcpServerExt::start(TestServer, IpAddr::V6(Ipv6Addr::LOCALHOST), 0, PlainCodec)
-                .await
-                .expect("Failed to start TCP server");
+        let server = TcpServerExt::start(TestServer, IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
+            .await
+            .expect("Failed to start TCP server");
 
         let mut client: Client<String, String> = Client::connect(
             SocketAddr::from((server.ip_addr(), server.port())),

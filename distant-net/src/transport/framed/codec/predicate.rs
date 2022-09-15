@@ -62,8 +62,8 @@ where
 
 impl<T, U, P> Codec for PredicateCodec<T, U, P>
 where
-    T: Codec,
-    U: Codec,
+    T: Codec + Clone,
+    U: Codec + Clone,
     P: Fn(&Frame) -> bool,
 {
     fn encode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {

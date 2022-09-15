@@ -1,7 +1,7 @@
 use crate::{
-    utils::Timer, ConnectionId, FramedTransport, GenericServerRef, Interest, Listener, Response,
-    Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState, Shutdown, Transport,
-    UntypedRequest,
+    utils::Timer, ConnectionId, FramedTransport, GenericServerRef, Interest, Listener, PlainCodec,
+    Response, Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState, Shutdown,
+    Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -40,7 +40,7 @@ pub trait ServerExt {
     fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener + 'static,
-        L::Output: Transport + Send + 'static;
+        L::Output: Transport + Send + Sync + 'static;
 }
 
 impl<S> ServerExt for S
@@ -56,7 +56,7 @@ where
     fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener + 'static,
-        L::Output: Transport + Send + 'static,
+        L::Output: Transport + Send + Sync + 'static,
     {
         let server = Arc::new(self);
         let state = Arc::new(ServerState::new());
@@ -74,7 +74,7 @@ where
     S::Response: Serialize + Send + 'static,
     S::LocalData: Default + Send + Sync + 'static,
     L: Listener + 'static,
-    L::Output: Transport + Send + 'static,
+    L::Output: Transport + Send + Sync + 'static,
 {
     // Grab a copy of our server's configuration so we can leverage it below
     let config = server.config();
@@ -194,7 +194,7 @@ where
     S::Request: DeserializeOwned + Send + Sync + 'static,
     S::Response: Serialize + Send + 'static,
     D: Default + Send + Sync + 'static,
-    T: Transport + Send + 'static,
+    T: Transport + Send + Sync + 'static,
 {
     pub fn spawn(self) -> JoinHandle<()> {
         tokio::spawn(self.run())
@@ -206,13 +206,21 @@ where
         // Construct a queue of outgoing responses
         let (tx, mut rx) = mpsc::channel::<Response<S::Response>>(1);
 
-        // TODO: We should perform a handshake here to determine which codec(s) to use in
-        //       collaboration with the client
-        let mut transport = FramedTransport::new(self.transport);
+        // Perform a handshake to ensure that the connection is properly established
+        let mut transport = match self
+            .server
+            .on_handshake(FramedTransport::new(self.transport, Box::new(PlainCodec)))
+            .await
+        {
+            Ok(transport) => transport,
+            Err(x) => {
+                error!("[Conn {connection_id}] Handshake failed: {x}");
+                return;
+            }
+        };
 
         loop {
-            let ready = self
-                .transport
+            let ready = transport
                 .ready(Interest::READABLE | Interest::WRITABLE)
                 .await
                 .expect("[Conn {connection_id}] Failed to examine ready state");
