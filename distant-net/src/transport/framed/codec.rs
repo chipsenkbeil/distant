@@ -1,9 +1,11 @@
 use super::Frame;
 use std::io;
 
+mod chain;
 mod plain;
 mod xchacha20poly1305;
 
+pub use chain::*;
 pub use plain::*;
 pub use xchacha20poly1305::*;
 
@@ -16,4 +18,21 @@ pub trait Codec: Clone {
 
     /// Decodes a frame's item
     fn decode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>>;
+}
+
+/// Interface that provides extensions to the codec interface
+pub trait CodecExt {
+    /// Chains this codec with another codec
+    fn chain<T>(self, codec: T) -> ChainCodec<Self, T>
+    where
+        Self: Sized;
+}
+
+impl<C: Codec> CodecExt for C {
+    fn chain<T>(self, codec: T) -> ChainCodec<Self, T>
+    where
+        Self: Sized,
+    {
+        ChainCodec::new(self, codec)
+    }
 }
