@@ -2,11 +2,13 @@ use super::Frame;
 use std::io;
 
 mod chain;
+mod compression;
 mod plain;
 mod predicate;
 mod xchacha20poly1305;
 
 pub use chain::*;
+pub use compression::*;
 pub use plain::*;
 pub use predicate::*;
 pub use xchacha20poly1305::*;
