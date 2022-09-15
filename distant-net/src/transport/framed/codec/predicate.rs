@@ -1,20 +1,23 @@
 use super::{Codec, Frame};
-use std::io;
+use std::{io, sync::Arc};
 
-/// Represents a codec that chains together other codecs such that encoding will call the encode
-/// methods of the underlying, chained codecs from left-to-right and decoding will call the decode
-/// methods in reverse order
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct ChainCodec<T, U> {
+/// Represents a codec that invokes one of two codecs based on the given predicate
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PredicateCodec<T, U, P> {
     left: T,
     right: U,
+    predicate: Arc<P>,
 }
 
-impl<T, U> ChainCodec<T, U> {
-    /// Chains two codecs together such that `left` will be invoked first during encoding and
-    /// `right` will be invoked first during decoding
-    pub fn new(left: T, right: U) -> Self {
-        Self { left, right }
+impl<T, U, P> PredicateCodec<T, U, P> {
+    /// Creates a new predicate codec where the left codec is invoked if the predicate returns true
+    /// and the right codec is invoked if the predicate returns false
+    pub fn new(left: T, right: U, predicate: P) -> Self {
+        Self {
+            left,
+            right,
+            predicate: Arc::new(predicate),
+        }
     }
 
     /// Returns reference to left codec
@@ -43,17 +46,40 @@ impl<T, U> ChainCodec<T, U> {
     }
 }
 
-impl<T, U> Codec for ChainCodec<T, U>
+impl<T, U, P> Clone for PredicateCodec<T, U, P>
+where
+    T: Clone,
+    U: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            left: self.left.clone(),
+            right: self.right.clone(),
+            predicate: Arc::clone(&self.predicate),
+        }
+    }
+}
+
+impl<T, U, P> Codec for PredicateCodec<T, U, P>
 where
     T: Codec,
     U: Codec,
+    P: Fn(&Frame) -> bool,
 {
     fn encode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
-        Codec::encode(&mut self.left, frame).and_then(|frame| Codec::encode(&mut self.right, frame))
+        if (self.predicate)(&frame) {
+            Codec::encode(&mut self.left, frame)
+        } else {
+            Codec::encode(&mut self.right, frame)
+        }
     }
 
     fn decode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
-        Codec::decode(&mut self.right, frame).and_then(|frame| Codec::decode(&mut self.left, frame))
+        if (self.predicate)(&frame) {
+            Codec::decode(&mut self.left, frame)
+        } else {
+            Codec::decode(&mut self.right, frame)
+        }
     }
 }
 
@@ -108,52 +134,46 @@ mod tests {
     }
 
     #[test]
-    fn encode_should_invoke_left_codec_followed_by_right_codec() {
-        let mut codec = ChainCodec::new(TestCodec::new("hello"), TestCodec::new("world"));
+    fn encode_should_invoke_left_codec_if_predicate_returns_true() {
+        let mut codec = PredicateCodec::new(
+            TestCodec::new("hello"),
+            TestCodec::new("world"),
+            |_: &Frame| true,
+        );
         let frame = codec.encode(Frame::new(b"some bytes")).unwrap();
-        assert_eq!(frame, b"some byteshelloworld");
+        assert_eq!(frame, b"some byteshello");
     }
 
     #[test]
-    fn encode_should_fail_if_left_codec_fails_to_encode() {
-        let mut codec = ChainCodec::new(ErrCodec, TestCodec::new("world"));
-        assert_eq!(
-            codec.encode(Frame::new(b"some bytes")).unwrap_err().kind(),
-            io::ErrorKind::InvalidData
+    fn encode_should_invoke_right_codec_if_predicate_returns_false() {
+        let mut codec = PredicateCodec::new(
+            TestCodec::new("hello"),
+            TestCodec::new("world"),
+            |_: &Frame| false,
         );
+        let frame = codec.encode(Frame::new(b"some bytes")).unwrap();
+        assert_eq!(frame, b"some bytesworld");
     }
 
     #[test]
-    fn encode_should_fail_if_right_codec_fails_to_encode() {
-        let mut codec = ChainCodec::new(TestCodec::new("hello"), ErrCodec);
-        assert_eq!(
-            codec.encode(Frame::new(b"some bytes")).unwrap_err().kind(),
-            io::ErrorKind::InvalidData
+    fn decode_should_invoke_left_codec_if_predicate_returns_true() {
+        let mut codec = PredicateCodec::new(
+            TestCodec::new("hello"),
+            TestCodec::new("world"),
+            |_: &Frame| true,
         );
-    }
-
-    #[test]
-    fn decode_should_invoke_right_codec_followed_by_left_codec() {
-        let mut codec = ChainCodec::new(TestCodec::new("hello"), TestCodec::new("world"));
-        let frame = codec.decode(Frame::new(b"some byteshelloworld")).unwrap();
+        let frame = codec.decode(Frame::new(b"some byteshello")).unwrap();
         assert_eq!(frame, b"some bytes");
     }
 
     #[test]
-    fn decode_should_fail_if_left_codec_fails_to_decode() {
-        let mut codec = ChainCodec::new(ErrCodec, TestCodec::new("world"));
-        assert_eq!(
-            codec.decode(Frame::new(b"some bytes")).unwrap_err().kind(),
-            io::ErrorKind::InvalidData
+    fn decode_should_invoke_right_codec_if_predicate_returns_false() {
+        let mut codec = PredicateCodec::new(
+            TestCodec::new("hello"),
+            TestCodec::new("world"),
+            |_: &Frame| false,
         );
-    }
-
-    #[test]
-    fn decode_should_fail_if_right_codec_fails_to_decode() {
-        let mut codec = ChainCodec::new(TestCodec::new("hello"), ErrCodec);
-        assert_eq!(
-            codec.decode(Frame::new(b"some bytes")).unwrap_err().kind(),
-            io::ErrorKind::InvalidData
-        );
+        let frame = codec.decode(Frame::new(b"some bytesworld")).unwrap();
+        assert_eq!(frame, b"some bytes");
     }
 }

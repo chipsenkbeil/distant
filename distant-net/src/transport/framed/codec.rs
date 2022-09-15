@@ -3,10 +3,12 @@ use std::io;
 
 mod chain;
 mod plain;
+mod predicate;
 mod xchacha20poly1305;
 
 pub use chain::*;
 pub use plain::*;
+pub use predicate::*;
 pub use xchacha20poly1305::*;
 
 /// Represents abstraction that implements specific encoder and decoder logic to transform an
