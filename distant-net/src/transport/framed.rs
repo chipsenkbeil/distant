@@ -155,6 +155,22 @@ where
         }
     }
 
+    /// Continues to invoke [`try_read_frame`] until a frame is successfully read, an error is
+    /// encountered that is not [`ErrorKind::WouldBlock`], or the underlying transport has closed.
+    ///
+    /// [`try_read_frame`]: FramedTransport::try_read_frame
+    /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
+    pub async fn read_frame(&mut self) -> io::Result<Option<OwnedFrame>> {
+        loop {
+            self.readable().await?;
+
+            match self.try_read_frame() {
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                x => return x,
+            }
+        }
+    }
+
     /// Writes a `frame` of bytes by using the [`Codec`] tied to this transport.
     ///
     /// This is accomplished by continually calling the inner transport's `try_write`. If 0 is
@@ -172,6 +188,31 @@ where
 
         // Attempt to write everything in our queue
         self.try_flush()
+    }
+
+    /// Invokes [`try_write_frame`] followed by a continuous calls to [`try_flush`] until a frame
+    /// is successfully written, an error is encountered that is not [`ErrorKind::WouldBlock`], or
+    /// the underlying transport has closed.
+    ///
+    /// [`try_write_frame`]: FramedTransport::try_write_frame
+    /// [`try_flush`]: FramedTransport::try_flush
+    /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
+    pub async fn write_frame<'a>(&mut self, frame: impl Into<Frame<'a>>) -> io::Result<()> {
+        self.writeable().await?;
+
+        match self.try_write_frame(frame) {
+            // Would block, so continually try to flush until good to go
+            Err(x) if x.kind() == io::ErrorKind::WouldBlock => loop {
+                self.writeable().await?;
+                match self.try_flush() {
+                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                    x => return x,
+                }
+            },
+
+            // Already fully succeeded or failed
+            x => x,
+        }
     }
 }
 

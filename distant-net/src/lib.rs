@@ -1,6 +1,7 @@
 mod any;
-/* mod auth;
-mod client; */
+// mod auth;
+mod client;
+mod handshake;
 mod id;
 mod key;
 mod listener;
@@ -11,8 +12,8 @@ mod transport;
 mod utils;
 
 pub use any::*;
-/* pub use auth::*;
-pub use client::*; */
+// pub use auth::*;
+pub use client::*;
 pub use id::*;
 pub use key::*;
 pub use listener::*;

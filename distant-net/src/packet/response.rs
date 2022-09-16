@@ -1,5 +1,6 @@
 use super::{parse_msg_pack_str, Id};
 use crate::utils;
+use derive_more::{Display, Error};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{borrow::Cow, io};
 
@@ -61,7 +62,7 @@ impl<T: schemars::JsonSchema> Response<T> {
 }
 
 /// Error encountered when attempting to parse bytes as an untyped response
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Display, Error, PartialEq, Eq, Hash)]
 pub enum UntypedResponseParseError {
     /// When the bytes do not represent a response
     WrongType,
@@ -88,7 +89,7 @@ pub struct UntypedResponse<'a> {
 
 impl<'a> UntypedResponse<'a> {
     /// Attempts to convert an untyped request to a typed request
-    pub fn to_typed_request<T: DeserializeOwned>(&self) -> io::Result<Response<T>> {
+    pub fn to_typed_response<T: DeserializeOwned>(&self) -> io::Result<Response<T>> {
         Ok(Response {
             id: self.id.to_string(),
             origin_id: self.origin_id.to_string(),

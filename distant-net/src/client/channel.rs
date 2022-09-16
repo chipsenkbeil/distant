@@ -142,14 +142,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, FramedTransport, TypedAsyncRead, TypedAsyncWrite};
+    use crate::{Client, FramedTransport};
     use std::time::Duration;
 
     type TestClient = Client<u8, u8>;
 
     #[tokio::test]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::pair(100);
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -184,7 +184,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_should_wait_until_response_received() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::pair(100);
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -200,7 +200,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::pair(100);
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -210,15 +210,13 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let _req = TypedAsyncRead::<Request<u8>>::read(&mut t2)
-            .await
-            .unwrap()
-            .unwrap();
+        let frame = t2.try_read_frame().unwrap().unwrap();
+        let _req: Request<u8> = Request::from_slice(&frame.as_item()).unwrap();
     }
 
     #[tokio::test]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::pair(100);
         let session: TestClient = Client::from_framed_transport(t1).unwrap();
         let mut channel = session.clone_channel();
 
@@ -228,9 +226,7 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let _req = TypedAsyncRead::<Request<u8>>::read(&mut t2)
-            .await
-            .unwrap()
-            .unwrap();
+        let frame = t2.try_read_frame().unwrap().unwrap();
+        let _req: Request<u8> = Request::from_slice(&frame.as_item()).unwrap();
     }
 }

@@ -1,4 +1,4 @@
-use crate::{Client, Codec, FramedTransport, IntoSplit, UnixSocketTransport};
+use crate::{Client, Codec, FramedTransport, UnixSocketTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, path::Path};

@@ -228,35 +228,33 @@ where
             if ready.is_readable() {
                 match transport.try_read_frame() {
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
-                        Ok(request) => {
-                            if log::log_enabled!(Level::Trace) {
-                                trace!(
-                                    "[Conn {connection_id}] Receiving {}",
-                                    String::from_utf8_lossy(&request.payload),
-                                );
+                        Ok(request) => match request.to_typed_request() {
+                            Ok(request) => {
+                                let reply = ServerReply {
+                                    origin_id: request.id.clone(),
+                                    tx: tx.clone(),
+                                };
+
+                                let ctx = ServerCtx {
+                                    connection_id,
+                                    request,
+                                    reply: reply.clone(),
+                                    local_data: Arc::clone(&self.local_data),
+                                };
+
+                                self.server.on_request(ctx).await;
                             }
-
-                            match request.to_typed_request() {
-                                Ok(request) => {
-                                    let reply = ServerReply {
-                                        origin_id: request.id.clone(),
-                                        tx: tx.clone(),
-                                    };
-
-                                    let ctx = ServerCtx {
-                                        connection_id,
-                                        request,
-                                        reply: reply.clone(),
-                                        local_data: Arc::clone(&self.local_data),
-                                    };
-
-                                    self.server.on_request(ctx).await;
+                            Err(x) => {
+                                if log::log_enabled!(Level::Trace) {
+                                    trace!(
+                                        "[Conn {connection_id}] Failed receiving {}",
+                                        String::from_utf8_lossy(&request.payload),
+                                    );
                                 }
-                                Err(x) => {
-                                    error!("[Conn {connection_id}] Invalid request: {x}");
-                                }
+
+                                error!("[Conn {connection_id}] Invalid request: {x}");
                             }
-                        }
+                        },
                         Err(x) => {
                             error!("[Conn {connection_id}] Invalid request: {x}");
                         }
@@ -330,7 +328,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InmemoryTransport, MpscListener, ServerConfig};
+    use crate::{InmemoryTransport, MpscListener, Request, ServerConfig};
     use async_trait::async_trait;
     use std::time::Duration;
 
@@ -356,14 +354,8 @@ mod tests {
     fn make_listener(
         buffer: usize,
     ) -> (
-        mpsc::Sender<(
-            MpscTransportWriteHalf<Response<String>>,
-            MpscTransportReadHalf<Request<u16>>,
-        )>,
-        MpscListener<(
-            MpscTransportWriteHalf<Response<String>>,
-            MpscTransportReadHalf<Request<u16>>,
-        )>,
+        mpsc::Sender<InmemoryTransport>,
+        MpscListener<InmemoryTransport>,
     ) {
         MpscListener::channel(buffer)
     }
@@ -374,9 +366,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (mut transport, connection) =
-            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
-        tx.send(connection.into_split())
+        let (mut transport, connection) = InmemoryTransport::pair(100);
+        tx.send(connection)
             .await
             .expect("Failed to feed listener a connection");
 
@@ -384,11 +375,12 @@ mod tests {
             .expect("Failed to start server");
 
         transport
-            .write(Request::new(123))
-            .await
+            .try_write(&Request::new(123).to_vec().unwrap())
             .expect("Failed to send request");
 
-        let response: Response<String> = transport.read().await.unwrap().unwrap();
+        let mut buf = [0u8; 1024];
+        let n = transport.try_read(&mut buf).unwrap();
+        let response: Response<String> = Response::from_slice(&buf[..n]).unwrap();
         assert_eq!(response.payload, "hello");
     }
 
@@ -417,9 +409,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (transport, connection) =
-            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
-        tx.send(connection.into_split())
+        let (transport, connection) = InmemoryTransport::pair(100);
+        tx.send(connection)
             .await
             .expect("Failed to feed listener a connection");
 
@@ -446,9 +437,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (_transport, connection) =
-            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
-        tx.send(connection.into_split())
+        let (_transport, connection) = InmemoryTransport::pair(100);
+        tx.send(connection)
             .await
             .expect("Failed to feed listener a connection");
 
@@ -471,9 +461,8 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (_transport, connection) =
-            InmemoryTypedTransport::<Request<u16>, Response<String>>::pair(100);
-        tx.send(connection.into_split())
+        let (_transport, connection) = InmemoryTransport::pair(100);
+        tx.send(connection)
             .await
             .expect("Failed to feed listener a connection");
 
