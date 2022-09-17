@@ -141,8 +141,8 @@ impl ServerSubcommand {
                 }
 
                 let host = get!(host).unwrap_or(BindAddress::Any);
-                trace!("Starting server using unresolved host '{}'", host);
-                let addr = host.resolve(get!(@flag use_ipv6))?;
+                trace!("Starting server using unresolved host '{host}'");
+                let addr = host.resolve(get!(@flag use_ipv6)).await?;
 
                 // If specified, change the current working directory of this program
                 if let Some(path) = get!(current_dir) {

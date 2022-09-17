@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file patterns, and execute in parallel via the `ignore` crate and `num_cpus`
   crate to calculate thread count
 
+### Fixed
+
+- Resolution of `BindAddress` now properly handles hostnames ranging from
+  `localhost` to `example.com`
+- Parsing of `BindAddress` no longer causes a stack overflow
+
 ## [0.19.0] - 2022-08-30
 ### Added
 
