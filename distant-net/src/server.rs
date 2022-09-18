@@ -1,4 +1,4 @@
-use crate::{BoxedCodec, FramedTransport};
+use crate::FramedTransport;
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
@@ -43,10 +43,10 @@ pub trait Server: Send {
 
     /// Invoked to facilitate a handshake between server and client upon establishing a connection,
     /// returning an updated [`FramedTransport`] once the handshake is complete
-    async fn on_handshake<T: Send>(
+    async fn on_handshake<T: Send, const CAPACITY: usize>(
         &self,
-        transport: FramedTransport<T, BoxedCodec>,
-    ) -> io::Result<FramedTransport<T, BoxedCodec>> {
+        transport: FramedTransport<T, CAPACITY>,
+    ) -> io::Result<FramedTransport<T, CAPACITY>> {
         Ok(transport)
     }
 

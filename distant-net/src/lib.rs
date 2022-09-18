@@ -1,7 +1,6 @@
 mod any;
 // mod auth;
 mod client;
-mod handshake;
 mod id;
 mod key;
 mod listener;

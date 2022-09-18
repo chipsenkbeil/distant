@@ -4,18 +4,15 @@ use std::io;
 
 mod chain;
 mod compression;
+mod encryption;
 mod plain;
 mod predicate;
-mod xchacha20poly1305;
 
 pub use chain::*;
 pub use compression::*;
+pub use encryption::*;
 pub use plain::*;
 pub use predicate::*;
-pub use xchacha20poly1305::*;
-
-/// Represents a [`Box`]ed version of [`Codec`]
-pub type BoxedCodec = Box<dyn Codec + Send + Sync>;
 
 /// Represents abstraction that implements specific encoder and decoder logic to transform an
 /// arbitrary collection of bytes. This can be used to encrypt and authenticate bytes sent and
@@ -27,6 +24,9 @@ pub trait Codec: DynClone {
     /// Decodes a frame's item
     fn decode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>>;
 }
+
+/// Represents a [`Box`]ed version of [`Codec`]
+pub type BoxedCodec = Box<dyn Codec + Send + Sync>;
 
 macro_rules! impl_traits {
     ($($x:tt)+) => {

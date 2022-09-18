@@ -11,11 +11,7 @@ const CHANNEL_MAILBOX_CAPACITY: usize = 10000;
 /// Represents a sender of requests tied to a session, holding onto a weak reference of
 /// mailboxes to relay responses, meaning that once the [`Session`] is closed or dropped,
 /// any sent request will no longer be able to receive responses
-pub struct Channel<T, U>
-where
-    T: Send + Sync,
-    U: Send + Sync,
-{
+pub struct Channel<T, U> {
     /// Used to send requests to a server
     pub(crate) tx: mpsc::Sender<Request<T>>,
 
@@ -24,11 +20,7 @@ where
 }
 
 // NOTE: Implemented manually to avoid needing clone to be defined on generic types
-impl<T, U> Clone for Channel<T, U>
-where
-    T: Send + Sync,
-    U: Send + Sync,
-{
+impl<T, U> Clone for Channel<T, U> {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),

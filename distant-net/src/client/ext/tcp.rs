@@ -1,4 +1,4 @@
-use crate::{Client, Codec, FramedTransport, TcpTransport};
+use crate::{BoxedCodec, Client, FramedTransport, TcpTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, net::SocketAddr};
@@ -11,19 +11,15 @@ where
     U: DeserializeOwned + Send + Sync,
 {
     /// Connect to a remote TCP server using the provided information
-    async fn connect<C>(addr: SocketAddr, codec: C) -> io::Result<Client<T, U>>
-    where
-        C: Codec + Send + 'static;
+    async fn connect(addr: SocketAddr, codec: impl Into<BoxedCodec>) -> io::Result<Client<T, U>>;
 
     /// Connect to a remote TCP server, timing out after duration has passed
     async fn connect_timeout<C>(
         addr: SocketAddr,
-        codec: C,
+        codec: impl Into<BoxedCodec> + Send,
         duration: Duration,
-    ) -> io::Result<Client<T, U>>
-    where
-        C: Codec + Send + 'static,
-    {
+    ) -> io::Result<Client<T, U>> {
+        let codec = codec.into();
         tokio::time::timeout(duration, Self::connect(addr, codec))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
@@ -38,12 +34,9 @@ where
     U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Connect to a remote TCP server using the provided information
-    async fn connect<C>(addr: SocketAddr, codec: C) -> io::Result<Client<T, U>>
-    where
-        C: Codec + Send + 'static,
-    {
+    async fn connect(addr: SocketAddr, codec: impl Into<BoxedCodec>) -> io::Result<Client<T, U>> {
         let transport = TcpTransport::connect(addr).await?;
         let transport = FramedTransport::new(transport, codec);
-        Self::from_framed_transport(transport)
+        Self::new(transport)
     }
 }

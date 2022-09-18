@@ -1,7 +1,7 @@
 use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
-use std::io;
+use std::{fmt, io};
 
 mod codec;
 pub use codec::*;
@@ -9,28 +9,53 @@ pub use codec::*;
 mod frame;
 pub use frame::*;
 
+mod handshake;
+pub use handshake::*;
+
 /// By default, framed transport's initial capacity (and max single-read) will be 8 KiB
 const DEFAULT_CAPACITY: usize = 8 * 1024;
 
 /// Represents a wrapper around a [`Transport`] that reads and writes using frames defined by a
-/// [`Codec`]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FramedTransport<T, U> {
+/// [`Codec`]. `CAPACITY` represents both the initial capacity of incoming and outgoing buffers as
+/// well as the maximum bytes read per call to [`try_read`].
+///
+/// [`try_read`]: Transport::try_read
+#[derive(Clone)]
+pub struct FramedTransport<T, const CAPACITY: usize = DEFAULT_CAPACITY> {
     inner: T,
-    codec: U,
+    codec: BoxedCodec,
 
     incoming: BytesMut,
     outgoing: BytesMut,
 }
 
-impl<T, U> FramedTransport<T, U> {
-    pub fn new(inner: T, codec: U) -> Self {
+impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
+    fn new(inner: T, codec: BoxedCodec) -> Self {
         Self {
             inner,
             codec,
-            incoming: BytesMut::with_capacity(DEFAULT_CAPACITY),
-            outgoing: BytesMut::with_capacity(DEFAULT_CAPACITY),
+            incoming: BytesMut::with_capacity(CAPACITY),
+            outgoing: BytesMut::with_capacity(CAPACITY),
         }
+    }
+
+    /// Performs a handshake with the other side of the `transport` in order to determine which
+    /// [`Codec`] to use as well as perform any additional logic to prepare the framed transport.
+    ///
+    /// Will use the handshake criteria provided in `handshake`
+    pub async fn from_handshake(
+        transport: T,
+        handshake: Handshake<T, CAPACITY>,
+    ) -> io::Result<FramedTransport<T, CAPACITY>>
+    where
+        T: Transport,
+    {
+        handshake::do_handshake(transport, &handshake).await
+    }
+
+    /// Creates a new [`FramedTransport`] using the [`PlainCodec`]
+    pub fn plain(inner: T) -> Self {
+        Self::new(inner, Box::new(PlainCodec::new()))
     }
 
     /// Consumes the current transport, replacing it's codec with the provided codec,
@@ -41,10 +66,10 @@ impl<T, U> FramedTransport<T, U> {
     /// For safety, use [`clear`] to wipe the buffers before further use.
     ///
     /// [`clear`]: FramedTransport::clear
-    pub fn with_codec<C>(self, codec: C) -> FramedTransport<T, C> {
+    pub fn with_codec(self, codec: impl Into<BoxedCodec>) -> FramedTransport<T, CAPACITY> {
         FramedTransport {
             inner: self.inner,
-            codec,
+            codec: codec.into(),
             incoming: self.incoming,
             outgoing: self.outgoing,
         }
@@ -57,7 +82,17 @@ impl<T, U> FramedTransport<T, U> {
     }
 }
 
-impl<T, U> FramedTransport<T, U>
+impl<T, const CAPACITY: usize> fmt::Debug for FramedTransport<T, CAPACITY> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FramedTransport")
+            .field("capacity", &CAPACITY)
+            .field("incoming", &self.incoming)
+            .field("outgoing", &self.outgoing)
+            .finish()
+    }
+}
+
+impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY>
 where
     T: Transport,
 {
@@ -106,10 +141,9 @@ where
     }
 }
 
-impl<T, U> FramedTransport<T, U>
+impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY>
 where
     T: Transport,
-    U: Codec,
 {
     /// Reads a frame of bytes by using the [`Codec`] tied to this transport. Returns
     /// `Ok(Some(frame))` upon reading a frame, or `Ok(None)` if the underlying transport has
@@ -121,7 +155,7 @@ where
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
     pub fn try_read_frame(&mut self) -> io::Result<Option<OwnedFrame>> {
         // Continually read bytes into the incoming queue and then attempt to tease out a frame
-        let mut buf = [0; DEFAULT_CAPACITY];
+        let mut buf = [0; CAPACITY];
 
         loop {
             match self.inner.try_read(&mut buf) {
@@ -217,17 +251,28 @@ where
 }
 
 #[async_trait]
-impl<T, U> Reconnectable for FramedTransport<T, U>
+impl<T, const CAPACITY: usize> Reconnectable for FramedTransport<T, CAPACITY>
 where
-    T: Transport + Send,
-    U: Codec + Send,
+    T: Transport + Send + Sync,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
-        Reconnectable::reconnect(&mut self.inner).await
+        // Establish a new connection
+        Reconnectable::reconnect(&mut self.inner).await?;
+
+        // Perform handshake again, which can result in the underlying codec
+        // changing based on the exchange; so, we want to clear out any lingering
+        // bytes in the incoming and outgoing queues
+        self.clear();
+
+        let FramedTransport { inner, codec, .. } =
+            handshake::do_handshake(self.inner, &self.handshake).await?;
+        self.inner = inner;
+        self.codec = codec;
+        Ok(())
     }
 }
 
-impl FramedTransport<super::InmemoryTransport, PlainCodec> {
+impl<const CAPACITY: usize> FramedTransport<super::InmemoryTransport, CAPACITY> {
     /// Produces a pair of inmemory transports that are connected to each other using
     /// a standard codec
     ///
@@ -235,8 +280,8 @@ impl FramedTransport<super::InmemoryTransport, PlainCodec> {
     pub fn pair(
         buffer: usize,
     ) -> (
-        FramedTransport<super::InmemoryTransport, PlainCodec>,
-        FramedTransport<super::InmemoryTransport, PlainCodec>,
+        FramedTransport<super::InmemoryTransport, CAPACITY>,
+        FramedTransport<super::InmemoryTransport, CAPACITY>,
     ) {
         let (a, b) = super::InmemoryTransport::pair(buffer);
         let a = FramedTransport::new(a, PlainCodec::new());

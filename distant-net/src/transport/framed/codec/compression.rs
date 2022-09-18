@@ -3,10 +3,11 @@ use flate2::{
     bufread::{DeflateDecoder, DeflateEncoder, GzDecoder, GzEncoder, ZlibDecoder, ZlibEncoder},
     Compression,
 };
+use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 
 /// Represents the level of compression to apply to data
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum CompressionLevel {
     /// Use no compression (can potentially inflate data)
     Zero = 0,
@@ -37,6 +38,36 @@ impl CompressionLevel {
     pub const BEST: Self = Self::Nine;
 }
 
+impl Default for CompressionLevel {
+    /// Standard compression level used in zlib library is 6, which is also used here
+    fn default() -> Self {
+        Self::Six
+    }
+}
+
+/// Represents the type of compression for a [`CompressionCodec`]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CompressionType {
+    Deflate,
+    Gzip,
+    Zlib,
+
+    /// Indicates an unknown compression type for use in handshakes
+    #[serde(other)]
+    Unknown,
+}
+
+impl CompressionType {
+    /// Returns a list of all variants of the type *except* unknown.
+    pub const fn known_variants() -> &'static [CompressionType] {
+        &[
+            CompressionType::Deflate,
+            CompressionType::Gzip,
+            CompressionType::Zlib,
+        ]
+    }
+}
+
 /// Represents a codec that applies compression during encoding and decompression during decoding
 /// of a frame's item
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -52,6 +83,23 @@ pub enum CompressionCodec {
 }
 
 impl CompressionCodec {
+    /// Makes a new [`CompressionCodec`] based on the [`CompressionType`] and [`CompressionLevel`],
+    /// returning error if the type is unknown
+    pub fn from_type_and_level(
+        ty: CompressionType,
+        level: CompressionLevel,
+    ) -> io::Result<CompressionCodec> {
+        match ty {
+            CompressionType::Deflate => Ok(Self::Deflate { level }),
+            CompressionType::Gzip => Ok(Self::Gzip { level }),
+            CompressionType::Zlib => Ok(Self::Zlib { level }),
+            CompressionType::Unknown => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Unknown compression type",
+            )),
+        }
+    }
+
     /// Create a new deflate compression codec with the specified `level`
     pub fn deflate(level: impl Into<CompressionLevel>) -> Self {
         Self::Deflate {
@@ -79,6 +127,15 @@ impl CompressionCodec {
             Self::Deflate { level } => *level,
             Self::Gzip { level } => *level,
             Self::Zlib { level } => *level,
+        }
+    }
+
+    /// Returns the compression type associated with the codec
+    pub fn ty(&self) -> CompressionType {
+        match self {
+            Self::Deflate { .. } => CompressionType::Deflate,
+            Self::Gzip { .. } => CompressionType::Gzip,
+            Self::Zlib { .. } => CompressionType::Zlib,
         }
     }
 }

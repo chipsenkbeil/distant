@@ -1,4 +1,5 @@
-use crate::{FramedTransport, Interest, Request, Transport, UntypedResponse};
+use crate::{FramedTransport, Interest, Reconnectable, Request, Transport, UntypedResponse};
+use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -7,7 +8,7 @@ use std::{
 };
 use tokio::{
     io,
-    sync::mpsc,
+    sync::{mpsc, oneshot},
     task::{JoinError, JoinHandle},
 };
 
@@ -18,13 +19,15 @@ mod ext;
 pub use ext::*;
 
 /// Represents a client that can be used to send requests & receive responses from a server
-pub struct Client<T, U>
-where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
-{
+pub struct Client<T, U> {
     /// Used to send requests to a server
     channel: Channel<T, U>,
+
+    /// Used to send reconnect request to inner transport
+    reconnect_tx: mpsc::Sender<oneshot::Sender<io::Result<()>>>,
+
+    /// Used to send shutdown request to inner transport
+    shutdown_tx: mpsc::Sender<()>,
 
     /// Contains the task that is running to send requests and receive responses from a server
     task: JoinHandle<()>,
@@ -35,27 +38,37 @@ where
     T: Send + Sync + Serialize,
     U: Send + Sync + DeserializeOwned,
 {
-    /// Initializes a client using the provided transport
-    pub fn new<V>(transport: V) -> io::Result<Self>
+    /// Initializes a client using the provided [`FramedTransport`]
+    pub fn new<V, const CAPACITY: usize>(transport: FramedTransport<V, CAPACITY>) -> Self
     where
-        V: Transport,
+        V: Transport + Send + Sync,
     {
         let post_office = Arc::new(PostOffice::default());
         let weak_post_office = Arc::downgrade(&post_office);
         let (tx, mut rx) = mpsc::channel::<Request<T>>(1);
-
-        // Do handshake with the server
-        // TODO: Support user configuration
-        let mut transport: FramedTransport<_, _> = todo!();
+        let (reconnect_tx, reconnect_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let task = tokio::spawn(async move {
             loop {
-                let ready = transport
-                    .ready(Interest::READABLE | Interest::WRITABLE)
-                    .await
-                    .expect("Failed to examine ready state");
+                let ready = tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        break;
+                    }
+                    cb = reconnect_rx.recv() => {
+                        if let Some(cb) = cb {
+                            cb.send(Reconnectable::reconnect(&mut transport).await);
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    result = transport.ready(Interest::READABLE | Interest::WRITABLE) => {
+                        result.expect("Failed to examine ready state")
+                    }
+                };
 
                 if ready.is_readable() {
                     match transport.try_read_frame() {
@@ -64,6 +77,7 @@ where
                                 match response.to_typed_response() {
                                     Ok(response) => {
                                         // Try to send response to appropriate mailbox
+                                        // TODO: This will block if full... is that a problem?
                                         // TODO: How should we handle false response? Did logging in past
                                         post_office.deliver_response(response).await;
                                     }
@@ -121,9 +135,16 @@ where
             post_office: weak_post_office,
         };
 
-        Ok(Self { channel, task })
+        Self {
+            channel,
+            reconnect_tx,
+            shutdown_tx,
+            task,
+        }
     }
+}
 
+impl<T, U> Client<T, U> {
     /// Convert into underlying channel
     pub fn into_channel(self) -> Channel<T, U> {
         self.channel
@@ -151,11 +172,27 @@ where
     }
 }
 
-impl<T, U> Deref for Client<T, U>
+#[async_trait]
+impl<T, U> Reconnectable for Client<T, U>
 where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
+    T: Send,
+    U: Send + Sync,
 {
+    async fn reconnect(&mut self) -> io::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        if self.reconnect_tx.send(tx).await.is_ok() {
+            rx.await
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "Callback lost"))?
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Client internal task dead",
+            ))
+        }
+    }
+}
+
+impl<T, U> Deref for Client<T, U> {
     type Target = Channel<T, U>;
 
     fn deref(&self) -> &Self::Target {
@@ -163,21 +200,13 @@ where
     }
 }
 
-impl<T, U> DerefMut for Client<T, U>
-where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
-{
+impl<T, U> DerefMut for Client<T, U> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.channel
     }
 }
 
-impl<T, U> From<Client<T, U>> for Channel<T, U>
-where
-    T: Send + Sync + Serialize + 'static,
-    U: Send + Sync + DeserializeOwned + 'static,
-{
+impl<T, U> From<Client<T, U>> for Channel<T, U> {
     fn from(client: Client<T, U>) -> Self {
         client.channel
     }
