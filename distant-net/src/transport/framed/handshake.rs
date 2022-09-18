@@ -91,6 +91,49 @@ impl<T, const CAPACITY: usize> Handshake<T, CAPACITY> {
             on_handshake: on_handshake.into(),
         }
     }
+
+    fn is_client(&self) -> bool {
+        matches!(self, Self::Client { .. })
+    }
+
+    fn is_server(&self) -> bool {
+        matches!(self, Self::Server { .. })
+    }
+
+    fn key(&self) -> &HeapSecretKey {
+        match self {
+            Self::Client { key, .. } => key,
+            Self::Server { key, .. } => key,
+        }
+    }
+
+    fn compression(&self) -> &[CompressionType] {
+        match self {
+            Self::Client { .. } => &[],
+            Self::Server { compression, .. } => compression,
+        }
+    }
+
+    fn encryption(&self) -> &[EncryptionType] {
+        match self {
+            Self::Client { .. } => &[],
+            Self::Server { encryption, .. } => encryption,
+        }
+    }
+
+    fn on_choice(&self) -> Option<&OnHandshakeClientChoice> {
+        match self {
+            Self::Client { on_choice, .. } => Some(on_choice),
+            Self::Server { .. } => None,
+        }
+    }
+
+    fn on_handshake(&mut self) -> &mut OnHandshake<T, CAPACITY> {
+        match self {
+            Self::Client { on_handshake, .. } => on_handshake,
+            Self::Server { on_handshake, .. } => on_handshake,
+        }
+    }
 }
 
 /// Helper method to perform a handshake
@@ -138,57 +181,45 @@ where
         }};
     }
 
-    match transport.handshake {
-        Handshake::Client {
-            key,
-            on_choice,
-            on_handshake,
-        } => {
-            // Receive options from the server and pick one
-            debug!("[Handshake] Client waiting on server options");
-            let options = next_frame_as!(HandshakeServerOptions);
+    if transport.handshake.is_client() {
+        // Receive options from the server and pick one
+        debug!("[Handshake] Client waiting on server options");
+        let options = next_frame_as!(HandshakeServerOptions);
 
-            // Choose a compression and encryption option from the options
-            debug!("[Handshake] Client selecting from server options: {options:#?}");
-            let choice = (on_choice.0)(options);
+        // Choose a compression and encryption option from the options
+        debug!("[Handshake] Client selecting from server options: {options:#?}");
+        let choice = (transport.handshake.on_choice().unwrap().0)(options);
 
-            // Report back to the server the choice
-            debug!("[Handshake] Client reporting choice: {choice:#?}");
-            write_frame!(choice);
+        // Report back to the server the choice
+        debug!("[Handshake] Client reporting choice: {choice:#?}");
+        write_frame!(choice);
 
-            // Transform the transport's codec to abide by the choice
-            transform_transport(transport, choice, &key)?;
+        // Transform the transport's codec to abide by the choice
+        transform_transport(transport, choice, transport.handshake.key())?;
 
-            // Invoke callback to signal completion of handshake
-            debug!("[Handshake] Standard client handshake done, invoking callback");
-            (on_handshake.0)(transport).await
-        }
-        Handshake::Server {
-            compression,
-            encryption,
-            key,
-            on_handshake,
-        } => {
-            let options = HandshakeServerOptions {
-                compression: compression.to_vec(),
-                encryption: encryption.to_vec(),
-            };
+        // Invoke callback to signal completion of handshake
+        debug!("[Handshake] Standard client handshake done, invoking callback");
+        (transport.handshake.on_handshake().0)(transport).await
+    } else {
+        let options = HandshakeServerOptions {
+            compression: transport.handshake.compression().to_vec(),
+            encryption: transport.handshake.encryption().to_vec(),
+        };
 
-            // Send options to the client
-            debug!("[Handshake] Server sending options: {options:#?}");
-            write_frame!(options);
+        // Send options to the client
+        debug!("[Handshake] Server sending options: {options:#?}");
+        write_frame!(options);
 
-            // Get client's response with selected compression and encryption
-            debug!("[Handshake] Server waiting on client choice");
-            let choice = next_frame_as!(HandshakeClientChoice);
+        // Get client's response with selected compression and encryption
+        debug!("[Handshake] Server waiting on client choice");
+        let choice = next_frame_as!(HandshakeClientChoice);
 
-            // Transform the transport's codec to abide by the choice
-            transform_transport(transport, choice, &key)?;
+        // Transform the transport's codec to abide by the choice
+        transform_transport(transport, choice, transport.handshake.key())?;
 
-            // Invoke callback to signal completion of handshake
-            debug!("[Handshake] Standard server handshake done, invoking callback");
-            (on_handshake.0)(transport).await
-        }
+        // Invoke callback to signal completion of handshake
+        debug!("[Handshake] Standard server handshake done, invoking callback");
+        (transport.handshake.on_handshake().0)(transport).await
     }
 }
 
