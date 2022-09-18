@@ -20,17 +20,18 @@ const DEFAULT_CAPACITY: usize = 8 * 1024;
 /// well as the maximum bytes read per call to [`try_read`].
 ///
 /// [`try_read`]: Transport::try_read
+#[derive(Clone)]
 pub struct FramedTransport<T, const CAPACITY: usize = DEFAULT_CAPACITY> {
     inner: T,
     codec: BoxedCodec,
-    handshake: Handshake<T, CAPACITY>,
+    handshake: Handshake,
 
     incoming: BytesMut,
     outgoing: BytesMut,
 }
 
 impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
-    fn new(inner: T, codec: BoxedCodec, handshake: Handshake<T, CAPACITY>) -> Self {
+    fn new(inner: T, codec: BoxedCodec, handshake: Handshake) -> Self {
         Self {
             inner,
             codec,
@@ -41,7 +42,7 @@ impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
     }
 
     /// Creates a new [`FramedTransport`] using the [`PlainCodec`]
-    fn plain(inner: T, handshake: Handshake<T, CAPACITY>) -> Self {
+    fn plain(inner: T, handshake: Handshake) -> Self {
         Self::new(inner, Box::new(PlainCodec::new()), handshake)
     }
 
@@ -51,7 +52,7 @@ impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
     /// Will use the handshake criteria provided in `handshake`
     pub async fn from_handshake(
         transport: T,
-        handshake: Handshake<T, CAPACITY>,
+        handshake: Handshake,
     ) -> io::Result<FramedTransport<T, CAPACITY>>
     where
         T: Transport,
