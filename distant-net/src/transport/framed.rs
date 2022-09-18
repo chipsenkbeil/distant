@@ -277,8 +277,25 @@ impl<const CAPACITY: usize> FramedTransport<super::InmemoryTransport, CAPACITY> 
         FramedTransport<super::InmemoryTransport, CAPACITY>,
     ) {
         let (a, b) = super::InmemoryTransport::pair(buffer);
-        let a = FramedTransport::new(a, PlainCodec::new());
-        let b = FramedTransport::new(b, PlainCodec::new());
+        let a = FramedTransport::new(
+            a,
+            Box::new(PlainCodec::new()),
+            Handshake::Client {
+                key: HeapSecretKey::from(Vec::new()),
+                preferred_compression_type: None,
+                preferred_compression_level: None,
+                preferred_encryption_type: None,
+            },
+        );
+        let b = FramedTransport::new(
+            b,
+            Box::new(PlainCodec::new()),
+            Handshake::Server {
+                key: HeapSecretKey::from(Vec::new()),
+                compression_types: Vec::new(),
+                encryption_types: Vec::new(),
+            },
+        );
         (a, b)
     }
 }

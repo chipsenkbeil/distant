@@ -53,14 +53,14 @@ pub enum Handshake {
 
     /// Indicates that the handshake is being performed from the server-side
     Server {
+        /// Secret key to use with encryption
+        key: HeapSecretKey,
+
         /// List of available compression algorithms for use between client and server
         compression_types: Vec<CompressionType>,
 
         /// List of available encryption algorithms for use between client and server
         encryption_types: Vec<EncryptionType>,
-
-        /// Secret key to use with encryption
-        key: HeapSecretKey,
     },
 }
 
@@ -158,6 +158,7 @@ where
             write_frame!(choice);
 
             // Transform the transport's codec to abide by the choice
+            debug!("[Handshake] Client updating codec based on {choice:#?}");
             transform_transport(transport, choice, &key)
         }
         Handshake::Server {
@@ -179,6 +180,7 @@ where
             let choice = next_frame_as!(HandshakeClientChoice);
 
             // Transform the transport's codec to abide by the choice
+            debug!("[Handshake] Server updating codec based on {choice:#?}");
             transform_transport(transport, choice, &key)
         }
     }
