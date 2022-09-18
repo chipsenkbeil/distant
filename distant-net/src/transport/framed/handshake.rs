@@ -5,7 +5,7 @@ use super::{
 use crate::utils;
 use log::*;
 use serde::{Deserialize, Serialize};
-use std::io;
+use std::{io, sync::Arc};
 
 mod on_choice;
 mod on_handshake;
@@ -110,13 +110,15 @@ impl<T, const CAPACITY: usize> Handshake<T, CAPACITY> {
 /// 4. Invoke on_handshake function
 ///
 pub(crate) async fn do_handshake<T, const CAPACITY: usize>(
-    transport: T,
-    handshake: &Handshake<T, CAPACITY>,
-) -> io::Result<FramedTransport<T, CAPACITY>>
+    transport: &mut FramedTransport<T, CAPACITY>,
+) -> io::Result<()>
 where
     T: Transport,
 {
-    let mut transport = FramedTransport::plain(transport);
+    // Place transport in plain text communication mode for start of handshake, and clear any data
+    // that is lingering within internal buffers
+    transport.set_codec(Box::new(PlainCodec::new()));
+    transport.clear();
 
     macro_rules! write_frame {
         ($data:expr) => {{
@@ -136,7 +138,7 @@ where
         }};
     }
 
-    match handshake {
+    match transport.handshake {
         Handshake::Client {
             key,
             on_choice,
@@ -155,7 +157,7 @@ where
             write_frame!(choice);
 
             // Transform the transport's codec to abide by the choice
-            let transport = transform_transport(transport, choice, &key)?;
+            transform_transport(transport, choice, &key)?;
 
             // Invoke callback to signal completion of handshake
             debug!("[Handshake] Standard client handshake done, invoking callback");
@@ -181,7 +183,7 @@ where
             let choice = next_frame_as!(HandshakeClientChoice);
 
             // Transform the transport's codec to abide by the choice
-            let transport = transform_transport(transport, choice, &key)?;
+            transform_transport(transport, choice, &key)?;
 
             // Invoke callback to signal completion of handshake
             debug!("[Handshake] Standard server handshake done, invoking callback");
@@ -191,10 +193,10 @@ where
 }
 
 fn transform_transport<T, const CAPACITY: usize>(
-    transport: FramedTransport<T, CAPACITY>,
+    transport: &mut FramedTransport<T, CAPACITY>,
     choice: HandshakeClientChoice,
     secret_key: &HeapSecretKey,
-) -> io::Result<FramedTransport<T, CAPACITY>> {
+) -> io::Result<()> {
     let codec: BoxedCodec = match (choice.compression, choice.encryption) {
         (Some(compression), Some(encryption)) => Box::new(ChainCodec::new(
             EncryptionCodec::from_type_and_key(encryption, secret_key.unprotected_as_bytes())?,
@@ -214,5 +216,5 @@ fn transform_transport<T, const CAPACITY: usize>(
         (None, None) => Box::new(PlainCodec::new()),
     };
 
-    Ok(transport.with_codec(codec))
+    Ok(transport.set_codec(codec))
 }

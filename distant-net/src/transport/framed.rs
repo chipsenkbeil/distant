@@ -1,7 +1,7 @@
 use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
-use std::{fmt, io};
+use std::{fmt, io, sync::Arc};
 
 mod codec;
 pub use codec::*;
@@ -20,23 +20,29 @@ const DEFAULT_CAPACITY: usize = 8 * 1024;
 /// well as the maximum bytes read per call to [`try_read`].
 ///
 /// [`try_read`]: Transport::try_read
-#[derive(Clone)]
 pub struct FramedTransport<T, const CAPACITY: usize = DEFAULT_CAPACITY> {
     inner: T,
     codec: BoxedCodec,
+    handshake: Handshake<T, CAPACITY>,
 
     incoming: BytesMut,
     outgoing: BytesMut,
 }
 
 impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
-    fn new(inner: T, codec: BoxedCodec) -> Self {
+    fn new(inner: T, codec: BoxedCodec, handshake: Handshake<T, CAPACITY>) -> Self {
         Self {
             inner,
             codec,
+            handshake,
             incoming: BytesMut::with_capacity(CAPACITY),
             outgoing: BytesMut::with_capacity(CAPACITY),
         }
+    }
+
+    /// Creates a new [`FramedTransport`] using the [`PlainCodec`]
+    fn plain(inner: T, handshake: Handshake<T, CAPACITY>) -> Self {
+        Self::new(inner, Box::new(PlainCodec::new()), handshake)
     }
 
     /// Performs a handshake with the other side of the `transport` in order to determine which
@@ -50,29 +56,20 @@ impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
     where
         T: Transport,
     {
-        handshake::do_handshake(transport, &handshake).await
+        let mut transport = Self::plain(transport, handshake);
+        handshake::do_handshake(&mut transport).await?;
+        Ok(transport)
     }
 
-    /// Creates a new [`FramedTransport`] using the [`PlainCodec`]
-    pub fn plain(inner: T) -> Self {
-        Self::new(inner, Box::new(PlainCodec::new()))
-    }
-
-    /// Consumes the current transport, replacing it's codec with the provided codec,
-    /// and returning it. Note that any bytes in the incoming or outgoing buffers will
-    /// remain in the transport, meaning that this can cause corruption if the bytes
-    /// in the buffers do not match the new codec.
+    /// Replaces the current codec with the provided codec. Note that any bytes in the incoming or
+    /// outgoing buffers will remain in the transport, meaning that this can cause corruption if
+    /// the bytes in the buffers do not match the new codec.
     ///
     /// For safety, use [`clear`] to wipe the buffers before further use.
     ///
     /// [`clear`]: FramedTransport::clear
-    pub fn with_codec(self, codec: impl Into<BoxedCodec>) -> FramedTransport<T, CAPACITY> {
-        FramedTransport {
-            inner: self.inner,
-            codec: codec.into(),
-            incoming: self.incoming,
-            outgoing: self.outgoing,
-        }
+    pub fn set_codec(&mut self, codec: BoxedCodec) {
+        self.codec = codec;
     }
 
     /// Clears the internal buffers used by the transport
@@ -263,12 +260,7 @@ where
         // changing based on the exchange; so, we want to clear out any lingering
         // bytes in the incoming and outgoing queues
         self.clear();
-
-        let FramedTransport { inner, codec, .. } =
-            handshake::do_handshake(self.inner, &self.handshake).await?;
-        self.inner = inner;
-        self.codec = codec;
-        Ok(())
+        handshake::do_handshake(self).await
     }
 }
 
