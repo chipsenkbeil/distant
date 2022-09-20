@@ -1,4 +1,4 @@
-use super::HeapSecretKey;
+use super::SecretKey32;
 use p256::{ecdh::EphemeralSecret, PublicKey};
 use rand::rngs::OsRng;
 use sha2::Sha256;
@@ -43,7 +43,7 @@ impl KeyExchange {
         &self,
         public_key: PublicKeyBytes,
         salt: Salt,
-    ) -> io::Result<HeapSecretKey> {
+    ) -> io::Result<SecretKey32> {
         // Decode the public key of the other side
         let decoded_public_key = PublicKey::try_from(public_key)?;
 
@@ -59,7 +59,7 @@ impl KeyExchange {
         // Derive a shared key (32 bytes)
         let mut shared_key = [0u8; 32];
         match hkdf.expand(&[], &mut shared_key) {
-            Ok(_) => Ok(HeapSecretKey::from(shared_key)),
+            Ok(_) => Ok(SecretKey32::from(shared_key)),
             Err(x) => Err(io::Error::new(io::ErrorKind::InvalidData, x.to_string())),
         }
     }

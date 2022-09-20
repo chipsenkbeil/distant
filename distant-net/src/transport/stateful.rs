@@ -96,23 +96,19 @@ where
     T: Transport + Send + Sync,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
-        match self.state {
+        // If authenticated, we perform a reconnect followed by re-authentication using our
+        // previously-acquired key to skip the need to do another authentication. Note that
+        // this can still change the underlying codec used by the transport if an alternative
+        // compression or encryption codec is picked.
+        if let State::Authenticated { key } = &self.state {
+            Reconnectable::reconnect(&mut self.inner).await?;
+
+            todo!("do handshake with key");
+        } else {
             // If not authenticated or in the process of authenticating, we simply perform a raw
             // reconnect and reset to not being authenticated
-            State::NotAuthenticated | State::Authenticating => {
-                self.state = State::NotAuthenticated;
-                Reconnectable::reconnect(&mut self.inner).await
-            }
-
-            // If authenticated, we perform a reconnect followed by re-authentication using our
-            // previously-acquired key to skip the need to do another authentication. Note that
-            // this can still change the underlying codec used by the transport if an alternative
-            // compression or encryption codec is picked.
-            State::Authenticated { key, .. } => {
-                Reconnectable::reconnect(&mut self.inner).await?;
-
-                todo!("do handshake with key");
-            }
+            self.state = State::NotAuthenticated;
+            Reconnectable::reconnect(&mut self.inner).await
         }
     }
 }

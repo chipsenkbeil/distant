@@ -1,4 +1,4 @@
-use crate::{Client, Codec, FramedTransport, WindowsPipeTransport};
+use crate::{Client, FramedTransport, WindowsPipeTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -15,54 +15,42 @@ where
 {
     /// Connect to a server listening on a Windows pipe at the specified address
     /// using the given codec
-    async fn connect<A, C>(addr: A, codec: C) -> io::Result<Client<T, U>>
+    async fn connect<A>(addr: A) -> io::Result<Client<T, U>>
     where
-        A: AsRef<OsStr> + Send,
-        C: Codec + Send + 'static;
+        A: AsRef<OsStr> + Send;
 
     /// Connect to a server listening on a Windows pipe at the specified address
     /// via `\\.\pipe\{name}` using the given codec
-    async fn connect_local<N, C>(name: N, codec: C) -> io::Result<Client<T, U>>
+    async fn connect_local<N>(name: N) -> io::Result<Client<T, U>>
     where
         N: AsRef<OsStr> + Send,
-        C: Codec + Send + 'static,
     {
         let mut addr = OsString::from(r"\\.\pipe\");
         addr.push(name.as_ref());
-        Self::connect(addr, codec).await
+        Self::connect(addr).await
     }
 
     /// Connect to a server listening on a Windows pipe at the specified address
     /// using the given codec, timing out after duration has passed
-    async fn connect_timeout<A, C>(
-        addr: A,
-        codec: C,
-        duration: Duration,
-    ) -> io::Result<Client<T, U>>
+    async fn connect_timeout<A>(addr: A, duration: Duration) -> io::Result<Client<T, U>>
     where
         A: AsRef<OsStr> + Send,
-        C: Codec + Send + 'static,
     {
-        tokio::time::timeout(duration, Self::connect(addr, codec))
+        tokio::time::timeout(duration, Self::connect(addr))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
             .and_then(convert::identity)
     }
 
     /// Connect to a server listening on a Windows pipe at the specified address
-    /// via `\\.\pipe\{name}` using the given codec, timing out after duration has passed
-    async fn connect_local_timeout<N, C>(
-        name: N,
-        codec: C,
-        duration: Duration,
-    ) -> io::Result<Client<T, U>>
+    /// via `\\.\pipe\{name}`, timing out after duration has passed
+    async fn connect_local_timeout<N>(name: N, duration: Duration) -> io::Result<Client<T, U>>
     where
         N: AsRef<OsStr> + Send,
-        C: Codec + Send + 'static,
     {
         let mut addr = OsString::from(r"\\.\pipe\");
         addr.push(name.as_ref());
-        Self::connect_timeout(addr, codec, duration).await
+        Self::connect_timeout(addr, duration).await
     }
 }
 
@@ -72,15 +60,18 @@ where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
-    async fn connect<A, C>(addr: A, codec: C) -> io::Result<Client<T, U>>
+    async fn connect<A>(addr: A) -> io::Result<Client<T, U>>
     where
         A: AsRef<OsStr> + Send,
-        C: Codec + Send + 'static,
     {
         let a = addr.as_ref();
         let transport = WindowsPipeTransport::connect(a).await?;
-        let transport = FramedTransport::new(transport, codec);
-        let (writer, reader) = transport.into_split();
-        Ok(Client::new(writer, reader)?)
+
+        // Establish our framed transport and perform a handshake to set the codec
+        // NOTE: Using default capacity
+        let mut transport = FramedTransport::<_>::plain(transport);
+        transport.client_handshake().await?;
+
+        Ok(Client::new(transport))
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
-    utils::Timer, ConnectionId, FramedTransport, GenericServerRef, Interest, Listener, PlainCodec,
-    Response, Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState, Shutdown,
-    Transport, UntypedRequest,
+    utils::Timer, ConnectionId, FramedTransport, GenericServerRef, Interest, Listener, Response,
+    Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState, Shutdown, Transport,
+    UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -207,17 +207,11 @@ where
         let (tx, mut rx) = mpsc::channel::<Response<S::Response>>(1);
 
         // Perform a handshake to ensure that the connection is properly established
-        let mut transport = match self
-            .server
-            .on_handshake(FramedTransport::new(self.transport, Box::new(PlainCodec)))
-            .await
-        {
-            Ok(transport) => transport,
-            Err(x) => {
-                error!("[Conn {connection_id}] Handshake failed: {x}");
-                return;
-            }
-        };
+        let mut transport: FramedTransport<T> = FramedTransport::plain(self.transport);
+        if let Err(x) = transport.server_handshake().await {
+            error!("[Conn {connection_id}] Handshake failed: {x}");
+            return;
+        }
 
         loop {
             let ready = transport

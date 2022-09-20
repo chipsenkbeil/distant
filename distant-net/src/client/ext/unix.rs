@@ -1,4 +1,4 @@
-use crate::{Client, Codec, FramedTransport, UnixSocketTransport};
+use crate::{Client, FramedTransport, UnixSocketTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, path::Path};
@@ -11,22 +11,16 @@ where
     U: DeserializeOwned + Send + Sync,
 {
     /// Connect to a proxy unix socket
-    async fn connect<P, C>(path: P, codec: C) -> io::Result<Client<T, U>>
+    async fn connect<P>(path: P) -> io::Result<Client<T, U>>
     where
-        P: AsRef<Path> + Send,
-        C: Codec + Send + 'static;
+        P: AsRef<Path> + Send;
 
     /// Connect to a proxy unix socket, timing out after duration has passed
-    async fn connect_timeout<P, C>(
-        path: P,
-        codec: C,
-        duration: Duration,
-    ) -> io::Result<Client<T, U>>
+    async fn connect_timeout<P>(path: P, duration: Duration) -> io::Result<Client<T, U>>
     where
         P: AsRef<Path> + Send,
-        C: Codec + Send + 'static,
     {
-        tokio::time::timeout(duration, Self::connect(path, codec))
+        tokio::time::timeout(duration, Self::connect(path))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
             .and_then(convert::identity)
@@ -40,15 +34,18 @@ where
     U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Connect to a proxy unix socket
-    async fn connect<P, C>(path: P, codec: C) -> io::Result<Client<T, U>>
+    async fn connect<P>(path: P) -> io::Result<Client<T, U>>
     where
         P: AsRef<Path> + Send,
-        C: Codec + Send + 'static,
     {
         let p = path.as_ref();
         let transport = UnixSocketTransport::connect(p).await?;
-        let transport = FramedTransport::new(transport, codec);
-        let (writer, reader) = transport.into_split();
-        Ok(Client::new(writer, reader)?)
+
+        // Establish our framed transport and perform a handshake to set the codec
+        // NOTE: Using default capacity
+        let mut transport = FramedTransport::<_>::plain(transport);
+        transport.client_handshake().await?;
+
+        Ok(Client::new(transport))
     }
 }

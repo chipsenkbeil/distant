@@ -41,7 +41,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, PlainCodec, Request, ServerCtx, TcpClientExt};
+    use crate::{Client, Request, ServerCtx, TcpClientExt};
     use std::net::{Ipv6Addr, SocketAddr};
 
     pub struct TestServer;
@@ -67,12 +67,10 @@ mod tests {
             .await
             .expect("Failed to start TCP server");
 
-        let mut client: Client<String, String> = Client::connect(
-            SocketAddr::from((server.ip_addr(), server.port())),
-            PlainCodec,
-        )
-        .await
-        .expect("Client failed to connect");
+        let mut client: Client<String, String> =
+            Client::connect(SocketAddr::from((server.ip_addr(), server.port())))
+                .await
+                .expect("Client failed to connect");
 
         let response = client
             .send(Request::new("hello".to_string()))

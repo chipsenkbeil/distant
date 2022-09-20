@@ -1,9 +1,10 @@
-use crate::{BoxedCodec, Client, FramedTransport, TcpTransport};
+use crate::{Client, FramedTransport, TcpTransport};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, net::SocketAddr};
 use tokio::{io, time::Duration};
 
+/// Interface that provides ability to connect to a TCP server
 #[async_trait]
 pub trait TcpClientExt<T, U>
 where
@@ -11,16 +12,11 @@ where
     U: DeserializeOwned + Send + Sync,
 {
     /// Connect to a remote TCP server using the provided information
-    async fn connect(addr: SocketAddr, codec: impl Into<BoxedCodec>) -> io::Result<Client<T, U>>;
+    async fn connect(addr: SocketAddr) -> io::Result<Client<T, U>>;
 
     /// Connect to a remote TCP server, timing out after duration has passed
-    async fn connect_timeout<C>(
-        addr: SocketAddr,
-        codec: impl Into<BoxedCodec> + Send,
-        duration: Duration,
-    ) -> io::Result<Client<T, U>> {
-        let codec = codec.into();
-        tokio::time::timeout(duration, Self::connect(addr, codec))
+    async fn connect_timeout<C>(addr: SocketAddr, duration: Duration) -> io::Result<Client<T, U>> {
+        tokio::time::timeout(duration, Self::connect(addr))
             .await
             .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
             .and_then(convert::identity)
@@ -34,9 +30,14 @@ where
     U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Connect to a remote TCP server using the provided information
-    async fn connect(addr: SocketAddr, codec: impl Into<BoxedCodec>) -> io::Result<Client<T, U>> {
+    async fn connect(addr: SocketAddr) -> io::Result<Client<T, U>> {
         let transport = TcpTransport::connect(addr).await?;
-        let transport = FramedTransport::new(transport, codec);
-        Self::new(transport)
+
+        // Establish our framed transport and perform a handshake to set the codec
+        // NOTE: Using default capacity
+        let mut transport = FramedTransport::<_>::plain(transport);
+        transport.client_handshake().await?;
+
+        Ok(Self::new(transport))
     }
 }
