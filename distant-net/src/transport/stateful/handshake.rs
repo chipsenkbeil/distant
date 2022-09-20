@@ -7,12 +7,6 @@ use log::*;
 use serde::{Deserialize, Serialize};
 use std::io;
 
-mod on_choice;
-mod on_handshake;
-
-pub use on_choice::*;
-pub use on_handshake::*;
-
 /// Options from the server representing available methods to configure a framed transport
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HandshakeServerOptions {
@@ -35,12 +29,9 @@ pub struct HandshakeClientChoice {
 
 /// Definition of the handshake to perform for a transport
 #[derive(Clone, Debug)]
-pub enum Handshake {
+pub enum HandshakeOptions {
     /// Indicates that the handshake is being performed from the client-side
     Client {
-        /// Secret key to use with encryption
-        key: HeapSecretKey,
-
         /// Preferred compression algorithm when presented options by server
         preferred_compression_type: Option<CompressionType>,
 
@@ -53,9 +44,6 @@ pub enum Handshake {
 
     /// Indicates that the handshake is being performed from the server-side
     Server {
-        /// Secret key to use with encryption
-        key: HeapSecretKey,
-
         /// List of available compression algorithms for use between client and server
         compression_types: Vec<CompressionType>,
 
@@ -64,25 +52,23 @@ pub enum Handshake {
     },
 }
 
-impl Handshake {
-    /// Creates a new client handshake definition, using `key` for encryption, providing defaults
-    /// for the preferred compression type, compression level, and encryption type
-    pub fn client(key: HeapSecretKey) -> Self {
+impl HandshakeOptions {
+    /// Creates a new client handshake definition, providing defaults for the preferred compression
+    /// type, compression level, and encryption type
+    pub fn client() -> Self {
         Self::Client {
-            key,
             preferred_compression_type: None,
             preferred_compression_level: None,
             preferred_encryption_type: Some(EncryptionType::XChaCha20Poly1305),
         }
     }
 
-    /// Creates a new client handshake definition, using `key` for encryption, providing defaults
-    /// for the compression types and encryption types by including all known variants
-    pub fn server(key: HeapSecretKey) -> Self {
+    /// Creates a new server handshake definition, providing defaults for the compression types and
+    /// encryption types by including all known variants
+    pub fn server() -> Self {
         Self::Server {
             compression_types: CompressionType::known_variants().to_vec(),
             encryption_types: EncryptionType::known_variants().to_vec(),
-            key,
         }
     }
 }
@@ -133,8 +119,8 @@ where
     }
 
     match transport.handshake.clone() {
-        Handshake::Client {
-            key,
+        HandshakeOptions::Client {
+            access_token,
             preferred_compression_type,
             preferred_compression_level,
             preferred_encryption_type,
@@ -159,9 +145,9 @@ where
 
             // Transform the transport's codec to abide by the choice
             debug!("[Handshake] Client updating codec based on {choice:#?}");
-            transform_transport(transport, choice, &key)
+            transform_transport(transport, choice, &access_token)
         }
-        Handshake::Server {
+        HandshakeOptions::Server {
             key,
             compression_types,
             encryption_types,

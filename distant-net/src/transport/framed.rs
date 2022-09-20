@@ -1,16 +1,13 @@
 use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
-use std::{fmt, io, sync::Arc};
+use std::{fmt, io};
 
 mod codec;
 pub use codec::*;
 
 mod frame;
 pub use frame::*;
-
-mod handshake;
-pub use handshake::*;
 
 /// By default, framed transport's initial capacity (and max single-read) will be 8 KiB
 const DEFAULT_CAPACITY: usize = 8 * 1024;
@@ -24,42 +21,23 @@ const DEFAULT_CAPACITY: usize = 8 * 1024;
 pub struct FramedTransport<T, const CAPACITY: usize = DEFAULT_CAPACITY> {
     inner: T,
     codec: BoxedCodec,
-    handshake: Handshake,
-
     incoming: BytesMut,
     outgoing: BytesMut,
 }
 
 impl<T, const CAPACITY: usize> FramedTransport<T, CAPACITY> {
-    fn new(inner: T, codec: BoxedCodec, handshake: Handshake) -> Self {
+    pub fn new(inner: T, codec: BoxedCodec) -> Self {
         Self {
             inner,
             codec,
-            handshake,
             incoming: BytesMut::with_capacity(CAPACITY),
             outgoing: BytesMut::with_capacity(CAPACITY),
         }
     }
 
     /// Creates a new [`FramedTransport`] using the [`PlainCodec`]
-    fn plain(inner: T, handshake: Handshake) -> Self {
-        Self::new(inner, Box::new(PlainCodec::new()), handshake)
-    }
-
-    /// Performs a handshake with the other side of the `transport` in order to determine which
-    /// [`Codec`] to use as well as perform any additional logic to prepare the framed transport.
-    ///
-    /// Will use the handshake criteria provided in `handshake`
-    pub async fn from_handshake(
-        transport: T,
-        handshake: Handshake,
-    ) -> io::Result<FramedTransport<T, CAPACITY>>
-    where
-        T: Transport,
-    {
-        let mut transport = Self::plain(transport, handshake);
-        handshake::do_handshake(&mut transport).await?;
-        Ok(transport)
+    pub fn plain(inner: T) -> Self {
+        Self::new(inner, Box::new(PlainCodec::new()))
     }
 
     /// Replaces the current codec with the provided codec. Note that any bytes in the incoming or
@@ -254,14 +232,7 @@ where
     T: Transport + Send + Sync,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
-        // Establish a new connection
-        Reconnectable::reconnect(&mut self.inner).await?;
-
-        // Perform handshake again, which can result in the underlying codec
-        // changing based on the exchange; so, we want to clear out any lingering
-        // bytes in the incoming and outgoing queues
-        self.clear();
-        handshake::do_handshake(self).await
+        Reconnectable::reconnect(&mut self.inner).await
     }
 }
 
@@ -277,25 +248,8 @@ impl<const CAPACITY: usize> FramedTransport<super::InmemoryTransport, CAPACITY> 
         FramedTransport<super::InmemoryTransport, CAPACITY>,
     ) {
         let (a, b) = super::InmemoryTransport::pair(buffer);
-        let a = FramedTransport::new(
-            a,
-            Box::new(PlainCodec::new()),
-            Handshake::Client {
-                key: HeapSecretKey::from(Vec::new()),
-                preferred_compression_type: None,
-                preferred_compression_level: None,
-                preferred_encryption_type: None,
-            },
-        );
-        let b = FramedTransport::new(
-            b,
-            Box::new(PlainCodec::new()),
-            Handshake::Server {
-                key: HeapSecretKey::from(Vec::new()),
-                compression_types: Vec::new(),
-                encryption_types: Vec::new(),
-            },
-        );
+        let a = FramedTransport::new(a, Box::new(PlainCodec::new()));
+        let b = FramedTransport::new(b, Box::new(PlainCodec::new()));
         (a, b)
     }
 }
@@ -385,7 +339,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -399,7 +353,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -415,7 +369,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -431,7 +385,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            ErrCodec,
+            Box::new(ErrCodec),
         );
         assert_eq!(
             transport.try_read_frame().unwrap_err().kind(),
@@ -456,7 +410,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
         assert_eq!(transport.try_read_frame().unwrap().unwrap(), b"hello world");
     }
@@ -475,7 +429,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
         assert_eq!(transport.try_read_frame().unwrap().unwrap(), b"hello world");
 
@@ -495,7 +449,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         // First call will only write part of the frame and then return WouldBlock
@@ -516,7 +470,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
         assert_eq!(
             transport
@@ -535,7 +489,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            ErrCodec,
+            Box::new(ErrCodec),
         );
         assert_eq!(
             transport
@@ -559,7 +513,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         transport.try_write_frame(b"hello world").unwrap();
@@ -593,7 +547,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         // First call will only write part of the frame and then return WouldBlock
@@ -636,7 +590,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         // Set our outgoing buffer to flush
@@ -657,7 +611,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         // Set our outgoing buffer to flush
@@ -678,7 +632,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         // Perform flush and verify nothing happens
@@ -699,7 +653,7 @@ mod tests {
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
                 ..Default::default()
             },
-            OkCodec,
+            Box::new(OkCodec),
         );
 
         // Set our outgoing buffer to flush
