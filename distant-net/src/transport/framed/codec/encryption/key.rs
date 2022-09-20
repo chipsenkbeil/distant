@@ -152,6 +152,12 @@ impl From<Vec<u8>> for HeapSecretKey {
     }
 }
 
+impl<const N: usize> From<[u8; N]> for HeapSecretKey {
+    fn from(arr: [u8; N]) -> Self {
+        Self::from(arr.to_vec())
+    }
+}
+
 impl FromStr for HeapSecretKey {
     type Err = SecretKeyError;
 

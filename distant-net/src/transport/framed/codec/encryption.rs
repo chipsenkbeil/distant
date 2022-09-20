@@ -26,6 +26,7 @@ impl EncryptionType {
         match self {
             Self::XChaCha20Poly1305 => Ok(SecretKey::<32>::generate()
                 .unwrap()
+                .into_heap_secret_key()
                 .unprotected_into_bytes()),
             Self::Unknown => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -37,6 +38,12 @@ impl EncryptionType {
     /// Returns a list of all variants of the type *except* unknown.
     pub const fn known_variants() -> &'static [EncryptionType] {
         &[EncryptionType::XChaCha20Poly1305]
+    }
+
+    /// Creates a new [`EncryptionCodec`] for this type, failing if this type is unknown or the key
+    /// is an invalid length
+    pub fn new_codec(&self, key: &[u8]) -> io::Result<EncryptionCodec> {
+        EncryptionCodec::from_type_and_key(*self, key)
     }
 }
 
@@ -100,6 +107,7 @@ impl EncryptionCodec {
         match self {
             Self::XChaCha20Poly1305 { .. } => SecretKey::<24>::generate()
                 .unwrap()
+                .into_heap_secret_key()
                 .unprotected_into_bytes(),
         }
     }

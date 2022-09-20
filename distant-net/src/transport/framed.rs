@@ -1,13 +1,20 @@
 use super::{Interest, Ready, Reconnectable, Transport};
+use crate::utils;
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
+use log::*;
+use serde::{Deserialize, Serialize};
 use std::{fmt, io};
 
 mod codec;
-pub use codec::*;
-
+mod exchange;
 mod frame;
+mod handshake;
+
+pub use codec::*;
+pub use exchange::*;
 pub use frame::*;
+pub use handshake::*;
 
 /// By default, framed transport's initial capacity (and max single-read) will be 8 KiB
 const DEFAULT_CAPACITY: usize = 8 * 1024;
@@ -114,6 +121,192 @@ where
         }
 
         Ok(())
+    }
+
+    /// Performs a handshake in order to establish a new codec to use between this transport and
+    /// the other side. The parameter `handshake` defines how the transport will handle the
+    /// handshake with `Client` being used to pick the compression and encryption used while
+    /// `Server` defines what the choices are for compression and encryption.
+    ///
+    /// This will reset the framed transport's codec to [`PlainCodec`] in order to communicate
+    /// which compression and encryption to use. Upon selecting an encryption type, a shared secret
+    /// key will be derived on both sides and used to establish the [`EncryptionCodec`], which in
+    /// combination with the [`CompressionCodec`] (if any) will replace this transport's codec.
+    ///
+    /// ### Client
+    ///
+    /// 1. Wait for options from server
+    /// 2. Send to server a compression and encryption choice
+    /// 3. Configure framed transport using selected choices
+    /// 4. Invoke on_handshake function
+    ///
+    /// ### Server
+    ///
+    /// 1. Send options to client
+    /// 2. Receive choices from client
+    /// 3. Configure framed transport using client's choices
+    /// 4. Invoke on_handshake function
+    ///
+    /// ### Failure
+    ///
+    /// The handshake will fail in several cases:
+    ///
+    /// * If any frame during the handshake fails to be serialized
+    /// * If any unexpected frame is received during the handshake
+    /// * If using encryption and unable to derive a shared secret key
+    ///
+    /// If a failure happens, the codec will be reset to what it was prior to the handshake
+    /// request, and all internal buffers will be cleared to avoid corruption.
+    ///
+    pub async fn handshake(&mut self, handshake: Handshake) -> io::Result<()>
+    where
+        T: Transport,
+    {
+        // Place transport in plain text communication mode for start of handshake, and clear any
+        // data that is lingering within internal buffers
+        //
+        // NOTE: We grab the old codec in case we encounter an error and need to reset it
+        let old_codec = std::mem::replace(&mut self.codec, Box::new(PlainCodec::new()));
+        self.clear();
+
+        // Transform the transport's codec to abide by the choice. In the case of an error, we
+        // reset the codec back to what it was prior to attempting the handshake and clear the
+        // internal buffers as they may be corrupt.
+        match self.handshake_impl(handshake).await {
+            Ok(codec) => {
+                self.set_codec(codec);
+                Ok(())
+            }
+            Err(x) => {
+                self.set_codec(old_codec);
+                self.clear();
+                Err(x)
+            }
+        }
+    }
+
+    async fn handshake_impl(&mut self, handshake: Handshake) -> io::Result<BoxedCodec> {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Choice {
+            compression_level: Option<CompressionLevel>,
+            compression_type: Option<CompressionType>,
+            encryption_type: Option<EncryptionType>,
+        }
+
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Options {
+            compression_types: Vec<CompressionType>,
+            encryption_types: Vec<EncryptionType>,
+        }
+
+        macro_rules! write_frame {
+            ($data:expr) => {{
+                self.write_frame(utils::serialize_to_vec(&$data)?).await?
+            }};
+        }
+
+        macro_rules! next_frame_as {
+            ($type:ty) => {{
+                let frame = self.read_frame().await?.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+                })?;
+
+                utils::deserialize_from_slice::<$type>(frame.as_item())?
+            }};
+        }
+
+        // Determine compression and encryption to apply to framed transport
+        let choice = match handshake {
+            Handshake::Client {
+                preferred_compression_type,
+                preferred_compression_level,
+                preferred_encryption_type,
+            } => {
+                // Receive options from the server and pick one
+                debug!("[Handshake] Client waiting on server options");
+                let options = next_frame_as!(Options);
+
+                // Choose a compression and encryption option from the options
+                debug!("[Handshake] Client selecting from server options: {options:#?}");
+                let choice = Choice {
+                    compression_type: preferred_compression_type
+                        .filter(|ty| options.compression_types.contains(ty)),
+                    compression_level: preferred_compression_level,
+                    encryption_type: preferred_encryption_type
+                        .filter(|ty| options.encryption_types.contains(ty)),
+                };
+
+                // Report back to the server the choice
+                debug!("[Handshake] Client reporting choice: {choice:#?}");
+                write_frame!(choice);
+
+                choice
+            }
+            Handshake::Server {
+                compression_types,
+                encryption_types,
+            } => {
+                let options = Options {
+                    compression_types: compression_types.to_vec(),
+                    encryption_types: encryption_types.to_vec(),
+                };
+
+                // Send options to the client
+                debug!("[Handshake] Server sending options: {options:#?}");
+                write_frame!(options);
+
+                // Get client's response with selected compression and encryption
+                debug!("[Handshake] Server waiting on client choice");
+                next_frame_as!(Choice)
+            }
+        };
+
+        debug!("[Handshake] Building compression & encryption codecs based on {choice:#?}");
+        let compression_level = choice.compression_level.unwrap_or_default();
+
+        // Acquire a codec for the compression type
+        let compression_codec = choice
+            .compression_type
+            .map(|ty| ty.new_codec(compression_level))
+            .transpose()?;
+
+        // In the case that we are using encryption, we derive a shared secret key to use with the
+        // encryption type
+        let encryption_codec = match choice.encryption_type {
+            Some(ty) => {
+                #[derive(Serialize, Deserialize)]
+                struct KeyExchangeData {
+                    /// Bytes of the public key
+                    #[serde(with = "serde_bytes")]
+                    public_key: PublicKeyBytes,
+
+                    /// Randomly generated salt
+                    #[serde(with = "serde_bytes")]
+                    salt: Salt,
+                }
+
+                let exchange = KeyExchange::default();
+                write_frame!(KeyExchangeData {
+                    public_key: exchange.pk_bytes(),
+                    salt: *exchange.salt(),
+                });
+
+                let data = next_frame_as!(KeyExchangeData);
+                let key = exchange.derive_shared_secret(data.public_key, data.salt)?;
+                Some(ty.new_codec(key.unprotected_as_bytes())?)
+            }
+            None => None,
+        };
+
+        // Bundle our compression and encryption codecs into a single, chained codec
+        let codec: BoxedCodec = match (compression_codec, encryption_codec) {
+            (Some(c), Some(e)) => Box::new(ChainCodec::new(c, e)),
+            (Some(c), None) => Box::new(c),
+            (None, Some(e)) => Box::new(e),
+            (None, None) => Box::new(PlainCodec::new()),
+        };
+
+        Ok(codec)
     }
 }
 

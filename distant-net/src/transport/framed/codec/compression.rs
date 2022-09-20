@@ -66,6 +66,11 @@ impl CompressionType {
             CompressionType::Zlib,
         ]
     }
+
+    /// Creates a new [`CompressionCodec`] for this type, failing if this type is unknown
+    pub fn new_codec(&self, level: CompressionLevel) -> io::Result<CompressionCodec> {
+        CompressionCodec::from_type_and_level(*self, level)
+    }
 }
 
 /// Represents a codec that applies compression during encoding and decompression during decoding
