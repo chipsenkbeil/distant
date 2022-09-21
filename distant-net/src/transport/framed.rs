@@ -914,4 +914,95 @@ mod tests {
             std::sync::mpsc::TryRecvError::Empty
         );
     }
+
+    #[tokio::test]
+    async fn handshake_should_configure_transports_with_matching_codec() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_failing_should_ensure_existing_codec_remains() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_should_clear_any_intermittent_buffer_contents_prior_to_handshake() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_if_receives_unexpected_frame_instead_of_options() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_unable_to_send_codec_choice_to_other_side() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type(
+    ) {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type(
+    ) {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
+    ) {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_client_should_fail_if_an_error_occurs_during_derive_of_shared_secret() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_if_receives_unexpected_frame_instead_of_choice() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_unable_to_send_codec_options_to_other_side() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type(
+    ) {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type(
+    ) {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
+    ) {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn handshake_for_server_should_fail_if_an_error_occurs_during_derive_of_shared_secret() {
+        todo!();
+    }
 }
