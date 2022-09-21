@@ -40,6 +40,11 @@ impl EncryptionType {
         &[EncryptionType::XChaCha20Poly1305]
     }
 
+    /// Returns true if type is unknown
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+
     /// Creates a new [`EncryptionCodec`] for this type, failing if this type is unknown or the key
     /// is an invalid length
     pub fn new_codec(&self, key: &[u8]) -> io::Result<EncryptionCodec> {

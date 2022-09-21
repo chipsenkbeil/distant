@@ -349,11 +349,25 @@ where
                 // Choose a compression and encryption option from the options
                 debug!("[Handshake] Client selecting from server options: {options:#?}");
                 let choice = Choice {
+                    // Use preferred compression if available, otherwise default to no compression
+                    // to avoid choosing something poor
                     compression_type: preferred_compression_type
                         .filter(|ty| options.compression_types.contains(ty)),
+
+                    // Use preferred compression level, otherwise allowing the server to pick
                     compression_level: preferred_compression_level,
+
+                    // Use preferred encryption, otherwise pick first non-unknown encryption type
+                    // that is available instead
                     encryption_type: preferred_encryption_type
-                        .filter(|ty| options.encryption_types.contains(ty)),
+                        .filter(|ty| options.encryption_types.contains(ty))
+                        .or_else(|| {
+                            options
+                                .encryption_types
+                                .iter()
+                                .find(|ty| !ty.is_unknown())
+                                .copied()
+                        }),
                 };
 
                 // Report back to the server the choice
@@ -411,6 +425,10 @@ where
                     salt: *exchange.salt(),
                 });
 
+                // TODO: This key only works because it happens to be 32 bytes and our encryption
+                //       also wants a 32-byte key. Once we introduce new encryption algorithms that
+                //       are not using 32-byte keys, the key exchange will need to support deriving
+                //       other length keys.
                 let data = next_frame_as!(KeyExchangeData);
                 let key = exchange.derive_shared_secret(data.public_key, data.salt)?;
                 Some(ty.new_codec(key.unprotected_as_bytes())?)
