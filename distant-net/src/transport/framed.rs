@@ -1,4 +1,4 @@
-use super::{Interest, Ready, Reconnectable, Transport};
+use super::{InmemoryTransport, Interest, Ready, Reconnectable, Transport};
 use crate::utils;
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
@@ -182,7 +182,7 @@ where
             self.readable().await?;
 
             match self.try_read_frame() {
-                Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => tokio::task::yield_now().await,
                 x => return x,
             }
         }
@@ -222,7 +222,9 @@ where
             Err(x) if x.kind() == io::ErrorKind::WouldBlock => loop {
                 self.writeable().await?;
                 match self.try_flush() {
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                        tokio::task::yield_now().await
+                    }
                     x => return x,
                 }
             },
@@ -466,7 +468,7 @@ where
     }
 }
 
-impl<const CAPACITY: usize> FramedTransport<super::InmemoryTransport, CAPACITY> {
+impl<const CAPACITY: usize> FramedTransport<InmemoryTransport, CAPACITY> {
     /// Produces a pair of inmemory transports that are connected to each other using
     /// a standard codec
     ///
@@ -474,10 +476,10 @@ impl<const CAPACITY: usize> FramedTransport<super::InmemoryTransport, CAPACITY> 
     pub fn pair(
         buffer: usize,
     ) -> (
-        FramedTransport<super::InmemoryTransport, CAPACITY>,
-        FramedTransport<super::InmemoryTransport, CAPACITY>,
+        FramedTransport<InmemoryTransport, CAPACITY>,
+        FramedTransport<InmemoryTransport, CAPACITY>,
     ) {
-        let (a, b) = super::InmemoryTransport::pair(buffer);
+        let (a, b) = InmemoryTransport::pair(buffer);
         let a = FramedTransport::new(a, Box::new(PlainCodec::new()));
         let b = FramedTransport::new(b, Box::new(PlainCodec::new()));
         (a, b)
@@ -485,13 +487,13 @@ impl<const CAPACITY: usize> FramedTransport<super::InmemoryTransport, CAPACITY> 
 }
 
 #[cfg(test)]
-impl FramedTransport<super::InmemoryTransport> {
+impl FramedTransport<InmemoryTransport> {
     /// Generates a test pair with default capacity
     pub fn test_pair(
         buffer: usize,
     ) -> (
-        FramedTransport<super::InmemoryTransport>,
-        FramedTransport<super::InmemoryTransport>,
+        FramedTransport<InmemoryTransport>,
+        FramedTransport<InmemoryTransport>,
     ) {
         Self::pair(buffer)
     }
@@ -915,9 +917,29 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn handshake_should_configure_transports_with_matching_codec() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // NOTE: Spawn a separate task for one of our transports so we can communicate without
+        //       deadlocking
+        let server_task = tokio::spawn(async move {
+            // Wait for handshake to complete
+            t2.server_handshake().await.unwrap();
+
+            // Receive one frame and echo it back
+            let frame = t2.read_frame().await.unwrap().unwrap();
+            t2.write_frame(frame).await.unwrap();
+        });
+
+        t1.client_handshake().await.unwrap();
+
+        // Verify that the transports can still communicate with one another
+        t1.write_frame(b"hello world").await.unwrap();
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello world");
+
+        // Ensure that the server transport did not error
+        server_task.await.unwrap();
     }
 
     #[tokio::test]
