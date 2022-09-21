@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn try_read_frame_should_return_would_block_if_fails_to_read_frame_before_blocking() {
         // Should fail if immediately blocks
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::WouldBlock))),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
@@ -572,7 +572,7 @@ mod tests {
         );
 
         // Should fail if not read enough bytes before blocking
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_read: simulate_try_read(vec![Frame::new(b"some data")], 1, |cnt| cnt == 1),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn try_read_frame_should_return_error_if_encountered_error_with_reading_bytes() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn try_read_frame_should_return_error_if_encountered_error_during_decode() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_read: simulate_try_read(vec![Frame::new(b"some data")], 1, |_| false),
                 f_ready: Box::new(|_| Ok(Ready::READABLE)),
@@ -626,7 +626,7 @@ mod tests {
             data.freeze()
         };
 
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_read: Box::new(move |buf| {
                     buf[..data.len()].copy_from_slice(data.as_ref());
@@ -644,7 +644,7 @@ mod tests {
     fn try_read_frame_should_keep_reading_until_a_frame_is_found() {
         const STEP_SIZE: usize = Frame::HEADER_SIZE + 7;
 
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_read: simulate_try_read(
                     vec![Frame::new(b"hello world"), Frame::new(b"test hello")],
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn try_write_frame_should_return_would_block_if_fails_to_write_frame_before_blocking() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::WouldBlock))),
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn try_write_frame_should_return_error_if_encountered_error_with_writing_bytes() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
@@ -708,7 +708,7 @@ mod tests {
 
     #[test]
     fn try_write_frame_should_return_error_if_encountered_error_during_encode() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(|buf| Ok(buf.len())),
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
@@ -728,7 +728,7 @@ mod tests {
     #[test]
     fn try_write_frame_should_write_entire_frame_if_possible() {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(move |buf| {
                     let len = buf.len();
@@ -754,7 +754,7 @@ mod tests {
     fn try_write_frame_should_write_any_prior_queued_bytes_before_writing_next_frame() {
         const STEP_SIZE: usize = Frame::HEADER_SIZE + 5;
         let (tx, rx) = std::sync::mpsc::sync_channel(10);
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(move |buf| {
                     static mut CNT: usize = 0;
@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn try_flush_should_return_error_if_try_write_fails() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
@@ -830,7 +830,7 @@ mod tests {
 
     #[test]
     fn try_flush_should_return_error_if_try_write_returns_0_bytes_written() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(|_| Ok(0)),
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
@@ -851,7 +851,7 @@ mod tests {
 
     #[test]
     fn try_flush_should_be_noop_if_nothing_to_flush() {
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
                 f_ready: Box::new(|_| Ok(Ready::WRITABLE)),
@@ -868,7 +868,7 @@ mod tests {
     fn try_flush_should_continually_call_try_write_until_outgoing_buffer_is_empty() {
         const STEP_SIZE: usize = 5;
         let (tx, rx) = std::sync::mpsc::sync_channel(10);
-        let mut transport = FramedTransport::new(
+        let mut transport = FramedTransport::<_>::new(
             TestTransport {
                 f_try_write: Box::new(move |buf| {
                     let len = std::cmp::min(STEP_SIZE, buf.len());

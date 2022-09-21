@@ -360,7 +360,7 @@ mod tests {
         let (tx, listener) = make_listener(100);
 
         // Make bounded transport pair and send off one of them to act as our connection
-        let (mut transport, connection) = InmemoryTransport::pair(100);
+        let (transport, connection) = InmemoryTransport::pair(100);
         tx.send(connection)
             .await
             .expect("Failed to feed listener a connection");

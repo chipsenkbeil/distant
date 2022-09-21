@@ -1,4 +1,3 @@
-use crate::FramedTransport;
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
@@ -39,15 +38,6 @@ pub trait Server: Send {
     /// Returns configuration tied to server instance
     fn config(&self) -> ServerConfig {
         ServerConfig::default()
-    }
-
-    /// Invoked to facilitate a handshake between server and client upon establishing a connection,
-    /// returning an updated [`FramedTransport`] once the handshake is complete
-    async fn on_handshake<T: Send, const CAPACITY: usize>(
-        &self,
-        transport: FramedTransport<T, CAPACITY>,
-    ) -> io::Result<FramedTransport<T, CAPACITY>> {
-        Ok(transport)
     }
 
     /// Invoked upon a new connection becoming established, which provides a mutable reference to

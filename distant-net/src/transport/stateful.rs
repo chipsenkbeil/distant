@@ -5,6 +5,9 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+mod auth;
+pub use auth::*;
+
 /// Internal state for our transport
 #[derive(Clone, Debug)]
 enum State {
@@ -45,8 +48,6 @@ impl<T, const CAPACITY: usize> StatefulFramedTransport<T, CAPACITY> {
     }
 
     /// Performs authentication with the other side, moving the state to be authenticated.
-    ///
-    /// NOTE: Does nothing if already authenticated!
     pub async fn authenticate(&mut self) -> io::Result<()> {
         if self.is_authenticated() {
             return Ok(());

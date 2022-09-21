@@ -203,7 +203,7 @@ mod tests {
         }
 
         let frame = t2.try_read_frame().unwrap().unwrap();
-        let _req: Request<u8> = Request::from_slice(&frame.as_item()).unwrap();
+        let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
     }
 
     #[tokio::test]
@@ -219,6 +219,6 @@ mod tests {
         }
 
         let frame = t2.try_read_frame().unwrap().unwrap();
-        let _req: Request<u8> = Request::from_slice(&frame.as_item()).unwrap();
+        let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
     }
 }

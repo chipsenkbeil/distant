@@ -1,4 +1,7 @@
-use crate::{FramedTransport, Interest, Reconnectable, Request, Transport, UntypedResponse};
+use crate::{
+    FramedTransport, Interest, Reconnectable, Request, StatefulFramedTransport, Transport,
+    UntypedResponse,
+};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -35,23 +38,30 @@ pub struct Client<T, U> {
 
 impl<T, U> Client<T, U>
 where
-    T: Send + Sync + Serialize,
-    U: Send + Sync + DeserializeOwned,
+    T: Send + Sync + Serialize + 'static,
+    U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Initializes a client using the provided [`FramedTransport`]
     pub fn new<V, const CAPACITY: usize>(transport: FramedTransport<V, CAPACITY>) -> Self
     where
-        V: Transport + Send + Sync,
+        V: Transport + Send + Sync + 'static,
     {
         let post_office = Arc::new(PostOffice::default());
         let weak_post_office = Arc::downgrade(&post_office);
         let (tx, mut rx) = mpsc::channel::<Request<T>>(1);
-        let (reconnect_tx, reconnect_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
-        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+
+        let mut transport = StatefulFramedTransport::new(transport);
 
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let task = tokio::spawn(async move {
+            transport
+                .authenticate()
+                .await
+                .expect("Failed to authenticate with the remote server");
+
             loop {
                 let ready = tokio::select! {
                     _ = shutdown_rx.recv() => {
@@ -59,7 +69,7 @@ where
                     }
                     cb = reconnect_rx.recv() => {
                         if let Some(cb) = cb {
-                            cb.send(Reconnectable::reconnect(&mut transport).await);
+                            let _ = cb.send(Reconnectable::reconnect(&mut transport).await);
                             continue;
                         } else {
                             break;
@@ -164,6 +174,11 @@ impl<T, U> Client<T, U> {
     /// Abort the client's current connection by forcing its tasks to abort
     pub fn abort(&self) {
         self.task.abort();
+    }
+
+    /// Signal for the client to shutdown its connection cleanly
+    pub async fn shutdown(&self) -> bool {
+        self.shutdown_tx.send(()).await.is_ok()
     }
 
     /// Returns true if client's underlying event processing has finished/terminated

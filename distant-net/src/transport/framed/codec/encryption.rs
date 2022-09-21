@@ -125,35 +125,34 @@ impl fmt::Debug for EncryptionCodec {
 
 impl Codec for EncryptionCodec {
     fn encode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
-        let frame = match self {
+        let nonce_bytes = self.generate_nonce_bytes();
+
+        Ok(match self {
             Self::XChaCha20Poly1305 { cipher } => {
                 use chacha20poly1305::{aead::Aead, XNonce};
-                let nonce_bytes = self.generate_nonce_bytes();
+                let item = frame.into_item();
                 let nonce = XNonce::from_slice(&nonce_bytes);
 
                 // Encrypt the frame's item as our ciphertext
                 let ciphertext = cipher
-                    .encrypt(nonce, frame.as_item())
+                    .encrypt(nonce, item.as_ref())
                     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Encryption failed"))?;
 
-                // Frame is now comprised of the nonce and ciphertext in sequence
-                let mut frame = Frame::new(&nonce_bytes);
+                // Start our frame with the nonce at the beginning
+                let mut frame = Frame::from(nonce_bytes);
                 frame.extend(ciphertext);
+
                 frame
             }
-        };
-
-        Ok(frame.into_owned())
+        })
     }
 
     fn decode<'a>(&mut self, frame: Frame<'a>) -> io::Result<Frame<'a>> {
-        if frame.len() <= self.nonce_size() {
+        let nonce_size = self.nonce_size();
+        if frame.len() <= nonce_size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "Frame cannot have length less than {}",
-                    self.nonce_size() + 1
-                ),
+                format!("Frame cannot have length less than {}", nonce_size + 1),
             ));
         }
 
@@ -162,9 +161,9 @@ impl Codec for EncryptionCodec {
         let item = match self {
             Self::XChaCha20Poly1305 { cipher } => {
                 use chacha20poly1305::{aead::Aead, XNonce};
-                let nonce = XNonce::from_slice(&frame.as_item()[..self.nonce_size()]);
+                let nonce = XNonce::from_slice(&frame.as_item()[..nonce_size]);
                 cipher
-                    .decrypt(nonce, &frame.as_item()[self.nonce_size()..])
+                    .decrypt(nonce, &frame.as_item()[nonce_size..])
                     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Decryption failed"))?
             }
         };

@@ -43,7 +43,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, PlainCodec, Request, ServerCtx, UnixSocketClientExt};
+    use crate::{Client, Request, ServerCtx, UnixSocketClientExt};
     use tempfile::NamedTempFile;
 
     pub struct TestServer;
@@ -75,7 +75,7 @@ mod tests {
             .await
             .expect("Failed to start Unix socket server");
 
-        let mut client: Client<String, String> = Client::connect(server.path(), PlainCodec)
+        let mut client: Client<String, String> = Client::connect(server.path())
             .await
             .expect("Client failed to connect");
 

@@ -184,20 +184,13 @@ mod tests {
     use super::*;
     use crate::data::ChangeKind;
     use crate::DistantClient;
-    use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
-        TypedAsyncRead, TypedAsyncWrite,
-    };
+    use distant_net::{Client, FramedTransport, InmemoryTransport, Response};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    fn make_session() -> (
-        FramedTransport<InmemoryTransport, PlainCodec>,
-        DistantClient,
-    ) {
-        let (t1, t2) = FramedTransport::pair(100);
-        let (writer, reader) = t2.into_split();
-        (t1, Client::new(writer, reader).unwrap())
+    fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
+        let (t1, t2) = FramedTransport::test_pair(100);
+        (t1, Client::new(t2))
     }
 
     #[tokio::test]
