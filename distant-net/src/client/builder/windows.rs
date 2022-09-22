@@ -73,11 +73,10 @@ impl<A: AuthHandler + Send> WindowsPipeClientBuilder<A> {
             let transport = if self.local {
                 let mut full_addr = OsString::from(r"\\.\pipe\");
                 full_addr.push(addr.as_ref());
-                WindowsPipeTransport::connect(full_addr)
+                WindowsPipeTransport::connect(full_addr).await?
             } else {
-                WindowsPipeTransport::connect(addr.as_ref())
-            }
-            .await?;
+                WindowsPipeTransport::connect(addr.as_ref()).await?
+            };
 
             // Establish our framed transport, perform a handshake to set the codec, and do
             // authentication to ensure the connection can be used
