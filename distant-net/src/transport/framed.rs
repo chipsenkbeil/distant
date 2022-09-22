@@ -115,7 +115,10 @@ impl<T: Transport> FramedTransport<T> {
         Ok(())
     }
 
-    /// Attempts to flush any remaining bytes in the outgoing queue.
+    /// Attempts to flush any remaining bytes in the outgoing queue, returning the total bytes
+    /// written as a result of the flush. Note that a return of 0 bytes does not indicate that the
+    /// underlying transport has closed, but rather that no bytes were flushed such as when the
+    /// outgoing queue is empty.
     ///
     /// This is accomplished by continually calling the inner transport's `try_write`. If 0 is
     /// returned from a call to `try_write`, this will fail with [`ErrorKind::WriteZero`].
@@ -124,18 +127,19 @@ impl<T: Transport> FramedTransport<T> {
     /// is not ready to write data.
     ///
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
-    pub fn try_flush(&mut self) -> io::Result<()> {
+    pub fn try_flush(&mut self) -> io::Result<usize> {
+        let mut bytes_written = 0;
+
         // Continue to send from the outgoing buffer until we either finish or fail
         while !self.outgoing.is_empty() {
-            trace!("try_flush({} bytes)", self.outgoing.len());
             match self.inner.try_write(self.outgoing.as_ref()) {
                 // Getting 0 bytes on write indicates the channel has closed
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
 
                 // Successful write will advance the outgoing buffer
                 Ok(n) => {
-                    trace!("try_flush() successfully flushed {n} bytes");
                     self.outgoing.advance(n);
+                    bytes_written += n;
                 }
 
                 // Any error (including WouldBlock) will get bubbled up
@@ -143,7 +147,7 @@ impl<T: Transport> FramedTransport<T> {
             }
         }
 
-        Ok(())
+        Ok(bytes_written)
     }
 
     /// Reads a frame of bytes by using the [`Codec`] tied to this transport. Returns
@@ -202,10 +206,6 @@ impl<T: Transport> FramedTransport<T> {
             match self.try_read_frame() {
                 Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                     // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
-                    trace!(
-                        "read_frame() blocked, so sleeping {}s",
-                        SLEEP_DURATION.as_secs_f32()
-                    );
                     tokio::time::sleep(SLEEP_DURATION).await
                 }
                 x => return x,
@@ -237,7 +237,9 @@ impl<T: Transport> FramedTransport<T> {
         frame.write(&mut self.outgoing)?;
 
         // Attempt to write everything in our queue
-        self.try_flush()
+        self.try_flush()?;
+
+        Ok(())
     }
 
     /// Invokes [`try_write_frame`] followed by a continuous calls to [`try_flush`] until a frame
@@ -261,13 +263,10 @@ impl<T: Transport> FramedTransport<T> {
                 match self.try_flush() {
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                         // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
-                        trace!(
-                            "write_frame() blocked, so sleeping {}s",
-                            SLEEP_DURATION.as_secs_f32()
-                        );
                         tokio::time::sleep(SLEEP_DURATION).await
                     }
-                    x => return x,
+                    Err(x) => return Err(x),
+                    Ok(_) => return Ok(()),
                 }
             },
 
@@ -512,7 +511,7 @@ where
 
 impl FramedTransport<InmemoryTransport> {
     /// Produces a pair of inmemory transports that are connected to each other using
-    /// a standard codec
+    /// a standard codec.
     ///
     /// Sets the buffer for message passing for each underlying transport to the given buffer size
     pub fn pair(

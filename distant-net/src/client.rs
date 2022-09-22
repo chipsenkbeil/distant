@@ -90,7 +90,6 @@ where
 
                 let mut read_blocked = false;
                 let mut write_blocked = false;
-                let mut flush_blocked = false;
 
                 if ready.is_readable() {
                     match transport.try_read_frame() {
@@ -121,7 +120,10 @@ where
                                 }
                             }
                         }
-                        Ok(None) => (),
+                        Ok(None) => {
+                            debug!("Connection closed");
+                            break;
+                        }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                         Err(x) => {
                             error!("Failed to read next frame: {x}");
@@ -130,6 +132,9 @@ where
                 }
 
                 if ready.is_writable() {
+                    // If we get more data to write, attempt to write it, which will result in
+                    // writing any queued bytes as well. Othewise, we attempt to flush any pending
+                    // outgoing bytes that weren't sent earlier.
                     if let Ok(request) = rx.try_recv() {
                         match request.to_vec() {
                             Ok(data) => match transport.try_write_frame(data) {
@@ -143,23 +148,26 @@ where
                                 error!("Unable to serialize outgoing request: {x}");
                             }
                         }
-                    }
-
-                    match transport.try_flush() {
-                        Ok(()) => (),
-                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => flush_blocked = true,
-                        Err(x) => {
-                            error!("Failed to flush outgoing data: {x}");
+                    } else {
+                        // In the case of flushing, there are two scenarios in which we want to
+                        // mark no write occurring:
+                        //
+                        // 1. When flush did not write any bytes, which can happen when the buffer
+                        //    is empty
+                        // 2. When the call to write bytes blocks
+                        match transport.try_flush() {
+                            Ok(0) => write_blocked = true,
+                            Ok(_) => (),
+                            Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
+                            Err(x) => {
+                                error!("Failed to flush outgoing data: {x}");
+                            }
                         }
                     }
                 }
 
                 // If we did not read or write anything, sleep a bit to offload CPU usage
-                if read_blocked && write_blocked && flush_blocked {
-                    trace!(
-                        "Client blocked on read and write, so sleeping {}s",
-                        SLEEP_DURATION.as_secs_f32()
-                    );
+                if read_blocked && write_blocked {
                     tokio::time::sleep(SLEEP_DURATION).await;
                 }
             }

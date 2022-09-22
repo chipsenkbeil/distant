@@ -134,17 +134,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{auth::Authenticator, Client, FramedTransport};
+    use crate::{Client, FramedTransport, InmemoryTransport};
     use std::time::Duration;
     use test_log::test;
 
     type TestClient = Client<u8, u8>;
 
+    /// Set up two connected transports without any handshake or authentication. This should be
+    /// okay since we are creating a raw client that
+    async fn setup(buffer: usize) -> (TestClient, FramedTransport<InmemoryTransport>) {
+        let (t1, t2) = FramedTransport::pair(buffer);
+        let client = TestClient::new(t1);
+
+        (client, t2)
+    }
+
     #[test(tokio::test)]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
-        let (t1, mut t2) = FramedTransport::test_pair(100);
-        let session = TestClient::new(t1);
-        let mut channel = session.clone_channel();
+        let (client, mut server) = setup(100).await;
+        let mut channel = client.clone_channel();
 
         let req = Request::new(0);
         let res = Response::new(req.id.clone(), 1);
@@ -152,13 +160,13 @@ mod tests {
         let mut mailbox = channel.mail(req).await.unwrap();
 
         // Get first response
-        match tokio::join!(mailbox.next(), t2.write_frame(res.to_vec().unwrap())) {
+        match tokio::join!(mailbox.next(), server.write_frame(res.to_vec().unwrap())) {
             (Some(actual), _) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
         }
 
         // Get second response
-        match tokio::join!(mailbox.next(), t2.write_frame(res.to_vec().unwrap())) {
+        match tokio::join!(mailbox.next(), server.write_frame(res.to_vec().unwrap())) {
             (Some(actual), _) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
         }
@@ -168,7 +176,7 @@ mod tests {
         let next_task = tokio::spawn(async move { mailbox.next().await });
         tokio::task::yield_now().await;
 
-        drop(t2);
+        drop(server);
         match next_task.await {
             Ok(None) => {}
             x => panic!("Unexpected response: {:?}", x),
@@ -177,14 +185,14 @@ mod tests {
 
     #[test(tokio::test)]
     async fn send_should_wait_until_response_received() {
-        let (t1, mut t2) = FramedTransport::test_pair(100);
-        let session = TestClient::new(t1);
-        let mut channel = session.clone_channel();
+        let (client, mut server) = setup(100).await;
+        let mut channel = client.clone_channel();
 
         let req = Request::new(0);
         let res = Response::new(req.id.clone(), 1);
 
-        let (actual, _) = tokio::join!(channel.send(req), t2.write_frame(res.to_vec().unwrap()));
+        let (actual, _) =
+            tokio::join!(channel.send(req), server.write_frame(res.to_vec().unwrap()));
         match actual {
             Ok(actual) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
@@ -193,9 +201,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (t1, mut t2) = FramedTransport::test_pair(100);
-        let session: TestClient = Client::new(t1);
-        let mut channel = session.clone_channel();
+        let (client, mut server) = setup(100).await;
+        let mut channel = client.clone_channel();
 
         let req = Request::new(0);
         match channel.send_timeout(req, Duration::from_millis(30)).await {
@@ -203,15 +210,14 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let frame = t2.try_read_frame().unwrap().unwrap();
+        let frame = server.read_frame().await.unwrap().unwrap();
         let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
     }
 
     #[test(tokio::test)]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (t1, mut t2) = FramedTransport::test_pair(100);
-        let session: TestClient = Client::new(t1);
-        let mut channel = session.clone_channel();
+        let (client, mut server) = setup(100).await;
+        let mut channel = client.clone_channel();
 
         let req = Request::new(0);
         match channel.fire(req).await {
@@ -219,7 +225,7 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let frame = t2.try_read_frame().unwrap().unwrap();
+        let frame = server.read_frame().await.unwrap().unwrap();
         let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
     }
 }
