@@ -127,12 +127,16 @@ impl<T: Transport> FramedTransport<T> {
     pub fn try_flush(&mut self) -> io::Result<()> {
         // Continue to send from the outgoing buffer until we either finish or fail
         while !self.outgoing.is_empty() {
+            trace!("try_flush({} bytes)", self.outgoing.len());
             match self.inner.try_write(self.outgoing.as_ref()) {
                 // Getting 0 bytes on write indicates the channel has closed
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
 
                 // Successful write will advance the outgoing buffer
-                Ok(n) => self.outgoing.advance(n),
+                Ok(n) => {
+                    trace!("try_flush() successfully flushed {n} bytes");
+                    self.outgoing.advance(n);
+                }
 
                 // Any error (including WouldBlock) will get bubbled up
                 Err(x) => return Err(x),
@@ -198,6 +202,10 @@ impl<T: Transport> FramedTransport<T> {
             match self.try_read_frame() {
                 Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                     // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
+                    trace!(
+                        "read_frame() blocked, so sleeping {}s",
+                        SLEEP_DURATION.as_secs_f32()
+                    );
                     tokio::time::sleep(SLEEP_DURATION).await
                 }
                 x => return x,
@@ -253,6 +261,10 @@ impl<T: Transport> FramedTransport<T> {
                 match self.try_flush() {
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                         // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
+                        trace!(
+                            "write_frame() blocked, so sleeping {}s",
+                            SLEEP_DURATION.as_secs_f32()
+                        );
                         tokio::time::sleep(SLEEP_DURATION).await
                     }
                     x => return x,

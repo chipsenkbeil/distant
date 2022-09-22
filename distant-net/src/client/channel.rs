@@ -134,12 +134,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, FramedTransport};
+    use crate::{auth::Authenticator, Client, FramedTransport};
     use std::time::Duration;
+    use test_log::test;
 
     type TestClient = Client<u8, u8>;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
         let (t1, mut t2) = FramedTransport::test_pair(100);
         let session = TestClient::new(t1);
@@ -174,7 +175,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn send_should_wait_until_response_received() {
         let (t1, mut t2) = FramedTransport::test_pair(100);
         let session = TestClient::new(t1);
@@ -190,7 +191,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
         let (t1, mut t2) = FramedTransport::test_pair(100);
         let session: TestClient = Client::new(t1);
@@ -206,7 +207,7 @@ mod tests {
         let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn fire_should_send_request_and_not_wait_for_response() {
         let (t1, mut t2) = FramedTransport::test_pair(100);
         let session: TestClient = Client::new(t1);

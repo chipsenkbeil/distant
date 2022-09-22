@@ -8,6 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     io,
     sync::{Arc, Weak},
+    time::Duration,
 };
 use tokio::{
     sync::{mpsc, Mutex},
@@ -28,6 +29,9 @@ mod windows;
 
 #[cfg(windows)]
 pub use windows::*;
+
+/// Time to wait inbetween connection read/write when nothing was read or written on last pass
+const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 /// Extension trait to provide a reference implementation of starting a server
 /// that will listen for new connections (exposed as [`TypedAsyncWrite`] and [`TypedAsyncRead`])
@@ -227,6 +231,11 @@ where
                 .await
                 .expect("[Conn {connection_id}] Failed to examine ready state");
 
+            // Keep track of whether we read or wrote anything
+            let mut read_blocked = false;
+            let mut write_blocked = false;
+            let mut flush_blocked = false;
+
             if ready.is_readable() {
                 match transport.try_read_frame() {
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
@@ -277,7 +286,7 @@ where
                         }
                         break;
                     }
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                     Err(x) => {
                         // NOTE: We do NOT break out of the loop, as this could happen
                         //       if someone sends bad data at any point, but does not
@@ -291,37 +300,48 @@ where
             // If our socket is ready to be written to, we try to get the next item from
             // the queue and process it
             if ready.is_writable() {
-                match rx.try_recv() {
-                    Ok(response) => {
-                        // Log our message as a string, which can be expensive
-                        if log_enabled!(Level::Trace) {
-                            trace!(
-                                "[Conn {connection_id}] Sending {}",
-                                &response
-                                    .to_vec()
-                                    .map(|x| String::from_utf8_lossy(&x).to_string())
-                                    .unwrap_or_else(|_| "<Cannot serialize>".to_string())
-                            );
-                        }
-
-                        match response.to_vec() {
-                            Ok(data) => match transport.try_write_frame(data) {
-                                Ok(()) => continue,
-                                Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
-                                Err(x) => error!("[Conn {connection_id}] Send failed: {x}"),
-                            },
-                            Err(x) => {
-                                error!(
-                                    "[Conn {connection_id}] Unable to serialize outgoing response: {x}"
-                                );
-                                continue;
-                            }
-                        }
+                if let Ok(response) = rx.try_recv() {
+                    // Log our message as a string, which can be expensive
+                    if log_enabled!(Level::Trace) {
+                        trace!(
+                            "[Conn {connection_id}] Sending {}",
+                            &response
+                                .to_vec()
+                                .map(|x| String::from_utf8_lossy(&x).to_string())
+                                .unwrap_or_else(|_| "<Cannot serialize>".to_string())
+                        );
                     }
 
-                    // If we don't have data, we skip
-                    Err(_) => continue,
+                    match response.to_vec() {
+                        Ok(data) => match transport.try_write_frame(data) {
+                            Ok(()) => (),
+                            Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
+                            Err(x) => error!("[Conn {connection_id}] Send failed: {x}"),
+                        },
+                        Err(x) => {
+                            error!(
+                                "[Conn {connection_id}] Unable to serialize outgoing response: {x}"
+                            );
+                        }
+                    }
                 }
+
+                match transport.try_flush() {
+                    Ok(()) => (),
+                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => flush_blocked = true,
+                    Err(x) => {
+                        error!("[Conn {connection_id}] Failed to flush outgoing data: {x}");
+                    }
+                }
+            }
+
+            // If we did not read or write anything, sleep a bit to offload CPU usage
+            if read_blocked && write_blocked && flush_blocked {
+                trace!(
+                    "[Conn {connection_id}] Blocked on read and write, so sleeping {}s",
+                    SLEEP_DURATION.as_secs_f32()
+                );
+                tokio::time::sleep(SLEEP_DURATION).await;
             }
         }
     }

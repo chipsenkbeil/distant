@@ -5,6 +5,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
+    time::Duration,
 };
 use tokio::{
     io,
@@ -17,6 +18,9 @@ pub use builder::*;
 
 mod channel;
 pub use channel::*;
+
+/// Time to wait inbetween connection read/write when nothing was read or written on last pass
+const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 /// Represents a client that can be used to send requests & receive responses from a server
 pub struct Client<T, U> {
@@ -60,13 +64,22 @@ where
             loop {
                 let ready = tokio::select! {
                     _ = shutdown_rx.recv() => {
+                        debug!("Client got shutdown signal, so exiting event loop");
                         break;
                     }
                     cb = reconnect_rx.recv() => {
+                        debug!("Client got reconnect signal, so attempting to reconnect");
                         if let Some(cb) = cb {
-                            let _ = cb.send(Reconnectable::reconnect(&mut transport).await);
+                            let _ = match Reconnectable::reconnect(&mut transport).await {
+                                Ok(()) => cb.send(Ok(())),
+                                Err(x) => {
+                                    error!("Client reconnect failed: {x}");
+                                    cb.send(Err(x))
+                                }
+                            };
                             continue;
                         } else {
+                            error!("Client callback for reconnect missing! Corrupt state!");
                             break;
                         }
                     }
@@ -75,35 +88,41 @@ where
                     }
                 };
 
+                let mut read_blocked = false;
+                let mut write_blocked = false;
+                let mut flush_blocked = false;
+
                 if ready.is_readable() {
                     match transport.try_read_frame() {
-                        Ok(Some(frame)) => match UntypedResponse::from_slice(frame.as_item()) {
-                            Ok(response) => {
-                                match response.to_typed_response() {
-                                    Ok(response) => {
-                                        // Try to send response to appropriate mailbox
-                                        // TODO: This will block if full... is that a problem?
-                                        // TODO: How should we handle false response? Did logging in past
-                                        post_office.deliver_response(response).await;
-                                    }
-                                    Err(x) => {
-                                        if log::log_enabled!(Level::Trace) {
-                                            trace!(
-                                                "Failed receiving {}",
-                                                String::from_utf8_lossy(&response.payload),
-                                            );
+                        Ok(Some(frame)) => {
+                            match UntypedResponse::from_slice(frame.as_item()) {
+                                Ok(response) => {
+                                    match response.to_typed_response() {
+                                        Ok(response) => {
+                                            // Try to send response to appropriate mailbox
+                                            // TODO: This will block if full... is that a problem?
+                                            // TODO: How should we handle false response? Did logging in past
+                                            post_office.deliver_response(response).await;
                                         }
+                                        Err(x) => {
+                                            if log::log_enabled!(Level::Trace) {
+                                                trace!(
+                                                    "Failed receiving {}",
+                                                    String::from_utf8_lossy(&response.payload),
+                                                );
+                                            }
 
-                                        error!("Invalid response: {x}");
+                                            error!("Invalid response: {x}");
+                                        }
                                     }
                                 }
+                                Err(x) => {
+                                    error!("Invalid response: {x}");
+                                }
                             }
-                            Err(x) => {
-                                error!("Invalid response: {x}");
-                            }
-                        },
+                        }
                         Ok(None) => (),
-                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => (),
+                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                         Err(x) => {
                             error!("Failed to read next frame: {x}");
                         }
@@ -115,7 +134,9 @@ where
                         match request.to_vec() {
                             Ok(data) => match transport.try_write_frame(data) {
                                 Ok(()) => (),
-                                Err(x) if x.kind() == io::ErrorKind::WouldBlock => (),
+                                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                    write_blocked = true
+                                }
                                 Err(x) => error!("Send failed: {x}"),
                             },
                             Err(x) => {
@@ -126,11 +147,20 @@ where
 
                     match transport.try_flush() {
                         Ok(()) => (),
-                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => (),
+                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => flush_blocked = true,
                         Err(x) => {
                             error!("Failed to flush outgoing data: {x}");
                         }
                     }
+                }
+
+                // If we did not read or write anything, sleep a bit to offload CPU usage
+                if read_blocked && write_blocked && flush_blocked {
+                    trace!(
+                        "Client blocked on read and write, so sleeping {}s",
+                        SLEEP_DURATION.as_secs_f32()
+                    );
+                    tokio::time::sleep(SLEEP_DURATION).await;
                 }
             }
         });
