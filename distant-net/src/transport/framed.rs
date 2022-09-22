@@ -1110,18 +1110,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handshake_for_client_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type(
-    ) {
-        todo!();
-    }
-
-    #[tokio::test]
-    async fn handshake_for_client_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type(
-    ) {
-        todo!();
-    }
-
-    #[tokio::test]
     async fn handshake_for_client_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
         todo!();
     }

@@ -12,9 +12,6 @@ pub use inmemory::*;
 mod tcp;
 pub use tcp::*;
 
-mod stateful;
-pub use stateful::*;
-
 #[cfg(test)]
 mod test;
 
