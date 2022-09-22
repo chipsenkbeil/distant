@@ -66,7 +66,7 @@ macro_rules! next_frame_as {
 }
 
 #[async_trait]
-impl<T, const CAPACITY: usize> Authenticate for FramedTransport<T, CAPACITY>
+impl<T> Authenticate for FramedTransport<T>
 where
     T: Transport + Send + Sync,
 {
@@ -121,7 +121,7 @@ where
 }
 
 #[async_trait]
-impl<T, const CAPACITY: usize> Authenticator for FramedTransport<T, CAPACITY>
+impl<T> Authenticator for FramedTransport<T>
 where
     T: Transport + Send + Sync,
 {

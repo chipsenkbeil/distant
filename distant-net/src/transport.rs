@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::io;
+use std::{io, time::Duration};
 
 // mod router;
 
@@ -31,6 +31,9 @@ mod windows;
 pub use windows::*;
 
 pub use tokio::io::{Interest, Ready};
+
+/// Duration to wait after WouldBlock received during looping operations like `read_exact`
+const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 /// Interface representing a connection that is reconnectable
 #[async_trait]
@@ -99,7 +102,10 @@ pub trait Transport: Reconnectable {
 
                 // Because we are using `try_read`, it can be possible for it to return
                 // WouldBlock; so, if we encounter that then we just wait for next readable
-                Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                    // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
+                    tokio::time::sleep(SLEEP_DURATION).await
+                }
 
                 Err(x) => return Err(x),
             }
@@ -132,7 +138,10 @@ pub trait Transport: Reconnectable {
 
                 // Because we are using `try_write`, it can be possible for it to return
                 // WouldBlock; so, if we encounter that then we just wait for next writeable
-                Err(x) if x.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                    // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
+                    tokio::time::sleep(SLEEP_DURATION).await
+                }
 
                 Err(x) => return Err(x),
             }

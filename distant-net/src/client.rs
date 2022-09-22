@@ -44,7 +44,7 @@ where
     ///
     /// It is assumed that the provided transport has performed any necessary handshake and is
     /// fully authenticated.
-    pub fn new<V, const CAPACITY: usize>(mut transport: FramedTransport<V, CAPACITY>) -> Self
+    pub fn new<V>(mut transport: FramedTransport<V>) -> Self
     where
         V: Transport + Send + Sync + 'static,
     {
