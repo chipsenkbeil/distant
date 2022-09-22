@@ -1,5 +1,5 @@
 use crate::{
-    auth::{AuthHandler, Authenticator, FramedAuthenticator},
+    auth::{AuthHandler, Authenticate},
     Client, FramedTransport, WindowsPipeTransport,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -83,9 +83,7 @@ impl<A: AuthHandler + Send> WindowsPipeClientBuilder<A> {
             // authentication to ensure the connection can be used
             let mut transport = FramedTransport::<_>::plain(transport);
             transport.client_handshake().await?;
-            FramedAuthenticator::new(&mut transport)
-                .authenticate(auth_handler)
-                .await?;
+            transport.authenticate(auth_handler).await?;
 
             Ok(Client::new(transport))
         };

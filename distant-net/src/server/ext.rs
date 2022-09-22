@@ -1,7 +1,7 @@
 use crate::{
-    auth::FramedAuthenticator, utils::Timer, ConnectionCtx, ConnectionId, FramedTransport,
-    GenericServerRef, Interest, Listener, Response, Server, ServerConnection, ServerCtx, ServerRef,
-    ServerReply, ServerState, Shutdown, Transport, UntypedRequest,
+    utils::Timer, ConnectionCtx, ConnectionId, FramedTransport, GenericServerRef, Interest,
+    Listener, Response, Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState,
+    Shutdown, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -210,7 +210,7 @@ where
             .server
             .on_accept(ConnectionCtx {
                 connection_id,
-                authenticator: FramedAuthenticator::new(&mut transport),
+                authenticator: &mut transport,
                 local_data: &mut local_data,
             })
             .await
@@ -330,7 +330,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InmemoryTransport, MpscListener, Request, ServerConfig};
+    use crate::{auth::Authenticator, InmemoryTransport, MpscListener, Request, ServerConfig};
     use async_trait::async_trait;
     use std::time::Duration;
 
@@ -344,6 +344,13 @@ mod tests {
 
         fn config(&self) -> ServerConfig {
             self.0.clone()
+        }
+
+        async fn on_accept<A: Authenticator>(
+            &self,
+            ctx: ConnectionCtx<'_, A, Self::LocalData>,
+        ) -> io::Result<()> {
+            ctx.authenticator.finished().await
         }
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {

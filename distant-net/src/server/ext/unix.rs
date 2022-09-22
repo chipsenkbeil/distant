@@ -43,7 +43,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, Request, ServerCtx};
+    use crate::{
+        auth::{AuthHandler, AuthQuestion, AuthVerifyKind, Authenticator},
+        Client, ConnectionCtx, Request, ServerCtx,
+    };
+    use std::collections::HashMap;
     use tempfile::NamedTempFile;
 
     pub struct TestServer;
@@ -54,12 +58,36 @@ mod tests {
         type Response = String;
         type LocalData = ();
 
+        async fn on_accept<A: Authenticator>(
+            &self,
+            ctx: ConnectionCtx<'_, A, Self::LocalData>,
+        ) -> io::Result<()> {
+            ctx.authenticator.finished().await
+        }
+
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received
             ctx.reply
                 .send(ctx.request.payload.to_string())
                 .await
                 .unwrap();
+        }
+    }
+
+    pub struct TestAuthHandler;
+
+    #[async_trait]
+    impl AuthHandler for TestAuthHandler {
+        async fn on_challenge(
+            &mut self,
+            _: Vec<AuthQuestion>,
+            _: HashMap<String, String>,
+        ) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn on_verify(&mut self, _: AuthVerifyKind, _: String) -> io::Result<bool> {
+            Ok(true)
         }
     }
 
@@ -75,7 +103,8 @@ mod tests {
             .await
             .expect("Failed to start Unix socket server");
 
-        let mut client: Client<String, String> = Client::unix_socket()
+        let mut client: Client<String, String> = Client::<String, String>::unix_socket()
+            .auth_handler(TestAuthHandler)
             .connect(server.path())
             .await
             .expect("Client failed to connect");

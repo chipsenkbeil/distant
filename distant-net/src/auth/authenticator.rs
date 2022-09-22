@@ -4,12 +4,16 @@ use async_trait::async_trait;
 use log::*;
 use std::{collections::HashMap, io};
 
-/// Represents an interface for authenticating or submitting challenges for authentication.
+/// Represents an interface for authenticating with a server.
 #[async_trait]
-pub trait Authenticator: Send {
+pub trait Authenticate {
     /// Performs authentication by leveraging the `handler` for any received challenge.
     async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()>;
+}
 
+/// Represents an interface for submitting challenges for authentication.
+#[async_trait]
+pub trait Authenticator: Send {
     /// Issues a challenge and returns the answers to the `questions` asked.
     async fn challenge(
         &mut self,
@@ -25,24 +29,11 @@ pub trait Authenticator: Send {
 
     /// Reports an error occurred during authentication, consuming the authenticator since no more
     /// challenges should be issued.
-    async fn error(self, kind: AuthErrorKind, text: String) -> io::Result<()>;
+    async fn error(&mut self, kind: AuthErrorKind, text: String) -> io::Result<()>;
 
     /// Reports that the authentication has finished successfully, consuming the authenticator
     /// since no more challenges should be issued.
-    async fn finished(self) -> io::Result<()>;
-}
-
-/// Wraps a [`FramedTransport`] in order to perform challenge-based communication through the
-/// transport to authenticate it. The authenticator is capable of conducting challenges or
-/// leveraging an [`AuthHandler`] to process challenges.
-pub struct FramedAuthenticator<'a, T: Send, const CAPACITY: usize> {
-    transport: &'a mut FramedTransport<T, CAPACITY>,
-}
-
-impl<'a, T: Send, const CAPACITY: usize> FramedAuthenticator<'a, T, CAPACITY> {
-    pub fn new(transport: &'a mut FramedTransport<T, CAPACITY>) -> Self {
-        Self { transport }
-    }
+    async fn finished(&mut self) -> io::Result<()>;
 }
 
 macro_rules! write_frame {
@@ -75,32 +66,32 @@ macro_rules! next_frame_as {
 }
 
 #[async_trait]
-impl<'a, T, const CAPACITY: usize> Authenticator for FramedAuthenticator<'a, T, CAPACITY>
+impl<T, const CAPACITY: usize> Authenticate for FramedTransport<T, CAPACITY>
 where
     T: Transport + Send + Sync,
 {
-    /// Performs authentication by leveraging the `handler` for any received challenge.
     async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()> {
         loop {
-            match next_frame_as!(self.transport, AuthRequest) {
+            match next_frame_as!(self, AuthRequest) {
                 AuthRequest::Challenge(x) => {
+                    trace!("Authenticate::Challenge({x:?})");
                     let answers = handler.on_challenge(x.questions, x.options).await?;
                     write_frame!(
-                        self.transport,
+                        self,
                         AuthResponse::Challenge(AuthChallengeResponse { answers })
                     );
                 }
                 AuthRequest::Verify(x) => {
+                    trace!("Authenticate::Verify({x:?})");
                     let valid = handler.on_verify(x.kind, x.text).await?;
-                    write_frame!(
-                        self.transport,
-                        AuthResponse::Verify(AuthVerifyResponse { valid })
-                    );
+                    write_frame!(self, AuthResponse::Verify(AuthVerifyResponse { valid }));
                 }
                 AuthRequest::Info(x) => {
+                    trace!("Authenticate::Info({x:?})");
                     handler.on_info(x.text).await?;
                 }
                 AuthRequest::Error(x) => {
+                    trace!("Authenticate::Error({x:?})");
                     let kind = x.kind;
                     let text = x.text;
 
@@ -120,67 +111,58 @@ where
                         }
                     });
                 }
-                AuthRequest::Finished => return Ok(()),
+                AuthRequest::Finished => {
+                    trace!("Authenticate::Finished");
+                    return Ok(());
+                }
             }
         }
     }
+}
 
-    /// Issues a challenge and returns the answers to the `questions` asked.
+#[async_trait]
+impl<T, const CAPACITY: usize> Authenticator for FramedTransport<T, CAPACITY>
+where
+    T: Transport + Send + Sync,
+{
     async fn challenge(
         &mut self,
         questions: Vec<AuthQuestion>,
         options: HashMap<String, String>,
     ) -> io::Result<Vec<String>> {
-        trace!(
-            "Authenticator::challenge(questions = {:?}, options = {:?})",
-            questions,
-            options
-        );
+        trace!("Authenticator::challenge(questions = {questions:?}, options = {options:?})");
 
         write_frame!(
-            self.transport,
+            self,
             AuthRequest::from(AuthChallengeRequest { questions, options })
         );
-        let response = next_frame_as!(self.transport, AuthResponse, Challenge);
+        let response = next_frame_as!(self, AuthResponse, Challenge);
         Ok(response.answers)
     }
 
-    /// Requests verification of some `kind` and `text`, returning true if passed verification.
     async fn verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool> {
-        trace!(
-            "Authenticator::verify(kind = {:?}, text = {:?})",
-            kind,
-            text
-        );
+        trace!("Authenticator::verify(kind = {kind:?}, text = {text:?})");
 
-        write_frame!(
-            self.transport,
-            AuthRequest::from(AuthVerifyRequest { kind, text })
-        );
-        let response = next_frame_as!(self.transport, AuthResponse, Verify);
+        write_frame!(self, AuthRequest::from(AuthVerifyRequest { kind, text }));
+        let response = next_frame_as!(self, AuthResponse, Verify);
         Ok(response.valid)
     }
 
-    /// Reports information with no response expected.
     async fn info(&mut self, text: String) -> io::Result<()> {
-        trace!("Authenticator::info(text = {:?})", text);
-        write_frame!(self.transport, AuthRequest::from(AuthInfo { text }));
+        trace!("Authenticator::info(text = {text:?})");
+        write_frame!(self, AuthRequest::from(AuthInfo { text }));
         Ok(())
     }
 
-    /// Reports an error occurred during authentication, consuming the authenticator since no more
-    /// challenges should be issued.
-    async fn error(self, kind: AuthErrorKind, text: String) -> io::Result<()> {
-        trace!("Authenticator::error(kind = {:?}, text = {:?})", kind, text);
-        write_frame!(self.transport, AuthRequest::from(AuthError { kind, text }));
+    async fn error(&mut self, kind: AuthErrorKind, text: String) -> io::Result<()> {
+        trace!("Authenticator::error(kind = {kind:?}, text = {text:?})");
+        write_frame!(self, AuthRequest::from(AuthError { kind, text }));
         Ok(())
     }
 
-    /// Reports that the authentication has finished successfully, consuming the authenticator
-    /// since no more challenges should be issued.
-    async fn finished(self) -> io::Result<()> {
+    async fn finished(&mut self) -> io::Result<()> {
         trace!("Authenticator::finished()");
-        write_frame!(self.transport, AuthRequest::Finished);
+        write_frame!(self, AuthRequest::Finished);
         Ok(())
     }
 }

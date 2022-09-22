@@ -53,9 +53,7 @@ pub trait Server: Send {
     async fn on_accept<A: Authenticator>(
         &self,
         ctx: ConnectionCtx<'_, A, Self::LocalData>,
-    ) -> io::Result<()> {
-        ctx.authenticator.finished().await
-    }
+    ) -> io::Result<()>;
 
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.

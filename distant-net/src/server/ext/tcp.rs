@@ -41,8 +41,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, Request, ServerCtx};
-    use std::net::{Ipv6Addr, SocketAddr};
+    use crate::{
+        auth::{AuthHandler, AuthQuestion, AuthVerifyKind, Authenticator},
+        Client, ConnectionCtx, Request, ServerCtx,
+    };
+    use std::{
+        collections::HashMap,
+        net::{Ipv6Addr, SocketAddr},
+    };
 
     pub struct TestServer;
 
@@ -51,6 +57,13 @@ mod tests {
         type Request = String;
         type Response = String;
         type LocalData = ();
+
+        async fn on_accept<A: Authenticator>(
+            &self,
+            ctx: ConnectionCtx<'_, A, Self::LocalData>,
+        ) -> io::Result<()> {
+            ctx.authenticator.finished().await
+        }
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received
@@ -61,13 +74,31 @@ mod tests {
         }
     }
 
+    pub struct TestAuthHandler;
+
+    #[async_trait]
+    impl AuthHandler for TestAuthHandler {
+        async fn on_challenge(
+            &mut self,
+            _: Vec<AuthQuestion>,
+            _: HashMap<String, String>,
+        ) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn on_verify(&mut self, _: AuthVerifyKind, _: String) -> io::Result<bool> {
+            Ok(true)
+        }
+    }
+
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
         let server = TcpServerExt::start(TestServer, IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
             .await
             .expect("Failed to start TCP server");
 
-        let mut client: Client<String, String> = Client::tcp()
+        let mut client: Client<String, String> = Client::<String, String>::tcp()
+            .auth_handler(TestAuthHandler)
             .connect(SocketAddr::from((server.ip_addr(), server.port())))
             .await
             .expect("Client failed to connect");

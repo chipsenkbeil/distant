@@ -38,8 +38,8 @@ where
     S::Response: Serialize + Send + 'static,
     S::LocalData: Default + Send + Sync + 'static,
 {
-    type Request = Req;
-    type Response = Res;
+    type Request = S::Request;
+    type Response = S::Response;
 
     async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
     where
@@ -57,7 +57,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, PlainCodec, Request, ServerCtx, WindowsPipeClientExt};
+    use crate::{
+        auth::Authenticator, Client, ConnectionCtx, PlainCodec, Request, ServerCtx,
+        WindowsPipeClientExt,
+    };
 
     pub struct TestServer;
 
@@ -66,6 +69,13 @@ mod tests {
         type Request = String;
         type Response = String;
         type LocalData = ();
+
+        async fn on_accept<A: Authenticator>(
+            &self,
+            ctx: ConnectionCtx<'_, A, Self::LocalData>,
+        ) -> io::Result<()> {
+            ctx.authenticator.finished().await
+        }
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received
@@ -85,7 +95,8 @@ mod tests {
         .await
         .expect("Failed to start Windows pipe server");
 
-        let mut client: Client<String, String> = Client::connect(server.addr(), PlainCodec)
+        let mut client: Client<String, String> = Client::windows_pipe()
+            .connect(server.addr())
             .await
             .expect("Client failed to connect");
 
