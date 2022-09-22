@@ -97,7 +97,7 @@ mod tests {
             .await
             .expect("Failed to start TCP server");
 
-        let mut client: Client<String, String> = Client::<String, String>::tcp()
+        let mut client: Client<String, String> = Client::tcp()
             .auth_handler(TestAuthHandler)
             .connect(SocketAddr::from((server.ip_addr(), server.port())))
             .await

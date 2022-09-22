@@ -58,9 +58,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        auth::Authenticator, Client, ConnectionCtx, PlainCodec, Request, ServerCtx,
-        WindowsPipeClientExt,
+        auth::{AuthHandler, AuthQuestion, AuthVerifyKind, Authenticator},
+        Client, Client, ConnectionCtx, ConnectionCtx, Request, Request, ServerCtx, ServerCtx,
     };
+    use std::collections::HashMap;
 
     pub struct TestServer;
 
@@ -86,6 +87,23 @@ mod tests {
         }
     }
 
+    pub struct TestAuthHandler;
+
+    #[async_trait]
+    impl AuthHandler for TestAuthHandler {
+        async fn on_challenge(
+            &mut self,
+            _: Vec<AuthQuestion>,
+            _: HashMap<String, String>,
+        ) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn on_verify(&mut self, _: AuthVerifyKind, _: String) -> io::Result<bool> {
+            Ok(true)
+        }
+    }
+
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
         let server = WindowsPipeServerExt::start_local(
@@ -96,6 +114,7 @@ mod tests {
         .expect("Failed to start Windows pipe server");
 
         let mut client: Client<String, String> = Client::windows_pipe()
+            .auth_handler(TestAuthHandler)
             .connect(server.addr())
             .await
             .expect("Client failed to connect");
