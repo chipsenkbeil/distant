@@ -12,11 +12,11 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
+mod builder;
+pub use builder::*;
+
 mod channel;
 pub use channel::*;
-
-mod ext;
-pub use ext::*;
 
 /// Represents a client that can be used to send requests & receive responses from a server
 pub struct Client<T, U> {
@@ -150,6 +150,23 @@ where
 }
 
 impl<T, U> Client<T, U> {
+    /// Creates a new [`TcpClientBuilder`]
+    pub fn tcp() -> TcpClientBuilder<()> {
+        TcpClientBuilder::new()
+    }
+
+    /// Creates a new [`UnixSocketClientBuilder`]
+    #[cfg(unix)]
+    pub fn unix_socket() -> UnixSocketClientBuilder<()> {
+        UnixSocketClientBuilder::new()
+    }
+
+    /// Creates a new [`WindowsPipeClientBuilder`]
+    #[cfg(windows)]
+    pub fn windows_pipe() -> WindowsPipeClientBuilder<()> {
+        WindowsPipeClientBuilder::new()
+    }
+
     /// Convert into underlying channel
     pub fn into_channel(self) -> Channel<T, U> {
         self.channel
