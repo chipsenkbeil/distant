@@ -1,7 +1,7 @@
 use crate::{
-    utils::Timer, ConnectionId, FramedTransport, GenericServerRef, Interest, Listener, Response,
-    Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState, Shutdown, Transport,
-    UntypedRequest,
+    auth::FramedAuthenticator, utils::Timer, ConnectionCtx, ConnectionId, FramedTransport,
+    GenericServerRef, Interest, Listener, Response, Server, ServerConnection, ServerCtx, ServerRef,
+    ServerReply, ServerState, Shutdown, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -148,21 +148,12 @@ where
             timer.lock().await.stop();
         }
 
-        // Create some default data for the new connection and pass it
-        // to the callback prior to processing new requests
-        let local_data = {
-            let mut data = S::LocalData::default();
-            server.on_accept(&mut data).await;
-            Arc::new(data)
-        };
-
         connection.task = Some(
             ConnectionTask {
                 id: connection_id,
                 server,
                 state: Arc::downgrade(&state),
                 transport,
-                local_data,
                 shutdown_timer: shutdown_timer
                     .as_ref()
                     .map(Arc::downgrade)
@@ -179,21 +170,20 @@ where
     }
 }
 
-struct ConnectionTask<S, T, D> {
+struct ConnectionTask<S, T> {
     id: ConnectionId,
     server: Arc<S>,
     state: Weak<ServerState>,
     transport: T,
-    local_data: Arc<D>,
     shutdown_timer: Weak<Mutex<Timer<()>>>,
 }
 
-impl<S, T, D> ConnectionTask<S, T, D>
+impl<S, T> ConnectionTask<S, T>
 where
-    S: Server<LocalData = D> + Sync + 'static,
+    S: Server + Sync + 'static,
     S::Request: DeserializeOwned + Send + Sync + 'static,
     S::Response: Serialize + Send + 'static,
-    D: Default + Send + Sync + 'static,
+    S::LocalData: Default + Send + Sync + 'static,
     T: Transport + Send + Sync + 'static,
 {
     pub fn spawn(self) -> JoinHandle<()> {
@@ -212,6 +202,24 @@ where
             error!("[Conn {connection_id}] Handshake failed: {x}");
             return;
         }
+
+        // Create local data for the connection and then process it as well as perform
+        // authentication and any other tasks on first connecting
+        let mut local_data = S::LocalData::default();
+        if let Err(x) = self
+            .server
+            .on_accept(ConnectionCtx {
+                connection_id,
+                authenticator: FramedAuthenticator::new(&mut transport),
+                local_data: &mut local_data,
+            })
+            .await
+        {
+            error!("[Conn {connection_id}] Accepting connection failed: {x}");
+            return;
+        }
+
+        let local_data = Arc::new(local_data);
 
         loop {
             let ready = transport
@@ -233,7 +241,7 @@ where
                                     connection_id,
                                     request,
                                     reply: reply.clone(),
-                                    local_data: Arc::clone(&self.local_data),
+                                    local_data: Arc::clone(&local_data),
                                 };
 
                                 self.server.on_request(ctx).await;

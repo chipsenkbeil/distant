@@ -1,60 +1,26 @@
-use async_trait::async_trait;
-use derive_more::Display;
+use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io};
-
-/// Interface for a handler of authentication requests
-#[async_trait]
-pub trait AuthHandler {
-    /// Callback when a challenge is received, returning answers to the given questions.
-    async fn on_challenge(
-        &mut self,
-        questions: Vec<AuthQuestion>,
-        options: HashMap<String, String>,
-    ) -> io::Result<Vec<String>>;
-
-    /// Callback when a verification request is received, returning true if approvided or false if
-    /// unapproved.
-    async fn on_verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool>;
-
-    /// Callback when authentication is finished and no more requests will be received
-    async fn on_done(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
-    /// Callback when information is received. To fail, return an error from this function.
-    #[allow(unused_variables)]
-    async fn on_info(&mut self, text: String) -> io::Result<()> {
-        Ok(())
-    }
-
-    /// Callback when an error is received. To fail, return an error from this function.
-    async fn on_error(&mut self, kind: AuthErrorKind, text: String) -> io::Result<()> {
-        Err(match kind {
-            AuthErrorKind::FailedChallenge => io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("Failed challenge: {text}"),
-            ),
-            AuthErrorKind::FailedVerification => io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("Failed verification: {text}"),
-            ),
-            AuthErrorKind::Unknown => {
-                io::Error::new(io::ErrorKind::Other, format!("Unknown error: {text}"))
-            }
-        })
-    }
-}
+use std::collections::HashMap;
 
 /// Represents authentication messages that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, From, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthRequest {
+    /// Issues a challenge to be answered
     Challenge(AuthChallengeRequest),
+
+    /// Requests verification of some text
     Verify(AuthVerifyRequest),
+
+    /// Reports some information
     Info(AuthInfo),
+
+    /// Reports an error occurrred
     Error(AuthError),
+
+    /// Indicates that the authentication is finished
+    Finished,
 }
 
 /// Represents a challenge comprising a series of questions to be presented
@@ -86,10 +52,13 @@ pub struct AuthError {
 
 /// Represents authentication messages that are responses to auth requests such
 /// as answers to challenges or verifying information
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, From, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthResponse {
+    /// Contains answers to challenge request
     Challenge(AuthChallengeResponse),
+
+    /// Contains response to a verification request
     Verify(AuthVerifyResponse),
 }
 
@@ -113,6 +82,11 @@ pub enum AuthVerifyKind {
     /// An ask to verify the host such as with SSH
     #[display(fmt = "host")]
     Host,
+
+    /// When the verification is unknown (happens when other side is unaware of the kind)
+    #[display(fmt = "unknown")]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Represents a single question in a challenge

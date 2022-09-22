@@ -218,9 +218,17 @@ where
     ///
     /// [`ErrorKind::WriteZero`]: io::ErrorKind::WriteZero
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
-    pub fn try_write_frame<'a>(&mut self, frame: impl Into<Frame<'a>>) -> io::Result<()> {
+    pub fn try_write_frame<'a, F>(&mut self, frame: F) -> io::Result<()>
+    where
+        F: TryInto<Frame<'a>>,
+        F::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
         // Encode the frame and store it in our outgoing queue
-        let frame = self.codec.encode(frame.into())?;
+        let frame = self.codec.encode(
+            frame
+                .try_into()
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+        )?;
         frame.write(&mut self.outgoing)?;
 
         // Attempt to write everything in our queue
@@ -234,7 +242,11 @@ where
     /// [`try_write_frame`]: FramedTransport::try_write_frame
     /// [`try_flush`]: FramedTransport::try_flush
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
-    pub async fn write_frame<'a>(&mut self, frame: impl Into<Frame<'a>>) -> io::Result<()> {
+    pub async fn write_frame<'a, F>(&mut self, frame: F) -> io::Result<()>
+    where
+        F: TryInto<Frame<'a>>,
+        F::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
         self.writeable().await?;
 
         match self.try_write_frame(frame) {

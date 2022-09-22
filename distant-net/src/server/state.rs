@@ -1,4 +1,4 @@
-use crate::{ConnectionId, ServerConnection};
+use crate::{ConnectionId, HeapSecretKey, ServerConnection};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
@@ -6,12 +6,16 @@ use tokio::sync::RwLock;
 pub struct ServerState {
     /// Mapping of connection ids to their transports
     pub connections: RwLock<HashMap<ConnectionId, ServerConnection>>,
+
+    /// Mapping of connection ids to their authenticated keys
+    pub authenticated: RwLock<HashMap<ConnectionId, HeapSecretKey>>,
 }
 
 impl ServerState {
     pub fn new() -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
+            authenticated: RwLock::new(HashMap::new()),
         }
     }
 }

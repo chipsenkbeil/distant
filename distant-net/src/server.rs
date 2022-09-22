@@ -1,3 +1,4 @@
+use crate::auth::Authenticator;
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
@@ -40,11 +41,21 @@ pub trait Server: Send {
         ServerConfig::default()
     }
 
-    /// Invoked upon a new connection becoming established, which provides a mutable reference to
-    /// the data created for the connection. This can be useful in performing some additional
-    /// initialization on the data prior to it being used anywhere else.
-    #[allow(unused_variables)]
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {}
+    /// Invoked upon a new connection becoming established.
+    ///
+    /// ### Note
+    ///
+    /// This can be useful in performing some additional initialization on the connection's local
+    /// data prior to it being used anywhere else.
+    ///
+    /// Additionally, the context contains an authenticator which can be used to issue challenges
+    /// to the connection to validate its access.
+    async fn on_accept<A: Authenticator>(
+        &self,
+        ctx: ConnectionCtx<'_, A, Self::LocalData>,
+    ) -> io::Result<()> {
+        ctx.authenticator.finished().await
+    }
 
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.

@@ -1,7 +1,4 @@
-use crate::{
-    FramedTransport, Interest, Reconnectable, Request, StatefulFramedTransport, Transport,
-    UntypedResponse,
-};
+use crate::{FramedTransport, Interest, Reconnectable, Request, Transport, UntypedResponse};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -41,8 +38,13 @@ where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
-    /// Initializes a client using the provided [`FramedTransport`]
-    pub fn new<V, const CAPACITY: usize>(transport: FramedTransport<V, CAPACITY>) -> Self
+    /// Creates a client using the provided [`FramedTransport`].
+    ///
+    /// ### Note
+    ///
+    /// It is assumed that the provided transport has performed any necessary handshake and is
+    /// fully authenticated.
+    pub fn new<V, const CAPACITY: usize>(mut transport: FramedTransport<V, CAPACITY>) -> Self
     where
         V: Transport + Send + Sync + 'static,
     {
@@ -52,16 +54,9 @@ where
         let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
-        let mut transport = StatefulFramedTransport::new(transport);
-
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let task = tokio::spawn(async move {
-            transport
-                .authenticate()
-                .await
-                .expect("Failed to authenticate with the remote server");
-
             loop {
                 let ready = tokio::select! {
                     _ = shutdown_rx.recv() => {
