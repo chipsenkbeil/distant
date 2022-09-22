@@ -103,7 +103,7 @@ mod tests {
             .await
             .expect("Failed to start Unix socket server");
 
-        let mut client: Client<String, String> = Client::unix_socket()
+        let mut client: Client<String, String> = Client::<String, String>::unix_socket()
             .auth_handler(TestAuthHandler)
             .connect(server.path())
             .await

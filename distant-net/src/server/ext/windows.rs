@@ -59,7 +59,7 @@ mod tests {
     use super::*;
     use crate::{
         auth::{AuthHandler, AuthQuestion, AuthVerifyKind, Authenticator},
-        Client, Client, ConnectionCtx, ConnectionCtx, Request, Request, ServerCtx, ServerCtx,
+        Client, ConnectionCtx, Request, ServerCtx,
     };
     use std::collections::HashMap;
 
@@ -113,7 +113,7 @@ mod tests {
         .await
         .expect("Failed to start Windows pipe server");
 
-        let mut client: Client<String, String> = Client::windows_pipe()
+        let mut client: Client<String, String> = Client::<String, String>::windows_pipe()
             .auth_handler(TestAuthHandler)
             .connect(server.addr())
             .await
