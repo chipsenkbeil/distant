@@ -545,6 +545,7 @@ mod tests {
     use super::*;
     use crate::TestTransport;
     use bytes::BufMut;
+    use test_log::test;
 
     /// Codec that always succeeds without altering the frame
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -972,7 +973,7 @@ mod tests {
         );
     }
 
-    #[test_log::test(tokio::test)]
+    #[test(tokio::test)]
     async fn handshake_should_configure_transports_with_matching_codec() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
@@ -997,7 +998,7 @@ mod tests {
         server_task.await.unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_failing_should_ensure_existing_codec_remains() {
         let (mut t1, t2) = FramedTransport::test_pair(100);
 
@@ -1015,7 +1016,7 @@ mod tests {
         assert_eq!(t1.codec.decode(Frame::new(b"test")).unwrap(), b"decode");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_should_clear_any_intermittent_buffer_contents_prior_to_handshake_failing() {
         let (mut t1, t2) = FramedTransport::test_pair(100);
 
@@ -1037,7 +1038,7 @@ mod tests {
         assert!(t1.outgoing.is_empty());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_should_clear_any_intermittent_buffer_contents_prior_to_handshake_succeeding()
     {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
@@ -1071,7 +1072,7 @@ mod tests {
         assert!(t1.outgoing.is_empty());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_client_should_fail_if_receives_unexpected_frame_instead_of_options() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
@@ -1091,7 +1092,7 @@ mod tests {
         server_task.await.unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_client_should_fail_unable_to_send_codec_choice_to_other_side() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
         /* #[derive(Debug, Serialize, Deserialize)]
@@ -1130,56 +1131,56 @@ mod tests {
         server_task.await.unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_client_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_client_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
     ) {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_client_should_fail_if_an_error_occurs_during_derive_of_shared_secret() {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_receives_unexpected_frame_instead_of_choice() {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_unable_to_send_codec_options_to_other_side() {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type(
     ) {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type(
     ) {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
     ) {
         todo!();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_an_error_occurs_during_derive_of_shared_secret() {
         todo!();
     }
