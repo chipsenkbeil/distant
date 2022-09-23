@@ -4,8 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use distant_net::{
-    router, Auth, AuthClient, Client, IntoSplit, Listener, MpscListener, Request, Response, Server,
-    ServerCtx, ServerExt, UntypedTransportRead, UntypedTransportWrite,
+    Client, Listener, MpscListener, Request, Response, Server, ServerCtx, ServerExt,
 };
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
@@ -28,11 +27,6 @@ pub use handler::*;
 
 mod r#ref;
 pub use r#ref::*;
-
-router!(DistantManagerRouter {
-    auth_transport: Response<Auth> => Request<Auth>,
-    manager_transport: Request<ManagerRequest> => Response<ManagerResponse>,
-});
 
 /// Represents a manager of multiple distant server connections
 pub struct DistantManager {

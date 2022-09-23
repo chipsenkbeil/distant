@@ -1,13 +1,38 @@
-use distant_net::{AuthChallengeFn, AuthErrorFn, AuthInfoFn, AuthVerifyFn, AuthVerifyKind};
+use async_trait::async_trait;
+use distant_net::auth::{AuthErrorKind, AuthHandler, AuthQuestion, AuthVerifyKind};
 use log::*;
-use std::io;
+use std::{collections::HashMap, io};
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
 pub struct DistantManagerClientConfig {
-    pub on_challenge: Box<AuthChallengeFn>,
-    pub on_verify: Box<AuthVerifyFn>,
-    pub on_info: Box<AuthInfoFn>,
-    pub on_error: Box<AuthErrorFn>,
+    pub on_challenge:
+        Box<dyn FnMut(Vec<AuthQuestion>, HashMap<String, String>) -> io::Result<Vec<String>>>,
+    pub on_verify: Box<dyn FnMut(AuthVerifyKind, String) -> io::Result<bool>>,
+    pub on_info: Box<dyn FnMut(String) -> io::Result<()>>,
+    pub on_error: Box<dyn FnMut(AuthErrorKind, &str) -> io::Result<()>>,
+}
+
+#[async_trait]
+impl AuthHandler for DistantManagerClientConfig {
+    async fn on_challenge(
+        &mut self,
+        questions: Vec<AuthQuestion>,
+        options: HashMap<String, String>,
+    ) -> io::Result<Vec<String>> {
+        (self.on_challenge)(questions, options)
+    }
+
+    async fn on_verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool> {
+        (self.on_verify)(kind, text)
+    }
+
+    async fn on_info(&mut self, text: String) -> io::Result<()> {
+        (self.on_info)(text)
+    }
+
+    async fn on_error(&mut self, kind: AuthErrorKind, text: &str) -> io::Result<()> {
+        (self.on_error)(kind, text)
+    }
 }
 
 impl DistantManagerClientConfig {
@@ -47,7 +72,7 @@ impl DistantManagerClientConfig {
 
                     answers.push(answer);
                 }
-                answers
+                Ok(answers)
             }),
             on_verify: Box::new(move |kind, text| {
                 trace!("[manager client] on_verify({kind}, {text})");
@@ -55,30 +80,25 @@ impl DistantManagerClientConfig {
                     AuthVerifyKind::Host => {
                         eprintln!("{}", text);
 
-                        match text_prompt("Enter [y/N]> ") {
-                            Ok(answer) => {
-                                trace!("Verify? Answer = '{answer}'");
-                                matches!(answer.trim(), "y" | "Y" | "yes" | "YES")
-                            }
-                            Err(x) => {
-                                error!("Failed verification: {x}");
-                                false
-                            }
-                        }
+                        let answer = text_prompt("Enter [y/N]> ")?;
+                        trace!("Verify? Answer = '{answer}'");
+                        Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES"))
                     }
                     x => {
                         error!("Unsupported verify kind: {x}");
-                        false
+                        Ok(false)
                     }
                 }
             }),
             on_info: Box::new(|text| {
                 trace!("[manager client] on_info({text})");
                 println!("{}", text);
+                Ok(())
             }),
             on_error: Box::new(|kind, text| {
                 trace!("[manager client] on_error({kind}, {text})");
                 eprintln!("{}: {}", kind, text);
+                Ok(())
             }),
         }
     }

@@ -1,9 +1,6 @@
 use crate::{
     data::Map,
-    manager::{
-        data::{ChannelId, ConnectionId, Destination},
-        BoxedDistantReader, BoxedDistantWriter,
-    },
+    manager::data::{ChannelId, ConnectionId, Destination},
     DistantMsg, DistantRequestData, DistantResponseData, ManagerResponse,
 };
 use distant_net::{Request, Response, ServerReply};
@@ -43,7 +40,7 @@ impl DistantManagerChannel {
             .map_err(|x| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
-                    format!("channel {} send failed: {}", channel_id, x),
+                    format!("channel {channel_id} send failed: {x}"),
                 )
             })
     }
@@ -56,7 +53,7 @@ impl DistantManagerChannel {
             .map_err(|x| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
-                    format!("channel {} close failed: {}", channel_id, x),
+                    format!("channel {channel_id} close failed: {x}"),
                 )
             })
     }
@@ -103,7 +100,7 @@ impl DistantManagerConnection {
                         }
                         Ok(None) => break,
                         Err(x) => {
-                            error!("[Conn {}] {}", connection_id, x);
+                            error!("[Conn {connection_id}] {x}");
                             continue;
                         }
                     }
@@ -141,7 +138,7 @@ impl DistantManagerConnection {
                                 response,
                             };
                             if let Err(x) = reply.send(response).await {
-                                error!("[Conn {}] {}", connection_id, x);
+                                error!("[Conn {connection_id}] {x}");
                             }
                         }
                     }
@@ -149,11 +146,11 @@ impl DistantManagerConnection {
                         // Combine channel id with request id so we can properly forward
                         // the response containing this in the origin id
                         let request = Request {
-                            id: format!("{}_{}", id, request.id),
+                            id: format!("{id}_{}", request.id),
                             payload: request.payload,
                         };
                         if let Err(x) = writer.write(request).await {
-                            error!("[Conn {}] {}", connection_id, x);
+                            error!("[Conn {connection_id}] {x}");
                         }
                     }
                 }
@@ -184,7 +181,7 @@ impl DistantManagerConnection {
             .map_err(|x| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
-                    format!("open_channel failed: {}", x),
+                    format!("open_channel failed: {x}"),
                 )
             })?;
         Ok(DistantManagerChannel {

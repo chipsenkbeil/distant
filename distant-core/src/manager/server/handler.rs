@@ -1,68 +1,79 @@
 use crate::{
-    data::Map, manager::data::Destination, DistantMsg, DistantRequestData, DistantResponseData,
+    data::Map, manager::data::Destination, DistantClient, DistantMsg, DistantRequestData,
+    DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::{AuthClient, Request, Response, TypedAsyncRead, TypedAsyncWrite};
+use distant_net::{auth::Authenticator, Request, Response};
 use std::{future::Future, io};
 
-pub type BoxedDistantWriter =
-    Box<dyn TypedAsyncWrite<Request<DistantMsg<DistantRequestData>>> + Send>;
-pub type BoxedDistantReader =
-    Box<dyn TypedAsyncRead<Response<DistantMsg<DistantResponseData>>> + Send>;
-pub type BoxedDistantWriterReader = (BoxedDistantWriter, BoxedDistantReader);
 pub type BoxedLaunchHandler = Box<dyn LaunchHandler>;
 pub type BoxedConnectHandler = Box<dyn ConnectHandler>;
 
-/// Used to launch a server at the specified destination, returning some result as a vec of bytes
+/// Represents an interface to start a server at some remote `destination` and then connect to the
+/// started server.
+///
+/// * `destination` is the location where the server will be started.
+/// * `options` is provided to include extra information needed to launch or establish the
+///   connection.
+/// * `authenticator` is provided to support a challenge-based authentication while launching or
+///   connecting.
+///
+/// Returns a [`Destination`] representing the new origin to use if a connection is desired.
 #[async_trait]
 pub trait LaunchHandler: Send + Sync {
     async fn launch(
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
+        authenticator: &mut dyn Authenticator,
     ) -> io::Result<Destination>;
 }
 
 #[async_trait]
 impl<F, R> LaunchHandler for F
 where
-    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut AuthClient) -> R + Send + Sync + 'static,
+    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut dyn Authenticator) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<Destination>> + Send + 'static,
 {
     async fn launch(
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
+        authenticator: &mut dyn Authenticator,
     ) -> io::Result<Destination> {
-        self(destination, options, auth_client).await
+        self(destination, options, authenticator).await
     }
 }
 
-/// Used to connect to a destination, returning a connected reader and writer pair
+/// Represents an interface to perform a connection to some remote `destination`.
+///
+/// * `destination` is the location of the server to connect to.
+/// * `options` is provided to include extra information needed to establish the connection.
+/// * `authenticator` is provided to support a challenge-based authentication while connecting.
+///
+/// Returns a [`FramedTransport`] representing the connection.
 #[async_trait]
 pub trait ConnectHandler: Send + Sync {
     async fn connect(
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
+        authenticator: &mut dyn Authenticator,
     ) -> io::Result<BoxedDistantWriterReader>;
 }
 
 #[async_trait]
 impl<F, R> ConnectHandler for F
 where
-    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut AuthClient) -> R + Send + Sync + 'static,
+    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut dyn Authenticator) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<BoxedDistantWriterReader>> + Send + 'static,
 {
     async fn connect(
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
+        authenticator: &mut dyn Authenticator,
     ) -> io::Result<BoxedDistantWriterReader> {
-        self(destination, options, auth_client).await
+        self(destination, options, authenticator).await
     }
 }
