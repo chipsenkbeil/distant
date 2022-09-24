@@ -23,8 +23,7 @@ const READ_BUF_SIZE: usize = 8 * 1024;
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 /// Represents a wrapper around a [`Transport`] that reads and writes using frames defined by a
-/// [`Codec`]. `CAPACITY` represents both the initial capacity of incoming and outgoing buffers as
-/// well as the maximum bytes read per call to [`try_read`].
+/// [`Codec`].
 ///
 /// [`try_read`]: Transport::try_read
 #[derive(Clone)]

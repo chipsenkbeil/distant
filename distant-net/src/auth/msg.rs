@@ -7,11 +7,11 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, From, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Authentication {
-    /// Indicates that authentication is starting for the specific `method`
-    Start(AuthenticationStart),
+    /// Indicates the beginning of authentication, providing available methods
+    Initialization(Initialization),
 
-    /// Lists methods available for authentication
-    Methods(AuthenticationMethods),
+    /// Indicates that authentication is starting for the specific `method`
+    StartMethod(StartMethod),
 
     /// Issues a challenge to be answered
     Challenge(Challenge),
@@ -25,25 +25,26 @@ pub enum Authentication {
     /// Reports an error occurrred during authentication
     Error(Error),
 
-    /// Indicates that the authentication is finished
+    /// Indicates that the authentication of all methods is finished
     Finished,
+}
+
+/// Represents the beginning of the authentication procedure
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Initialization {
+    /// Available methods to use for authentication
+    pub methods: Vec<Method>,
 }
 
 /// Represents the start of authentication for some method
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AuthenticationStart {
-    pub method: AuthenticationMethod,
-}
-
-/// Represents a list of authentication methods available
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AuthenticationMethods {
-    pub methods: Vec<AuthenticationMethod>,
+pub struct StartMethod {
+    pub method: Method,
 }
 
 /// Represents the type of authentication method to use by the authenticator
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AuthenticationMethod {
+pub enum Method {
     /// Indicates that a static key is being used for authentication
     StaticKey,
 
@@ -80,11 +81,20 @@ pub struct Info {
 #[derive(Clone, Debug, From, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthenticationResponse {
+    /// Contains response to initialization, providing details about which methods to use
+    Initialization(InitializationResponse),
+
     /// Contains answers to challenge request
     Challenge(ChallengeResponse),
 
     /// Contains response to a verification request
     Verification(VerificationResponse),
+}
+
+/// Represents a response to initialization to specify which authentication methods to pursue
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InitializationResponse {
+    pub methods: Vec<Method>,
 }
 
 /// Represents the answers to a previously-asked challenge associated with authentication
@@ -102,7 +112,6 @@ pub struct VerificationResponse {
 /// Represents the type of verification being requested
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum VerificationKind {
     /// An ask to verify the host such as with SSH
     #[display(fmt = "host")]
@@ -146,6 +155,19 @@ pub struct Error {
     pub text: String,
 }
 
+impl Error {
+    /// Returns true if error represents a fatal error, meaning that there is no recovery possible
+    /// from this error
+    pub fn is_fatal(&self) -> bool {
+        self.kind.is_fatal()
+    }
+
+    /// Converts the error into a [`std::io::Error`] representing permission denied
+    pub fn into_io_permission_denied(self) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, self)
+    }
+}
+
 /// Represents the type of error encountered during authentication
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -155,4 +177,12 @@ pub enum ErrorKind {
 
     /// Error is recoverable
     Error,
+}
+
+impl ErrorKind {
+    /// Returns true if error kind represents a fatal error, meaning that there is no recovery
+    /// possible from this error
+    pub fn is_fatal(self) -> bool {
+        matches!(self, Self::Fatal)
+    }
 }
