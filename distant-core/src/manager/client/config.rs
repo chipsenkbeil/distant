@@ -1,28 +1,28 @@
 use async_trait::async_trait;
-use distant_net::auth::{AuthErrorKind, AuthHandler, AuthQuestion, AuthVerifyKind};
+use distant_net::auth::{AuthHandler, ErrorKind, Question, VerificationKind};
 use log::*;
 use std::{collections::HashMap, io};
 
 /// Configuration to use when creating a new [`DistantManagerClient`](super::DistantManagerClient)
 pub struct DistantManagerClientConfig {
     pub on_challenge:
-        Box<dyn FnMut(Vec<AuthQuestion>, HashMap<String, String>) -> io::Result<Vec<String>>>,
-    pub on_verify: Box<dyn FnMut(AuthVerifyKind, String) -> io::Result<bool>>,
+        Box<dyn FnMut(Vec<Question>, HashMap<String, String>) -> io::Result<Vec<String>>>,
+    pub on_verify: Box<dyn FnMut(VerificationKind, String) -> io::Result<bool>>,
     pub on_info: Box<dyn FnMut(String) -> io::Result<()>>,
-    pub on_error: Box<dyn FnMut(AuthErrorKind, &str) -> io::Result<()>>,
+    pub on_error: Box<dyn FnMut(ErrorKind, &str) -> io::Result<()>>,
 }
 
 #[async_trait]
 impl AuthHandler for DistantManagerClientConfig {
     async fn on_challenge(
         &mut self,
-        questions: Vec<AuthQuestion>,
+        questions: Vec<Question>,
         options: HashMap<String, String>,
     ) -> io::Result<Vec<String>> {
         (self.on_challenge)(questions, options)
     }
 
-    async fn on_verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool> {
+    async fn on_verify(&mut self, kind: VerificationKind, text: String) -> io::Result<bool> {
         (self.on_verify)(kind, text)
     }
 
@@ -30,7 +30,7 @@ impl AuthHandler for DistantManagerClientConfig {
         (self.on_info)(text)
     }
 
-    async fn on_error(&mut self, kind: AuthErrorKind, text: &str) -> io::Result<()> {
+    async fn on_error(&mut self, kind: ErrorKind, text: &str) -> io::Result<()> {
         (self.on_error)(kind, text)
     }
 }
@@ -77,7 +77,7 @@ impl DistantManagerClientConfig {
             on_verify: Box::new(move |kind, text| {
                 trace!("[manager client] on_verify({kind}, {text})");
                 match kind {
-                    AuthVerifyKind::Host => {
+                    VerificationKind::Host => {
                         eprintln!("{}", text);
 
                         let answer = text_prompt("Enter [y/N]> ")?;

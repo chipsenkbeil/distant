@@ -1,7 +1,6 @@
 mod authenticator;
-mod data;
 mod handler;
+pub mod msg;
 
 pub use authenticator::*;
-pub use data::*;
 pub use handler::*;

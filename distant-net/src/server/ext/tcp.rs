@@ -42,7 +42,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        auth::{AuthHandler, AuthQuestion, AuthVerifyKind, Authenticator},
+        auth::{AuthHandler, Authenticator, Question, VerificationKind},
         Client, ConnectionCtx, Request, ServerCtx,
     };
     use std::{
@@ -80,13 +80,13 @@ mod tests {
     impl AuthHandler for TestAuthHandler {
         async fn on_challenge(
             &mut self,
-            _: Vec<AuthQuestion>,
+            _: Vec<Question>,
             _: HashMap<String, String>,
         ) -> io::Result<Vec<String>> {
             Ok(Vec::new())
         }
 
-        async fn on_verify(&mut self, _: AuthVerifyKind, _: String) -> io::Result<bool> {
+        async fn on_verify(&mut self, _: VerificationKind, _: String) -> io::Result<bool> {
             Ok(true)
         }
     }

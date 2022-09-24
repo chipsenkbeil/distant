@@ -1,4 +1,4 @@
-use super::{data::*, AuthHandler};
+use super::{msg::*, AuthHandler};
 use crate::{utils, FramedTransport, Transport};
 use async_trait::async_trait;
 use log::*;
@@ -17,19 +17,19 @@ pub trait Authenticator: Send {
     /// Issues a challenge and returns the answers to the `questions` asked.
     async fn challenge(
         &mut self,
-        questions: Vec<AuthQuestion>,
+        questions: Vec<Question>,
         options: HashMap<String, String>,
     ) -> io::Result<Vec<String>>;
 
     /// Requests verification of some `kind` and `text`, returning true if passed verification.
-    async fn verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool>;
+    async fn verify(&mut self, kind: VerificationKind, text: String) -> io::Result<bool>;
 
     /// Reports information with no response expected.
     async fn info(&mut self, text: String) -> io::Result<()>;
 
     /// Reports an error occurred during authentication, consuming the authenticator since no more
     /// challenges should be issued.
-    async fn error(&mut self, kind: AuthErrorKind, text: String) -> io::Result<()>;
+    async fn error(&mut self, kind: ErrorKind, text: String) -> io::Result<()>;
 
     /// Reports that the authentication has finished successfully, consuming the authenticator
     /// since no more challenges should be issued.
@@ -72,25 +72,28 @@ where
 {
     async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()> {
         loop {
-            match next_frame_as!(self, AuthRequest) {
-                AuthRequest::Challenge(x) => {
+            match next_frame_as!(self, Authentication) {
+                Authentication::Challenge(x) => {
                     trace!("Authenticate::Challenge({x:?})");
                     let answers = handler.on_challenge(x.questions, x.options).await?;
                     write_frame!(
                         self,
-                        AuthResponse::Challenge(AuthChallengeResponse { answers })
+                        AuthenticationResponse::Challenge(ChallengeResponse { answers })
                     );
                 }
-                AuthRequest::Verify(x) => {
+                Authentication::Verification(x) => {
                     trace!("Authenticate::Verify({x:?})");
                     let valid = handler.on_verify(x.kind, x.text).await?;
-                    write_frame!(self, AuthResponse::Verify(AuthVerifyResponse { valid }));
+                    write_frame!(
+                        self,
+                        AuthenticationResponse::Verification(VerificationResponse { valid })
+                    );
                 }
-                AuthRequest::Info(x) => {
+                Authentication::Info(x) => {
                     trace!("Authenticate::Info({x:?})");
                     handler.on_info(x.text).await?;
                 }
-                AuthRequest::Error(x) => {
+                Authentication::Error(x) => {
                     trace!("Authenticate::Error({x:?})");
                     let kind = x.kind;
                     let text = x.text;
@@ -98,20 +101,24 @@ where
                     handler.on_error(kind, &text).await?;
 
                     return Err(match kind {
-                        AuthErrorKind::FailedChallenge => io::Error::new(
+                        ErrorKind::FailedChallenge => io::Error::new(
                             io::ErrorKind::PermissionDenied,
                             format!("Failed challenge: {text}"),
                         ),
-                        AuthErrorKind::FailedVerification => io::Error::new(
+                        ErrorKind::FailedVerification => io::Error::new(
                             io::ErrorKind::PermissionDenied,
                             format!("Failed verification: {text}"),
                         ),
-                        AuthErrorKind::Unknown => {
+                        ErrorKind::Unknown => {
                             io::Error::new(io::ErrorKind::Other, format!("Unknown error: {text}"))
                         }
                     });
                 }
-                AuthRequest::Finished => {
+                Authentication::Start(x) => {
+                    trace!("Authenticate::Start({x:?})");
+                    return Ok(());
+                }
+                Authentication::Finished => {
                     trace!("Authenticate::Finished");
                     return Ok(());
                 }
@@ -127,42 +134,39 @@ where
 {
     async fn challenge(
         &mut self,
-        questions: Vec<AuthQuestion>,
+        questions: Vec<Question>,
         options: HashMap<String, String>,
     ) -> io::Result<Vec<String>> {
         trace!("Authenticator::challenge(questions = {questions:?}, options = {options:?})");
 
-        write_frame!(
-            self,
-            AuthRequest::from(AuthChallengeRequest { questions, options })
-        );
-        let response = next_frame_as!(self, AuthResponse, Challenge);
+        write_frame!(self, Authentication::from(Challenge { questions, options }));
+        let response = next_frame_as!(self, AuthenticationResponse, Challenge);
         Ok(response.answers)
     }
 
-    async fn verify(&mut self, kind: AuthVerifyKind, text: String) -> io::Result<bool> {
+    async fn verify(&mut self, kind: VerificationKind, text: String) -> io::Result<bool> {
         trace!("Authenticator::verify(kind = {kind:?}, text = {text:?})");
 
-        write_frame!(self, AuthRequest::from(AuthVerifyRequest { kind, text }));
-        let response = next_frame_as!(self, AuthResponse, Verify);
+        write_frame!(self, Authentication::from(Verification { kind, text }));
+        let response = next_frame_as!(self, AuthenticationResponse, Verification);
         Ok(response.valid)
     }
 
     async fn info(&mut self, text: String) -> io::Result<()> {
         trace!("Authenticator::info(text = {text:?})");
-        write_frame!(self, AuthRequest::from(AuthInfo { text }));
+        write_frame!(self, Authentication::from(Info { text }));
         Ok(())
     }
 
-    async fn error(&mut self, kind: AuthErrorKind, text: String) -> io::Result<()> {
+    async fn error(&mut self, kind: ErrorKind, text: String) -> io::Result<()> {
         trace!("Authenticator::error(kind = {kind:?}, text = {text:?})");
-        write_frame!(self, AuthRequest::from(AuthError { kind, text }));
+        write_frame!(self, Authentication::from(Error { kind, text }));
         Ok(())
     }
 
     async fn finished(&mut self) -> io::Result<()> {
         trace!("Authenticator::finished()");
-        write_frame!(self, AuthRequest::Finished);
+        write_frame!(self, Authentication::Finished);
         Ok(())
     }
 }
