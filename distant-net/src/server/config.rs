@@ -9,6 +9,9 @@ pub struct ServerConfig {
     /// Supported authentication methods
     pub authentication_methods: Vec<MethodType>,
 
+    /// If true, authentication type "none" is allowed, meaning that no authentication is required
+    pub allow_none_authentication: bool,
+
     /// Rules for how a server will shutdown automatically
     pub shutdown: Shutdown,
 }
@@ -17,6 +20,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             authentication_methods: vec![MethodType::None],
+            allow_none_authentication: true,
             shutdown: Shutdown::default(),
         }
     }

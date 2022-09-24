@@ -1,7 +1,7 @@
 use super::MethodType;
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Represents messages from an authenticator that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
@@ -31,10 +31,10 @@ pub enum Authentication {
 }
 
 /// Represents the beginning of the authentication procedure
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Initialization {
     /// Available methods to use for authentication
-    pub methods: Vec<MethodType>,
+    pub methods: HashSet<MethodType>,
 }
 
 /// Represents the start of authentication for some method
@@ -81,7 +81,7 @@ pub enum AuthenticationResponse {
 /// Represents a response to initialization to specify which authentication methods to pursue
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InitializationResponse {
-    pub methods: Vec<MethodType>,
+    pub methods: HashSet<MethodType>,
 }
 
 /// Represents the answers to a previously-asked challenge associated with authentication
@@ -159,7 +159,7 @@ impl Error {
     }
 
     /// Creates a non-fatal error
-    pub fn error(text: impl Into<String>) -> Self {
+    pub fn non_fatal(text: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Error,
             text: text.into(),

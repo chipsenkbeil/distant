@@ -82,7 +82,7 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
             return Err(x.into_io_permission_denied());
         } else if response.answers.len() > 1 {
             authenticator
-                .error(Error::error("more than one answer, picking first"))
+                .error(Error::non_fatal("more than one answer, picking first"))
                 .await?;
         }
 

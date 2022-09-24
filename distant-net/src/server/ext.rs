@@ -425,6 +425,7 @@ mod tests {
         let server = ServerExt::start(
             TestServer(ServerConfig {
                 shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+                ..Default::default()
             }),
             listener,
         )
@@ -451,6 +452,7 @@ mod tests {
         let server = ServerExt::start(
             TestServer(ServerConfig {
                 shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+                ..Default::default()
             }),
             listener,
         )
@@ -479,6 +481,7 @@ mod tests {
         let server = ServerExt::start(
             TestServer(ServerConfig {
                 shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+                ..Default::default()
             }),
             listener,
         )
@@ -503,6 +506,7 @@ mod tests {
         let server = ServerExt::start(
             TestServer(ServerConfig {
                 shutdown: Shutdown::After(Duration::from_millis(100)),
+                ..Default::default()
             }),
             listener,
         )
@@ -521,6 +525,7 @@ mod tests {
         let server = ServerExt::start(
             TestServer(ServerConfig {
                 shutdown: Shutdown::After(Duration::from_millis(100)),
+                ..Default::default()
             }),
             listener,
         )
@@ -539,6 +544,7 @@ mod tests {
         let server = ServerExt::start(
             TestServer(ServerConfig {
                 shutdown: Shutdown::Never,
+                ..Default::default()
             }),
             listener,
         )
