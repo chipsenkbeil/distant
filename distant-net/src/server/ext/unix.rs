@@ -45,7 +45,10 @@ mod tests {
     use super::*;
     use crate::{
         auth::{
-            msg::{Challenge, ChallengeResponse, Verification, VerificationResponse},
+            msg::{
+                Challenge, ChallengeResponse, Initialization, InitializationResponse, Verification,
+                VerificationResponse,
+            },
             AuthHandler, Authenticator,
         },
         Client, ConnectionCtx, Request, ServerCtx,
@@ -80,6 +83,13 @@ mod tests {
 
     #[async_trait]
     impl AuthHandler for TestAuthHandler {
+        async fn on_initialization(
+            &mut self,
+            x: Initialization,
+        ) -> io::Result<InitializationResponse> {
+            Ok(InitializationResponse { methods: x.methods })
+        }
+
         async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
             Ok(ChallengeResponse {
                 answers: Vec::new(),

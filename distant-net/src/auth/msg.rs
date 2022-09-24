@@ -1,3 +1,4 @@
+use super::MethodType;
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,27 +34,13 @@ pub enum Authentication {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Initialization {
     /// Available methods to use for authentication
-    pub methods: Vec<Method>,
+    pub methods: Vec<MethodType>,
 }
 
 /// Represents the start of authentication for some method
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StartMethod {
-    pub method: Method,
-}
-
-/// Represents the type of authentication method to use by the authenticator
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Method {
-    /// Indicates that a static key is being used for authentication
-    StaticKey,
-
-    /// Indicates that re-authentication is being employed (using specialized key)
-    Reauthentication,
-
-    /// When the method is unknown (happens when other side is unaware of the method)
-    #[serde(other)]
-    Unknown,
+    pub method: MethodType,
 }
 
 /// Represents a challenge comprising a series of questions to be presented
@@ -94,7 +81,7 @@ pub enum AuthenticationResponse {
 /// Represents a response to initialization to specify which authentication methods to pursue
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InitializationResponse {
-    pub methods: Vec<Method>,
+    pub methods: Vec<MethodType>,
 }
 
 /// Represents the answers to a previously-asked challenge associated with authentication
@@ -121,6 +108,13 @@ pub enum VerificationKind {
     #[display(fmt = "unknown")]
     #[serde(other)]
     Unknown,
+}
+
+impl VerificationKind {
+    /// Returns all variants except "unknown"
+    pub const fn known_variants() -> &'static [Self] {
+        &[Self::Host]
+    }
 }
 
 /// Represents a single question in a challenge associated with authentication
@@ -156,6 +150,22 @@ pub struct Error {
 }
 
 impl Error {
+    /// Creates a fatal error
+    pub fn fatal(text: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Fatal,
+            text: text.into(),
+        }
+    }
+
+    /// Creates a non-fatal error
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Error,
+            text: text.into(),
+        }
+    }
+
     /// Returns true if error represents a fatal error, meaning that there is no recovery possible
     /// from this error
     pub fn is_fatal(&self) -> bool {

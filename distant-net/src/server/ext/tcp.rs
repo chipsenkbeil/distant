@@ -42,13 +42,16 @@ where
 mod tests {
     use super::*;
     use crate::{
-        auth::{AuthHandler, Authenticator, Question, VerificationKind},
+        auth::{
+            msg::{
+                Challenge, ChallengeResponse, Initialization, InitializationResponse, Verification,
+                VerificationResponse,
+            },
+            AuthHandler, Authenticator,
+        },
         Client, ConnectionCtx, Request, ServerCtx,
     };
-    use std::{
-        collections::HashMap,
-        net::{Ipv6Addr, SocketAddr},
-    };
+    use std::net::{Ipv6Addr, SocketAddr};
 
     pub struct TestServer;
 
@@ -78,16 +81,21 @@ mod tests {
 
     #[async_trait]
     impl AuthHandler for TestAuthHandler {
-        async fn on_challenge(
+        async fn on_initialization(
             &mut self,
-            _: Vec<Question>,
-            _: HashMap<String, String>,
-        ) -> io::Result<Vec<String>> {
-            Ok(Vec::new())
+            x: Initialization,
+        ) -> io::Result<InitializationResponse> {
+            Ok(InitializationResponse { methods: x.methods })
         }
 
-        async fn on_verify(&mut self, _: VerificationKind, _: String) -> io::Result<bool> {
-            Ok(true)
+        async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
+            Ok(ChallengeResponse {
+                answers: Vec::new(),
+            })
+        }
+
+        async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
+            Ok(VerificationResponse { valid: true })
         }
     }
 
