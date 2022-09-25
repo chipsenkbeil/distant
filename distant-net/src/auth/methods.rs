@@ -25,6 +25,8 @@ pub enum MethodType {
 /// Represents an interface to authenticate using some method
 #[async_trait]
 pub trait AuthenticationMethod {
+    // TODO: add a unique id method and update below method to take dyn ref so it can be boxed.
+    // that way, we can pass to server a collection of boxed methods
     async fn authenticate<A: Authenticator>(&self, authenticator: &mut A) -> io::Result<()>;
 }
 
