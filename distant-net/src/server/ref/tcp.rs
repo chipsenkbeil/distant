@@ -1,4 +1,4 @@
-use crate::{ServerRef, ServerState};
+use crate::ServerRef;
 use std::net::IpAddr;
 
 /// Reference to a TCP server instance
@@ -25,10 +25,6 @@ impl TcpServerRef {
 }
 
 impl ServerRef for TcpServerRef {
-    fn state(&self) -> &ServerState {
-        self.inner.state()
-    }
-
     fn is_finished(&self) -> bool {
         self.inner.is_finished()
     }

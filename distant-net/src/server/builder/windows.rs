@@ -1,47 +1,49 @@
-use crate::{Server, ServerExt, WindowsPipeListener, WindowsPipeServerRef};
-use async_trait::async_trait;
+use crate::{Server, ServerConfig, ServerHandler, WindowsPipeListener, WindowsPipeServerRef};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     ffi::{OsStr, OsString},
     io,
 };
 
-/// Extension trait to provide a reference implementation of starting a Windows pipe server
-/// that will listen for new connections and process them using the [`Server`] implementation
-#[async_trait]
-pub trait WindowsPipeServerExt {
-    type Request;
-    type Response;
+pub struct WindowsPipeServerBuilder<T> {
+    config: ServerConfig,
+    handler: T,
+}
 
-    /// Start a new server at the specified address using the given codec
-    async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
-    where
-        A: AsRef<OsStr> + Send;
-
-    /// Start a new server at the specified address via `\\.\pipe\{name}` using the given codec
-    async fn start_local<N>(self, name: N) -> io::Result<WindowsPipeServerRef>
-    where
-        Self: Sized,
-        N: AsRef<OsStr> + Send,
-    {
-        let mut addr = OsString::from(r"\\.\pipe\");
-        addr.push(name.as_ref());
-        self.start(addr).await
+impl Default for WindowsPipeServerBuilder<()> {
+    fn default() -> Self {
+        Self {
+            config: Default::default(),
+            handler: (),
+        }
     }
 }
 
-#[async_trait]
-impl<S> WindowsPipeServerExt for S
-where
-    S: Server + Sync + 'static,
-    S::Request: DeserializeOwned + Send + Sync + 'static,
-    S::Response: Serialize + Send + 'static,
-    S::LocalData: Default + Send + Sync + 'static,
-{
-    type Request = S::Request;
-    type Response = S::Response;
+impl<T> WindowsPipeServerBuilder<T> {
+    pub fn config(self, config: ServerConfig) -> Self {
+        Self {
+            config,
+            handler: self.handler,
+        }
+    }
 
-    async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
+    pub fn handler<U>(self, handler: U) -> WindowsPipeServerBuilder<U> {
+        WindowsPipeServerBuilder {
+            config: self.config,
+            handler,
+        }
+    }
+}
+
+impl<T> WindowsPipeServerBuilder<T>
+where
+    T: ServerHandler + Sync + 'static,
+    T::Request: DeserializeOwned + Send + Sync + 'static,
+    T::Response: Serialize + Send + 'static,
+    T::LocalData: Default + Send + Sync + 'static,
+{
+    /// Start a new server at the specified address using the given codec
+    pub async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
     where
         A: AsRef<OsStr> + Send,
     {
@@ -49,8 +51,23 @@ where
         let listener = WindowsPipeListener::bind(a)?;
         let addr = listener.addr().to_os_string();
 
-        let inner = ServerExt::start(self, listener)?;
+        let server = Server {
+            config: self.config,
+            handler: self.handler,
+        };
+        let inner = server.start(listener)?;
         Ok(WindowsPipeServerRef { addr, inner })
+    }
+
+    /// Start a new server at the specified address via `\\.\pipe\{name}` using the given codec
+    pub async fn start_local<N>(self, name: N) -> io::Result<WindowsPipeServerRef>
+    where
+        Self: Sized,
+        N: AsRef<OsStr> + Send,
+    {
+        let mut addr = OsString::from(r"\\.\pipe\");
+        addr.push(name.as_ref());
+        self.start(addr).await
     }
 }
 
@@ -67,12 +84,13 @@ mod tests {
         },
         Client, ConnectionCtx, Request, ServerCtx,
     };
+    use async_trait::async_trait;
     use std::collections::HashMap;
 
-    pub struct TestServer;
+    pub struct TestServerHandler;
 
     #[async_trait]
-    impl Server for TestServer {
+    impl ServerHandler for TestServerHandler {
         type Request = String;
         type Response = String;
         type LocalData = ();
@@ -117,14 +135,13 @@ mod tests {
 
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
-        let server = WindowsPipeServerExt::start_local(
-            TestServer,
-            format!("test_pip_{}", rand::random::<usize>()),
-        )
-        .await
-        .expect("Failed to start Windows pipe server");
+        let server = Server::windows_pipe()
+            .handler(TestServerHandler)
+            .start_local(format!("test_pipe_{}", rand::random::<usize>()))
+            .await
+            .expect("Failed to start Windows pipe server");
 
-        let mut client: Client<String, String> = Client::<String, String>::windows_pipe()
+        let mut client: Client<String, String> = Client::windows_pipe()
             .auth_handler(TestAuthHandler)
             .connect(server.addr())
             .await

@@ -1,40 +1,58 @@
-use crate::{PortRange, ServerExt, ServerHandler, TcpListener, TcpServerRef};
-use async_trait::async_trait;
+use crate::{Server, ServerConfig, ServerHandler, UnixSocketListener, UnixSocketServerRef};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{io, net::IpAddr};
+use std::{io, path::Path};
 
-/// Extension trait to provide a reference implementation of starting a TCP server
-/// that will listen for new connections and process them using the [`Server`] implementation
-#[async_trait]
-pub trait TcpServerExt {
-    type Request;
-    type Response;
-
-    /// Start a new server using the provided listener
-    async fn start<P>(self, addr: IpAddr, port: P) -> io::Result<TcpServerRef>
-    where
-        P: Into<PortRange> + Send;
+pub struct UnixSocketServerBuilder<T> {
+    config: ServerConfig,
+    handler: T,
 }
 
-#[async_trait]
-impl<S> TcpServerExt for S
-where
-    S: ServerHandler + Sync + 'static,
-    S::Request: DeserializeOwned + Send + Sync + 'static,
-    S::Response: Serialize + Send + 'static,
-    S::LocalData: Default + Send + Sync + 'static,
-{
-    type Request = S::Request;
-    type Response = S::Response;
+impl Default for UnixSocketServerBuilder<()> {
+    fn default() -> Self {
+        Self {
+            config: Default::default(),
+            handler: (),
+        }
+    }
+}
 
-    async fn start<P>(self, addr: IpAddr, port: P) -> io::Result<TcpServerRef>
+impl<T> UnixSocketServerBuilder<T> {
+    pub fn config(self, config: ServerConfig) -> Self {
+        Self {
+            config,
+            handler: self.handler,
+        }
+    }
+
+    pub fn handler<U>(self, handler: U) -> UnixSocketServerBuilder<U> {
+        UnixSocketServerBuilder {
+            config: self.config,
+            handler,
+        }
+    }
+}
+
+impl<T> UnixSocketServerBuilder<T>
+where
+    T: ServerHandler + Sync + 'static,
+    T::Request: DeserializeOwned + Send + Sync + 'static,
+    T::Response: Serialize + Send + 'static,
+    T::LocalData: Default + Send + Sync + 'static,
+{
+    pub async fn start<P>(self, path: P) -> io::Result<UnixSocketServerRef>
     where
-        P: Into<PortRange> + Send,
+        P: AsRef<Path> + Send,
     {
-        let listener = TcpListener::bind(addr, port).await?;
-        let port = listener.port();
-        let inner = ServerExt::start(self, listener)?;
-        Ok(TcpServerRef { addr, port, inner })
+        let path = path.as_ref();
+        let listener = UnixSocketListener::bind(path).await?;
+        let path = listener.path().to_path_buf();
+
+        let server = Server {
+            config: self.config,
+            handler: self.handler,
+        };
+        let inner = server.start(listener)?;
+        Ok(UnixSocketServerRef { path, inner })
     }
 }
 
@@ -51,12 +69,13 @@ mod tests {
         },
         Client, ConnectionCtx, Request, ServerCtx,
     };
-    use std::net::{Ipv6Addr, SocketAddr};
+    use async_trait::async_trait;
+    use tempfile::NamedTempFile;
 
-    pub struct TestServer;
+    pub struct TestServerHandler;
 
     #[async_trait]
-    impl ServerHandler for TestServer {
+    impl ServerHandler for TestServerHandler {
         type Request = String;
         type Response = String;
         type LocalData = ();
@@ -101,13 +120,21 @@ mod tests {
 
     #[tokio::test]
     async fn should_invoke_handler_upon_receiving_a_request() {
-        let server = TcpServerExt::start(TestServer, IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
-            .await
-            .expect("Failed to start TCP server");
+        // Generate a socket path and delete the file after so there is nothing there
+        let path = NamedTempFile::new()
+            .expect("Failed to create socket file")
+            .path()
+            .to_path_buf();
 
-        let mut client: Client<String, String> = Client::<String, String>::tcp()
+        let server = Server::unix_socket()
+            .handler(TestServerHandler)
+            .start(path)
+            .await
+            .expect("Failed to start Unix socket server");
+
+        let mut client: Client<String, String> = Client::unix_socket()
             .auth_handler(TestAuthHandler)
-            .connect(SocketAddr::from((server.ip_addr(), server.port())))
+            .connect(server.path())
             .await
             .expect("Client failed to connect");
 

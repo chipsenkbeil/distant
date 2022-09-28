@@ -1,4 +1,5 @@
-use crate::{AsAny, ServerState};
+use super::ServerState;
+use crate::AsAny;
 use log::*;
 use std::{
     future::Future,
@@ -12,9 +13,6 @@ use tokio::task::{JoinError, JoinHandle};
 
 /// Interface to engage with a server instance
 pub trait ServerRef: AsAny + Send {
-    /// Returns a reference to the state of the server
-    fn state(&self) -> &ServerState;
-
     /// Returns true if the server is no longer running
     fn is_finished(&self) -> bool;
 
@@ -64,10 +62,6 @@ pub struct GenericServerRef {
 
 /// Runtime-specific implementation of [`ServerRef`] for a [`tokio::task::JoinHandle`]
 impl ServerRef for GenericServerRef {
-    fn state(&self) -> &ServerState {
-        &self.state
-    }
-
     fn is_finished(&self) -> bool {
         self.task.is_finished()
     }

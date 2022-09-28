@@ -1,6 +1,7 @@
+use super::{ServerState, ShutdownTimer};
 use crate::{
     ConnectionCtx, FramedTransport, Interest, Response, ServerCtx, ServerHandler, ServerReply,
-    ServerState, ShutdownTimer, Transport, UntypedRequest,
+    Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -45,11 +46,6 @@ impl Connection {
     /// Returns the id associated with the connection
     pub fn id(&self) -> ConnectionId {
         self.id
-    }
-
-    /// Returns true if connection is still processing incoming or outgoing messages
-    pub fn is_active(&self) -> bool {
-        !self.task.is_finished()
     }
 
     /// Aborts the connection
@@ -97,7 +93,7 @@ impl<H, T> ConnectionBuilder<H, T> {
         }
     }
 
-    pub fn shutdown_timer(
+    pub(crate) fn shutdown_timer(
         self,
         shutdown_timer: Weak<RwLock<ShutdownTimer>>,
     ) -> ConnectionBuilder<H, T> {

@@ -54,11 +54,6 @@ where
         }
     }
 
-    /// Returns duration of the timer
-    pub fn duration(&self) -> Duration {
-        self.duration
-    }
-
     /// Starts the timer, re-starting the countdown if already running. If the callback has already
     /// been completed, this timer will not invoke it again; however, this will start the timer
     /// itself, which will wait the duration and then fail to trigger the callback
@@ -118,7 +113,7 @@ mod tests {
 
         #[tokio::test]
         async fn should_not_invoke_callback_if_only_stop_called() {
-            let mut timer = Timer::new(Duration::default(), async {});
+            let timer = Timer::new(Duration::default(), async {});
             timer.stop();
 
             tokio::time::sleep(Duration::from_millis(300)).await;

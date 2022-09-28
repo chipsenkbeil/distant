@@ -1,4 +1,4 @@
-use crate::{ServerRef, ServerState};
+use crate::ServerRef;
 use std::path::{Path, PathBuf};
 
 /// Reference to a unix socket server instance
@@ -24,10 +24,6 @@ impl UnixSocketServerRef {
 }
 
 impl ServerRef for UnixSocketServerRef {
-    fn state(&self) -> &ServerState {
-        self.inner.state()
-    }
-
     fn is_finished(&self) -> bool {
         self.inner.is_finished()
     }

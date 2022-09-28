@@ -5,17 +5,18 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{io, sync::Arc};
 use tokio::sync::RwLock;
 
+mod builder;
+pub use builder::*;
+
 mod config;
 pub use config::*;
 
 mod connection;
-pub use connection::*;
+pub use connection::ConnectionId;
+use connection::*;
 
 mod context;
 pub use context::*;
-
-mod ext;
-pub use ext::*;
 
 mod r#ref;
 pub use r#ref::*;
@@ -24,10 +25,10 @@ mod reply;
 pub use reply::*;
 
 mod state;
-pub use state::*;
+use state::*;
 
 mod shutdown_timer;
-pub use shutdown_timer::*;
+use shutdown_timer::*;
 
 /// Represents a server that can be used to receive requests & send responses to clients.
 pub struct Server<T> {
@@ -67,6 +68,25 @@ pub trait ServerHandler: Send {
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>);
+}
+
+impl Server<()> {
+    /// Creates a new [`TcpServerBuilder`] that is used to construct a [`Server`].
+    pub fn tcp() -> TcpServerBuilder<()> {
+        TcpServerBuilder::default()
+    }
+
+    /// Creates a new [`UnixSocketServerBuilder`] that is used to construct a [`Server`].
+    #[cfg(unix)]
+    pub fn unix_socket() -> UnixSocketServerBuilder<()> {
+        UnixSocketServerBuilder::default()
+    }
+
+    /// Creates a new [`WindowsPipeServerBuilder`] that is used to construct a [`Server`].
+    #[cfg(windows)]
+    pub fn windows_pipe() -> WindowsPipeServerBuilder<()> {
+        WindowsPipeServerBuilder::default()
+    }
 }
 
 impl<T> Server<T>
@@ -154,7 +174,7 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
-    pub struct TestServerHandler(ServerConfig);
+    pub struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
@@ -172,6 +192,14 @@ mod tests {
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Always send back "hello"
             ctx.reply.send("hello".to_string()).await.unwrap();
+        }
+    }
+
+    #[inline]
+    fn make_test_server(config: ServerConfig) -> Server<TestServerHandler> {
+        Server {
+            config,
+            handler: TestServerHandler,
         }
     }
 
@@ -196,7 +224,8 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let _server = ServerExt::start(TestServerHandler(ServerConfig::default()), listener)
+        let _server = make_test_server(ServerConfig::default())
+            .start(listener)
             .expect("Failed to start server");
 
         transport
@@ -213,13 +242,11 @@ mod tests {
     async fn should_lonely_shutdown_if_no_connections_received_after_n_secs_when_config_set() {
         let (_tx, listener) = make_listener(100);
 
-        let server = ServerExt::start(
-            TestServerHandler(ServerConfig {
-                shutdown: Shutdown::Lonely(Duration::from_millis(100)),
-                ..Default::default()
-            }),
-            listener,
-        )
+        let server = make_test_server(ServerConfig {
+            shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+            ..Default::default()
+        })
+        .start(listener)
         .expect("Failed to start server");
 
         // Wait for some time
@@ -240,13 +267,11 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let server = ServerExt::start(
-            TestServerHandler(ServerConfig {
-                shutdown: Shutdown::Lonely(Duration::from_millis(100)),
-                ..Default::default()
-            }),
-            listener,
-        )
+        let server = make_test_server(ServerConfig {
+            shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+            ..Default::default()
+        })
+        .start(listener)
         .expect("Failed to start server");
 
         // Drop the connection by dropping the transport
@@ -269,13 +294,11 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let server = ServerExt::start(
-            TestServerHandler(ServerConfig {
-                shutdown: Shutdown::Lonely(Duration::from_millis(100)),
-                ..Default::default()
-            }),
-            listener,
-        )
+        let server = make_test_server(ServerConfig {
+            shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+            ..Default::default()
+        })
+        .start(listener)
         .expect("Failed to start server");
 
         // Wait for some time
@@ -294,13 +317,11 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let server = ServerExt::start(
-            TestServerHandler(ServerConfig {
-                shutdown: Shutdown::After(Duration::from_millis(100)),
-                ..Default::default()
-            }),
-            listener,
-        )
+        let server = make_test_server(ServerConfig {
+            shutdown: Shutdown::After(Duration::from_millis(100)),
+            ..Default::default()
+        })
+        .start(listener)
         .expect("Failed to start server");
 
         // Wait for some time
@@ -313,13 +334,11 @@ mod tests {
     async fn should_shutdown_after_n_seconds_if_config_set_to_after() {
         let (_tx, listener) = make_listener(100);
 
-        let server = ServerExt::start(
-            TestServerHandler(ServerConfig {
-                shutdown: Shutdown::After(Duration::from_millis(100)),
-                ..Default::default()
-            }),
-            listener,
-        )
+        let server = make_test_server(ServerConfig {
+            shutdown: Shutdown::After(Duration::from_millis(100)),
+            ..Default::default()
+        })
+        .start(listener)
         .expect("Failed to start server");
 
         // Wait for some time
@@ -332,13 +351,11 @@ mod tests {
     async fn should_never_shutdown_if_config_set_to_never() {
         let (_tx, listener) = make_listener(100);
 
-        let server = ServerExt::start(
-            TestServerHandler(ServerConfig {
-                shutdown: Shutdown::Never,
-                ..Default::default()
-            }),
-            listener,
-        )
+        let server = make_test_server(ServerConfig {
+            shutdown: Shutdown::Never,
+            ..Default::default()
+        })
+        .start(listener)
         .expect("Failed to start server");
 
         // Wait for some time

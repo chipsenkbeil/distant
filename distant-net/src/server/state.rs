@@ -1,4 +1,5 @@
-use crate::{Connection, ConnectionId, HeapSecretKey};
+use super::{Connection, ConnectionId};
+use crate::HeapSecretKey;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 

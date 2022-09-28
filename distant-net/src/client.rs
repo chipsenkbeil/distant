@@ -187,7 +187,7 @@ where
     }
 }
 
-impl<T, U> Client<T, U> {
+impl Client<(), ()> {
     /// Creates a new [`TcpClientBuilder`]
     pub fn tcp() -> TcpClientBuilder<()> {
         TcpClientBuilder::new()
@@ -204,7 +204,9 @@ impl<T, U> Client<T, U> {
     pub fn windows_pipe() -> WindowsPipeClientBuilder<()> {
         WindowsPipeClientBuilder::new()
     }
+}
 
+impl<T, U> Client<T, U> {
     /// Convert into underlying channel
     pub fn into_channel(self) -> Channel<T, U> {
         self.channel

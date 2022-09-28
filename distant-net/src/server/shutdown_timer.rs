@@ -7,7 +7,7 @@ use tokio::sync::watch;
 
 /// Cloneable notification for when a [`ShutdownTimer`] has completed.
 #[derive(Clone)]
-pub struct ShutdownNotification(watch::Receiver<()>);
+pub(crate) struct ShutdownNotification(watch::Receiver<()>);
 
 impl ShutdownNotification {
     /// Waits to receive a notification that the shutdown timer has concluded
@@ -17,7 +17,7 @@ impl ShutdownNotification {
 }
 
 /// Wrapper around [`Timer`] to support shutdown-specific notifications.
-pub struct ShutdownTimer {
+pub(crate) struct ShutdownTimer {
     timer: Timer<()>,
     watcher: ShutdownNotification,
 }
@@ -25,7 +25,7 @@ pub struct ShutdownTimer {
 impl ShutdownTimer {
     pub fn new(shutdown: Shutdown) -> Self {
         // Create the timer that will be used shutdown the server after duration elapsed
-        let (tx, mut rx) = watch::channel(());
+        let (tx, rx) = watch::channel(());
 
         // NOTE: We do a manual map such that the shutdown sender is not captured and dropped when
         //       there is no shutdown after configured. This is because we need the future for the
@@ -77,11 +77,6 @@ impl ShutdownTimer {
     /// Clones the notification
     pub fn clone_notification(&self) -> ShutdownNotification {
         self.watcher.clone()
-    }
-
-    /// Wait for the timer to complete
-    pub async fn wait(&mut self) {
-        self.watcher.wait().await
     }
 }
 
