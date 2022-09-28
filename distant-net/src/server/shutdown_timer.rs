@@ -75,9 +75,8 @@ impl ShutdownTimer {
 
     /// Stops the timer, only applying if the timer is `lonely`
     pub fn stop(&self) {
-        match self.shutdown {
-            Shutdown::Lonely(_) => self.timer.stop(),
-            _ => (),
+        if let Shutdown::Lonely(_) = self.shutdown {
+            self.timer.stop();
         }
     }
 
