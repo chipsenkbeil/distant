@@ -170,6 +170,7 @@ fn copy_and_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     #[test]
     fn is_rx_closed_should_properly_reflect_if_internal_rx_channel_is_closed() {
@@ -321,7 +322,7 @@ mod tests {
         assert_eq!(transport.try_write(b"some bytes").unwrap(), 0);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn reconnect_should_fail_as_unsupported() {
         let (write_tx, _write_rx) = mpsc::channel(1);
         let (_read_tx, read_rx) = mpsc::channel(1);
@@ -333,7 +334,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn ready_should_report_read_closed_if_channel_closed_and_internal_buf_empty() {
         let (write_tx, _write_rx) = mpsc::channel(1);
         let (read_tx, read_rx) = mpsc::channel(1);
@@ -347,7 +348,7 @@ mod tests {
         assert!(ready.is_read_closed());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn ready_should_report_readable_if_channel_not_closed() {
         let (write_tx, _write_rx) = mpsc::channel(1);
         let (_read_tx, read_rx) = mpsc::channel(1);
@@ -358,7 +359,7 @@ mod tests {
         assert!(!ready.is_read_closed());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn ready_should_report_readable_if_internal_buf_not_empty() {
         let (write_tx, _write_rx) = mpsc::channel(1);
         let (read_tx, read_rx) = mpsc::channel(1);
@@ -376,7 +377,7 @@ mod tests {
         assert!(!ready.is_read_closed());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn ready_should_report_writable_if_channel_not_closed() {
         let (write_tx, _write_rx) = mpsc::channel(1);
         let (_read_tx, read_rx) = mpsc::channel(1);
@@ -387,7 +388,7 @@ mod tests {
         assert!(!ready.is_write_closed());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn ready_should_report_write_closed_if_channel_closed() {
         let (write_tx, write_rx) = mpsc::channel(1);
         let (_read_tx, read_rx) = mpsc::channel(1);
@@ -401,7 +402,7 @@ mod tests {
         assert!(ready.is_write_closed());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn make_should_return_sender_that_sends_data_to_transport() {
         let (tx, _, transport) = InmemoryTransport::make(3);
 
@@ -430,7 +431,7 @@ mod tests {
         assert_eq!(len, 0, "Unexpectedly got more data");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn make_should_return_receiver_that_receives_data_from_transport() {
         let (_, mut rx, transport) = InmemoryTransport::make(3);
 

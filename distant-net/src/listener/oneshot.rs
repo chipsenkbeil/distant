@@ -48,9 +48,10 @@ impl<T: Send> Listener for OneshotListener<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
     use tokio::task::JoinHandle;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn from_value_should_return_value_on_first_call_to_accept() {
         let mut listener = OneshotListener::from_value("hello world");
         assert_eq!(listener.accept().await.unwrap(), "hello world");
@@ -60,7 +61,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn channel_should_return_a_oneshot_sender_to_feed_first_call_to_accept() {
         let (tx, mut listener) = OneshotListener::channel();
         let accept_task: JoinHandle<(io::Result<&str>, io::Result<&str>)> =

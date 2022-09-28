@@ -66,9 +66,10 @@ mod tests {
     use super::*;
     use crate::Transport;
     use std::net::{Ipv6Addr, SocketAddr};
+    use test_log::test;
     use tokio::{sync::oneshot, task::JoinHandle};
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_fail_to_bind_if_port_already_bound() {
         let addr = IpAddr::V6(Ipv6Addr::LOCALHOST);
         let port = 0; // Ephemeral port
@@ -88,7 +89,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_receive_connections_and_read_and_write_data_with_them() {
         let (tx, rx) = oneshot::channel();
 

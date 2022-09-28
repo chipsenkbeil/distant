@@ -63,6 +63,7 @@ impl Transport for UnixSocketTransport {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+    use test_log::test;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::UnixListener,
@@ -102,7 +103,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_fail_to_connect_if_socket_does_not_exist() {
         // Generate a socket path and delete the file after so there is nothing there
         let path = NamedTempFile::new()
@@ -116,7 +117,7 @@ mod tests {
             .expect_err("Unexpectedly succeeded in connecting to missing socket");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_fail_to_connect_if_path_is_not_a_socket() {
         // Generate a regular file
         let path = NamedTempFile::new()
@@ -129,7 +130,7 @@ mod tests {
             .expect_err("Unexpectedly succeeded in connecting to regular file");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_read_and_write_data() {
         let (tx, rx) = oneshot::channel();
 
@@ -159,7 +160,7 @@ mod tests {
         let _ = task.await.expect("Server task failed unexpectedly");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_reconnect() {
         let (tx, rx) = oneshot::channel();
 

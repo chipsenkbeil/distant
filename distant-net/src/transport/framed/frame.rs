@@ -211,6 +211,7 @@ impl<'a, const N: usize> PartialEq<&'a [u8; N]> for Frame<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     #[test]
     fn write_should_fail_when_item_is_zero_bytes() {

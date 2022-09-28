@@ -71,6 +71,14 @@ pub trait ServerHandler: Send {
 }
 
 impl Server<()> {
+    /// Creates a new [`Server`], starting with a default configuration and no [`ServerHandler`].
+    pub fn new() -> Self {
+        Self {
+            config: Default::default(),
+            handler: (),
+        }
+    }
+
     /// Creates a new [`TcpServerBuilder`] that is used to construct a [`Server`].
     pub fn tcp() -> TcpServerBuilder<()> {
         TcpServerBuilder::default()
@@ -86,6 +94,30 @@ impl Server<()> {
     #[cfg(windows)]
     pub fn windows_pipe() -> WindowsPipeServerBuilder<()> {
         WindowsPipeServerBuilder::default()
+    }
+}
+
+impl Default for Server<()> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Server<T> {
+    /// Consumes the current server, replacing its config with `config` and returning it.
+    pub fn config(self, config: ServerConfig) -> Self {
+        Self {
+            config,
+            handler: self.handler,
+        }
+    }
+
+    /// Consumes the current server, replacing its handler with `handler` and returning it.
+    pub fn handler<U>(self, handler: U) -> Server<U> {
+        Server {
+            config: self.config,
+            handler,
+        }
     }
 }
 
@@ -172,6 +204,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use std::time::Duration;
+    use test_log::test;
     use tokio::sync::mpsc;
 
     pub struct TestServerHandler;
@@ -213,7 +246,7 @@ mod tests {
         MpscListener::channel(buffer)
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_invoke_handler_upon_receiving_a_request() {
         // Create a test listener where we will forward a connection
         let (tx, listener) = make_listener(100);
@@ -229,7 +262,8 @@ mod tests {
             .expect("Failed to start server");
 
         transport
-            .try_write(&Request::new(123).to_vec().unwrap())
+            .write_all(&Request::new(123).to_vec().unwrap())
+            .await
             .expect("Failed to send request");
 
         let mut buf = [0u8; 1024];
@@ -238,7 +272,7 @@ mod tests {
         assert_eq!(response.payload, "hello");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_lonely_shutdown_if_no_connections_received_after_n_secs_when_config_set() {
         let (_tx, listener) = make_listener(100);
 
@@ -255,7 +289,7 @@ mod tests {
         assert!(server.is_finished(), "Server shutdown not triggered!");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_lonely_shutdown_if_last_connection_terminated_and_then_no_connections_after_n_secs(
     ) {
         // Create a test listener where we will forward a connection
@@ -283,7 +317,7 @@ mod tests {
         assert!(server.is_finished(), "Server shutdown not triggered!");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_not_lonely_shutdown_as_long_as_a_connection_exists() {
         // Create a test listener where we will forward a connection
         let (tx, listener) = make_listener(100);
@@ -307,7 +341,7 @@ mod tests {
         assert!(!server.is_finished(), "Server shutdown when it should not!");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_shutdown_after_n_seconds_even_with_connections_if_config_set_to_after() {
         let (tx, listener) = make_listener(100);
 
@@ -330,7 +364,7 @@ mod tests {
         assert!(server.is_finished(), "Server shutdown not triggered!");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_shutdown_after_n_seconds_if_config_set_to_after() {
         let (_tx, listener) = make_listener(100);
 
@@ -347,7 +381,7 @@ mod tests {
         assert!(server.is_finished(), "Server shutdown not triggered!");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_never_shutdown_if_config_set_to_never() {
         let (_tx, listener) = make_listener(100);
 

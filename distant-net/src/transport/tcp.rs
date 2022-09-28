@@ -70,6 +70,7 @@ impl Transport for TcpTransport {
 mod tests {
     use super::*;
     use std::net::{Ipv6Addr, SocketAddr};
+    use test_log::test;
     use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
     async fn find_ephemeral_addr() -> SocketAddr {
@@ -121,7 +122,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_fail_to_connect_if_nothing_listening() {
         let addr = find_ephemeral_addr().await;
 
@@ -132,7 +133,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_read_and_write_data() {
         let (tx, rx) = oneshot::channel();
 
@@ -164,7 +165,7 @@ mod tests {
         let _ = task.await.expect("Server task failed unexpectedly");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_reconnect() {
         let (tx, rx) = oneshot::channel();
 

@@ -154,8 +154,9 @@ pub trait Transport: Reconnectable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_exact_should_fail_if_try_read_encounters_error_other_than_would_block() {
         let transport = TestTransport {
             f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
@@ -170,7 +171,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_exact_should_fail_if_try_read_returns_0_before_necessary_bytes_read() {
         let transport = TestTransport {
             f_try_read: Box::new(|_| Ok(0)),
@@ -185,7 +186,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_exact_should_continue_to_call_try_read_until_buffer_is_filled() {
         let transport = TestTransport {
             f_try_read: Box::new(|buf| {
@@ -205,7 +206,7 @@ mod tests {
         assert_eq!(&buf, b"abc");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_exact_should_continue_to_call_try_read_while_it_returns_would_block() {
         // Configure `try_read` to alternate between reading a byte and WouldBlock
         let transport = TestTransport {
@@ -230,7 +231,7 @@ mod tests {
         assert_eq!(&buf, b"ace");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_exact_should_return_0_if_given_a_buffer_of_0_len() {
         let transport = TestTransport {
             f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
@@ -242,7 +243,7 @@ mod tests {
         assert_eq!(transport.read_exact(&mut buf).await.unwrap(), 0);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_all_should_fail_if_try_write_encounters_error_other_than_would_block() {
         let transport = TestTransport {
             f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
@@ -256,7 +257,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_all_should_fail_if_try_write_returns_0_before_all_bytes_written() {
         let transport = TestTransport {
             f_try_write: Box::new(|_| Ok(0)),
@@ -270,7 +271,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_all_should_continue_to_call_try_write_until_all_bytes_written() {
         // Configure `try_write` to alternate between writing a byte and WouldBlock
         let transport = TestTransport {
@@ -289,7 +290,7 @@ mod tests {
         transport.write_all(b"abc").await.unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_all_should_continue_to_call_try_write_while_it_returns_would_block() {
         // Configure `try_write` to alternate between writing a byte and WouldBlock
         let transport = TestTransport {
@@ -313,7 +314,7 @@ mod tests {
         transport.write_all(b"ace").await.unwrap();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_all_should_return_immediately_if_given_buffer_of_0_len() {
         let transport = TestTransport {
             f_try_write: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),

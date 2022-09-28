@@ -96,9 +96,10 @@ mod tests {
     use super::*;
     use crate::Transport;
     use tempfile::NamedTempFile;
+    use test_log::test;
     use tokio::{sync::oneshot, task::JoinHandle};
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_succeed_to_bind_if_file_exists_at_path_but_nothing_listening() {
         // Generate a socket path
         let path = NamedTempFile::new()
@@ -111,7 +112,7 @@ mod tests {
             .expect("Unexpectedly failed to bind to existing file");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_fail_to_bind_if_socket_already_bound() {
         // Generate a socket path and delete the file after
         let path = NamedTempFile::new()
@@ -130,7 +131,7 @@ mod tests {
             .expect_err("Unexpectedly succeeded in binding to same socket");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_receive_connections_and_read_and_write_data_with_them() {
         let (tx, rx) = oneshot::channel();
 

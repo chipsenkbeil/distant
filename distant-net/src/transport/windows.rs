@@ -93,6 +93,7 @@ mod tests {
         sync::oneshot,
         task::JoinHandle,
     };
+    use test_log::test;
 
     async fn start_and_run_server(tx: oneshot::Sender<String>) -> io::Result<()> {
         let pipe = start_server(tx).await?;
@@ -135,7 +136,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_fail_to_connect_if_pipe_does_not_exist() {
         // Generate a pipe name
         let name = format!("test_pipe_{}", rand::random::<usize>());
@@ -146,7 +147,7 @@ mod tests {
             .expect_err("Unexpectedly succeeded in connecting to missing pipe");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_be_able_to_read_and_write_data() {
         let (tx, rx) = oneshot::channel();
 
@@ -176,7 +177,7 @@ mod tests {
         let _ = task.await.expect("Server task failed unexpectedly");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     #[ignore]
     async fn should_be_able_to_reconnect() {
         todo!();

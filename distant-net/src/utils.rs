@@ -98,8 +98,9 @@ mod tests {
 
     mod timer {
         use super::*;
+        use test_log::test;
 
-        #[tokio::test]
+        #[test(tokio::test)]
         async fn should_not_invoke_callback_regardless_of_time_if_not_started() {
             let timer = Timer::new(Duration::default(), async {});
 
@@ -111,7 +112,7 @@ mod tests {
             );
         }
 
-        #[tokio::test]
+        #[test(tokio::test)]
         async fn should_not_invoke_callback_if_only_stop_called() {
             let timer = Timer::new(Duration::default(), async {});
             timer.stop();
@@ -124,7 +125,7 @@ mod tests {
             );
         }
 
-        #[tokio::test]
+        #[test(tokio::test)]
         async fn should_finish_callback_but_not_trigger_it_if_abort_called() {
             let (tx, mut rx) = mpsc::channel(1);
 
@@ -139,7 +140,7 @@ mod tests {
             assert!(rx.try_recv().is_err(), "Callback triggered unexpectedly");
         }
 
-        #[tokio::test]
+        #[test(tokio::test)]
         async fn should_trigger_callback_after_time_elapses_once_started() {
             let (tx, mut rx) = mpsc::channel(1);
 
@@ -154,7 +155,7 @@ mod tests {
             assert!(rx.try_recv().is_ok(), "Callback not triggered");
         }
 
-        #[tokio::test]
+        #[test(tokio::test)]
         async fn should_trigger_callback_even_if_timer_dropped() {
             let (tx, mut rx) = mpsc::channel(1);
 

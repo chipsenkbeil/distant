@@ -187,6 +187,7 @@ impl Codec for CompressionCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     #[test]
     fn encode_should_apply_appropriate_compression_algorithm() {

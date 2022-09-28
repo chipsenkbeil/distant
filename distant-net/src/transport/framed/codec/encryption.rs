@@ -180,6 +180,7 @@ impl Codec for EncryptionCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     #[test]
     fn encode_should_build_a_frame_containing_a_length_nonce_and_ciphertext() {

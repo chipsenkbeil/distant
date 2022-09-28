@@ -170,6 +170,7 @@ impl<'a> UntypedRequest<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     const TRUE_BYTE: u8 = 0xc3;
     const NEVER_USED_BYTE: u8 = 0xc1;
