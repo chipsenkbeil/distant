@@ -1,4 +1,7 @@
-use crate::{auth::Authenticator, Listener, Transport};
+use crate::{
+    auth::{Authenticator, Verifier},
+    Listener, Transport,
+};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -37,6 +40,9 @@ pub struct Server<T> {
 
     /// Handler used to process various server events
     handler: T,
+
+    /// Performs authentication using various methods
+    verifier: Verifier,
 }
 
 /// Interface for a handler that receives connections and requests
@@ -71,11 +77,13 @@ pub trait ServerHandler: Send {
 }
 
 impl Server<()> {
-    /// Creates a new [`Server`], starting with a default configuration and no [`ServerHandler`].
+    /// Creates a new [`Server`], starting with a default configuration, no authentication methods,
+    /// and no [`ServerHandler`].
     pub fn new() -> Self {
         Self {
             config: Default::default(),
             handler: (),
+            verifier: Verifier::empty(),
         }
     }
 
@@ -109,6 +117,7 @@ impl<T> Server<T> {
         Self {
             config,
             handler: self.handler,
+            verifier: self.verifier,
         }
     }
 
@@ -117,6 +126,16 @@ impl<T> Server<T> {
         Server {
             config: self.config,
             handler,
+            verifier: self.verifier,
+        }
+    }
+
+    /// Consumes the current server, replacing its verifier with `verifier` and returning it.
+    pub fn verifier(self, verifier: Verifier) -> Self {
+        Self {
+            config: self.config,
+            handler: self.handler,
+            verifier,
         }
     }
 }
@@ -147,12 +166,17 @@ where
         L: Listener + 'static,
         L::Output: Transport + Send + Sync + 'static,
     {
-        let Server { config, handler } = self;
+        let Server {
+            config,
+            handler,
+            verifier,
+        } = self;
 
         let handler = Arc::new(handler);
         let timer = ShutdownTimer::start(config.shutdown);
         let mut notification = timer.clone_notification();
         let timer = Arc::new(RwLock::new(timer));
+        let verifier = Arc::new(verifier);
 
         loop {
             // Receive a new connection, exiting if no longer accepting connections or if the shutdown
@@ -185,6 +209,7 @@ where
                 .state(Arc::downgrade(&state))
                 .transport(transport)
                 .shutdown_timer(Arc::downgrade(&timer))
+                .verifier(Arc::downgrade(&verifier))
                 .spawn();
 
             state
@@ -200,7 +225,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        auth::Authenticator, InmemoryTransport, MpscListener, Request, Response, ServerConfig,
+        auth::{AuthenticationMethod, Authenticator, NoneAuthenticationMethod},
+        InmemoryTransport, MpscListener, Request, Response, ServerConfig,
     };
     use async_trait::async_trait;
     use std::time::Duration;
@@ -230,9 +256,13 @@ mod tests {
 
     #[inline]
     fn make_test_server(config: ServerConfig) -> Server<TestServerHandler> {
+        let methods: Vec<Box<dyn AuthenticationMethod>> =
+            vec![Box::new(NoneAuthenticationMethod::new())];
+
         Server {
             config,
             handler: TestServerHandler,
+            verifier: Verifier::new(methods),
         }
     }
 
@@ -266,6 +296,7 @@ mod tests {
             .await
             .expect("Failed to send request");
 
+        // Wait for a response
         let mut buf = [0u8; 1024];
         let n = transport.try_read(&mut buf).unwrap();
         let response: Response<String> = Response::from_slice(&buf[..n]).unwrap();

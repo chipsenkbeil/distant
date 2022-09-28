@@ -1,7 +1,7 @@
 use super::{ServerState, ShutdownTimer};
 use crate::{
-    ConnectionCtx, FramedTransport, Interest, Response, ServerCtx, ServerHandler, ServerReply,
-    Transport, UntypedRequest,
+    auth::Verifier, ConnectionCtx, FramedTransport, Interest, Response, ServerCtx, ServerHandler,
+    ServerReply, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -40,6 +40,7 @@ impl Connection {
             state: Weak::new(),
             transport: (),
             shutdown_timer: Weak::new(),
+            verifier: Weak::new(),
         }
     }
 
@@ -60,6 +61,7 @@ pub struct ConnectionBuilder<H, T> {
     state: Weak<ServerState>,
     transport: T,
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
+    verifier: Weak<Verifier>,
 }
 
 impl<H, T> ConnectionBuilder<H, T> {
@@ -70,6 +72,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
+            verifier: self.verifier,
         }
     }
 
@@ -80,6 +83,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
+            verifier: self.verifier,
         }
     }
 
@@ -90,6 +94,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport,
             shutdown_timer: self.shutdown_timer,
+            verifier: self.verifier,
         }
     }
 
@@ -103,6 +108,18 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport: self.transport,
             shutdown_timer,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionBuilder<H, T> {
+        ConnectionBuilder {
+            id: self.id,
+            handler: self.handler,
+            state: self.state,
+            transport: self.transport,
+            shutdown_timer: self.shutdown_timer,
+            verifier,
         }
     }
 }
@@ -131,6 +148,7 @@ where
             state,
             transport,
             shutdown_timer,
+            verifier,
         } = self;
 
         // Attempt to upgrade our handler for use with the connection going forward
@@ -151,6 +169,20 @@ where
             error!("[Conn {id}] Handshake failed: {x}");
             return;
         }
+
+        // Perform authentication to ensure the connection is valid
+        match Weak::upgrade(&verifier) {
+            Some(verifier) => {
+                if let Err(x) = verifier.verify(&mut transport).await {
+                    error!("[Conn {id}] Verification failed: {x}");
+                    return;
+                }
+            }
+            None => {
+                error!("[Conn {id}] Verifier has been dropped");
+                return;
+            }
+        };
 
         // Create local data for the connection and then process it as well as perform
         // authentication and any other tasks on first connecting

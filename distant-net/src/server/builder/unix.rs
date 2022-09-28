@@ -1,10 +1,13 @@
-use crate::{Server, ServerConfig, ServerHandler, UnixSocketListener, UnixSocketServerRef};
+use crate::{
+    auth::Verifier, Server, ServerConfig, ServerHandler, UnixSocketListener, UnixSocketServerRef,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, path::Path};
 
 pub struct UnixSocketServerBuilder<T> {
     config: ServerConfig,
     handler: T,
+    verifier: Verifier,
 }
 
 impl Default for UnixSocketServerBuilder<()> {
@@ -12,6 +15,7 @@ impl Default for UnixSocketServerBuilder<()> {
         Self {
             config: Default::default(),
             handler: (),
+            verifier: Verifier::empty(),
         }
     }
 }
@@ -21,6 +25,7 @@ impl<T> UnixSocketServerBuilder<T> {
         Self {
             config,
             handler: self.handler,
+            verifier: self.verifier,
         }
     }
 
@@ -28,6 +33,15 @@ impl<T> UnixSocketServerBuilder<T> {
         UnixSocketServerBuilder {
             config: self.config,
             handler,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn verifier(self, verifier: Verifier) -> Self {
+        Self {
+            config: self.config,
+            handler: self.handler,
+            verifier,
         }
     }
 }
@@ -50,6 +64,7 @@ where
         let server = Server {
             config: self.config,
             handler: self.handler,
+            verifier: self.verifier,
         };
         let inner = server.start(listener)?;
         Ok(UnixSocketServerRef { path, inner })

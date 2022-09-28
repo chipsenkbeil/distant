@@ -1,10 +1,13 @@
-use crate::{PortRange, Server, ServerConfig, ServerHandler, TcpListener, TcpServerRef};
+use crate::{
+    auth::Verifier, PortRange, Server, ServerConfig, ServerHandler, TcpListener, TcpServerRef,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, net::IpAddr};
 
 pub struct TcpServerBuilder<T> {
     config: ServerConfig,
     handler: T,
+    verifier: Verifier,
 }
 
 impl Default for TcpServerBuilder<()> {
@@ -12,6 +15,7 @@ impl Default for TcpServerBuilder<()> {
         Self {
             config: Default::default(),
             handler: (),
+            verifier: Verifier::empty(),
         }
     }
 }
@@ -21,6 +25,7 @@ impl<T> TcpServerBuilder<T> {
         Self {
             config,
             handler: self.handler,
+            verifier: self.verifier,
         }
     }
 
@@ -28,6 +33,15 @@ impl<T> TcpServerBuilder<T> {
         TcpServerBuilder {
             config: self.config,
             handler,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn verifier(self, verifier: Verifier) -> Self {
+        Self {
+            config: self.config,
+            handler: self.handler,
+            verifier,
         }
     }
 }
@@ -48,6 +62,7 @@ where
         let server = Server {
             config: self.config,
             handler: self.handler,
+            verifier: self.verifier,
         };
         let inner = server.start(listener)?;
         Ok(TcpServerRef { addr, port, inner })

@@ -1,4 +1,6 @@
-use crate::{Server, ServerConfig, ServerHandler, WindowsPipeListener, WindowsPipeServerRef};
+use crate::{
+    auth::Verifier, Server, ServerConfig, ServerHandler, WindowsPipeListener, WindowsPipeServerRef,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     ffi::{OsStr, OsString},
@@ -8,6 +10,7 @@ use std::{
 pub struct WindowsPipeServerBuilder<T> {
     config: ServerConfig,
     handler: T,
+    verifier: Verifier,
 }
 
 impl Default for WindowsPipeServerBuilder<()> {
@@ -15,15 +18,25 @@ impl Default for WindowsPipeServerBuilder<()> {
         Self {
             config: Default::default(),
             handler: (),
+            verifier: Verifier::empty(),
         }
     }
 }
 
 impl<T> WindowsPipeServerBuilder<T> {
+    pub fn verifier(self, verifier: Verifier) -> Self {
+        Self {
+            config: self.config,
+            handler: self.handler,
+            verifier,
+        }
+    }
+
     pub fn config(self, config: ServerConfig) -> Self {
         Self {
             config,
             handler: self.handler,
+            verifier: self.verifier,
         }
     }
 
@@ -31,6 +44,7 @@ impl<T> WindowsPipeServerBuilder<T> {
         WindowsPipeServerBuilder {
             config: self.config,
             handler,
+            verifier: self.verifier,
         }
     }
 }
@@ -54,6 +68,7 @@ where
         let server = Server {
             config: self.config,
             handler: self.handler,
+            verifier: self.verifier,
         };
         let inner = server.start(listener)?;
         Ok(WindowsPipeServerRef { addr, inner })
@@ -85,7 +100,6 @@ mod tests {
         Client, ConnectionCtx, Request, ServerCtx,
     };
     use async_trait::async_trait;
-    use std::collections::HashMap;
 
     pub struct TestServerHandler;
 
