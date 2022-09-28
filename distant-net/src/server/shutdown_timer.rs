@@ -48,7 +48,7 @@ impl ShutdownTimer {
             // Create a timer that will complete after `duration`
             Shutdown::Lonely(duration) => {
                 info!(
-                    "Server shutdown timer configured: terminate after no activity in {}s",
+                    "Server shutdown timer configured: terminate after no activity for {}s",
                     duration.as_secs_f32()
                 );
                 Timer::new(duration, async move {
