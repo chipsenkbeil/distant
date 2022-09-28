@@ -6,7 +6,7 @@ use crate::{
     ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::{Reply, Server, ServerConfig, ServerCtx};
+use distant_net::{Reply, ServerConfig, ServerCtx, ServerHandler};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
 
@@ -420,7 +420,7 @@ pub trait DistantApi {
 }
 
 #[async_trait]
-impl<T, D> Server for DistantApiServer<T, D>
+impl<T, D> ServerHandler for DistantApiServer<T, D>
 where
     T: DistantApi<LocalData = D> + Send + Sync,
     D: Send + Sync,

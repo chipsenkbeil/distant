@@ -1,4 +1,4 @@
-use crate::{PortRange, Server, ServerExt, TcpListener, TcpServerRef};
+use crate::{PortRange, ServerExt, ServerHandler, TcpListener, TcpServerRef};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, net::IpAddr};
@@ -19,7 +19,7 @@ pub trait TcpServerExt {
 #[async_trait]
 impl<S> TcpServerExt for S
 where
-    S: Server + Sync + 'static,
+    S: ServerHandler + Sync + 'static,
     S::Request: DeserializeOwned + Send + Sync + 'static,
     S::Response: Serialize + Send + 'static,
     S::LocalData: Default + Send + Sync + 'static,
@@ -56,7 +56,7 @@ mod tests {
     pub struct TestServer;
 
     #[async_trait]
-    impl Server for TestServer {
+    impl ServerHandler for TestServer {
         type Request = String;
         type Response = String;
         type LocalData = ();

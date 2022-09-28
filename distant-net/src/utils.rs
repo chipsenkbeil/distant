@@ -65,6 +65,7 @@ where
     pub fn start(&mut self) {
         // Cancel the active timer task
         self.stop();
+        self.active_timer = None;
 
         // Exit early if callback completed as starting will do nothing
         if self.callback.is_finished() {
@@ -82,9 +83,8 @@ where
 
     /// Stops the timer, cancelling the internal task, but leaving the callback in place in case
     /// the timer is re-started later
-    pub fn stop(&mut self) {
-        // Delete the active timer task
-        if let Some(task) = self.active_timer.take() {
+    pub fn stop(&self) {
+        if let Some(task) = self.active_timer.as_ref() {
             task.abort();
         }
     }
@@ -92,10 +92,7 @@ where
     /// Aborts the timer's callback task and internal task to trigger the callback, which means
     /// that the timer will never complete the callback and starting will have no effect
     pub fn abort(&self) {
-        if let Some(task) = self.active_timer.as_ref() {
-            task.abort();
-        }
-
+        self.stop();
         self.callback.abort();
     }
 }

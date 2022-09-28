@@ -22,7 +22,7 @@ pub use channel::*;
 /// Time to wait inbetween connection read/write when nothing was read or written on last pass
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
-/// Represents a client that can be used to send requests & receive responses from a server
+/// Represents a client that can be used to send requests & receive responses from a server.
 pub struct Client<T, U> {
     /// Used to send requests to a server
     channel: Channel<T, U>,

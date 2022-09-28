@@ -1,6 +1,6 @@
 use crate::{
-    utils::Timer, ConnectionCtx, ConnectionId, FramedTransport, GenericServerRef, Interest,
-    Listener, Response, Server, ServerConnection, ServerCtx, ServerRef, ServerReply, ServerState,
+    utils::Timer, Connection, ConnectionCtx, ConnectionId, FramedTransport, GenericServerRef,
+    Interest, Listener, Response, ServerCtx, ServerHandler, ServerRef, ServerReply, ServerState,
     Shutdown, Transport, UntypedRequest,
 };
 use log::*;
@@ -49,7 +49,7 @@ pub trait ServerExt {
 
 impl<S> ServerExt for S
 where
-    S: Server + Sync + 'static,
+    S: ServerHandler + Sync + 'static,
     S::Request: DeserializeOwned + Send + Sync + 'static,
     S::Response: Serialize + Send + 'static,
     S::LocalData: Default + Send + Sync + 'static,
@@ -73,7 +73,7 @@ where
 
 async fn task<S, L>(server: Arc<S>, state: Arc<ServerState>, mut listener: L)
 where
-    S: Server + Sync + 'static,
+    S: ServerHandler + Sync + 'static,
     S::Request: DeserializeOwned + Send + Sync + 'static,
     S::Response: Serialize + Send + 'static,
     S::LocalData: Default + Send + Sync + 'static,
@@ -143,7 +143,7 @@ where
             }
         };
 
-        let mut connection = ServerConnection::new();
+        let mut connection = Connection::new();
         let connection_id = connection.id;
         let state = Arc::clone(&state);
 
@@ -184,7 +184,7 @@ struct ConnectionTask<S, T> {
 
 impl<S, T> ConnectionTask<S, T>
 where
-    S: Server + Sync + 'static,
+    S: ServerHandler + Sync + 'static,
     S::Request: DeserializeOwned + Send + Sync + 'static,
     S::Response: Serialize + Send + 'static,
     S::LocalData: Default + Send + Sync + 'static,
@@ -362,7 +362,7 @@ mod tests {
     pub struct TestServer(ServerConfig);
 
     #[async_trait]
-    impl Server for TestServer {
+    impl ServerHandler for TestServer {
         type Request = u16;
         type Response = String;
         type LocalData = ();

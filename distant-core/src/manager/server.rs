@@ -4,7 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use distant_net::{
-    Client, Listener, MpscListener, Request, Response, Server, ServerCtx, ServerExt,
+    Client, Listener, MpscListener, Request, Response, ServerCtx, ServerExt, ServerHandler,
 };
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
@@ -267,7 +267,7 @@ pub struct DistantManagerServerConnection {
 }
 
 #[async_trait]
-impl Server for DistantManager {
+impl ServerHandler for DistantManager {
     type Request = ManagerRequest;
     type Response = ManagerResponse;
     type LocalData = DistantManagerServerConnection;

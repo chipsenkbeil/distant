@@ -1,16 +1,9 @@
-use crate::{auth::Authenticator, utils::Timer, ConnectionId, Listener, Transport};
+use crate::{auth::Authenticator, Listener, Transport};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    io,
-    sync::{Arc, Weak},
-    time::Duration,
-};
-use tokio::{
-    sync::{mpsc, Mutex},
-    task::JoinHandle,
-};
+use std::{io, sync::Arc};
+use tokio::sync::RwLock;
 
 mod config;
 pub use config::*;
@@ -33,25 +26,29 @@ pub use reply::*;
 mod state;
 pub use state::*;
 
-/// Time to wait inbetween connection read/write when nothing was read or written on last pass
-const SLEEP_DURATION: Duration = Duration::from_millis(50);
+mod shutdown_timer;
+pub use shutdown_timer::*;
 
-/// Interface for a general-purpose server that receives requests to handle
+/// Represents a server that can be used to receive requests & send responses to clients.
+pub struct Server<T> {
+    /// Custom configuration details associated with the server
+    config: ServerConfig,
+
+    /// Handler used to process various server events
+    handler: T,
+}
+
+/// Interface for a handler that receives connections and requests
 #[async_trait]
-pub trait Server: Send {
+pub trait ServerHandler: Send {
     /// Type of data received by the server
-    type Request: DeserializeOwned + Send + Sync;
+    type Request;
 
     /// Type of data sent back by the server
-    type Response: Serialize + Send;
+    type Response;
 
     /// Type of data to store locally tied to the specific connection
-    type LocalData: Send + Sync;
-
-    /// Returns configuration tied to server instance
-    fn config(&self) -> ServerConfig {
-        ServerConfig::default()
-    }
+    type LocalData;
 
     /// Invoked upon a new connection becoming established.
     ///
@@ -70,298 +67,79 @@ pub trait Server: Send {
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>);
+}
 
-    fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
+impl<T> Server<T>
+where
+    T: ServerHandler + Sync + 'static,
+    T::Request: DeserializeOwned + Send + Sync + 'static,
+    T::Response: Serialize + Send + 'static,
+    T::LocalData: Default + Send + Sync + 'static,
+{
+    /// Consumes the server, starting a task to process connections from the `listener` and
+    /// returning a [`ServerRef`] that can be used to control the active server instance.
+    pub fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener + 'static,
         L::Output: Transport + Send + Sync + 'static,
     {
-        let server = Arc::new(self);
         let state = Arc::new(ServerState::new());
-
-        let task = tokio::spawn(task(server, Arc::clone(&state), listener));
+        let task = tokio::spawn(self.task(Arc::clone(&state), listener));
 
         Ok(Box::new(GenericServerRef { state, task }))
     }
-}
 
-async fn task<S, L>(server: Arc<S>, state: Arc<ServerState>, mut listener: L)
-where
-    S: Server + Sync + 'static,
-    S::Request: DeserializeOwned + Send + Sync + 'static,
-    S::Response: Serialize + Send + 'static,
-    S::LocalData: Default + Send + Sync + 'static,
-    L: Listener + 'static,
-    L::Output: Transport + Send + Sync + 'static,
-{
-    // Grab a copy of our server's configuration so we can leverage it below
-    let config = server.config();
+    /// Internal task that is run to receive connections and spawn connection tasks
+    async fn task<L>(self, state: Arc<ServerState>, mut listener: L)
+    where
+        L: Listener + 'static,
+        L::Output: Transport + Send + Sync + 'static,
+    {
+        let Server { config, handler } = self;
 
-    // Create the timer that will be used shutdown the server after duration elapsed
-    let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
-
-    // NOTE: We do a manual map such that the shutdown sender is not captured and dropped when
-    //       there is no shutdown after configured. This is because we need the future for the
-    //       shutdown receiver to last forever in the event that there is no shutdown configured,
-    //       not return immediately, which is what would happen if the sender was dropped.
-    #[allow(clippy::manual_map)]
-    let mut shutdown_timer = match config.shutdown {
-        // Create a timer, start it, and drop it so it will always happen
-        Shutdown::After(duration) => {
-            Timer::new(duration, async move {
-                let _ = shutdown_tx.send(()).await;
-            })
-            .start();
-            None
-        }
-        Shutdown::Lonely(duration) => Some(Timer::new(duration, async move {
-            let _ = shutdown_tx.send(()).await;
-        })),
-        Shutdown::Never => None,
-    };
-
-    if let Some(timer) = shutdown_timer.as_mut() {
-        info!(
-            "Server shutdown timer configured: {}s",
-            timer.duration().as_secs_f32()
-        );
-        timer.start();
-    }
-
-    let mut shutdown_timer = shutdown_timer.map(|timer| Arc::new(Mutex::new(timer)));
-
-    loop {
-        let server = Arc::clone(&server);
-
-        // Receive a new connection, exiting if no longer accepting connections or if the shutdown
-        // signal has been received
-        let transport = tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok(x) => x,
-                    Err(x) => {
-                        error!("Server no longer accepting connections: {x}");
-                        if let Some(timer) = shutdown_timer.take() {
-                            timer.lock().await.abort();
-                        }
-                        break;
-                    }
-                }
-            }
-            _ = shutdown_rx.recv() => {
-                info!(
-                    "Server shutdown triggered after {}s",
-                    config.shutdown.duration().unwrap_or_default().as_secs_f32(),
-                );
-                break;
-            }
-        };
-
-        let mut connection = ServerConnection::new();
-        let connection_id = connection.id;
-        let state = Arc::clone(&state);
-
-        // Ensure that the shutdown timer is cancelled now that we have a connection
-        if let Some(timer) = shutdown_timer.as_ref() {
-            timer.lock().await.stop();
-        }
-
-        connection.task = Some(
-            ConnectionTask {
-                id: connection_id,
-                server,
-                state: Arc::downgrade(&state),
-                transport,
-                shutdown_timer: shutdown_timer
-                    .as_ref()
-                    .map(Arc::downgrade)
-                    .unwrap_or_default(),
-            }
-            .spawn(),
-        );
-
-        state
-            .connections
-            .write()
-            .await
-            .insert(connection_id, connection);
-    }
-}
-
-struct ConnectionTask<S, T> {
-    id: ConnectionId,
-    server: Arc<S>,
-    state: Weak<ServerState>,
-    transport: T,
-    shutdown_timer: Weak<Mutex<Timer<()>>>,
-}
-
-impl<S, T> ConnectionTask<S, T>
-where
-    S: Server + Sync + 'static,
-    S::Request: DeserializeOwned + Send + Sync + 'static,
-    S::Response: Serialize + Send + 'static,
-    S::LocalData: Default + Send + Sync + 'static,
-    T: Transport + Send + Sync + 'static,
-{
-    pub fn spawn(self) -> JoinHandle<()> {
-        tokio::spawn(self.run())
-    }
-
-    async fn run(self) {
-        let connection_id = self.id;
-
-        // Construct a queue of outgoing responses
-        let (tx, mut rx) = mpsc::channel::<Response<S::Response>>(1);
-
-        // Perform a handshake to ensure that the connection is properly established
-        let mut transport: FramedTransport<T> = FramedTransport::plain(self.transport);
-        if let Err(x) = transport.server_handshake().await {
-            error!("[Conn {connection_id}] Handshake failed: {x}");
-            return;
-        }
-
-        // Create local data for the connection and then process it as well as perform
-        // authentication and any other tasks on first connecting
-        let mut local_data = S::LocalData::default();
-        if let Err(x) = self
-            .server
-            .on_accept(ConnectionCtx {
-                connection_id,
-                authenticator: &mut transport,
-                local_data: &mut local_data,
-            })
-            .await
-        {
-            error!("[Conn {connection_id}] Accepting connection failed: {x}");
-            return;
-        }
-
-        let local_data = Arc::new(local_data);
+        let handler = Arc::new(handler);
+        let timer = ShutdownTimer::new(config.shutdown);
+        let mut notification = timer.clone_notification();
+        let timer = Arc::new(RwLock::new(timer));
 
         loop {
-            let ready = transport
-                .ready(Interest::READABLE | Interest::WRITABLE)
+            // Receive a new connection, exiting if no longer accepting connections or if the shutdown
+            // signal has been received
+            let transport = tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok(x) => x,
+                        Err(x) => {
+                            error!("Server no longer accepting connections: {x}");
+                            timer.read().await.abort();
+                            break;
+                        }
+                    }
+                }
+                _ = notification.wait() => {
+                    info!(
+                        "Server shutdown triggered after {}s",
+                        config.shutdown.duration().unwrap_or_default().as_secs_f32(),
+                    );
+                    break;
+                }
+            };
+
+            // Ensure that the shutdown timer is cancelled now that we have a connection
+            timer.read().await.stop();
+
+            let connection = Connection::build()
+                .handler(Arc::downgrade(&handler))
+                .state(Arc::downgrade(&state))
+                .transport(transport)
+                .shutdown_timer(Arc::downgrade(&timer))
+                .spawn();
+
+            state
+                .connections
+                .write()
                 .await
-                .expect("[Conn {connection_id}] Failed to examine ready state");
-
-            // Keep track of whether we read or wrote anything
-            let mut read_blocked = false;
-            let mut write_blocked = false;
-
-            if ready.is_readable() {
-                match transport.try_read_frame() {
-                    Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
-                        Ok(request) => match request.to_typed_request() {
-                            Ok(request) => {
-                                let reply = ServerReply {
-                                    origin_id: request.id.clone(),
-                                    tx: tx.clone(),
-                                };
-
-                                let ctx = ServerCtx {
-                                    connection_id,
-                                    request,
-                                    reply: reply.clone(),
-                                    local_data: Arc::clone(&local_data),
-                                };
-
-                                self.server.on_request(ctx).await;
-                            }
-                            Err(x) => {
-                                if log::log_enabled!(Level::Trace) {
-                                    trace!(
-                                        "[Conn {connection_id}] Failed receiving {}",
-                                        String::from_utf8_lossy(&request.payload),
-                                    );
-                                }
-
-                                error!("[Conn {connection_id}] Invalid request: {x}");
-                            }
-                        },
-                        Err(x) => {
-                            error!("[Conn {connection_id}] Invalid request: {x}");
-                        }
-                    },
-                    Ok(None) => {
-                        debug!("[Conn {connection_id}] Connection closed");
-
-                        // Remove the connection from our state if it has closed
-                        if let Some(state) = Weak::upgrade(&self.state) {
-                            state.connections.write().await.remove(&self.id);
-
-                            // If we have no more connections, start the timer
-                            if let Some(timer) = Weak::upgrade(&self.shutdown_timer) {
-                                if state.connections.read().await.is_empty() {
-                                    timer.lock().await.start();
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
-                    Err(x) => {
-                        // NOTE: We do NOT break out of the loop, as this could happen
-                        //       if someone sends bad data at any point, but does not
-                        //       mean that the reader itself has failed. This can
-                        //       happen from getting non-compliant typed data
-                        error!("[Conn {connection_id}] {x}");
-                    }
-                }
-            }
-
-            // If our socket is ready to be written to, we try to get the next item from
-            // the queue and process it
-            if ready.is_writable() {
-                // If we get more data to write, attempt to write it, which will result in writing
-                // any queued bytes as well. Othewise, we attempt to flush any pending outgoing
-                // bytes that weren't sent earlier.
-                if let Ok(response) = rx.try_recv() {
-                    // Log our message as a string, which can be expensive
-                    if log_enabled!(Level::Trace) {
-                        trace!(
-                            "[Conn {connection_id}] Sending {}",
-                            &response
-                                .to_vec()
-                                .map(|x| String::from_utf8_lossy(&x).to_string())
-                                .unwrap_or_else(|_| "<Cannot serialize>".to_string())
-                        );
-                    }
-
-                    match response.to_vec() {
-                        Ok(data) => match transport.try_write_frame(data) {
-                            Ok(()) => (),
-                            Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
-                            Err(x) => error!("[Conn {connection_id}] Send failed: {x}"),
-                        },
-                        Err(x) => {
-                            error!(
-                                "[Conn {connection_id}] Unable to serialize outgoing response: {x}"
-                            );
-                        }
-                    }
-                } else {
-                    // In the case of flushing, there are two scenarios in which we want to
-                    // mark no write occurring:
-                    //
-                    // 1. When flush did not write any bytes, which can happen when the buffer
-                    //    is empty
-                    // 2. When the call to write bytes blocks
-                    match transport.try_flush() {
-                        Ok(0) => write_blocked = true,
-                        Ok(_) => (),
-                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
-                        Err(x) => {
-                            error!("[Conn {connection_id}] Failed to flush outgoing data: {x}");
-                        }
-                    }
-                }
-            }
-
-            // If we did not read or write anything, sleep a bit to offload CPU usage
-            if read_blocked && write_blocked {
-                tokio::time::sleep(SLEEP_DURATION).await;
-            }
+                .insert(connection.id(), connection);
         }
     }
 }
@@ -369,21 +147,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{auth::Authenticator, InmemoryTransport, MpscListener, Request, ServerConfig};
+    use crate::{
+        auth::Authenticator, InmemoryTransport, MpscListener, Request, Response, ServerConfig,
+    };
     use async_trait::async_trait;
     use std::time::Duration;
+    use tokio::sync::mpsc;
 
-    pub struct TestServer(ServerConfig);
+    pub struct TestServerHandler(ServerConfig);
 
     #[async_trait]
-    impl Server for TestServer {
+    impl ServerHandler for TestServerHandler {
         type Request = u16;
         type Response = String;
         type LocalData = ();
-
-        fn config(&self) -> ServerConfig {
-            self.0.clone()
-        }
 
         async fn on_accept<A: Authenticator>(
             &self,
@@ -419,7 +196,7 @@ mod tests {
             .await
             .expect("Failed to feed listener a connection");
 
-        let _server = ServerExt::start(TestServer(ServerConfig::default()), listener)
+        let _server = ServerExt::start(TestServerHandler(ServerConfig::default()), listener)
             .expect("Failed to start server");
 
         transport
@@ -437,7 +214,7 @@ mod tests {
         let (_tx, listener) = make_listener(100);
 
         let server = ServerExt::start(
-            TestServer(ServerConfig {
+            TestServerHandler(ServerConfig {
                 shutdown: Shutdown::Lonely(Duration::from_millis(100)),
                 ..Default::default()
             }),
@@ -464,7 +241,7 @@ mod tests {
             .expect("Failed to feed listener a connection");
 
         let server = ServerExt::start(
-            TestServer(ServerConfig {
+            TestServerHandler(ServerConfig {
                 shutdown: Shutdown::Lonely(Duration::from_millis(100)),
                 ..Default::default()
             }),
@@ -493,7 +270,7 @@ mod tests {
             .expect("Failed to feed listener a connection");
 
         let server = ServerExt::start(
-            TestServer(ServerConfig {
+            TestServerHandler(ServerConfig {
                 shutdown: Shutdown::Lonely(Duration::from_millis(100)),
                 ..Default::default()
             }),
@@ -518,7 +295,7 @@ mod tests {
             .expect("Failed to feed listener a connection");
 
         let server = ServerExt::start(
-            TestServer(ServerConfig {
+            TestServerHandler(ServerConfig {
                 shutdown: Shutdown::After(Duration::from_millis(100)),
                 ..Default::default()
             }),
@@ -537,7 +314,7 @@ mod tests {
         let (_tx, listener) = make_listener(100);
 
         let server = ServerExt::start(
-            TestServer(ServerConfig {
+            TestServerHandler(ServerConfig {
                 shutdown: Shutdown::After(Duration::from_millis(100)),
                 ..Default::default()
             }),
@@ -556,7 +333,7 @@ mod tests {
         let (_tx, listener) = make_listener(100);
 
         let server = ServerExt::start(
-            TestServer(ServerConfig {
+            TestServerHandler(ServerConfig {
                 shutdown: Shutdown::Never,
                 ..Default::default()
             }),
