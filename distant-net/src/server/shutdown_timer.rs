@@ -1,7 +1,6 @@
 use super::Shutdown;
 use crate::utils::Timer;
 use log::*;
-use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -20,6 +19,7 @@ impl ShutdownNotification {
 pub(crate) struct ShutdownTimer {
     timer: Timer<()>,
     watcher: ShutdownNotification,
+    shutdown: Shutdown,
 }
 
 impl ShutdownTimer {
@@ -30,9 +30,6 @@ impl ShutdownTimer {
         let timer = match shutdown {
             // Create a timer that will complete after `duration`, dropping it to ensure that it
             // will always happen no matter if stop/abort is called
-            //
-            // TODO: We aren't dropping it after the refactor! This will act like lonely until we
-            //       prevent stop/abort from killing it!
             Shutdown::After(duration) => {
                 info!(
                     "Server shutdown timer configured: terminate after {}s",
@@ -67,25 +64,31 @@ impl ShutdownTimer {
         Self {
             timer,
             watcher: ShutdownNotification(rx),
+            shutdown,
         }
+    }
+
+    /// Starts or restarts the timer
+    pub fn start(&mut self) {
+        self.timer.start();
+    }
+
+    /// Stops the timer, only applying if the timer is `lonely`
+    pub fn stop(&self) {
+        match self.shutdown {
+            Shutdown::Lonely(_) => self.timer.stop(),
+            _ => (),
+        }
+    }
+
+    /// Stops the timer completely by killing the internal callback task, meaning it can never be
+    /// started again
+    pub fn abort(&self) {
+        self.timer.abort();
     }
 
     /// Clones the notification
     pub fn clone_notification(&self) -> ShutdownNotification {
         self.watcher.clone()
-    }
-}
-
-impl Deref for ShutdownTimer {
-    type Target = Timer<()>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.timer
-    }
-}
-
-impl DerefMut for ShutdownTimer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.timer
     }
 }
