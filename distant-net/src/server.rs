@@ -150,8 +150,10 @@ where
         let Server { config, handler } = self;
 
         let handler = Arc::new(handler);
-        let timer = ShutdownTimer::new(config.shutdown);
+        let mut timer = ShutdownTimer::new(config.shutdown);
         let mut notification = timer.clone_notification();
+
+        timer.start();
         let timer = Arc::new(RwLock::new(timer));
 
         loop {

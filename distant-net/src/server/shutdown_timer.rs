@@ -23,18 +23,16 @@ pub(crate) struct ShutdownTimer {
 }
 
 impl ShutdownTimer {
+    // Create the timer that will be used shutdown the server after duration elapsed. The timer is
+    // not started upon creation.
     pub fn new(shutdown: Shutdown) -> Self {
-        // Create the timer that will be used shutdown the server after duration elapsed
         let (tx, rx) = watch::channel(());
-
-        // NOTE: We do a manual map such that the shutdown sender is not captured and dropped when
-        //       there is no shutdown after configured. This is because we need the future for the
-        //       shutdown receiver to last forever in the event that there is no shutdown configured,
-        //       not return immediately, which is what would happen if the sender was dropped.
-        #[allow(clippy::manual_map)]
-        let mut timer = match shutdown {
+        let timer = match shutdown {
             // Create a timer that will complete after `duration`, dropping it to ensure that it
             // will always happen no matter if stop/abort is called
+            //
+            // TODO: We aren't dropping it after the refactor! This will act like lonely until we
+            //       prevent stop/abort from killing it!
             Shutdown::After(duration) => {
                 info!(
                     "Server shutdown timer configured: terminate after {}s",
@@ -65,8 +63,6 @@ impl ShutdownTimer {
                 })
             }
         };
-
-        timer.start();
 
         Self {
             timer,
