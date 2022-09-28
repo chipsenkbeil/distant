@@ -150,10 +150,8 @@ where
         let Server { config, handler } = self;
 
         let handler = Arc::new(handler);
-        let mut timer = ShutdownTimer::new(config.shutdown);
+        let timer = ShutdownTimer::start(config.shutdown);
         let mut notification = timer.clone_notification();
-
-        timer.start();
         let timer = Arc::new(RwLock::new(timer));
 
         loop {
@@ -280,7 +278,6 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Lonely(Duration::from_millis(100)),
-            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -305,7 +302,6 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Lonely(Duration::from_millis(100)),
-            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -332,7 +328,6 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Lonely(Duration::from_millis(100)),
-            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -355,7 +350,6 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::After(Duration::from_millis(100)),
-            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -372,7 +366,6 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::After(Duration::from_millis(100)),
-            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -389,7 +382,6 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Never,
-            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");

@@ -1,33 +1,17 @@
 use super::{msg::*, Authenticator};
 use crate::HeapSecretKey;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::io;
-
-/// Represents the type of authentication method to use
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MethodType {
-    /// Indicates no authentication, which means this will always succeed
-    None,
-
-    /// Indicates that a static key is being used for authentication
-    StaticKey,
-
-    /// Indicates that re-authentication is being employed (using specialized key)
-    Reauthentication,
-
-    /// When the method is unknown (happens when other side is unaware of the method)
-    #[serde(other)]
-    Unknown,
-}
 
 /// Represents an interface to authenticate using some method
 #[async_trait]
-pub trait AuthenticationMethod {
+pub trait AuthenticationMethod: Sized {
+    /// Returns a unique id to distinguish the method from other methods
+    fn id() -> &'static str;
+
     // TODO: add a unique id method and update below method to take dyn ref so it can be boxed.
     // that way, we can pass to server a collection of boxed methods
-    async fn authenticate<A: Authenticator>(&self, authenticator: &mut A) -> io::Result<()>;
+    async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()>;
 }
 
 /// Authenticaton method for a static secret key
@@ -50,7 +34,11 @@ impl Default for NoneAuthenticationMethod {
 
 #[async_trait]
 impl AuthenticationMethod for NoneAuthenticationMethod {
-    async fn authenticate<A: Authenticator>(&self, _: &mut A) -> io::Result<()> {
+    fn id() -> &'static str {
+        "none"
+    }
+
+    async fn authenticate(&self, _: &mut dyn Authenticator) -> io::Result<()> {
         Ok(())
     }
 }
@@ -70,7 +58,11 @@ impl StaticKeyAuthenticationMethod {
 
 #[async_trait]
 impl AuthenticationMethod for StaticKeyAuthenticationMethod {
-    async fn authenticate<A: Authenticator>(&self, authenticator: &mut A) -> io::Result<()> {
+    fn id() -> &'static str {
+        "static_key"
+    }
+
+    async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()> {
         let response = authenticator
             .challenge(Challenge {
                 questions: vec![Question::new("key")],
@@ -122,7 +114,11 @@ impl ReauthenticationMethod {
 
 #[async_trait]
 impl AuthenticationMethod for ReauthenticationMethod {
-    async fn authenticate<A: Authenticator>(&self, authenticator: &mut A) -> io::Result<()> {
+    fn id() -> &'static str {
+        "reauthentication"
+    }
+
+    async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()> {
         self.method.authenticate(authenticator).await
     }
 }

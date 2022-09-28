@@ -1,4 +1,3 @@
-use super::MethodType;
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -34,13 +33,13 @@ pub enum Authentication {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Initialization {
     /// Available methods to use for authentication
-    pub methods: HashSet<MethodType>,
+    pub methods: HashSet<String>,
 }
 
 /// Represents the start of authentication for some method
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StartMethod {
-    pub method: MethodType,
+    pub method: String,
 }
 
 /// Represents a challenge comprising a series of questions to be presented
@@ -81,7 +80,7 @@ pub enum AuthenticationResponse {
 /// Represents a response to initialization to specify which authentication methods to pursue
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InitializationResponse {
-    pub methods: HashSet<MethodType>,
+    pub methods: HashSet<String>,
 }
 
 /// Represents the answers to a previously-asked challenge associated with authentication
@@ -120,7 +119,10 @@ impl VerificationKind {
 /// Represents a single question in a challenge associated with authentication
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Question {
-    /// The text of the question
+    /// Label associated with the question for more programmatic usage
+    pub label: String,
+
+    /// The text of the question (used for display purposes)
     pub text: String,
 
     /// Any options information specific to a particular auth domain
@@ -129,10 +131,13 @@ pub struct Question {
 }
 
 impl Question {
-    /// Creates a new question without any options data
+    /// Creates a new question without any options data using `text` for both label and text
     pub fn new(text: impl Into<String>) -> Self {
+        let text = text.into();
+
         Self {
-            text: text.into(),
+            label: text.clone(),
+            text,
             options: HashMap::new(),
         }
     }

@@ -1,29 +1,12 @@
-use crate::auth::MethodType;
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
 /// Represents a general-purpose set of properties tied with a server instance
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Supported authentication methods
-    pub authentication_methods: Vec<MethodType>,
-
-    /// If true, authentication type "none" is allowed, meaning that no authentication is required
-    pub allow_none_authentication: bool,
-
     /// Rules for how a server will shutdown automatically
     pub shutdown: Shutdown,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            authentication_methods: vec![MethodType::None],
-            allow_none_authentication: true,
-            shutdown: Shutdown::default(),
-        }
-    }
 }
 
 /// Rules for how a server will shut itself down automatically

@@ -23,11 +23,10 @@ pub(crate) struct ShutdownTimer {
 }
 
 impl ShutdownTimer {
-    // Create the timer that will be used shutdown the server after duration elapsed. The timer is
-    // not started upon creation.
-    pub fn new(shutdown: Shutdown) -> Self {
+    // Creates and starts the timer that will be used shutdown the server after duration elapsed.
+    pub fn start(shutdown: Shutdown) -> Self {
         let (tx, rx) = watch::channel(());
-        let timer = match shutdown {
+        let mut timer = match shutdown {
             // Create a timer that will complete after `duration`, dropping it to ensure that it
             // will always happen no matter if stop/abort is called
             Shutdown::After(duration) => {
@@ -61,6 +60,8 @@ impl ShutdownTimer {
             }
         };
 
+        timer.start();
+
         Self {
             timer,
             watcher: ShutdownNotification(rx),
@@ -68,9 +69,11 @@ impl ShutdownTimer {
         }
     }
 
-    /// Starts or restarts the timer
-    pub fn start(&mut self) {
-        self.timer.start();
+    /// Restarts the timer, doing nothing if the timer is already running
+    pub fn restart(&mut self) {
+        if !self.timer.is_running() {
+            self.timer.start();
+        }
     }
 
     /// Stops the timer, only applying if the timer is `lonely`

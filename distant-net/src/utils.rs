@@ -84,6 +84,11 @@ where
         }
     }
 
+    /// Returns true if the timer is actively running
+    pub fn is_running(&self) -> bool {
+        self.active_timer.is_some() && !self.active_timer.as_ref().unwrap().is_finished()
+    }
+
     /// Aborts the timer's callback task and internal task to trigger the callback, which means
     /// that the timer will never complete the callback and starting will have no effect
     pub fn abort(&self) {

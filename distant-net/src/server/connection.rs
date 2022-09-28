@@ -223,7 +223,7 @@ where
                             // If we have no more connections, start the timer
                             if let Some(timer) = Weak::upgrade(&shutdown_timer) {
                                 if state.connections.read().await.is_empty() {
-                                    timer.write().await.start();
+                                    timer.write().await.restart();
                                 }
                             }
                         }
