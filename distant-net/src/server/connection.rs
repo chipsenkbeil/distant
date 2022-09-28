@@ -40,6 +40,7 @@ impl Connection {
             state: Weak::new(),
             transport: (),
             shutdown_timer: Weak::new(),
+            sleep_duration: SLEEP_DURATION,
             verifier: Weak::new(),
         }
     }
@@ -61,6 +62,7 @@ pub struct ConnectionBuilder<H, T> {
     state: Weak<ServerState>,
     transport: T,
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
+    sleep_duration: Duration,
     verifier: Weak<Verifier>,
 }
 
@@ -72,6 +74,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
             verifier: self.verifier,
         }
     }
@@ -83,6 +86,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
             verifier: self.verifier,
         }
     }
@@ -94,6 +98,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport,
             shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
             verifier: self.verifier,
         }
     }
@@ -108,6 +113,19 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport: self.transport,
             shutdown_timer,
+            sleep_duration: self.sleep_duration,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionBuilder<H, T> {
+        ConnectionBuilder {
+            id: self.id,
+            handler: self.handler,
+            state: self.state,
+            transport: self.transport,
+            shutdown_timer: self.shutdown_timer,
+            sleep_duration,
             verifier: self.verifier,
         }
     }
@@ -119,6 +137,7 @@ impl<H, T> ConnectionBuilder<H, T> {
             state: self.state,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
             verifier,
         }
     }
@@ -148,6 +167,7 @@ where
             state,
             transport,
             shutdown_timer,
+            sleep_duration,
             verifier,
         } = self;
 
@@ -320,7 +340,7 @@ where
 
             // If we did not read or write anything, sleep a bit to offload CPU usage
             if read_blocked && write_blocked {
-                tokio::time::sleep(SLEEP_DURATION).await;
+                tokio::time::sleep(sleep_duration).await;
             }
         }
     }
