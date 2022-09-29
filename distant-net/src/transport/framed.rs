@@ -377,6 +377,13 @@ impl<T: Transport> FramedTransport<T> {
             }};
         }
 
+        // Define a label to distinguish log output for client and server
+        let log_label = if handshake.is_client() {
+            "Handshake | Client"
+        } else {
+            "Handshake | Server"
+        };
+
         // Determine compression and encryption to apply to framed transport
         let choice = match handshake {
             Handshake::Client {
@@ -385,11 +392,11 @@ impl<T: Transport> FramedTransport<T> {
                 preferred_encryption_type,
             } => {
                 // Receive options from the server and pick one
-                debug!("[Handshake] Client waiting on server options");
+                debug!("[{log_label}] Waiting on options");
                 let options = next_frame_as!(Options);
 
                 // Choose a compression and encryption option from the options
-                debug!("[Handshake] Client selecting from server options: {options:#?}");
+                debug!("[{log_label}] Selecting from options: {options:#?}");
                 let choice = Choice {
                     // Use preferred compression if available, otherwise default to no compression
                     // to avoid choosing something poor
@@ -413,7 +420,7 @@ impl<T: Transport> FramedTransport<T> {
                 };
 
                 // Report back to the server the choice
-                debug!("[Handshake] Client reporting choice: {choice:#?}");
+                debug!("[{log_label}] Reporting choice: {choice:#?}");
                 write_frame!(choice);
 
                 choice
@@ -428,16 +435,16 @@ impl<T: Transport> FramedTransport<T> {
                 };
 
                 // Send options to the client
-                debug!("[Handshake] Server sending options: {options:#?}");
+                debug!("[{log_label}] Sending options: {options:#?}");
                 write_frame!(options);
 
                 // Get client's response with selected compression and encryption
-                debug!("[Handshake] Server waiting on client choice");
+                debug!("[{log_label}] Waiting on choice");
                 next_frame_as!(Choice)
             }
         };
 
-        debug!("[Handshake] Building compression & encryption codecs based on {choice:#?}");
+        debug!("[{log_label}] Building compression & encryption codecs based on {choice:#?}");
         let compression_level = choice.compression_level.unwrap_or_default();
 
         // Acquire a codec for the compression type
@@ -461,6 +468,7 @@ impl<T: Transport> FramedTransport<T> {
                     salt: Salt,
                 }
 
+                debug!("[{log_label}] Exchanging public key and salt");
                 let exchange = KeyExchange::default();
                 write_frame!(KeyExchangeData {
                     public_key: exchange.pk_bytes(),
@@ -471,7 +479,10 @@ impl<T: Transport> FramedTransport<T> {
                 //       also wants a 32-byte key. Once we introduce new encryption algorithms that
                 //       are not using 32-byte keys, the key exchange will need to support deriving
                 //       other length keys.
+                trace!("[{log_label}] Waiting on public key and salt from other side");
                 let data = next_frame_as!(KeyExchangeData);
+
+                trace!("[{log_label}] Deriving shared secret key");
                 let key = exchange.derive_shared_secret(data.public_key, data.salt)?;
                 Some(ty.new_codec(key.unprotected_as_bytes())?)
             }
@@ -479,6 +490,7 @@ impl<T: Transport> FramedTransport<T> {
         };
 
         // Bundle our compression and encryption codecs into a single, chained codec
+        trace!("[{log_label}] Bundling codecs");
         let codec: BoxedCodec = match (compression_codec, encryption_codec) {
             // If we have both encryption and compression, do the encryption first and then
             // compress in order to get smallest result

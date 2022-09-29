@@ -57,7 +57,7 @@ impl<A: AuthHandler + Send> TcpClientBuilder<A> {
 
             // Establish our framed transport, perform a handshake to set the codec, and do
             // authentication to ensure the connection can be used
-            let mut transport = FramedTransport::<_>::plain(transport);
+            let mut transport = FramedTransport::plain(transport);
             transport.client_handshake().await?;
             transport.authenticate(auth_handler).await?;
 

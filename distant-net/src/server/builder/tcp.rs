@@ -84,6 +84,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use std::net::{Ipv6Addr, SocketAddr};
+    use test_log::test;
 
     pub struct TestServerHandler;
 
@@ -131,7 +132,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_invoke_handler_upon_receiving_a_request() {
         let server = Server::tcp()
             .handler(TestServerHandler)

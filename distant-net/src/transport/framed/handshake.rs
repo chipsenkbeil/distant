@@ -44,4 +44,14 @@ impl Handshake {
             encryption_types: EncryptionType::known_variants().to_vec(),
         }
     }
+
+    /// Returns true if handshake is from client-side
+    pub fn is_client(&self) -> bool {
+        matches!(self, Self::Client { .. })
+    }
+
+    /// Returns true if handshake is from server-side
+    pub fn is_server(&self) -> bool {
+        matches!(self, Self::Server { .. })
+    }
 }
