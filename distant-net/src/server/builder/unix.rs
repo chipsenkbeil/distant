@@ -4,45 +4,25 @@ use crate::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, path::Path};
 
-pub struct UnixSocketServerBuilder<T> {
-    config: ServerConfig,
-    handler: T,
-    verifier: Verifier,
-}
+pub struct UnixSocketServerBuilder<T>(Server<T>);
 
 impl Default for UnixSocketServerBuilder<()> {
     fn default() -> Self {
-        Self {
-            config: Default::default(),
-            handler: (),
-            verifier: Verifier::empty(),
-        }
+        Self(Server::new())
     }
 }
 
 impl<T> UnixSocketServerBuilder<T> {
     pub fn config(self, config: ServerConfig) -> Self {
-        Self {
-            config,
-            handler: self.handler,
-            verifier: self.verifier,
-        }
+        Self(self.0.config(config))
     }
 
     pub fn handler<U>(self, handler: U) -> UnixSocketServerBuilder<U> {
-        UnixSocketServerBuilder {
-            config: self.config,
-            handler,
-            verifier: self.verifier,
-        }
+        UnixSocketServerBuilder(self.0.handler(handler))
     }
 
     pub fn verifier(self, verifier: Verifier) -> Self {
-        Self {
-            config: self.config,
-            handler: self.handler,
-            verifier,
-        }
+        Self(self.0.verifier(verifier))
     }
 }
 
@@ -60,13 +40,7 @@ where
         let path = path.as_ref();
         let listener = UnixSocketListener::bind(path).await?;
         let path = listener.path().to_path_buf();
-
-        let server = Server {
-            config: self.config,
-            handler: self.handler,
-            verifier: self.verifier,
-        };
-        let inner = server.start(listener)?;
+        let inner = self.0.start(listener)?;
         Ok(UnixSocketServerRef { path, inner })
     }
 }

@@ -7,45 +7,25 @@ use std::{
     io,
 };
 
-pub struct WindowsPipeServerBuilder<T> {
-    config: ServerConfig,
-    handler: T,
-    verifier: Verifier,
-}
+pub struct WindowsPipeServerBuilder<T>(Server<T>);
 
 impl Default for WindowsPipeServerBuilder<()> {
     fn default() -> Self {
-        Self {
-            config: Default::default(),
-            handler: (),
-            verifier: Verifier::empty(),
-        }
+        Self(Server::new())
     }
 }
 
 impl<T> WindowsPipeServerBuilder<T> {
-    pub fn verifier(self, verifier: Verifier) -> Self {
-        Self {
-            config: self.config,
-            handler: self.handler,
-            verifier,
-        }
-    }
-
     pub fn config(self, config: ServerConfig) -> Self {
-        Self {
-            config,
-            handler: self.handler,
-            verifier: self.verifier,
-        }
+        Self(self.0.config(config))
     }
 
     pub fn handler<U>(self, handler: U) -> WindowsPipeServerBuilder<U> {
-        WindowsPipeServerBuilder {
-            config: self.config,
-            handler,
-            verifier: self.verifier,
-        }
+        WindowsPipeServerBuilder(self.0.handler(handler))
+    }
+
+    pub fn verifier(self, verifier: Verifier) -> Self {
+        Self(self.0.verifier(verifier))
     }
 }
 
@@ -64,13 +44,7 @@ where
         let a = addr.as_ref();
         let listener = WindowsPipeListener::bind(a)?;
         let addr = listener.addr().to_os_string();
-
-        let server = Server {
-            config: self.config,
-            handler: self.handler,
-            verifier: self.verifier,
-        };
-        let inner = server.start(listener)?;
+        let inner = self.0.start(listener)?;
         Ok(WindowsPipeServerRef { addr, inner })
     }
 
