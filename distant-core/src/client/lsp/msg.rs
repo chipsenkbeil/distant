@@ -310,7 +310,7 @@ fn swap_prefix(obj: &mut Map<String, Value>, old: &str, new: &str) {
     let check = |s: &String| s.starts_with(old);
     let mut mutate = |s: &mut String| {
         if let Some(pos) = s.find(old) {
-            s.replace_range(pos..old.len(), new);
+            s.replace_range(pos..pos + old.len(), new);
         }
     };
 
