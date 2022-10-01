@@ -18,7 +18,7 @@ use crate::{
     Client, FramedTransport, Transport,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{convert, io, time::Duration};
+use std::{convert, future::Future, io, time::Duration};
 
 /// Builder for a [`Client`]
 pub struct ClientBuilder<H, T> {
@@ -34,6 +34,20 @@ impl<H, T> ClientBuilder<H, T> {
             transport: self.transport,
             timeout: self.timeout,
         }
+    }
+
+    pub async fn try_transport<U>(
+        self,
+        f: impl Future<Output = io::Result<U>>,
+    ) -> io::Result<ClientBuilder<H, U>> {
+        let timeout = self.timeout.as_ref().copied();
+        Ok(self.transport(match timeout {
+            Some(duration) => tokio::time::timeout(duration, f)
+                .await
+                .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
+                .and_then(convert::identity)?,
+            None => f.await?,
+        }))
     }
 
     pub fn transport<U>(self, transport: U) -> ClientBuilder<H, U> {

@@ -1,6 +1,6 @@
 use crate::{
     auth::{AuthHandler, Authenticate},
-    Client, FramedTransport, WindowsPipeTransport,
+    Client, ClientBuilder, FramedTransport, WindowsPipeTransport,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -11,17 +11,15 @@ use tokio::{io, time::Duration};
 
 /// Builder for a client that will connect over a Windows pipe
 pub struct WindowsPipeClientBuilder<T> {
-    auth_handler: T,
+    inner: ClientBuilder<T, ()>,
     local: bool,
-    timeout: Option<Duration>,
 }
 
 impl<T> WindowsPipeClientBuilder<T> {
     pub fn auth_handler<A: AuthHandler>(self, auth_handler: A) -> WindowsPipeClientBuilder<A> {
         WindowsPipeClientBuilder {
-            auth_handler,
+            inner: self.inner.auth_handler(auth_handler),
             local: self.local,
-            timeout: self.timeout,
         }
     }
 
@@ -29,16 +27,14 @@ impl<T> WindowsPipeClientBuilder<T> {
     /// via `\\.\pipe\{name}`; otherwise, will connect using the address verbatim.
     pub fn local(self, local: bool) -> Self {
         Self {
-            auth_handler: self.auth_handler,
+            inner: self.inner,
             local,
-            timeout: self.timeout,
         }
     }
 
     pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {
         Self {
-            auth_handler: self.auth_handler,
-            local: self.local,
+            inner: self.inner.timeout(timeout),
             timeout: timeout.into(),
         }
     }
@@ -47,9 +43,8 @@ impl<T> WindowsPipeClientBuilder<T> {
 impl WindowsPipeClientBuilder<()> {
     pub fn new() -> Self {
         Self {
-            auth_handler: (),
+            inner: ClientBuilder::new(),
             local: false,
-            timeout: None,
         }
     }
 }
@@ -66,33 +61,17 @@ impl<A: AuthHandler + Send> WindowsPipeClientBuilder<A> {
         T: Send + Sync + Serialize + 'static,
         U: Send + Sync + DeserializeOwned + 'static,
     {
-        let auth_handler = self.auth_handler;
-        let timeout = self.timeout;
-
-        let f = async move {
-            let transport = if self.local {
+        let local = self.local;
+        self.0
+            .try_transport(if local {
                 let mut full_addr = OsString::from(r"\\.\pipe\");
                 full_addr.push(addr.as_ref());
-                WindowsPipeTransport::connect(full_addr).await?
+                WindowsPipeTransport::connect(full_addr)
             } else {
-                WindowsPipeTransport::connect(addr.as_ref()).await?
-            };
-
-            // Establish our framed transport, perform a handshake to set the codec, and do
-            // authentication to ensure the connection can be used
-            let mut transport = FramedTransport::plain(transport);
-            transport.client_handshake().await?;
-            transport.authenticate(auth_handler).await?;
-
-            Ok(Client::new(transport))
-        };
-
-        match timeout {
-            Some(duration) => tokio::time::timeout(duration, f)
-                .await
-                .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
-                .and_then(convert::identity),
-            None => f.await,
-        }
+                WindowsPipeTransport::connect(addr.as_ref())
+            })
+            .await?
+            .connect()
+            .await
     }
 }
