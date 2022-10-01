@@ -64,13 +64,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        auth::{
-            msg::{
-                Challenge, ChallengeResponse, Initialization, InitializationResponse, Verification,
-                VerificationResponse,
-            },
-            AuthHandler, Authenticator,
-        },
+    use crate::{auth::DummyAuthHandler, Client, Request, ServerCtx};
         Client, ConnectionCtx, Request, ServerCtx,
     };
     use async_trait::async_trait;
@@ -84,13 +78,6 @@ mod tests {
         type Response = String;
         type LocalData = ();
 
-        async fn on_accept<A: Authenticator>(
-            &self,
-            ctx: ConnectionCtx<'_, A, Self::LocalData>,
-        ) -> io::Result<()> {
-            ctx.authenticator.finished().await
-        }
-
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received
             ctx.reply
@@ -100,38 +87,17 @@ mod tests {
         }
     }
 
-    pub struct TestAuthHandler;
-
-    #[async_trait]
-    impl AuthHandler for TestAuthHandler {
-        async fn on_initialization(
-            &mut self,
-            x: Initialization,
-        ) -> io::Result<InitializationResponse> {
-            Ok(InitializationResponse { methods: x.methods })
-        }
-
-        async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-            Ok(ChallengeResponse {
-                answers: Vec::new(),
-            })
-        }
-
-        async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
-            Ok(VerificationResponse { valid: true })
-        }
-    }
-
     #[test(tokio::test)]
     async fn should_invoke_handler_upon_receiving_a_request() {
         let server = WindowsPipeServerBuilder::default()
             .handler(TestServerHandler)
+            .verifier(Verifier::none())
             .start_local(format!("test_pipe_{}", rand::random::<usize>()))
             .await
             .expect("Failed to start Windows pipe server");
 
         let mut client: Client<String, String> = Client::windows_pipe()
-            .auth_handler(TestAuthHandler)
+            .auth_handler(DummyAuthHandler)
             .connect(server.addr())
             .await
             .expect("Client failed to connect");

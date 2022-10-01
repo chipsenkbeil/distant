@@ -38,6 +38,13 @@ impl Verifier {
         }
     }
 
+    /// Creates a verifier that uses the [`NoneAuthenticationMethod`] exclusively.
+    pub fn none() -> Self {
+        Self::new(vec![
+            Box::new(NoneAuthenticationMethod::new()) as Box<dyn AuthenticationMethod>
+        ])
+    }
+
     /// Returns an iterator over the ids of the methods supported by the verifier
     pub fn methods(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.methods.keys().copied()

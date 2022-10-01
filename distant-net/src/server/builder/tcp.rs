@@ -47,16 +47,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        auth::{
-            msg::{
-                Challenge, ChallengeResponse, Initialization, InitializationResponse, Verification,
-                VerificationResponse,
-            },
-            AuthHandler,
-        },
-        Client, Request, ServerCtx,
-    };
+    use crate::{auth::DummyAuthHandler, Client, Request, ServerCtx};
     use async_trait::async_trait;
     use std::net::{Ipv6Addr, SocketAddr};
     use test_log::test;
@@ -78,38 +69,17 @@ mod tests {
         }
     }
 
-    pub struct TestAuthHandler;
-
-    #[async_trait]
-    impl AuthHandler for TestAuthHandler {
-        async fn on_initialization(
-            &mut self,
-            x: Initialization,
-        ) -> io::Result<InitializationResponse> {
-            Ok(InitializationResponse { methods: x.methods })
-        }
-
-        async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-            Ok(ChallengeResponse {
-                answers: Vec::new(),
-            })
-        }
-
-        async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
-            Ok(VerificationResponse { valid: true })
-        }
-    }
-
     #[test(tokio::test)]
     async fn should_invoke_handler_upon_receiving_a_request() {
         let server = TcpServerBuilder::default()
             .handler(TestServerHandler)
+            .verifier(Verifier::none())
             .start(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
             .await
             .expect("Failed to start TCP server");
 
         let mut client: Client<String, String> = Client::tcp()
-            .auth_handler(TestAuthHandler)
+            .auth_handler(DummyAuthHandler)
             .connect(SocketAddr::from((server.ip_addr(), server.port())))
             .await
             .expect("Client failed to connect");
