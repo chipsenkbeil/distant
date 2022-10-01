@@ -78,6 +78,7 @@ where
 {
     async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()> {
         loop {
+            trace!("Authenticate::authenticate waiting on next authentication frame");
             match next_frame_as!(self, Authentication) {
                 Authentication::Initialization(x) => {
                     trace!("Authenticate::Initialization({x:?})");
