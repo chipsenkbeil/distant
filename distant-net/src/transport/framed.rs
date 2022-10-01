@@ -456,6 +456,13 @@ impl<T: Transport> FramedTransport<T> {
         // In the case that we are using encryption, we derive a shared secret key to use with the
         // encryption type
         let encryption_codec = match choice.encryption_type {
+            // Fail early if we got an unknown encryption type
+            Some(EncryptionType::Unknown) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Unknown compression type",
+                ))
+            }
             Some(ty) => {
                 #[derive(Serialize, Deserialize)]
                 struct KeyExchangeData {
@@ -990,7 +997,7 @@ mod tests {
 
         // NOTE: Spawn a separate task for one of our transports so we can communicate without
         //       deadlocking
-        let server_task = tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             // Wait for handshake to complete
             t2.server_handshake().await.unwrap();
 
@@ -1005,8 +1012,8 @@ mod tests {
         t1.write_frame(b"hello world").await.unwrap();
         assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello world");
 
-        // Ensure that the server transport did not error
-        server_task.await.unwrap();
+        // Ensure that the other transport did not error
+        task.await.unwrap();
     }
 
     #[test(tokio::test)]
@@ -1056,7 +1063,7 @@ mod tests {
 
         // NOTE: Spawn a separate task for one of our transports so we can communicate without
         //       deadlocking
-        let server_task = tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             // Wait for handshake to complete
             t2.server_handshake().await.unwrap();
 
@@ -1075,8 +1082,8 @@ mod tests {
         t1.write_frame(b"hello world").await.unwrap();
         assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello world");
 
-        // Ensure that the server transport did not error
-        server_task.await.unwrap();
+        // Ensure that the other transport did not error
+        task.await.unwrap();
 
         // Verify that the incoming and outgoing buffers are empty
         assert!(t1.incoming.is_empty());
@@ -1089,7 +1096,7 @@ mod tests {
 
         // NOTE: Spawn a separate task for one of our transports so we can communicate without
         //       deadlocking
-        let server_task = tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             t2.write_frame(b"not a valid frame for handshake")
                 .await
                 .unwrap();
@@ -1099,19 +1106,13 @@ mod tests {
         let err = t1.client_handshake().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 
-        // Ensure that the server transport did not error
-        server_task.await.unwrap();
+        // Ensure that the other transport did not error
+        task.await.unwrap();
     }
 
     #[test(tokio::test)]
     async fn handshake_for_client_should_fail_unable_to_send_codec_choice_to_other_side() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
-        /* #[derive(Debug, Serialize, Deserialize)]
-        struct Choice {
-            compression_level: Option<CompressionLevel>,
-            compression_type: Option<CompressionType>,
-            encryption_type: Option<EncryptionType>,
-        } */
 
         #[derive(Debug, Serialize, Deserialize)]
         struct Options {
@@ -1121,7 +1122,7 @@ mod tests {
 
         // NOTE: Spawn a separate task for one of our transports so we can communicate without
         //       deadlocking
-        let server_task = tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             // Send options, and then quit so the client side will fail
             t2.write_frame(
                 utils::serialize_to_vec(&Options {
@@ -1138,61 +1139,161 @@ mod tests {
         let err = t1.client_handshake().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
 
-        // Ensure that the server transport did not error
-        server_task.await.unwrap();
-    }
-
-    #[test(tokio::test)]
-    async fn handshake_for_client_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
-        todo!();
+        // Ensure that the other transport did not error
+        task.await.unwrap();
     }
 
     #[test(tokio::test)]
     async fn handshake_for_client_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
     ) {
-        todo!();
-    }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Options {
+            compression_types: Vec<CompressionType>,
+            encryption_types: Vec<EncryptionType>,
+        }
 
-    #[test(tokio::test)]
-    async fn handshake_for_client_should_fail_if_an_error_occurs_during_derive_of_shared_secret() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Go ahead and queue up a choice, and then queue up invalid key exchange data
+        t2.write_frame(
+            utils::serialize_to_vec(&Options {
+                compression_types: CompressionType::known_variants().to_vec(),
+                encryption_types: EncryptionType::known_variants().to_vec(),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        t2.write_frame(b"not valid key exchange data")
+            .await
+            .unwrap();
+
+        // Ensure we detect the failure on handshake
+        let err = t1.client_handshake().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_receives_unexpected_frame_instead_of_choice() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // NOTE: Spawn a separate task for one of our transports so we can communicate without
+        //       deadlocking
+        let task = tokio::spawn(async move {
+            t2.write_frame(b"not a valid frame for handshake")
+                .await
+                .unwrap();
+        });
+
+        // Ensure we detect the failure on handshake
+        let err = t1.server_handshake().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        // Ensure that the other transport did not error
+        task.await.unwrap();
     }
 
     #[test(tokio::test)]
     async fn handshake_for_server_should_fail_unable_to_send_codec_options_to_other_side() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::test_pair(100);
+
+        // Drop our other transport to ensure that nothing can be sent to it
+        drop(t2);
+
+        // Ensure we detect the failure on handshake
+        let err = t1.server_handshake().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WriteZero);
     }
 
     #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type(
     ) {
-        todo!();
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Choice {
+            compression_level: Option<CompressionLevel>,
+            compression_type: Option<CompressionType>,
+            encryption_type: Option<EncryptionType>,
+        }
+
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Go ahead and queue up an improper response
+        t2.write_frame(
+            utils::serialize_to_vec(&Choice {
+                compression_level: None,
+                compression_type: Some(CompressionType::Unknown),
+                encryption_type: None,
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Ensure we detect the failure on handshake
+        let err = t1.server_handshake().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type(
     ) {
-        todo!();
-    }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Choice {
+            compression_level: Option<CompressionLevel>,
+            compression_type: Option<CompressionType>,
+            encryption_type: Option<EncryptionType>,
+        }
 
-    #[test(tokio::test)]
-    async fn handshake_for_server_should_fail_if_unable_to_send_key_exchange_data_to_other_side() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Go ahead and queue up an improper response
+        t2.write_frame(
+            utils::serialize_to_vec(&Choice {
+                compression_level: None,
+                compression_type: None,
+                encryption_type: Some(EncryptionType::Unknown),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Ensure we detect the failure on handshake
+        let err = t1.server_handshake().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test(tokio::test)]
     async fn handshake_for_server_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
     ) {
-        todo!();
-    }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Choice {
+            compression_level: Option<CompressionLevel>,
+            compression_type: Option<CompressionType>,
+            encryption_type: Option<EncryptionType>,
+        }
 
-    #[test(tokio::test)]
-    async fn handshake_for_server_should_fail_if_an_error_occurs_during_derive_of_shared_secret() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Go ahead and queue up a choice, and then queue up invalid key exchange data
+        t2.write_frame(
+            utils::serialize_to_vec(&Choice {
+                compression_level: None,
+                compression_type: None,
+                encryption_type: Some(EncryptionType::XChaCha20Poly1305),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        t2.write_frame(b"not valid key exchange data")
+            .await
+            .unwrap();
+
+        // Ensure we detect the failure on handshake
+        let err = t1.server_handshake().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }
