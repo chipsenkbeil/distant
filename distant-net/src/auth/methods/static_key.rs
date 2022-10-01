@@ -31,13 +31,7 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
             .await?;
 
         if response.answers.is_empty() {
-            let x = Error::fatal("missing answer");
-            authenticator.error(x.clone()).await?;
-            return Err(x.into_io_permission_denied());
-        } else if response.answers.len() > 1 {
-            authenticator
-                .error(Error::non_fatal("more than one answer, picking first"))
-                .await?;
+            return Err(Error::non_fatal("missing answer").into_io_permission_denied());
         }
 
         match response
@@ -48,11 +42,93 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
             .parse::<HeapSecretKey>()
         {
             Ok(key) if key == self.key => Ok(()),
-            _ => {
-                let x = Error::fatal("answer not a valid key");
-                authenticator.error(x.clone()).await?;
-                Err(x.into_io_permission_denied())
-            }
+            _ => Err(Error::non_fatal("answer does not match key").into_io_permission_denied()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        auth::msg::{AuthenticationResponse, ChallengeResponse},
+        utils, FramedTransport,
+    };
+    use test_log::test;
+
+    #[test(tokio::test)]
+    async fn authenticate_should_fail_if_key_challenge_fails() {
+        let method = StaticKeyAuthenticationMethod::new(b"".to_vec());
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Queue up an invalid frame for our challenge to ensure it fails
+        t2.write_frame(b"invalid initialization response")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            method.authenticate(&mut t1).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticate_should_fail_if_no_answer_included_in_challenge_response() {
+        let method = StaticKeyAuthenticationMethod::new(b"".to_vec());
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Queue up a response to the initialization request
+        t2.write_frame(
+            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
+                answers: Vec::new(),
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            method.authenticate(&mut t1).await.unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticate_should_fail_if_answer_does_not_match_key() {
+        let method = StaticKeyAuthenticationMethod::new(b"answer".to_vec());
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Queue up a response to the initialization request
+        t2.write_frame(
+            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
+                answers: vec![HeapSecretKey::from(b"some key".to_vec()).to_string()],
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            method.authenticate(&mut t1).await.unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticate_should_succeed_if_answer_matches_key() {
+        let method = StaticKeyAuthenticationMethod::new(b"answer".to_vec());
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Queue up a response to the initialization request
+        t2.write_frame(
+            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
+                answers: vec![HeapSecretKey::from(b"answer".to_vec()).to_string()],
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        method.authenticate(&mut t1).await.unwrap();
     }
 }
