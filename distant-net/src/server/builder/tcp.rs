@@ -109,7 +109,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn should_invoke_handler_upon_receiving_a_request() {
-        let server = Server::tcp()
+        let server = TcpServerBuilder::default()
             .handler(TestServerHandler)
             .start(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
             .await

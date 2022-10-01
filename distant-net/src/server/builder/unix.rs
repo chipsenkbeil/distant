@@ -116,7 +116,7 @@ mod tests {
             .path()
             .to_path_buf();
 
-        let server = Server::unix_socket()
+        let server = UnixSocketServerBuilder::default()
             .handler(TestServerHandler)
             .start(path)
             .await

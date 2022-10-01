@@ -124,7 +124,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn should_invoke_handler_upon_receiving_a_request() {
-        let server = Server::windows_pipe()
+        let server = WindowsPipeServerBuilder::default()
             .handler(TestServerHandler)
             .start_local(format!("test_pipe_{}", rand::random::<usize>()))
             .await
