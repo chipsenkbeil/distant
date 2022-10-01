@@ -17,12 +17,9 @@ pub struct ServerCtx<T, U, D> {
 }
 
 /// Represents contextual information for working with an inbound connection
-pub struct ConnectionCtx<'a, A, D> {
+pub struct ConnectionCtx<'a, D> {
     /// Unique identifer associated with the connection
     pub connection_id: ConnectionId,
-
-    /// Authenticator to use to issue challenges to the connection to ensure it is valid
-    pub authenticator: &'a mut A,
 
     /// Reference to the connection's local data
     pub local_data: &'a mut D,

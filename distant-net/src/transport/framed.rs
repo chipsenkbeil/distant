@@ -274,6 +274,17 @@ impl<T: Transport> FramedTransport<T> {
         }
     }
 
+    /// Shorthand for creating a [`FramedTransport`] with a [`PlainCodec`] and then immediately
+    /// performing a [`client_handshake`], returning the updated [`FramedTransport`] on success.
+    ///
+    /// [`client_handshake`]: FramedTransport::client_handshake
+    #[inline]
+    pub async fn from_client_handshake(transport: T) -> io::Result<Self> {
+        let mut transport = Self::plain(transport);
+        transport.client_handshake().await?;
+        Ok(transport)
+    }
+
     /// Perform the client-side of a handshake. See [`handshake`] for more details.
     ///
     /// [`handshake`]: FramedTransport::handshake

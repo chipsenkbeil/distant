@@ -237,7 +237,6 @@ where
         if let Err(x) = handler
             .on_accept(ConnectionCtx {
                 connection_id: id,
-                authenticator: &mut transport,
                 local_data: &mut local_data,
             })
             .await

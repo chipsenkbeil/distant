@@ -54,9 +54,9 @@ mod tests {
                 Challenge, ChallengeResponse, Initialization, InitializationResponse, Verification,
                 VerificationResponse,
             },
-            AuthHandler, Authenticator,
+            AuthHandler,
         },
-        Client, ConnectionCtx, Request, ServerCtx,
+        Client, Request, ServerCtx,
     };
     use async_trait::async_trait;
     use tempfile::NamedTempFile;
@@ -69,13 +69,6 @@ mod tests {
         type Request = String;
         type Response = String;
         type LocalData = ();
-
-        async fn on_accept<A: Authenticator>(
-            &self,
-            ctx: ConnectionCtx<'_, A, Self::LocalData>,
-        ) -> io::Result<()> {
-            ctx.authenticator.finished().await
-        }
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received

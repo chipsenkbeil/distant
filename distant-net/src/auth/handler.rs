@@ -51,3 +51,18 @@ pub trait AuthHandler {
         Ok(())
     }
 }
+
+/// Dummy implementation of [`AuthHandler`] where any challenge or verification request will
+/// instantly fail.
+pub struct DummyAuthHandler;
+
+#[async_trait]
+impl AuthHandler for DummyAuthHandler {
+    async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+}

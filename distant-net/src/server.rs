@@ -1,7 +1,4 @@
-use crate::{
-    auth::{Authenticator, Verifier},
-    Listener, Transport,
-};
+use crate::{auth::Verifier, Listener, Transport};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -55,7 +52,7 @@ pub trait ServerHandler: Send {
     type Response;
 
     /// Type of data to store locally tied to the specific connection
-    type LocalData;
+    type LocalData: Send;
 
     /// Invoked upon a new connection becoming established.
     ///
@@ -63,13 +60,10 @@ pub trait ServerHandler: Send {
     ///
     /// This can be useful in performing some additional initialization on the connection's local
     /// data prior to it being used anywhere else.
-    ///
-    /// Additionally, the context contains an authenticator which can be used to issue challenges
-    /// to the connection to validate its access.
-    async fn on_accept<A: Authenticator>(
-        &self,
-        ctx: ConnectionCtx<'_, A, Self::LocalData>,
-    ) -> io::Result<()>;
+    #[allow(unused_variables)]
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        Ok(())
+    }
 
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.
@@ -225,8 +219,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        auth::{AuthenticationMethod, Authenticator, NoneAuthenticationMethod},
-        InmemoryTransport, MpscListener, Request, Response, ServerConfig,
+        auth::{Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
+        FramedTransport, InmemoryTransport, MpscListener, Request, Response, ServerConfig,
     };
     use async_trait::async_trait;
     use std::time::Duration;
@@ -241,11 +235,8 @@ mod tests {
         type Response = String;
         type LocalData = ();
 
-        async fn on_accept<A: Authenticator>(
-            &self,
-            ctx: ConnectionCtx<'_, A, Self::LocalData>,
-        ) -> io::Result<()> {
-            ctx.authenticator.finished().await
+        async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+            Ok(())
         }
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
@@ -291,15 +282,20 @@ mod tests {
             .start(listener)
             .expect("Failed to start server");
 
+        // Perform handshake and authentication with the server before beginning to send data
+        let mut transport = FramedTransport::from_client_handshake(transport)
+            .await
+            .unwrap();
+        transport.authenticate(DummyAuthHandler).await.unwrap();
+
         transport
-            .write_all(&Request::new(123).to_vec().unwrap())
+            .write_frame(Request::new(123).to_vec().unwrap())
             .await
             .expect("Failed to send request");
 
         // Wait for a response
-        let mut buf = [0u8; 1024];
-        let n = transport.try_read(&mut buf).unwrap();
-        let response: Response<String> = Response::from_slice(&buf[..n]).unwrap();
+        let frame = transport.read_frame().await.unwrap().unwrap();
+        let response: Response<String> = Response::from_slice(frame.as_item()).unwrap();
         assert_eq!(response.payload, "hello");
     }
 
