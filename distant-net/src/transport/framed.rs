@@ -3,7 +3,7 @@ use crate::utils;
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use log::*;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt, io, time::Duration};
 
 mod codec;
@@ -245,6 +245,17 @@ impl<T: Transport> FramedTransport<T> {
         }
     }
 
+    /// Reads a frame using [`read_frame`] and then deserializes the bytes into `D`.
+    ///
+    /// [`read_frame`]: FramedTransport::read_frame
+    pub async fn read_frame_as<D: DeserializeOwned>(&mut self) -> io::Result<Option<D>> {
+        match self.read_frame().await {
+            Ok(Some(frame)) => Ok(Some(utils::deserialize_from_slice(frame.as_item())?)),
+            Ok(None) => Ok(None),
+            Err(x) => Err(x),
+        }
+    }
+
     /// Writes a `frame` of bytes by using the [`Codec`] tied to this transport.
     ///
     /// This is accomplished by continually calling the inner transport's `try_write`. If 0 is
@@ -305,6 +316,14 @@ impl<T: Transport> FramedTransport<T> {
             // Already fully succeeded or failed
             x => x,
         }
+    }
+
+    /// Serializes `value` into bytes and passes them to  [`write_frame`].
+    ///
+    /// [`write_frame`]: FramedTransport::write_frame
+    pub async fn write_frame_for<D: Serialize>(&mut self, value: &D) -> io::Result<()> {
+        let data = utils::serialize_to_vec(value)?;
+        self.write_frame(data).await
     }
 
     /// Shorthand for creating a [`FramedTransport`] with a [`PlainCodec`] and then immediately
@@ -415,22 +434,6 @@ impl<T: Transport> FramedTransport<T> {
             encryption_types: Vec<EncryptionType>,
         }
 
-        macro_rules! write_frame {
-            ($data:expr) => {{
-                self.write_frame(utils::serialize_to_vec(&$data)?).await?
-            }};
-        }
-
-        macro_rules! next_frame_as {
-            ($type:ty) => {{
-                let frame = self.read_frame().await?.ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
-                })?;
-
-                utils::deserialize_from_slice::<$type>(frame.as_item())?
-            }};
-        }
-
         // Define a label to distinguish log output for client and server
         let log_label = if handshake.is_client() {
             "Handshake | Client"
@@ -447,7 +450,9 @@ impl<T: Transport> FramedTransport<T> {
             } => {
                 // Receive options from the server and pick one
                 debug!("[{log_label}] Waiting on options");
-                let options = next_frame_as!(Options);
+                let options = self.read_frame_as::<Options>().await?.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+                })?;
 
                 // Choose a compression and encryption option from the options
                 debug!("[{log_label}] Selecting from options: {options:#?}");
@@ -475,7 +480,7 @@ impl<T: Transport> FramedTransport<T> {
 
                 // Report back to the server the choice
                 debug!("[{log_label}] Reporting choice: {choice:#?}");
-                write_frame!(choice);
+                self.write_frame_for(&choice).await?;
 
                 choice
             }
@@ -490,11 +495,13 @@ impl<T: Transport> FramedTransport<T> {
 
                 // Send options to the client
                 debug!("[{log_label}] Sending options: {options:#?}");
-                write_frame!(options);
+                self.write_frame_for(&options).await?;
 
                 // Get client's response with selected compression and encryption
                 debug!("[{log_label}] Waiting on choice");
-                next_frame_as!(Choice)
+                self.read_frame_as::<Choice>().await?.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+                })?
             }
         };
 
@@ -557,21 +564,7 @@ impl<T: Transport> FramedTransport<T> {
             format!("[{label}] ")
         };
 
-        macro_rules! write_frame {
-            ($data:expr) => {{
-                self.write_frame(utils::serialize_to_vec(&$data)?).await?
-            }};
-        }
-
-        macro_rules! next_frame_as {
-            ($type:ty) => {{
-                let frame = self.read_frame().await?.ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
-                })?;
-
-                utils::deserialize_from_slice::<$type>(frame.as_item())?
-            }};
-        }
+        /*  */
 
         #[derive(Serialize, Deserialize)]
         struct KeyExchangeData {
@@ -586,17 +579,23 @@ impl<T: Transport> FramedTransport<T> {
 
         debug!("{log_label}Exchanging public key and salt");
         let exchange = KeyExchange::default();
-        write_frame!(KeyExchangeData {
+        self.write_frame_for(&KeyExchangeData {
             public_key: exchange.pk_bytes(),
             salt: *exchange.salt(),
-        });
+        })
+        .await?;
 
         // TODO: This key only works because it happens to be 32 bytes and our encryption
         //       also wants a 32-byte key. Once we introduce new encryption algorithms that
         //       are not using 32-byte keys, the key exchange will need to support deriving
         //       other length keys.
         trace!("{log_label}Waiting on public key and salt from other side");
-        let data = next_frame_as!(KeyExchangeData);
+        let data = self
+            .read_frame_as::<KeyExchangeData>()
+            .await?
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+            })?;
 
         trace!("{log_label}Deriving shared secret key");
         let key = exchange.derive_shared_secret(data.public_key, data.salt)?;
