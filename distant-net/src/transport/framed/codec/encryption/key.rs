@@ -153,6 +153,26 @@ impl HeapSecretKey {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    /// Generates a random key of `n` bytes in length.
+    pub fn generate(n: usize) -> Result<Self, SecretKeyError> {
+        // Limitation described in https://github.com/orion-rs/orion/issues/130
+        if n < 1 || n > (isize::MAX as usize) {
+            return Err(SecretKeyError);
+        }
+
+        let mut key = Vec::new();
+        let mut buf = [0; 32];
+
+        // Continually generate a chunk of bytes and extend our key until we've reached
+        // the appropriate length
+        while key.len() < n {
+            OsRng.fill_bytes(&mut buf);
+            key.extend_from_slice(&buf[..std::cmp::min(n - key.len(), 32)]);
+        }
+
+        Ok(Self(key))
+    }
 }
 
 impl From<Vec<u8>> for HeapSecretKey {
@@ -252,5 +272,37 @@ impl PartialEq<HeapSecretKey> for str {
 impl PartialEq<HeapSecretKey> for &str {
     fn eq(&self, other: &HeapSecretKey) -> bool {
         other.eq(*self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_log::test;
+
+    #[test]
+    fn secret_key_should_be_able_to_be_generated() {
+        SecretKey::<0>::generate().unwrap_err();
+
+        let key = SecretKey::<1>::generate().unwrap();
+        assert_eq!(key.len(), 1);
+
+        // NOTE: We aren't going to validate generating isize::MAX or +1 of that size because it
+        //       takes a lot of time to do so
+        let key = SecretKey::<100>::generate().unwrap();
+        assert_eq!(key.len(), 100);
+    }
+
+    #[test]
+    fn heap_secret_key_should_be_able_to_be_generated() {
+        HeapSecretKey::generate(0).unwrap_err();
+
+        let key = HeapSecretKey::generate(1).unwrap();
+        assert_eq!(key.len(), 1);
+
+        // NOTE: We aren't going to validate generating isize::MAX or +1 of that size because it
+        //       takes a lot of time to do so
+        let key = HeapSecretKey::generate(100).unwrap();
+        assert_eq!(key.len(), 100);
     }
 }
