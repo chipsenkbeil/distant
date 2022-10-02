@@ -158,6 +158,19 @@ impl<T: Transport> FramedTransport<T> {
     ///
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
     pub fn try_read_frame(&mut self) -> io::Result<Option<OwnedFrame>> {
+        // Attempt to read a frame, returning the decoded frame if we get one, returning any error
+        // that is encountered from reading frames or failing to decode, or otherwise doing nothing
+        // and continuing forward.
+        macro_rules! read_next_frame {
+            () => {{
+                match Frame::read(&mut self.incoming) {
+                    Ok(None) => (),
+                    Ok(Some(frame)) => return Ok(Some(self.codec.decode(frame)?.into_owned())),
+                    Err(x) => return Err(x),
+                }
+            }};
+        }
+
         // If we have data remaining in the buffer, we first try to parse it in case we received
         // multiple frames from a previous call.
         //
@@ -165,10 +178,7 @@ impl<T: Transport> FramedTransport<T> {
         //       incoming buffer, but it is never evaluated because a call to `try_read` returns
         //       `WouldBlock`, 0 bytes, or some other error.
         if !self.incoming.is_empty() {
-            match Frame::read(&mut self.incoming) {
-                Ok(None) => (),
-                x => return x,
-            }
+            read_next_frame!();
         }
 
         // Continually read bytes into the incoming queue and then attempt to tease out a frame
@@ -187,17 +197,7 @@ impl<T: Transport> FramedTransport<T> {
                 // decode into a frame
                 Ok(n) => {
                     self.incoming.extend_from_slice(&buf[..n]);
-
-                    // Attempt to read a frame, returning the decoded frame if we get one,
-                    // continuing to try to read more bytes if we don't find a frame, and returning
-                    // any error that is encountered from reading frames or failing to decode
-                    let frame = match Frame::read(&mut self.incoming) {
-                        Ok(Some(frame)) => frame,
-                        Ok(None) => continue,
-                        Err(x) => return Err(x),
-                    };
-
-                    return Ok(Some(self.codec.decode(frame)?.into_owned()));
+                    read_next_frame!();
                 }
 
                 // Any error (including WouldBlock) will get bubbled up
