@@ -44,9 +44,12 @@ pub trait Authenticator: Send {
 
 macro_rules! write_frame {
     ($transport:expr, $data:expr) => {{
-        $transport
-            .write_frame(utils::serialize_to_vec(&$data)?)
-            .await?
+        let data = utils::serialize_to_vec(&$data)?;
+        if log_enabled!(Level::Trace) {
+            trace!("Writing data as frame: {data:?}");
+        }
+
+        $transport.write_frame(data).await?
     }};
 }
 
@@ -67,7 +70,21 @@ macro_rules! next_frame_as {
             io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
         })?;
 
-        utils::deserialize_from_slice::<$type>(frame.as_item())?
+        match utils::deserialize_from_slice::<$type>(frame.as_item()) {
+            Ok(frame) => frame,
+            Err(x) => {
+                if log_enabled!(Level::Trace) {
+                    trace!(
+                        "Failed to deserialize frame item as {}: {:?}",
+                        stringify!($type),
+                        frame.as_item()
+                    );
+                }
+
+                Err(x)?;
+                unreachable!();
+            }
+        }
     }};
 }
 

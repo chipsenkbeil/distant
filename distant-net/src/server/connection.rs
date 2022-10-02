@@ -214,10 +214,13 @@ where
         let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
 
         // Perform a handshake to ensure that the connection is properly established
-        let mut transport: FramedTransport<T> = FramedTransport::plain(transport);
-        if let Err(x) = transport.server_handshake().await {
-            terminate_connection!(@error "[Conn {id}] Handshake failed: {x}");
-        }
+        let mut transport: FramedTransport<T> =
+            match FramedTransport::from_server_handshake(transport).await {
+                Ok(x) => x,
+                Err(x) => {
+                    terminate_connection!(@error "[Conn {id}] Handshake failed: {x}");
+                }
+            };
 
         // Perform authentication to ensure the connection is valid
         match Weak::upgrade(&verifier) {
