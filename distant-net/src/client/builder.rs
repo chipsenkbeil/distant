@@ -100,8 +100,7 @@ where
         let f = async move {
             // Establish our framed transport, perform a handshake to set the codec, and do
             // authentication to ensure the connection can be used
-            let mut transport = FramedTransport::plain(transport);
-            transport.client_handshake().await?;
+            let mut transport = FramedTransport::from_client_handshake(transport).await?;
             transport.authenticate(auth_handler).await?;
 
             Ok(Client::new(transport))

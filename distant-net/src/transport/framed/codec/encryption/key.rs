@@ -5,6 +5,15 @@ use std::{fmt, str::FromStr};
 #[derive(Debug, Display, Error)]
 pub struct SecretKeyError;
 
+impl From<SecretKeyError> for std::io::Error {
+    fn from(_: SecretKeyError) -> Self {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "not valid secret key format",
+        )
+    }
+}
+
 /// Represents a 16-byte (128-bit) secret key
 pub type SecretKey16 = SecretKey<16>;
 
@@ -171,5 +180,77 @@ impl fmt::Display for HeapSecretKey {
     /// Display an N-byte secret key as a hex string
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", hex::encode(self.unprotected_as_bytes()))
+    }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for HeapSecretKey {
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.0.eq(other)
+    }
+}
+
+impl<const N: usize> PartialEq<HeapSecretKey> for [u8; N] {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(self)
+    }
+}
+
+impl<const N: usize> PartialEq<HeapSecretKey> for &[u8; N] {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(*self)
+    }
+}
+
+impl PartialEq<[u8]> for HeapSecretKey {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.0.eq(other)
+    }
+}
+
+impl PartialEq<HeapSecretKey> for [u8] {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(self)
+    }
+}
+
+impl PartialEq<HeapSecretKey> for &[u8] {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(*self)
+    }
+}
+
+impl PartialEq<String> for HeapSecretKey {
+    fn eq(&self, other: &String) -> bool {
+        self.0.eq(other.as_bytes())
+    }
+}
+
+impl PartialEq<HeapSecretKey> for String {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(self)
+    }
+}
+
+impl PartialEq<HeapSecretKey> for &String {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(*self)
+    }
+}
+
+impl PartialEq<str> for HeapSecretKey {
+    fn eq(&self, other: &str) -> bool {
+        self.0.eq(other.as_bytes())
+    }
+}
+
+impl PartialEq<HeapSecretKey> for str {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(self)
+    }
+}
+
+impl PartialEq<HeapSecretKey> for &str {
+    fn eq(&self, other: &HeapSecretKey) -> bool {
+        other.eq(*self)
     }
 }
