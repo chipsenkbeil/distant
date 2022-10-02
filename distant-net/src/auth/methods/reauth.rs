@@ -110,7 +110,7 @@ mod tests {
     use super::*;
     use crate::{
         auth::msg::{AuthenticationResponse, ChallengeResponse},
-        utils, FramedTransport,
+        FramedTransport,
     };
     use test_log::test;
 
@@ -149,12 +149,9 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec!["id".to_string()],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec!["id".to_string()],
+        }))
         .await
         .unwrap();
 
@@ -170,12 +167,9 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec!["id".to_string(), "secret key".to_string()],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec!["id".to_string(), "secret key".to_string()],
+        }))
         .await
         .unwrap();
 
@@ -191,15 +185,12 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec![
-                    "id2".to_string(),
-                    HeapSecretKey::from(b"secret key".to_vec()).to_string(),
-                ],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec![
+                "id2".to_string(),
+                HeapSecretKey::from(b"secret key".to_vec()).to_string(),
+            ],
+        }))
         .await
         .unwrap();
 
@@ -215,15 +206,12 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec![
-                    "id".to_string(),
-                    HeapSecretKey::from(b"wrong secret key".to_vec()).to_string(),
-                ],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec![
+                "id".to_string(),
+                HeapSecretKey::from(b"wrong secret key".to_vec()).to_string(),
+            ],
+        }))
         .await
         .unwrap();
 
@@ -239,15 +227,12 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec![
-                    "id".to_string(),
-                    HeapSecretKey::from(b"secret key".to_vec()).to_string(),
-                ],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec![
+                "id".to_string(),
+                HeapSecretKey::from(b"secret key".to_vec()).to_string(),
+            ],
+        }))
         .await
         .unwrap();
 
