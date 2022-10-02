@@ -20,6 +20,11 @@ pub struct InmemoryTransport {
 }
 
 impl InmemoryTransport {
+    /// Creates a new transport where `tx` is used to send data out of the transport during
+    /// [`try_write`] and `rx` is used to receive data into the transport during [`try_read`].
+    ///
+    /// [`try_read`]: Transport::try_read
+    /// [`try_write`]: Transport::try_write
     pub fn new(tx: mpsc::Sender<Vec<u8>>, rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
             tx,
@@ -28,7 +33,12 @@ impl InmemoryTransport {
         }
     }
 
-    /// Returns (incoming_tx, outgoing_rx, transport)
+    /// Returns (incoming_tx, outgoing_rx, transport) where `incoming_tx` is used to send data to
+    /// the transport where it will be consumed during [`try_read`] and `outgoing_rx` is used to
+    /// receive data from the transport when it is written using [`try_write`].
+    ///
+    /// [`try_read`]: Transport::try_read
+    /// [`try_write`]: Transport::try_write
     pub fn make(buffer: usize) -> (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>, Self) {
         let (incoming_tx, incoming_rx) = mpsc::channel(buffer);
         let (outgoing_tx, outgoing_rx) = mpsc::channel(buffer);

@@ -101,7 +101,7 @@ pub trait AuthenticationMethod: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{utils, FramedTransport};
+    use crate::FramedTransport;
     use test_log::test;
 
     struct SuccessAuthenticationMethod;
@@ -150,16 +150,13 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Initialization(
-                InitializationResponse {
-                    methods: vec![SuccessAuthenticationMethod.id().to_string()]
-                        .into_iter()
-                        .collect(),
-                },
-            ))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![SuccessAuthenticationMethod.id().to_string()]
+                    .into_iter()
+                    .collect(),
+            },
+        ))
         .await
         .unwrap();
 
@@ -180,16 +177,13 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Initialization(
-                InitializationResponse {
-                    methods: vec![SuccessAuthenticationMethod.id().to_string()]
-                        .into_iter()
-                        .collect(),
-                },
-            ))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![SuccessAuthenticationMethod.id().to_string()]
+                    .into_iter()
+                    .collect(),
+            },
+        ))
         .await
         .unwrap();
 
@@ -204,14 +198,11 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Initialization(
-                InitializationResponse {
-                    methods: vec!["other".to_string()].into_iter().collect(),
-                },
-            ))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec!["other".to_string()].into_iter().collect(),
+            },
+        ))
         .await
         .unwrap();
 
@@ -226,16 +217,13 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Initialization(
-                InitializationResponse {
-                    methods: vec![FailAuthenticationMethod.id().to_string()]
-                        .into_iter()
-                        .collect(),
-                },
-            ))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![FailAuthenticationMethod.id().to_string()]
+                    .into_iter()
+                    .collect(),
+            },
+        ))
         .await
         .unwrap();
 
@@ -249,16 +237,13 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Initialization(
-                InitializationResponse {
-                    methods: vec![SuccessAuthenticationMethod.id().to_string()]
-                        .into_iter()
-                        .collect(),
-                },
-            ))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![SuccessAuthenticationMethod.id().to_string()]
+                    .into_iter()
+                    .collect(),
+            },
+        ))
         .await
         .unwrap();
 
@@ -276,19 +261,16 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Initialization(
-                InitializationResponse {
-                    methods: vec![
-                        FailAuthenticationMethod.id().to_string(),
-                        SuccessAuthenticationMethod.id().to_string(),
-                    ]
-                    .into_iter()
-                    .collect(),
-                },
-            ))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![
+                    FailAuthenticationMethod.id().to_string(),
+                    SuccessAuthenticationMethod.id().to_string(),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        ))
         .await
         .unwrap();
 

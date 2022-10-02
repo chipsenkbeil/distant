@@ -52,7 +52,7 @@ mod tests {
     use super::*;
     use crate::{
         auth::msg::{AuthenticationResponse, ChallengeResponse},
-        utils, FramedTransport,
+        FramedTransport,
     };
     use test_log::test;
 
@@ -78,12 +78,9 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: Vec::new(),
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: Vec::new(),
+        }))
         .await
         .unwrap();
 
@@ -99,12 +96,9 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec![HeapSecretKey::from(b"some key".to_vec()).to_string()],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec![HeapSecretKey::from(b"some key".to_vec()).to_string()],
+        }))
         .await
         .unwrap();
 
@@ -120,12 +114,9 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
-        t2.write_frame(
-            utils::serialize_to_vec(&AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec![HeapSecretKey::from(b"answer".to_vec()).to_string()],
-            }))
-            .unwrap(),
-        )
+        t2.write_frame_for(&AuthenticationResponse::Challenge(ChallengeResponse {
+            answers: vec![HeapSecretKey::from(b"answer".to_vec()).to_string()],
+        }))
         .await
         .unwrap();
 

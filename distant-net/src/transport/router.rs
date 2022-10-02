@@ -1,8 +1,8 @@
-/// Creates a new struct around a [`UntypedTransport`](crate::UntypedTransport) that routes incoming
-/// and outgoing messages to different transports, enabling the ability to transform a singular
-/// transport into multiple typed transports that can be combined with [`Client`](crate::Client)
-/// and [`Server`](crate::Server) to mix having a variety of clients and servers available on the
-/// same underlying [`UntypedTransport`](crate::UntypedTransport).
+/// Creates a new struct around a [`Transport`](crate::Transport) that routes incoming and outgoing
+/// messages to different transports, enabling the ability to transform a singular transport into
+/// multiple typed transports that can be combined with [`Client`](crate::Client) and
+/// [`Server`](crate::Server) to mix having a variety of clients and servers available on the same
+/// underlying [`Transport`](crate::Transport).
 ///
 /// ```no_run
 /// use distant_net::router;
@@ -51,10 +51,9 @@ macro_rules! router {
             #[doc = "Implements a message router for splitting out transport messages"]
             #[allow(dead_code)]
             $vis struct $name {
-                reader_task: tokio::task::JoinHandle<()>,
-                writer_task: tokio::task::JoinHandle<()>,
+                task: tokio::task::JoinHandle<()>,
                 $(
-                    pub $transport: $crate::MpscTransport<$req_ty, $res_ty>,
+                    pub $transport: $crate::InmemoryTransport,
                 )+
             }
 
@@ -84,24 +83,15 @@ macro_rules! router {
                     (_inbound, _outbound)
                 }
 
-                #[doc = "Creates a new instance of [`" $name "`]"]
-                pub fn new<T, W, R>(split: T) -> Self
+                #[doc = "Creates a new instance of [`" $name "`] using `transport`."]
+                #[doc = ""]
+                #[doc = "### Note"]
+                #[doc = ""]
+                #[doc = "Assumes that the `transport` has already been authenticated."]
+                pub fn new<T>(transport: $crate::FramedTransport<T>) -> Self
                 where
-                    T: $crate::IntoSplit<Write = W, Read = R>,
-                    W: $crate::UntypedTransportWrite + 'static,
-                    R: $crate::UntypedTransportRead + 'static,
+                    T: $crate::Transport,
                 {
-                    let (writer, reader) = split.into_split();
-                    Self::from_writer_and_reader(writer, reader)
-                }
-
-                #[doc = "Creates a new instance of [`" $name "`] from the given writer and reader"]
-                pub fn from_writer_and_reader<W, R>(mut writer: W, mut reader: R) -> Self
-                where
-                    W: $crate::UntypedTransportWrite + 'static,
-                    R: $crate::UntypedTransportRead + 'static,
-                {
-
                     $(
                         let (
                             [<$transport:snake _inbound_tx>],
@@ -190,19 +180,17 @@ macro_rules! router {
                     });
 
                     Self {
-                        reader_task,
-                        writer_task,
+                        task,
                         $([<$transport:snake>]),+
                     }
                 }
 
                 pub fn abort(&self) {
-                    self.reader_task.abort();
-                    self.writer_task.abort();
+                    self.task.abort();
                 }
 
                 pub fn is_finished(&self) -> bool {
-                    self.reader_task.is_finished() && self.writer_task.is_finished()
+                    self.task.is_finished()
                 }
             }
         }
@@ -211,7 +199,7 @@ macro_rules! router {
 
 #[cfg(test)]
 mod tests {
-    use crate::{FramedTransport, TypedAsyncRead, TypedAsyncWrite};
+    use crate::FramedTransport;
     use serde::{Deserialize, Serialize};
 
     // NOTE: Must implement deserialize for our router,
@@ -258,7 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_should_wire_transports_to_distinguish_incoming_data() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::test_pair(100);
         let TestRouter {
             mut one,
             mut two,
@@ -293,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_should_wire_transports_to_ignore_unknown_incoming_data() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::test_pair(100);
         let TestRouter {
             mut one, mut two, ..
         } = TestRouter::new(t1);
@@ -325,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_should_wire_transports_to_relay_outgoing_data() {
-        let (t1, mut t2) = FramedTransport::make_test_pair();
+        let (t1, mut t2) = FramedTransport::test_pair(100);
         let TestRouter {
             mut one,
             mut two,

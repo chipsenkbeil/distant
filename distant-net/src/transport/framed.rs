@@ -226,6 +226,17 @@ impl<T: Transport> FramedTransport<T> {
         }
     }
 
+    /// Reads a frame using [`try_read_frame`] and then deserializes the bytes into `D`.
+    ///
+    /// [`try_read_frame`]: FramedTransport::try_read_frame
+    pub fn try_read_frame_as<D: DeserializeOwned>(&mut self) -> io::Result<Option<D>> {
+        match self.try_read_frame() {
+            Ok(Some(frame)) => Ok(Some(utils::deserialize_from_slice(frame.as_item())?)),
+            Ok(None) => Ok(None),
+            Err(x) => Err(x),
+        }
+    }
+
     /// Continues to invoke [`try_read_frame`] until a frame is successfully read, an error is
     /// encountered that is not [`ErrorKind::WouldBlock`], or the underlying transport has closed.
     ///
@@ -285,6 +296,14 @@ impl<T: Transport> FramedTransport<T> {
         Ok(())
     }
 
+    /// Serializes `value` into bytes and passes them to [`try_write_frame`].
+    ///
+    /// [`try_write_frame`]: FramedTransport::try_write_frame
+    pub fn try_write_frame_for<D: Serialize>(&mut self, value: &D) -> io::Result<()> {
+        let data = utils::serialize_to_vec(value)?;
+        self.try_write_frame(data)
+    }
+
     /// Invokes [`try_write_frame`] followed by a continuous calls to [`try_flush`] until a frame
     /// is successfully written, an error is encountered that is not [`ErrorKind::WouldBlock`], or
     /// the underlying transport has closed.
@@ -318,7 +337,7 @@ impl<T: Transport> FramedTransport<T> {
         }
     }
 
-    /// Serializes `value` into bytes and passes them to  [`write_frame`].
+    /// Serializes `value` into bytes and passes them to [`write_frame`].
     ///
     /// [`write_frame`]: FramedTransport::write_frame
     pub async fn write_frame_for<D: Serialize>(&mut self, value: &D) -> io::Result<()> {
@@ -1251,13 +1270,10 @@ mod tests {
         //       deadlocking
         let task = tokio::spawn(async move {
             // Send options, and then quit so the client side will fail
-            t2.write_frame(
-                utils::serialize_to_vec(&Options {
-                    compression_types: Vec::new(),
-                    encryption_types: Vec::new(),
-                })
-                .unwrap(),
-            )
+            t2.write_frame_for(&Options {
+                compression_types: Vec::new(),
+                encryption_types: Vec::new(),
+            })
             .await
             .unwrap();
         });
@@ -1282,13 +1298,10 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Go ahead and queue up a choice, and then queue up invalid key exchange data
-        t2.write_frame(
-            utils::serialize_to_vec(&Options {
-                compression_types: CompressionType::known_variants().to_vec(),
-                encryption_types: EncryptionType::known_variants().to_vec(),
-            })
-            .unwrap(),
-        )
+        t2.write_frame_for(&Options {
+            compression_types: CompressionType::known_variants().to_vec(),
+            encryption_types: EncryptionType::known_variants().to_vec(),
+        })
         .await
         .unwrap();
 
@@ -1346,14 +1359,11 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Go ahead and queue up an improper response
-        t2.write_frame(
-            utils::serialize_to_vec(&Choice {
-                compression_level: None,
-                compression_type: Some(CompressionType::Unknown),
-                encryption_type: None,
-            })
-            .unwrap(),
-        )
+        t2.write_frame_for(&Choice {
+            compression_level: None,
+            compression_type: Some(CompressionType::Unknown),
+            encryption_type: None,
+        })
         .await
         .unwrap();
 
@@ -1375,14 +1385,11 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Go ahead and queue up an improper response
-        t2.write_frame(
-            utils::serialize_to_vec(&Choice {
-                compression_level: None,
-                compression_type: None,
-                encryption_type: Some(EncryptionType::Unknown),
-            })
-            .unwrap(),
-        )
+        t2.write_frame_for(&Choice {
+            compression_level: None,
+            compression_type: None,
+            encryption_type: Some(EncryptionType::Unknown),
+        })
         .await
         .unwrap();
 
@@ -1404,14 +1411,11 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Go ahead and queue up a choice, and then queue up invalid key exchange data
-        t2.write_frame(
-            utils::serialize_to_vec(&Choice {
-                compression_level: None,
-                compression_type: None,
-                encryption_type: Some(EncryptionType::XChaCha20Poly1305),
-            })
-            .unwrap(),
-        )
+        t2.write_frame_for(&Choice {
+            compression_level: None,
+            compression_type: None,
+            encryption_type: Some(EncryptionType::XChaCha20Poly1305),
+        })
         .await
         .unwrap();
 
