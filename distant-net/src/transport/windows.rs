@@ -1,4 +1,4 @@
-use super::{Interest, Transport, Ready, Reconnectable};
+use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
 use std::{
     ffi::{OsStr, OsString},
@@ -88,12 +88,12 @@ impl Transport for WindowsPipeTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
     use tokio::{
         net::windows::named_pipe::{NamedPipeServer, ServerOptions},
         sync::oneshot,
         task::JoinHandle,
     };
-    use test_log::test;
 
     async fn start_and_run_server(tx: oneshot::Sender<String>) -> io::Result<()> {
         let pipe = start_server(tx).await?;

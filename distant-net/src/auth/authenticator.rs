@@ -173,3 +173,400 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_log::test;
+    use tokio::sync::mpsc;
+
+    macro_rules! auth_handler {
+        (@no_challenge @no_verification @tx($tx:ident, $ty:ty) $($methods:item)*) => {
+            auth_handler! {
+                @tx($tx, $ty)
+
+                async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
+                    Err(io::Error::from(io::ErrorKind::Unsupported))
+                }
+
+                async fn on_verification(
+                    &mut self,
+                    _: Verification,
+                ) -> io::Result<VerificationResponse> {
+                    Err(io::Error::from(io::ErrorKind::Unsupported))
+                }
+
+                $($methods)*
+            }
+        };
+        (@no_challenge @tx($tx:ident, $ty:ty) $($methods:item)*) => {
+            auth_handler! {
+                @tx($tx, $ty)
+
+                async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
+                    Err(io::Error::from(io::ErrorKind::Unsupported))
+                }
+
+                $($methods)*
+            }
+        };
+        (@no_verification @tx($tx:ident, $ty:ty) $($methods:item)*) => {
+            auth_handler! {
+                @tx($tx, $ty)
+
+                async fn on_verification(
+                    &mut self,
+                    _: Verification,
+                ) -> io::Result<VerificationResponse> {
+                    Err(io::Error::from(io::ErrorKind::Unsupported))
+                }
+
+                $($methods)*
+            }
+        };
+        (@tx($tx:ident, $ty:ty) $($methods:item)*) => {{
+            #[allow(dead_code)]
+            struct __InlineAuthHandler {
+                tx: mpsc::Sender<$ty>,
+            }
+
+            #[async_trait]
+            impl AuthHandler for __InlineAuthHandler {
+                $($methods)*
+            }
+
+            __InlineAuthHandler { tx: $tx }
+        }};
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_initialization_should_be_able_to_successfully_complete_round_trip() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, _) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @no_verification
+                @tx(tx, ())
+
+                async fn on_initialization(
+                    &mut self,
+                    initialization: Initialization,
+                ) -> io::Result<InitializationResponse> {
+                    Ok(InitializationResponse {
+                        methods: initialization.methods,
+                    })
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        let response = t1
+            .initialize(Initialization {
+                methods: vec!["test method".to_string()].into_iter().collect(),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            !task.is_finished(),
+            "Auth handler unexpectedly finished without signal"
+        );
+
+        assert_eq!(
+            response,
+            InitializationResponse {
+                methods: vec!["test method".to_string()].into_iter().collect()
+            }
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_challenge_should_be_able_to_successfully_complete_round_trip() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, _) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_verification
+                @tx(tx, ())
+
+                async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+                    assert_eq!(challenge.questions, vec![Question {
+                        label: "label".to_string(),
+                        text: "text".to_string(),
+                        options: vec![("question_key".to_string(), "question_value".to_string())]
+                            .into_iter()
+                            .collect(),
+                    }]);
+                    assert_eq!(
+                        challenge.options,
+                        vec![("key".to_string(), "value".to_string())].into_iter().collect(),
+                    );
+                    Ok(ChallengeResponse {
+                        answers: vec!["some answer".to_string()].into_iter().collect(),
+                    })
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        let response = t1
+            .challenge(Challenge {
+                questions: vec![Question {
+                    label: "label".to_string(),
+                    text: "text".to_string(),
+                    options: vec![("question_key".to_string(), "question_value".to_string())]
+                        .into_iter()
+                        .collect(),
+                }],
+                options: vec![("key".to_string(), "value".to_string())]
+                    .into_iter()
+                    .collect(),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            !task.is_finished(),
+            "Auth handler unexpectedly finished without signal"
+        );
+
+        assert_eq!(
+            response,
+            ChallengeResponse {
+                answers: vec!["some answer".to_string()],
+            }
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_verification_should_be_able_to_successfully_complete_round_trip() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, _) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @tx(tx, ())
+
+                async fn on_verification(
+                    &mut self,
+                    verification: Verification,
+                ) -> io::Result<VerificationResponse> {
+                    assert_eq!(verification.kind, VerificationKind::Host);
+                    assert_eq!(verification.text, "some text");
+                    Ok(VerificationResponse {
+                        valid: true,
+                    })
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        let response = t1
+            .verify(Verification {
+                kind: VerificationKind::Host,
+                text: "some text".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            !task.is_finished(),
+            "Auth handler unexpectedly finished without signal"
+        );
+
+        assert_eq!(response, VerificationResponse { valid: true });
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_info_should_be_able_to_be_sent_to_auth_handler() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @no_verification
+                @tx(tx, Info)
+
+                async fn on_info(
+                    &mut self,
+                    info: Info,
+                ) -> io::Result<()> {
+                    self.tx.send(info).await.unwrap();
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        t1.info(Info {
+            text: "some text".to_string(),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            Info {
+                text: "some text".to_string()
+            }
+        );
+
+        assert!(
+            !task.is_finished(),
+            "Auth handler unexpectedly finished without signal"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_error_should_be_able_to_be_sent_to_auth_handler() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @no_verification
+                @tx(tx, Error)
+
+                async fn on_error(&mut self, error: Error) -> io::Result<()> {
+                    self.tx.send(error).await.unwrap();
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        t1.error(Error {
+            kind: ErrorKind::Error,
+            text: "some text".to_string(),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            Error {
+                kind: ErrorKind::Error,
+                text: "some text".to_string(),
+            }
+        );
+
+        assert!(
+            !task.is_finished(),
+            "Auth handler unexpectedly finished without signal"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_received_error_should_fail_auth_handler_if_fatal() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @no_verification
+                @tx(tx, Error)
+
+                async fn on_error(&mut self, error: Error) -> io::Result<()> {
+                    self.tx.send(error).await.unwrap();
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        t1.error(Error {
+            kind: ErrorKind::Fatal,
+            text: "some text".to_string(),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            Error {
+                kind: ErrorKind::Fatal,
+                text: "some text".to_string(),
+            }
+        );
+
+        // Verify that the handler exited with an error
+        task.await.unwrap_err();
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_start_method_should_be_able_to_be_sent_to_auth_handler() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @no_verification
+                @tx(tx, StartMethod)
+
+                async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+                    self.tx.send(start_method).await.unwrap();
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        t1.start_method(StartMethod {
+            method: "some method".to_string(),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            StartMethod {
+                method: "some method".to_string()
+            }
+        );
+
+        assert!(
+            !task.is_finished(),
+            "Auth handler unexpectedly finished without signal"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn authenticator_finished_should_be_able_to_be_sent_to_auth_handler() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, _) = mpsc::channel(1);
+
+        let task = tokio::spawn(async move {
+            t2.authenticate(auth_handler! {
+                @no_challenge
+                @no_verification
+                @tx(tx, ())
+
+                async fn on_finished(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap()
+        });
+
+        t1.finished().await.unwrap();
+
+        // Finished should signal that the handler completed successfully
+        task.await.unwrap();
+    }
+}

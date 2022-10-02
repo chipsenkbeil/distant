@@ -67,8 +67,8 @@ impl Listener for WindowsPipeListener {
 mod tests {
     use super::*;
     use crate::Transport;
-    use tokio::{sync::oneshot, task::JoinHandle};
     use test_log::test;
+    use tokio::{sync::oneshot, task::JoinHandle};
 
     #[test(tokio::test)]
     async fn should_fail_to_bind_if_pipe_already_bound() {

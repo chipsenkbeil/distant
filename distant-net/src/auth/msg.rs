@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Represents messages from an authenticator that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
-#[derive(Clone, Debug, From, Serialize, Deserialize)]
+#[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Authentication {
     /// Indicates the beginning of authentication, providing available methods
@@ -43,28 +43,28 @@ pub struct StartMethod {
 }
 
 /// Represents a challenge comprising a series of questions to be presented
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Challenge {
     pub questions: Vec<Question>,
     pub options: HashMap<String, String>,
 }
 
 /// Represents an ask to verify some information
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verification {
     pub kind: VerificationKind,
     pub text: String,
 }
 
 /// Represents some information to be presented related to authentication
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Info {
     pub text: String,
 }
 
 /// Represents authentication messages that are responses to authenticator requests such
 /// as answers to challenges or verifying information
-#[derive(Clone, Debug, From, Serialize, Deserialize)]
+#[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthenticationResponse {
     /// Contains response to initialization, providing details about which methods to use
@@ -78,19 +78,19 @@ pub enum AuthenticationResponse {
 }
 
 /// Represents a response to initialization to specify which authentication methods to pursue
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitializationResponse {
     pub methods: HashSet<String>,
 }
 
 /// Represents the answers to a previously-asked challenge associated with authentication
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChallengeResponse {
     pub answers: Vec<String>,
 }
 
 /// Represents the answer to a previously-asked verification associated with authentication
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationResponse {
     pub valid: bool,
 }
@@ -144,7 +144,7 @@ impl Question {
 }
 
 /// Represents some error that occurred during authentication
-#[derive(Clone, Debug, Display, Error, Serialize, Deserialize)]
+#[derive(Clone, Debug, Display, Error, PartialEq, Eq, Serialize, Deserialize)]
 #[display(fmt = "{}: {}", kind, text)]
 pub struct Error {
     /// Represents the kind of error

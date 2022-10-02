@@ -64,7 +64,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-    use crate::{auth::DummyAuthHandler, Client, Request, ServerCtx};
+        auth::{Client, DummyAuthHandler, Request, ServerCtx},
         Client, ConnectionCtx, Request, ServerCtx,
     };
     use async_trait::async_trait;
