@@ -214,6 +214,7 @@ where
         let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
 
         // Perform a handshake to ensure that the connection is properly established
+        debug!("[Conn {id}] Performing handshake");
         let mut transport: FramedTransport<T> =
             match FramedTransport::from_server_handshake(transport).await {
                 Ok(x) => x,
@@ -223,6 +224,7 @@ where
             };
 
         // Perform authentication to ensure the connection is valid
+        debug!("[Conn {id}] Verifying connection");
         match Weak::upgrade(&verifier) {
             Some(verifier) => {
                 if let Err(x) = verifier.verify(&mut transport).await {
@@ -236,6 +238,7 @@ where
 
         // Create local data for the connection and then process it as well as perform
         // authentication and any other tasks on first connecting
+        debug!("[Conn {id}] Accepting connection");
         let mut local_data = H::LocalData::default();
         if let Err(x) = handler
             .on_accept(ConnectionCtx {
@@ -261,8 +264,8 @@ where
             };
 
             // Keep track of whether we read or wrote anything
-            let mut read_blocked = false;
-            let mut write_blocked = false;
+            let mut read_blocked = !ready.is_readable();
+            let mut write_blocked = !ready.is_writable();
 
             if ready.is_readable() {
                 match transport.try_read_frame() {

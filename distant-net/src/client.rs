@@ -88,8 +88,8 @@ where
                     }
                 };
 
-                let mut read_blocked = false;
-                let mut write_blocked = false;
+                let mut read_blocked = !ready.is_readable();
+                let mut write_blocked = !ready.is_writable();
 
                 if ready.is_readable() {
                     match transport.try_read_frame() {

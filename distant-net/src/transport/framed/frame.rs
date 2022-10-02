@@ -100,6 +100,12 @@ impl Frame<'_> {
         Ok(Some(Frame::from(item)))
     }
 
+    /// Checks if a full frame is available from `src`, returning true if a frame was found false
+    /// if the current `src` does not contain a frame. Does not consume the frame.
+    pub fn available(src: &BytesMut) -> bool {
+        matches!(Frame::read(&mut src.clone()), Ok(Some(_)))
+    }
+
     /// Returns a new frame which is identical but has a lifetime tied to this frame.
     pub fn as_borrowed(&self) -> Frame<'_> {
         let item = match &self.item {

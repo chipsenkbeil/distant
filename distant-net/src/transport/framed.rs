@@ -99,7 +99,27 @@ impl<T> fmt::Debug for FramedTransport<T> {
 impl<T: Transport> FramedTransport<T> {
     /// Waits for the transport to be ready based on the given interest, returning the ready status
     pub async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        Transport::ready(&self.inner, interest).await
+        // If interest includes reading, we check if we already have a frame in our queue,
+        // as there can be a scenario where a frame was received and then the connection
+        // was closed, and we still want to be able to read the next frame is if it is
+        // available in the connection.
+        let ready = if interest.is_readable() && Frame::available(&self.incoming) {
+            Ready::READABLE
+        } else {
+            Ready::EMPTY
+        };
+
+        // If we know that we are readable and not checking for write status, we can short-circuit
+        // to avoid an async call by returning immediately that we are readable
+        if !interest.is_writable() && ready.is_readable() {
+            return Ok(ready);
+        }
+
+        // Otherwise, we need to check the status using the underlying transport and merge it with
+        // our current understanding based on internal state
+        Transport::ready(&self.inner, interest)
+            .await
+            .map(|r| r | ready)
     }
 
     /// Waits for the transport to be readable to follow up with `try_read`
