@@ -203,6 +203,7 @@ where
                 .state(Arc::downgrade(&state))
                 .transport(transport)
                 .shutdown_timer(Arc::downgrade(&timer))
+                .sleep_duration(config.connection_sleep)
                 .verifier(Arc::downgrade(&verifier))
                 .spawn();
 
@@ -305,6 +306,7 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -329,6 +331,7 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -355,6 +358,7 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Lonely(Duration::from_millis(100)),
+            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -377,6 +381,7 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::After(Duration::from_millis(100)),
+            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -393,6 +398,7 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::After(Duration::from_millis(100)),
+            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");
@@ -409,6 +415,7 @@ mod tests {
 
         let server = make_test_server(ServerConfig {
             shutdown: Shutdown::Never,
+            ..Default::default()
         })
         .start(listener)
         .expect("Failed to start server");

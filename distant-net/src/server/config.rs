@@ -2,11 +2,25 @@ use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
+const DEFAULT_CONNECTION_SLEEP: Duration = Duration::from_millis(50);
+
 /// Represents a general-purpose set of properties tied with a server instance
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
+    /// Time to wait inbetween connection read/write when nothing was read or written on last pass
+    pub connection_sleep: Duration,
+
     /// Rules for how a server will shutdown automatically
     pub shutdown: Shutdown,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            connection_sleep: DEFAULT_CONNECTION_SLEEP,
+            shutdown: Default::default(),
+        }
+    }
 }
 
 /// Rules for how a server will shut itself down automatically
