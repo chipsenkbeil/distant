@@ -1,4 +1,4 @@
-use super::{parse_msg_pack_str, Id};
+use super::{parse_msg_pack_str, write_str_msg_pack, Id};
 use crate::utils;
 use derive_more::{Display, Error};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -133,9 +133,25 @@ impl<'a> UntypedResponse<'a> {
         }
     }
 
+    /// Allocates a new collection of bytes representing the response.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0x83];
+
+        write_str_msg_pack("id", &mut bytes);
+        write_str_msg_pack(&self.id, &mut bytes);
+
+        write_str_msg_pack("origin_id", &mut bytes);
+        write_str_msg_pack(&self.origin_id, &mut bytes);
+
+        write_str_msg_pack("payload", &mut bytes);
+        bytes.extend_from_slice(&self.payload);
+
+        bytes
+    }
+
     /// Parses a collection of bytes, returning an untyped response if it can be potentially
     /// represented as a [`Response`] depending on the payload, or the original bytes if it does not
-    /// represent a [`Response`]
+    /// represent a [`Response`].
     ///
     /// NOTE: This supports parsing an invalid response where the payload would not properly
     /// deserialize, but the bytes themselves represent a complete response of some kind.
@@ -216,6 +232,20 @@ mod tests {
 
     /// fixstr of 4 bytes with str "test"
     const TEST_STR_BYTES: &[u8] = &[0xa4, 0x74, 0x65, 0x73, 0x74];
+
+    #[test]
+    fn untyped_response_should_support_converting_to_bytes() {
+        let bytes = Response {
+            id: "some id".to_string(),
+            origin_id: "some origin id".to_string(),
+            payload: true,
+        }
+        .to_vec()
+        .unwrap();
+
+        let untyped_response = UntypedResponse::from_slice(&bytes).unwrap();
+        assert_eq!(untyped_response.to_bytes(), bytes);
+    }
 
     #[test]
     fn untyped_response_should_support_parsing_from_response_bytes_with_valid_payload() {

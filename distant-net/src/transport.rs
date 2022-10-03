@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use std::{io, time::Duration};
 
-// mod router;
-
 mod framed;
 pub use framed::*;
 

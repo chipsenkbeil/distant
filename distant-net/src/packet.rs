@@ -13,7 +13,38 @@ enum MsgPackStrParseError {
     Utf8Error(std::str::Utf8Error),
 }
 
-/// Parse msgpack str, returning remaining bytes and str on success, or error on failure
+/// Writes the given str to the end of `buf` as the str's msgpack representation.
+///
+/// # Panics
+///
+/// Panics if `s.len() >= 2 ^ 32` as the maximum str length for a msgpack str is `(2 ^ 32) - 1`.
+fn write_str_msg_pack(s: &str, buf: &mut Vec<u8>) {
+    assert!(
+        s.len() < 2usize.pow(32),
+        "str cannot be longer than (2^32)-1 bytes"
+    );
+
+    if s.len() < 32 {
+        buf.push(s.len() as u8 | 0b10100000);
+    } else if s.len() < 2usize.pow(8) {
+        buf.push(0xd9);
+        buf.push(s.len() as u8);
+    } else if s.len() < 2usize.pow(16) {
+        buf.push(0xda);
+        for b in (s.len() as u16).to_be_bytes() {
+            buf.push(b);
+        }
+    } else {
+        buf.push(0xdb);
+        for b in (s.len() as u32).to_be_bytes() {
+            buf.push(b);
+        }
+    }
+
+    buf.extend_from_slice(s.as_bytes());
+}
+
+/// Parse msgpack str, returning remaining bytes and str on success, or error on failure.
 fn parse_msg_pack_str(input: &[u8]) -> Result<(&[u8], &str), MsgPackStrParseError> {
     let ilen = input.len();
     if ilen == 0 {
@@ -52,6 +83,349 @@ fn parse_msg_pack_str(input: &[u8]) -> Result<(&[u8], &str), MsgPackStrParseErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod write_str_msg_pack {
+        use super::*;
+
+        #[test]
+        fn should_support_fixstr() {
+            // 0-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("", &mut buf);
+            assert_eq!(buf, &[0xa0]);
+
+            // 1-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("a", &mut buf);
+            assert_eq!(buf, &[0xa1, b'a']);
+
+            // 2-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("ab", &mut buf);
+            assert_eq!(buf, &[0xa2, b'a', b'b']);
+
+            // 3-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abc", &mut buf);
+            assert_eq!(buf, &[0xa3, b'a', b'b', b'c']);
+
+            // 4-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcd", &mut buf);
+            assert_eq!(buf, &[0xa4, b'a', b'b', b'c', b'd']);
+
+            // 5-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcde", &mut buf);
+            assert_eq!(buf, &[0xa5, b'a', b'b', b'c', b'd', b'e']);
+
+            // 6-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdef", &mut buf);
+            assert_eq!(buf, &[0xa6, b'a', b'b', b'c', b'd', b'e', b'f']);
+
+            // 7-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefg", &mut buf);
+            assert_eq!(buf, &[0xa7, b'a', b'b', b'c', b'd', b'e', b'f', b'g']);
+
+            // 8-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefgh", &mut buf);
+            assert_eq!(buf, &[0xa8, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h']);
+
+            // 9-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghi", &mut buf);
+            assert_eq!(
+                buf,
+                &[0xa9, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i']
+            );
+
+            // 10-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghij", &mut buf);
+            assert_eq!(
+                buf,
+                &[0xaa, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j']
+            );
+
+            // 11-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijk", &mut buf);
+            assert_eq!(
+                buf,
+                &[0xab, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k']
+            );
+
+            // 12-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijkl", &mut buf);
+            assert_eq!(
+                buf,
+                &[0xac, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l']
+            );
+
+            // 13-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklm", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xad, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm'
+                ]
+            );
+
+            // 14-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmn", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xae, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n'
+                ]
+            );
+
+            // 15-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmno", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xaf, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o'
+                ]
+            );
+
+            // 16-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnop", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb0, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p'
+                ]
+            );
+
+            // 17-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopq", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb1, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q'
+                ]
+            );
+
+            // 18-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqr", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb2, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r'
+                ]
+            );
+
+            // 19-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrs", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb3, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's'
+                ]
+            );
+
+            // 20-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrst", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb4, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't'
+                ]
+            );
+
+            // 21-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstu", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb5, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u'
+                ]
+            );
+
+            // 22-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuv", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb6, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v'
+                ]
+            );
+
+            // 23-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvw", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb7, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w'
+                ]
+            );
+
+            // 24-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwx", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb8, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x'
+                ]
+            );
+
+            // 25-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxy", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xb9, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y'
+                ]
+            );
+
+            // 26-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xba, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
+                    b'z'
+                ]
+            );
+
+            // 27-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz0", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xbb, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
+                    b'z', b'0'
+                ]
+            );
+
+            // 28-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz01", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xbc, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
+                    b'z', b'0', b'1'
+                ]
+            );
+
+            // 29-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz012", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xbd, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
+                    b'z', b'0', b'1', b'2'
+                ]
+            );
+
+            // 30-byte str
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz0123", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xbe, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
+                    b'z', b'0', b'1', b'2', b'3'
+                ]
+            );
+
+            // 31-byte str is maximum len of fixstr
+            let mut buf = Vec::new();
+            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz01234", &mut buf);
+            assert_eq!(
+                buf,
+                &[
+                    0xbf, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
+                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
+                    b'z', b'0', b'1', b'2', b'3', b'4'
+                ]
+            );
+        }
+
+        #[test]
+        fn should_support_str_8() {
+            let input = "a".repeat(32);
+            let mut buf = Vec::new();
+            write_str_msg_pack(&input, &mut buf);
+            assert_eq!(buf[0], 0xd9);
+            assert_eq!(buf[1], input.len() as u8);
+            assert_eq!(&buf[2..], input.as_bytes());
+
+            let input = "a".repeat(2usize.pow(8) - 1);
+            let mut buf = Vec::new();
+            write_str_msg_pack(&input, &mut buf);
+            assert_eq!(buf[0], 0xd9);
+            assert_eq!(buf[1], input.len() as u8);
+            assert_eq!(&buf[2..], input.as_bytes());
+        }
+
+        #[test]
+        fn should_support_str_16() {
+            let input = "a".repeat(2usize.pow(8));
+            let mut buf = Vec::new();
+            write_str_msg_pack(&input, &mut buf);
+            assert_eq!(buf[0], 0xda);
+            assert_eq!(&buf[1..3], &(input.len() as u16).to_be_bytes());
+            assert_eq!(&buf[3..], input.as_bytes());
+
+            let input = "a".repeat(2usize.pow(16) - 1);
+            let mut buf = Vec::new();
+            write_str_msg_pack(&input, &mut buf);
+            assert_eq!(buf[0], 0xda);
+            assert_eq!(&buf[1..3], &(input.len() as u16).to_be_bytes());
+            assert_eq!(&buf[3..], input.as_bytes());
+        }
+
+        #[test]
+        fn should_support_str_32() {
+            let input = "a".repeat(2usize.pow(16));
+            let mut buf = Vec::new();
+            write_str_msg_pack(&input, &mut buf);
+            assert_eq!(buf[0], 0xdb);
+            assert_eq!(&buf[1..5], &(input.len() as u32).to_be_bytes());
+            assert_eq!(&buf[5..], input.as_bytes());
+        }
+    }
 
     mod parse_msg_pack_str {
         use super::*;
