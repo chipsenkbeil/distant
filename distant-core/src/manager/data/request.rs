@@ -1,7 +1,6 @@
 use super::{ChannelId, ConnectionId, Destination};
-use crate::{DistantMsg, DistantRequestData, Map};
+use crate::Map;
 use derive_more::IsVariant;
-use distant_net::Request;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
@@ -72,9 +71,8 @@ pub enum ManagerRequest {
         /// Id of the channel
         id: ChannelId,
 
-        /// Request to send to through the channel
-        #[cfg_attr(feature = "clap", clap(skip = skipped_request()))]
-        request: Request<DistantMsg<DistantRequestData>>,
+        /// Raw data to send through the channel
+        data: Vec<u8>,
     },
 
     /// Closes an open channel
@@ -100,10 +98,4 @@ pub enum ManagerRequest {
     /// Signals the manager to shutdown
     #[strum_discriminants(strum(message = "Supports being shut down on demand"))]
     Shutdown,
-}
-
-/// Produces some default request, purely to satisfy clap
-#[cfg(feature = "clap")]
-fn skipped_request() -> Request<DistantMsg<DistantRequestData>> {
-    Request::new(DistantMsg::Single(DistantRequestData::SystemInfo {}))
 }

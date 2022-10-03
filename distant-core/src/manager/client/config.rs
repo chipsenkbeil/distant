@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use distant_net::auth::{AuthHandler, ErrorKind, Question, VerificationKind};
+use distant_net::auth::{
+    msg::{ErrorKind, Question, VerificationKind},
+    AuthHandler,
+};
 use log::*;
 use std::{collections::HashMap, io};
 
@@ -22,7 +25,7 @@ impl AuthHandler for DistantManagerClientConfig {
         (self.on_challenge)(questions, options)
     }
 
-    async fn on_verify(&mut self, kind: VerificationKind, text: String) -> io::Result<bool> {
+    async fn on_verification(&mut self, kind: VerificationKind, text: String) -> io::Result<bool> {
         (self.on_verify)(kind, text)
     }
 

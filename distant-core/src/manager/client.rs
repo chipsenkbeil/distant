@@ -6,8 +6,8 @@ use crate::{
     DistantChannel, DistantClient, DistantMsg, DistantRequestData, DistantResponseData, Map,
 };
 use distant_net::{
-    router, Auth, AuthServer, Client, InmemoryTypedTransport, IntoSplit, OneshotListener, Request,
-    Response, ServerExt, ServerRef, UntypedTransportRead, UntypedTransportWrite,
+    Client, FramedTransport, InmemoryTransport, OneshotListener, Request, Response, ServerRef,
+    Transport,
 };
 use log::*;
 use std::{
@@ -23,31 +23,21 @@ pub use config::*;
 mod ext;
 pub use ext::*;
 
-router!(DistantManagerClientRouter {
-    auth_transport: Request<Auth> => Response<Auth>,
-    manager_transport: Response<ManagerResponse> => Request<ManagerRequest>,
-});
-
 /// Represents a client that can connect to a remote distant manager
 pub struct DistantManagerClient {
-    auth: Box<dyn ServerRef>,
     client: Client<ManagerRequest, ManagerResponse>,
     distant_clients: HashMap<ConnectionId, ClientHandle>,
 }
 
 impl Drop for DistantManagerClient {
     fn drop(&mut self) {
-        self.auth.abort();
         self.client.abort();
     }
 }
 
 /// Represents a raw channel between a manager client and some remote server
 pub struct RawDistantChannel {
-    pub transport: InmemoryTypedTransport<
-        Request<DistantMsg<DistantRequestData>>,
-        Response<DistantMsg<DistantResponseData>>,
-    >,
+    pub transport: FramedTransport<InmemoryTransport>,
     forward_task: JoinHandle<()>,
     mailbox_task: JoinHandle<()>,
 }
@@ -60,10 +50,7 @@ impl RawDistantChannel {
 }
 
 impl Deref for RawDistantChannel {
-    type Target = InmemoryTypedTransport<
-        Request<DistantMsg<DistantRequestData>>,
-        Response<DistantMsg<DistantResponseData>>,
-    >;
+    type Target = FramedTransport<InmemoryTransport>;
 
     fn deref(&self) -> &Self::Target {
         &self.transport
@@ -90,35 +77,15 @@ impl Drop for ClientHandle {
 }
 
 impl DistantManagerClient {
-    /// Initializes a client using the provided [`UntypedTransport`]
-    pub fn new<T>(config: DistantManagerClientConfig, transport: T) -> io::Result<Self>
+    /// Initializes a client using the provided [`Transport`]
+    pub async fn new<T>(config: DistantManagerClientConfig, transport: T) -> io::Result<Self>
     where
-        T: IntoSplit + 'static,
-        T::Read: UntypedTransportRead + 'static,
-        T::Write: UntypedTransportWrite + 'static,
+        T: Transport + 'static,
     {
-        let DistantManagerClientRouter {
-            auth_transport,
-            manager_transport,
-            ..
-        } = DistantManagerClientRouter::new(transport);
-
-        // Initialize our client with manager request/response transport
-        let (writer, reader) = manager_transport.into_split();
-        let client = Client::new(writer, reader)?;
-
-        // Initialize our auth handler with auth/auth transport
-        let auth = AuthServer {
-            on_challenge: config.on_challenge,
-            on_verify: config.on_verify,
-            on_info: config.on_info,
-            on_error: config.on_error,
-        }
-        .start(OneshotListener::from_value(auth_transport.into_split()))?;
+        let transport = FramedTransport::from_client_handshake(transport).await?;
 
         Ok(Self {
-            auth,
-            client,
+            client: Client::new(transport),
             distant_clients: HashMap::new(),
         })
     }
@@ -201,8 +168,7 @@ impl DistantManagerClient {
                 forward_task,
                 mailbox_task,
             } = self.open_raw_channel(connection_id).await?;
-            let (writer, reader) = transport.into_split();
-            let client = DistantClient::new(writer, reader)?;
+            let client = DistantClient::new(transport);
             let channel = client.clone_channel();
             self.distant_clients.insert(
                 connection_id,
@@ -377,15 +343,9 @@ impl DistantManagerClient {
 mod tests {
     use super::*;
     use crate::data::{Error, ErrorKind};
-    use distant_net::{
-        FramedTransport, InmemoryTransport, PlainCodec, UntypedTransportRead, UntypedTransportWrite,
-    };
 
-    fn setup() -> (
-        DistantManagerClient,
-        FramedTransport<InmemoryTransport, PlainCodec>,
-    ) {
-        let (t1, t2) = FramedTransport::pair(100);
+    fn setup() -> (DistantManagerClient, FramedTransport<InmemoryTransport>) {
+        let (t1, t2) = FramedTransport::test_pair(100);
         let client =
             DistantManagerClient::new(DistantManagerClientConfig::with_empty_prompts(), t1)
                 .unwrap();
