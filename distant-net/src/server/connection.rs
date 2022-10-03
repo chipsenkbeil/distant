@@ -284,7 +284,10 @@ where
                                     local_data: Arc::clone(&local_data),
                                 };
 
-                                handler.on_request(ctx).await;
+                                // Spawn a new task to run the request handler so we don't block
+                                // our connection from processing other requests
+                                let handler = Arc::clone(&handler);
+                                tokio::spawn(async move { handler.on_request(ctx).await });
                             }
                             Err(x) => {
                                 if log::log_enabled!(Level::Trace) {
