@@ -2,20 +2,15 @@ use super::data::{
     ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities, ManagerRequest,
     ManagerResponse,
 };
-use crate::{
-    DistantChannel, DistantClient, DistantMsg, DistantRequestData, DistantResponseData, Map,
-};
-use distant_net::{
-    Client, FramedTransport, InmemoryTransport, OneshotListener, Request, Response, ServerRef,
-    Transport,
-};
+use crate::{DistantChannel, DistantClient, Map};
+use distant_net::{Client, FramedTransport, InmemoryTransport, ServerRef, Transport};
 use log::*;
 use std::{
     collections::HashMap,
     io,
     ops::{Deref, DerefMut},
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::oneshot, task::JoinHandle};
 
 mod config;
 pub use config::*;
@@ -206,7 +201,7 @@ impl DistantManagerClient {
                 ManagerResponse::Error(x) => Err(x.into()),
                 x => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Got unexpected response: {:?}", x),
+                    format!("Got unexpected response: {x:?}"),
                 )),
             },
             None => Err(io::Error::new(
@@ -217,18 +212,20 @@ impl DistantManagerClient {
 
         // Spawn reader and writer tasks to forward requests and replies
         // using our opened channel
-        let (t1, t2) = InmemoryTypedTransport::pair(1);
-        let (mut writer, mut reader) = t1.into_split();
+        let (tx, rx, transport) = InmemoryTransport::make(1);
+        let (channel_close_tx, channel_close_rx) = oneshot::channel();
         let mailbox_task = tokio::spawn(async move {
-            use distant_net::TypedAsyncWrite;
             while let Some(response) = mailbox.next().await {
                 match response.payload {
-                    ManagerResponse::Channel { response, .. } => {
-                        if let Err(x) = writer.write(response).await {
-                            error!("[Conn {}] {}", connection_id, x);
+                    ManagerResponse::Channel { data, .. } => {
+                        if let Err(x) = tx.send(data).await {
+                            error!("[Conn {connection_id}] {x}");
                         }
                     }
-                    ManagerResponse::ChannelClosed { .. } => break,
+                    ManagerResponse::ChannelClosed { .. } => {
+                        let _ = channel_close_tx.send(());
+                        break;
+                    }
                     _ => continue,
                 }
             }
@@ -236,33 +233,28 @@ impl DistantManagerClient {
 
         let mut manager_channel = self.client.clone_channel();
         let forward_task = tokio::spawn(async move {
-            use distant_net::TypedAsyncRead;
             loop {
-                match reader.read().await {
-                    Ok(Some(request)) => {
+                tokio::select! {
+                    _ = channel_close_rx => { break }
+                    data = rx.recv() => {
                         // NOTE: In this situation, we do not expect a response to this
                         //       request (even if the server sends something back)
                         if let Err(x) = manager_channel
                             .fire(ManagerRequest::Channel {
                                 id: channel_id,
-                                request,
+                                data,
                             })
                             .await
                         {
-                            error!("[Conn {}] {}", connection_id, x);
+                            error!("[Conn {connection_id}] {x}");
                         }
-                    }
-                    Ok(None) => break,
-                    Err(x) => {
-                        error!("[Conn {}] {}", connection_id, x);
-                        continue;
                     }
                 }
             }
         });
 
         Ok(RawDistantChannel {
-            transport: t2,
+            transport,
             forward_task,
             mailbox_task,
         })
@@ -343,6 +335,7 @@ impl DistantManagerClient {
 mod tests {
     use super::*;
     use crate::data::{Error, ErrorKind};
+    use distant_net::{Request, Response};
 
     fn setup() -> (DistantManagerClient, FramedTransport<InmemoryTransport>) {
         let (t1, t2) = FramedTransport::test_pair(100);
@@ -371,7 +364,7 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();

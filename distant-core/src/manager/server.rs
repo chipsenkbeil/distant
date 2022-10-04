@@ -3,9 +3,7 @@ use crate::{
     ManagerRequest, ManagerResponse, Map,
 };
 use async_trait::async_trait;
-use distant_net::{
-    Client, Listener, MpscListener, Request, Response, ServerCtx, ServerExt, ServerHandler,
-};
+use distant_net::{Client, Listener, MpscListener, Request, Response, ServerCtx, ServerHandler};
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
@@ -30,9 +28,6 @@ pub use r#ref::*;
 
 /// Represents a manager of multiple distant server connections
 pub struct DistantManager {
-    /// Receives authentication clients to feed into local data of server
-    auth_client_rx: Mutex<mpsc::Receiver<AuthClient>>,
-
     /// Configuration settings for the server
     config: DistantManagerConfig,
 
@@ -101,7 +96,6 @@ impl DistantManager {
         let connect_handlers = Arc::new(RwLock::new(config.connect_handlers.drain().collect()));
         let weak_connect_handlers = Arc::downgrade(&connect_handlers);
         let server_ref = Self {
-            auth_client_rx: Mutex::new(auth_client_rx),
             config,
             launch_handlers,
             connect_handlers,
