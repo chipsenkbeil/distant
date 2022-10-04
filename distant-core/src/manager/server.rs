@@ -341,12 +341,12 @@ impl ServerHandler for DistantManager {
                     io::Error::new(io::ErrorKind::NotConnected, "Connection does not exist").into(),
                 ),
             },
-            ManagerRequest::Channel { id, request } => {
+            ManagerRequest::Channel { id, data } => {
                 match local_data.channels.read().await.get(&id) {
                     // TODO: For now, we are NOT sending back a response to acknowledge
                     //       a successful channel send. We could do this in order for
                     //       the client to listen for a complete send, but is it worth it?
-                    Some(channel) => match channel.send(request).await {
+                    Some(channel) => match channel.send(data).await {
                         Ok(_) => return,
                         Err(x) => ManagerResponse::Error(x.into()),
                     },
