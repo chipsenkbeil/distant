@@ -133,6 +133,16 @@ impl<'a> UntypedResponse<'a> {
         }
     }
 
+    /// Updates the id of the response to the given `id`.
+    pub fn set_id(&mut self, id: impl Into<String>) {
+        self.id = Cow::Owned(id.into());
+    }
+
+    /// Updates the origin id of the response to the given `origin_id`.
+    pub fn set_origin_id(&mut self, origin_id: impl Into<String>) {
+        self.origin_id = Cow::Owned(origin_id.into());
+    }
+
     /// Allocates a new collection of bytes representing the response.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![0x83];

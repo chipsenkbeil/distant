@@ -410,10 +410,7 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspMsg>)>
 mod tests {
     use super::*;
     use crate::data::{DistantRequestData, DistantResponseData};
-    use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Request, Response,
-        TypedAsyncRead, TypedAsyncWrite,
-    };
+    use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Request, Response};
     use std::{future::Future, time::Duration};
 
     /// Timeout used with timeout function
@@ -425,8 +422,7 @@ mod tests {
         RemoteLspProcess,
     ) {
         let (mut t1, t2) = FramedTransport::pair(100);
-        let (writer, reader) = t2.into_split();
-        let session = Client::new(writer, reader).unwrap();
+        let session = Client::new(t2);
         let spawn_task = tokio::spawn(async move {
             RemoteLspCommand::new()
                 .spawn(session.clone_channel(), String::from("cmd arg"))
@@ -520,7 +516,7 @@ mod tests {
         tokio::task::yield_now().await;
         let result = timeout(
             TIMEOUT,
-            TypedAsyncRead::<Request<DistantRequestData>>::read(&mut transport),
+            transport.read_frame_as::<Request<DistantRequestData>>(),
         )
         .await;
         assert!(result.is_err(), "Unexpectedly got data: {:?}", result);

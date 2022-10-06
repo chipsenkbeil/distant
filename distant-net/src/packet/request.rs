@@ -120,6 +120,11 @@ impl<'a> UntypedRequest<'a> {
         }
     }
 
+    /// Updates the id of the request to the given `id`.
+    pub fn set_id(&mut self, id: impl Into<String>) {
+        self.id = Cow::Owned(id.into());
+    }
+
     /// Allocates a new collection of bytes representing the request.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![0x82];
