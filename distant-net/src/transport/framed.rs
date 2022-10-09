@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use log::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt, io, time::Duration};
+use std::{collections::VecDeque, fmt, io, time::Duration};
 
 mod codec;
 mod exchange;
@@ -19,6 +19,9 @@ pub use handshake::*;
 /// Size of the read buffer when reading bytes to construct a frame
 const READ_BUF_SIZE: usize = 8 * 1024;
 
+/// Maximum size (in bytes) to save for replaying when reconnecting (256MiB)
+const MAX_OUTGOING_REPLAY_SIZE: usize = 256 * 1024 * 1024;
+
 /// Duration to wait after WouldBlock received during looping operations like `read_frame`
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
@@ -28,10 +31,34 @@ const SLEEP_DURATION: Duration = Duration::from_millis(50);
 /// [`try_read`]: Transport::try_read
 #[derive(Clone)]
 pub struct FramedTransport<T> {
+    /// Inner transport wrapped to support frames of data
     inner: T,
+
+    /// Codec used to encoding outgoing bytes and decode incoming bytes
     codec: BoxedCodec,
+
+    /// Bytes in queue to be read
     incoming: BytesMut,
+
+    /// Bytes in queue to be written
     outgoing: BytesMut,
+
+    /// Maximum size (in bytes) to save frames in case we need to replay them
+    ///
+    /// NOTE: If 0, no frames will be stored.
+    max_replay_size: usize,
+
+    /// Tracker for the total size (in bytes) of frames stored for replay
+    current_replay_size: usize,
+
+    /// Storage used to hold outgoing frames in case they need to be replayed
+    replay_frames: VecDeque<OwnedFrame>,
+
+    /// Counter keeping track of total frames written by this transport
+    sent_frame_cnt: usize,
+
+    /// Counter keeping track of total frames received by this transport
+    received_frame_cnt: usize,
 }
 
 impl<T> FramedTransport<T> {
@@ -41,6 +68,11 @@ impl<T> FramedTransport<T> {
             codec,
             incoming: BytesMut::with_capacity(READ_BUF_SIZE * 2),
             outgoing: BytesMut::with_capacity(READ_BUF_SIZE * 2),
+            max_replay_size: MAX_OUTGOING_REPLAY_SIZE,
+            current_replay_size: 0,
+            replay_frames: VecDeque::new(),
+            sent_frame_cnt: 0,
+            received_frame_cnt: 0,
         }
     }
 
@@ -70,6 +102,18 @@ impl<T> FramedTransport<T> {
         self.codec.as_ref()
     }
 
+    /// Sets the maximum size (in bytes) of collective frames stored in case a replay is needed
+    /// during reconnection. Setting the `size` to 0 will result in no frames being stored.
+    pub fn set_max_replay_size(&mut self, size: usize) {
+        self.max_replay_size = size;
+    }
+
+    /// Returns the maximum size (in bytes) of collective frames stored in case a replay is needed
+    /// during reconnection.
+    pub fn max_replay_size(&self) -> usize {
+        self.max_replay_size
+    }
+
     /// Returns a mutable reference to the codec used by the transport.
     ///
     /// ### Note
@@ -92,6 +136,10 @@ impl<T> fmt::Debug for FramedTransport<T> {
         f.debug_struct("FramedTransport")
             .field("incoming", &self.incoming)
             .field("outgoing", &self.outgoing)
+            .field("max_replay_size", &self.max_replay_size)
+            .field("replay_frames", &self.replay_frames)
+            .field("sent_frame_cnt", &self.sent_frame_cnt)
+            .field("received_frame_cnt", &self.received_frame_cnt)
             .finish()
     }
 }
@@ -169,6 +217,25 @@ impl<T: Transport> FramedTransport<T> {
         Ok(bytes_written)
     }
 
+    /// Flushes all buffered, outgoing bytes using repeated calls to [`try_flush`].
+    ///
+    /// [`try_flush`]: FramedTransport::try_flush
+    pub async fn flush(&mut self) -> io::Result<()> {
+        while !self.outgoing.is_empty() {
+            self.writeable().await?;
+            match self.try_flush() {
+                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                    // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
+                    tokio::time::sleep(SLEEP_DURATION).await
+                }
+                Err(x) => return Err(x),
+                Ok(_) => return Ok(()),
+            }
+        }
+
+        Ok(())
+    }
+
     /// Reads a frame of bytes by using the [`Codec`] tied to this transport. Returns
     /// `Ok(Some(frame))` upon reading a frame, or `Ok(None)` if the underlying transport has
     /// closed.
@@ -185,7 +252,10 @@ impl<T: Transport> FramedTransport<T> {
             () => {{
                 match Frame::read(&mut self.incoming) {
                     Ok(None) => (),
-                    Ok(Some(frame)) => return Ok(Some(self.codec.decode(frame)?.into_owned())),
+                    Ok(Some(frame)) => {
+                        self.received_frame_cnt += 1;
+                        return Ok(Some(self.codec.decode(frame)?.into_owned()));
+                    }
                     Err(x) => return Err(x),
                 }
             }};
@@ -289,6 +359,30 @@ impl<T: Transport> FramedTransport<T> {
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         )?;
         frame.write(&mut self.outgoing)?;
+
+        // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
+        self.sent_frame_cnt += 1;
+
+        // If we are storing frames for replay, do so and clear out the oldest frames until we are
+        // under our maximum size constraint
+        if self.max_replay_size > 0 {
+            self.current_replay_size += frame.len();
+            self.replay_frames.push_back(frame.into_owned());
+            while self.current_replay_size > self.max_replay_size {
+                match self.replay_frames.pop_front() {
+                    Some(frame) => {
+                        self.current_replay_size -= frame.len();
+                    }
+
+                    // If we have exhausted all frames, then we have reached
+                    // an internal size of 0 and should exit the loop
+                    None => {
+                        self.current_replay_size = 0;
+                        break;
+                    }
+                }
+            }
+        }
 
         // Attempt to write everything in our queue
         self.try_flush()?;
@@ -628,7 +722,76 @@ where
     T: Transport + Send + Sync,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
-        Reconnectable::reconnect(&mut self.inner).await
+        // Perform inner reconnect first so that we can send data
+        Reconnectable::reconnect(&mut self.inner).await?;
+
+        // Clear our internal buffers
+        self.clear();
+
+        #[derive(Serialize, Deserialize)]
+        struct FrameStats {
+            sent_cnt: usize,
+            received_cnt: usize,
+        }
+
+        let stats = FrameStats {
+            sent_cnt: self.sent_frame_cnt,
+            received_cnt: self.received_frame_cnt,
+        };
+
+        // Communicate frame counters with other side so we can determine how many frames to send
+        // and how many to receive. Wait until we get the stats from the other side, and then send
+        // over any missing frames.
+        self.write_frame_for(&stats).await?;
+        let other_stats = self.read_frame_as::<FrameStats>().await?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Transport terminated before getting replay stats",
+            )
+        })?;
+
+        // Determine how many frames are missing from the other side
+        let missing_frame_cnt = if stats.sent_cnt > other_stats.received_cnt {
+            stats.sent_cnt - other_stats.received_cnt
+        } else {
+            0
+        };
+
+        // Determine how many frames we expect to receive from the other side
+        let expected_frame_cnt = if stats.received_cnt < other_stats.sent_cnt {
+            other_stats.sent_cnt - stats.received_cnt
+        } else {
+            0
+        };
+
+        // Send all missing frames, removing any frames that we know have been received
+        while self.replay_frames.len() > missing_frame_cnt {
+            self.replay_frames.pop_front();
+        }
+        for i in 0..missing_frame_cnt {
+            self.replay_frames[i].write(&mut self.outgoing)?;
+        }
+        self.flush().await?;
+
+        // Receive all expected frames, placing their contents into our incoming queue
+        //
+        // NOTE: We do not increment our counter as this is done during `try_read_frame`, even
+        //       when the frame comes from our internal queue. To avoid duplicating the increment,
+        //       we do not increment the counter here.
+        for i in 0..expected_frame_cnt {
+            let frame = self.read_frame().await?.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "Transport terminated before getting frame {}/{expected_frame_cnt}",
+                        i + 1
+                    ),
+                )
+            })?;
+            frame.write(&mut self.incoming)?;
+        }
+
+        Ok(())
     }
 }
 
