@@ -6,17 +6,17 @@ use log::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt, io, time::Duration};
 
+mod backup;
 mod codec;
 mod exchange;
 mod frame;
 mod handshake;
-mod replay;
 
+pub use backup::*;
 pub use codec::*;
 pub use exchange::*;
 pub use frame::*;
 pub use handshake::*;
-pub use replay::*;
 
 /// Size of the read buffer when reading bytes to construct a frame
 const READ_BUF_SIZE: usize = 8 * 1024;
@@ -42,8 +42,8 @@ pub struct FramedTransport<T> {
     /// Bytes in queue to be written
     outgoing: BytesMut,
 
-    /// Used to track frame statistics and replay frames
-    replayer: Replayer,
+    /// Stores outgoing frames in case of transmission issues
+    pub backup: Backup,
 }
 
 impl<T> FramedTransport<T> {
@@ -53,7 +53,7 @@ impl<T> FramedTransport<T> {
             codec,
             incoming: BytesMut::with_capacity(READ_BUF_SIZE * 2),
             outgoing: BytesMut::with_capacity(READ_BUF_SIZE * 2),
-            replayer: Replayer::new(),
+            backup: Backup::new(),
         }
     }
 
@@ -105,7 +105,7 @@ impl<T> fmt::Debug for FramedTransport<T> {
         f.debug_struct("FramedTransport")
             .field("incoming", &self.incoming)
             .field("outgoing", &self.outgoing)
-            .field("replayer", &self.replayer)
+            .field("backup", &self.backup)
             .finish()
     }
 }
@@ -219,7 +219,7 @@ impl<T: Transport> FramedTransport<T> {
                 match Frame::read(&mut self.incoming) {
                     Ok(None) => (),
                     Ok(Some(frame)) => {
-                        self.replayer.increment_received_cnt();
+                        self.backup.increment_received_cnt();
                         return Ok(Some(self.codec.decode(frame)?.into_owned()));
                     }
                     Err(x) => return Err(x),
@@ -327,11 +327,11 @@ impl<T: Transport> FramedTransport<T> {
         frame.write(&mut self.outgoing)?;
 
         // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
-        self.replayer.increment_sent_cnt();
+        self.backup.increment_sent_cnt();
 
         // If we are storing frames for replay, do so and clear out the oldest frames until we are
         // under our maximum size constraint
-        self.replayer.push_frame(frame);
+        self.backup.push_frame(frame);
 
         // Attempt to write everything in our queue
         self.try_flush()?;
@@ -405,8 +405,8 @@ impl<T: Transport> FramedTransport<T> {
         }
 
         let stats = FrameStats {
-            sent_cnt: self.replayer.sent_cnt(),
-            received_cnt: self.replayer.received_cnt(),
+            sent_cnt: self.backup.sent_cnt(),
+            received_cnt: self.backup.received_cnt(),
         };
 
         // Clear our internal buffers
@@ -442,12 +442,12 @@ impl<T: Transport> FramedTransport<T> {
         // Send all missing frames, removing any frames that we know have been received
         trace!(
             "Reducing internal replay frames from {} to {missing_frame_cnt}",
-            self.replayer.frame_cnt()
+            self.backup.frame_cnt()
         );
-        self.replayer.truncate_front(missing_frame_cnt);
+        self.backup.truncate_front(missing_frame_cnt);
 
         debug!("Sending {missing_frame_cnt} frames");
-        self.replayer.write(&mut self.outgoing)?;
+        self.backup.write(&mut self.outgoing)?;
         self.flush().await?;
 
         // Receive all expected frames, placing their contents into our incoming queue
