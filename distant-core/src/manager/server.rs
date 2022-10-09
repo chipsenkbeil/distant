@@ -3,7 +3,9 @@ use crate::{
     ManagerRequest, ManagerResponse, Map,
 };
 use async_trait::async_trait;
-use distant_net::{Client, Listener, MpscListener, Request, Response, ServerCtx, ServerHandler};
+use distant_net::{
+    Client, Listener, MpscListener, Request, Response, Server, ServerCtx, ServerHandler,
+};
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
@@ -188,7 +190,7 @@ impl DistantManager {
         }
         .to_lowercase();
 
-        let (writer, reader) = {
+        let transport = {
             let lock = self.connect_handlers.read().await;
             let handler = lock.get(&scheme).ok_or_else(|| {
                 io::Error::new(
@@ -199,7 +201,7 @@ impl DistantManager {
             handler.connect(&destination, &options, auth).await?
         };
 
-        let connection = DistantManagerConnection::new(destination, options, writer, reader);
+        let connection = DistantManagerConnection::new(destination, options, transport);
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
@@ -251,10 +253,6 @@ impl DistantManager {
 
 #[derive(Default)]
 pub struct DistantManagerServerConnection {
-    /// Authentication client that manager can use when establishing a new connection
-    /// and needing to get authentication details from the client to move forward
-    auth_client: Option<Mutex<AuthClient>>,
-
     /// Holds on to open channels feeding data back from a server to some connected client,
     /// enabling us to cancel the tasks on demand
     channels: RwLock<HashMap<ChannelId, DistantManagerChannel>>,
@@ -414,15 +412,12 @@ impl ServerHandler for DistantManager {
 mod tests {
     use super::*;
     use distant_net::{
-        AuthClient, FramedTransport, HeapAuthServer, InmemoryTransport, IntoSplit, MappedListener,
-        OneshotListener, PlainCodec, ServerExt, ServerRef,
+        FramedTransport, InmemoryTransport, MappedListener, OneshotListener, PlainCodec, ServerRef,
     };
 
     /// Create a new server, bypassing the start loop
     fn setup() -> DistantManager {
-        let (_, rx) = mpsc::channel(1);
         DistantManager {
-            auth_client_rx: Mutex::new(rx),
             config: Default::default(),
             connections: RwLock::new(HashMap::new()),
             launch_handlers: Arc::new(RwLock::new(HashMap::new())),

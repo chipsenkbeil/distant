@@ -9,6 +9,13 @@ use std::{
 
 pub struct WindowsPipeServerBuilder<T>(Server<T>);
 
+impl<T> Server<T> {
+    /// Consume [`Server`] and produce a builder for a Windows pipe variant.
+    pub fn into_windows_pipe_builder(self) -> WindowsPipeServerBuilder<T> {
+        WindowsPipeServerBuilder(self)
+    }
+}
+
 impl Default for WindowsPipeServerBuilder<()> {
     fn default() -> Self {
         Self(Server::new())

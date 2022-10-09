@@ -429,11 +429,6 @@ where
     type Response = DistantMsg<DistantResponseData>;
     type LocalData = D;
 
-    /// Overridden to leverage [`DistantApi`] implementation of `config`
-    fn config(&self) -> ServerConfig {
-        T::config(&self.api)
-    }
-
     /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
     async fn on_accept(&self, local_data: &mut Self::LocalData) {
         T::on_accept(&self.api, local_data).await

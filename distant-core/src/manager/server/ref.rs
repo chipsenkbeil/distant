@@ -1,5 +1,5 @@
 use super::{BoxedConnectHandler, BoxedLaunchHandler, ConnectHandler, LaunchHandler};
-use distant_net::{ServerRef, ServerState};
+use distant_net::ServerRef;
 use std::{collections::HashMap, io, sync::Weak};
 use tokio::sync::RwLock;
 
@@ -59,10 +59,6 @@ impl DistantManagerRef {
 }
 
 impl ServerRef for DistantManagerRef {
-    fn state(&self) -> &ServerState {
-        self.inner.state()
-    }
-
     fn is_finished(&self) -> bool {
         self.inner.is_finished()
     }

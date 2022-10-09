@@ -6,6 +6,13 @@ use std::{io, path::Path};
 
 pub struct UnixSocketServerBuilder<T>(Server<T>);
 
+impl<T> Server<T> {
+    /// Consume [`Server`] and produce a builder for a Unix socket variant.
+    pub fn into_unix_socket_builder(self) -> UnixSocketServerBuilder<T> {
+        UnixSocketServerBuilder(self)
+    }
+}
+
 impl Default for UnixSocketServerBuilder<()> {
     fn default() -> Self {
         Self(Server::new())

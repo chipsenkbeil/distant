@@ -6,6 +6,13 @@ use std::{io, net::IpAddr};
 
 pub struct TcpServerBuilder<T>(Server<T>);
 
+impl<T> Server<T> {
+    /// Consume [`Server`] and produce a builder for a TCP variant.
+    pub fn into_tcp_builder(self) -> TcpServerBuilder<T> {
+        TcpServerBuilder(self)
+    }
+}
+
 impl Default for TcpServerBuilder<()> {
     fn default() -> Self {
         Self(Server::new())
