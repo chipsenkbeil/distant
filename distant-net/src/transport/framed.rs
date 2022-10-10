@@ -329,8 +329,7 @@ impl<T: Transport> FramedTransport<T> {
         // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
         self.backup.increment_sent_cnt();
 
-        // If we are storing frames for replay, do so and clear out the oldest frames until we are
-        // under our maximum size constraint
+        // Then we store the frame for the future in case we need to retry sending it later
         self.backup.push_frame(frame);
 
         // Attempt to write everything in our queue
@@ -388,25 +387,27 @@ impl<T: Transport> FramedTransport<T> {
         self.write_frame(data).await
     }
 
-    /// Places the transport in **replay mode** where it communicates with the other side how many
-    /// frames have been sent and received. From there, any frames not received by the other side
-    /// are sent again and then this transport waits for any missing frames that it did not receive
-    /// from the other side.
+    /// Places the transport in **synchronize mode** where it communicates with the other side how
+    /// many frames have been sent and received. From there, any frames not received by the other
+    /// side are sent again and then this transport waits for any missing frames that it did not
+    /// receive from the other side.
     ///
     /// ### Note
     ///
     /// This will clear the internal incoming and outgoing buffers, so any frame that was in
     /// transit in either direction will be dropped.
-    pub async fn replay(&mut self) -> io::Result<()> {
+    pub async fn synchronize(&mut self) -> io::Result<()> {
         #[derive(Debug, Serialize, Deserialize)]
         struct FrameStats {
             sent_cnt: usize,
             received_cnt: usize,
+            available_cnt: usize,
         }
 
         let stats = FrameStats {
             sent_cnt: self.backup.sent_cnt(),
             received_cnt: self.backup.received_cnt(),
+            available_cnt: self.backup.frame_cnt(),
         };
 
         // Clear our internal buffers
@@ -425,28 +426,33 @@ impl<T: Transport> FramedTransport<T> {
         })?;
         trace!("Received stats from other side: {stats:?}");
 
-        // Determine how many frames are missing from the other side
-        let missing_frame_cnt = if stats.sent_cnt > other_stats.received_cnt {
-            stats.sent_cnt - other_stats.received_cnt
-        } else {
-            0
-        };
+        // Determine how many frames we need to resend. This will either be (sent - received) or
+        // available frames, whichever is smaller.
+        let resend_cnt = std::cmp::min(
+            if stats.sent_cnt > other_stats.received_cnt {
+                stats.sent_cnt - other_stats.received_cnt
+            } else {
+                0
+            },
+            stats.available_cnt,
+        );
 
-        // Determine how many frames we expect to receive from the other side
-        let expected_frame_cnt = if stats.received_cnt < other_stats.sent_cnt {
-            other_stats.sent_cnt - stats.received_cnt
-        } else {
-            0
-        };
+        // Determine how many frames we expect to receive. This will either be (received - sent) or
+        // available frames, whichever is smaller.
+        let expected_cnt = std::cmp::min(
+            if stats.received_cnt < other_stats.sent_cnt {
+                other_stats.sent_cnt - stats.received_cnt
+            } else {
+                0
+            },
+            other_stats.available_cnt,
+        );
 
         // Send all missing frames, removing any frames that we know have been received
-        trace!(
-            "Reducing internal replay frames from {} to {missing_frame_cnt}",
-            self.backup.frame_cnt()
-        );
-        self.backup.truncate_front(missing_frame_cnt);
+        trace!("Reducing internal replay frames to {resend_cnt}");
+        self.backup.truncate_front(resend_cnt);
 
-        debug!("Sending {missing_frame_cnt} frames");
+        debug!("Sending {resend_cnt} frames");
         self.backup.write(&mut self.outgoing)?;
         self.flush().await?;
 
@@ -455,13 +461,13 @@ impl<T: Transport> FramedTransport<T> {
         // NOTE: We do not increment our counter as this is done during `try_read_frame`, even
         //       when the frame comes from our internal queue. To avoid duplicating the increment,
         //       we do not increment the counter here.
-        debug!("Waiting for {expected_frame_cnt} frames");
-        for i in 0..expected_frame_cnt {
+        debug!("Waiting for {expected_cnt} frames");
+        for i in 0..expected_cnt {
             let frame = self.read_frame().await?.ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     format!(
-                        "Transport terminated before getting frame {}/{expected_frame_cnt}",
+                        "Transport terminated before getting frame {}/{expected_cnt}",
                         i + 1
                     ),
                 )
