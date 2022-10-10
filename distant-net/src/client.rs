@@ -35,6 +35,9 @@ pub struct Client<T, U> {
 
     /// Contains the task that is running to send requests and receive responses from a server
     task: JoinHandle<()>,
+    // TODO: We need to change the task type above to return the transport when finished so we
+    //       can reuse it via `reconnect`. We also want some form of retry strategy that determines
+    //       how often we attempt to reconnect, handshake, reauthenticate, and synchronize.
 }
 
 impl<T, U> Client<T, U>
@@ -58,6 +61,9 @@ where
         let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
+        // Ensure that our transport starts off clean (nothing in buffers or backup)
+        transport.clear();
+
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let task = tokio::spawn(async move {
@@ -65,7 +71,7 @@ where
                 let ready = tokio::select! {
                     _ = shutdown_rx.recv() => {
                         debug!("Client got shutdown signal, so exiting event loop");
-                        break;
+                        break transport;
                     }
                     cb = reconnect_rx.recv() => {
                         debug!("Client got reconnect signal, so attempting to reconnect");
@@ -80,11 +86,17 @@ where
                             continue;
                         } else {
                             error!("Client callback for reconnect missing! Corrupt state!");
-                            break;
+                            break transport;
                         }
                     }
                     result = transport.ready(Interest::READABLE | Interest::WRITABLE) => {
-                        result.expect("Failed to examine ready state")
+                        match result {
+                            Ok(result) => result,
+                            Err(x) => {
+                                error!("Failed to examine ready state: {x}");
+                                break transport;
+                            }
+                        }
                     }
                 };
 
@@ -122,7 +134,7 @@ where
                         }
                         Ok(None) => {
                             debug!("Connection closed");
-                            break;
+                            break transport;
                         }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                         Err(x) => {

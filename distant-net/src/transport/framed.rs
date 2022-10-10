@@ -93,10 +93,11 @@ impl<T> FramedTransport<T> {
         self.codec.as_mut()
     }
 
-    /// Clears the internal buffers used by the transport.
+    /// Clears the internal buffers and backup used by the transport.
     pub fn clear(&mut self) {
         self.incoming.clear();
         self.outgoing.clear();
+        self.backup.clear();
     }
 }
 

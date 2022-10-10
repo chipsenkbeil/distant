@@ -191,6 +191,7 @@ where
                 // Remove the connection from our state if it has closed
                 if let Some(state) = Weak::upgrade(&state) {
                     state.connections.write().await.remove(&self.id);
+
                     // If we have no more connections, start the timer
                     if let Some(timer) = Weak::upgrade(&shutdown_timer) {
                         if state.connections.read().await.is_empty() {
@@ -251,6 +252,14 @@ where
         }
 
         let local_data = Arc::new(local_data);
+
+        macro_rules! store_backup {
+            () => {{
+                // TODO: We want to store the transport's backup in our state with a mapping
+                //       like id -> backup so when a new connection happens, we can
+                //       repopulate the backup if it exists.
+            }};
+        }
 
         loop {
             let ready = match transport
