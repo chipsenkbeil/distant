@@ -1,6 +1,6 @@
 use super::{
-    authentication::{AuthHandler, Authenticate, Keychain, Verifier},
-    FramedTransport, HeapSecretKey, Reconnectable, Transport,
+    authentication::{AuthHandler, Authenticate, Keychain, KeychainResult, Verifier},
+    Backup, FramedTransport, HeapSecretKey, Reconnectable, Transport,
 };
 use async_trait::async_trait;
 use log::*;
@@ -108,14 +108,12 @@ where
                     io::Error::new(io::ErrorKind::Other, "Missing connection id frame")
                 })?;
             debug!("[Conn {id}] Resetting id to {new_id}");
+            *id = new_id;
 
             // Derive an OTP for reauthentication
-            debug!("[Conn {new_id}] Deriving future OTP for reauthentication");
-            let new_reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
+            debug!("[Conn {id}] Deriving future OTP for reauthentication");
+            *reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
 
-            // Update our connection's id and reauth OTP
-            *id = new_id;
-            *reauth_otp = new_reauth_otp;
             Ok(())
         }
 
@@ -135,6 +133,7 @@ where
                 result?;
 
                 // Perform synchronization
+                debug!("[Conn {id}] Synchronizing frame state");
                 transport.synchronize().await?;
 
                 Ok(())
@@ -236,7 +235,11 @@ where
     ///    from our database
     /// 3. Restores pre-existing state using the provided backup, replaying any missing frames and
     ///    receiving any frames from the other side
-    pub async fn server(transport: T, verifier: &Verifier, keychain: Keychain) -> io::Result<Self> {
+    pub async fn server(
+        transport: T,
+        verifier: &Verifier,
+        keychain: Keychain<Backup>,
+    ) -> io::Result<Self> {
         let id: ConnectionId = rand::random();
 
         // Perform a handshake to ensure that the connection is properly established and encrypted
@@ -271,33 +274,49 @@ where
                 // Perform authentication to ensure the connection is valid
                 debug!("[Conn {id}] Verifying connection");
                 verifier.verify(&mut transport).await?;
+
+                // Derive an OTP for reauthentication
+                debug!("[Conn {id}] Deriving future OTP for reauthentication");
+                let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
             }
             ConnectType::Reconnect { id: other_id, otp } => {
                 let reauth_otp = HeapSecretKey::from(otp);
 
-                debug!("[Conn {id}] Checking if {other_id} exists");
-                if let Some(otp) = keychain.remove(other_id.to_string()).await {
-                    debug!("[Conn {id}] Checking if OTP matches for {other_id}");
-                    if reauth_otp != otp {
-                        // Re-add the existing OTP since we didn't match
-                        keychain.insert(other_id.to_string(), otp).await;
+                debug!("[Conn {id}] Checking if {other_id} exists and has matching OTP");
+                match keychain
+                    .remove_if_has_key(other_id.to_string(), reauth_otp)
+                    .await
+                {
+                    KeychainResult::Ok(backup) => {
+                        // Communicate the connection id
+                        debug!("[Conn {id}] Telling other side to change connection id");
+                        transport.write_frame_for(&id).await?;
 
+                        // Derive an OTP for reauthentication
+                        debug!("[Conn {id}] Deriving future OTP for reauthentication");
+                        let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
+
+                        // Synchronize using the provided backup
+                        debug!("[Conn {id}] Synchronizing frame state");
+                        transport.backup = backup;
+                        transport.synchronize().await?;
+                    }
+
+                    KeychainResult::InvalidPassword => {
                         return Err(io::Error::new(
                             io::ErrorKind::PermissionDenied,
-                            "Invalid OTP",
+                            "Invalid OTP for reconnect",
+                        ));
+                    }
+                    KeychainResult::InvalidId => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "Invalid id for reconnect",
                         ));
                     }
                 }
-
-                // Communicate the connection id
-                debug!("[Conn {id}] Telling other side to change connection id");
-                transport.write_frame_for(&id).await?;
             }
         }
-
-        // Derive an OTP for reauthentication
-        debug!("[Conn {id}] Deriving future OTP for reauthentication");
-        let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
 
         // Store the id and OTP in our database
         keychain.insert(id.to_string(), reauth_otp).await;
