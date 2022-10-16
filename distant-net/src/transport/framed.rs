@@ -476,6 +476,10 @@ impl<T: Transport> FramedTransport<T> {
             frame.write(&mut self.incoming)?;
         }
 
+        // Catch up our read count as we can have the case where the other side has a higher
+        // count than frames sent if some frames were fully dropped due to size limits
+        self.backup.set_received_cnt(other_stats.sent_cnt);
+
         Ok(())
     }
 

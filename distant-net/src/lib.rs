@@ -1,6 +1,7 @@
 mod any;
 pub mod auth;
 mod client;
+mod connection;
 mod listener;
 mod packet;
 mod port;
@@ -10,6 +11,7 @@ mod utils;
 
 pub use any::*;
 pub use client::*;
+pub use connection::*;
 pub use listener::*;
 pub use packet::*;
 pub use port::*;

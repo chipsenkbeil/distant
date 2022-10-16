@@ -25,6 +25,9 @@ pub struct Backup {
 
     /// Counter keeping track of total frames received
     received_cnt: usize,
+
+    /// Indicates whether the backup is frozen, which indicates that mutations are ignored
+    frozen: bool,
 }
 
 impl Default for Backup {
@@ -34,6 +37,7 @@ impl Default for Backup {
 }
 
 impl Backup {
+    /// Creates a new, unfrozen backup.
     pub fn new() -> Self {
         Self {
             max_backup_size: MAX_BACKUP_SIZE,
@@ -41,21 +45,49 @@ impl Backup {
             frames: VecDeque::new(),
             sent_cnt: 0,
             received_cnt: 0,
+            frozen: false,
         }
     }
 
     /// Clears the backup of any stored data and resets the state to being new.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
     pub fn clear(&mut self) {
-        self.current_backup_size = 0;
-        self.frames.clear();
-        self.sent_cnt = 0;
-        self.received_cnt = 0;
+        if !self.frozen {
+            self.current_backup_size = 0;
+            self.frames.clear();
+            self.sent_cnt = 0;
+            self.received_cnt = 0;
+        }
+    }
+
+    /// Returns true if the backup is frozen, meaning that modifications will be ignored.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen
+    }
+
+    /// Marks the backup as frozen.
+    pub fn freeze(&mut self) {
+        self.frozen = true;
+    }
+
+    /// Marks the backup as no longer frozen.
+    pub fn unfreeze(&mut self) {
+        self.frozen = false;
     }
 
     /// Sets the maximum size (in bytes) of collective frames stored in case a backup is needed
     /// during reconnection. Setting the `size` to 0 will result in no frames being stored.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
     pub fn set_max_backup_size(&mut self, size: usize) {
-        self.max_backup_size = size;
+        if !self.frozen {
+            self.max_backup_size = size;
+        }
     }
 
     /// Returns the maximum size (in bytes) of collective frames stored in case a backup is needed
@@ -65,8 +97,14 @@ impl Backup {
     }
 
     /// Increments (by 1) the total sent frames.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
     pub(super) fn increment_sent_cnt(&mut self) {
-        self.sent_cnt += 1;
+        if !self.frozen {
+            self.sent_cnt += 1;
+        }
     }
 
     /// Returns how many frames have been sent.
@@ -75,8 +113,14 @@ impl Backup {
     }
 
     /// Increments (by 1) the total received frames.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
     pub(super) fn increment_received_cnt(&mut self) {
-        self.received_cnt += 1;
+        if !self.frozen {
+            self.received_cnt += 1;
+        }
     }
 
     /// Returns how many frames have been received.
@@ -84,9 +128,24 @@ impl Backup {
         self.received_cnt
     }
 
+    /// Sets  the total received frames to the specified `cnt`.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
+    pub(super) fn set_received_cnt(&self, cnt: usize) {
+        if !self.frozen {
+            self.received_cnt = cnt;
+        }
+    }
+
     /// Pushes a new frame to the end of the internal queue.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
     pub(super) fn push_frame(&mut self, frame: Frame) {
-        if self.max_backup_size > 0 {
+        if self.max_backup_size > 0 && !self.frozen {
             self.current_backup_size += frame.len();
             self.frames.push_back(frame.into_owned());
             while self.current_backup_size > self.max_backup_size {
@@ -124,9 +183,15 @@ impl Backup {
 
     /// Truncates the stored frames to be no larger than `size` total frames by popping from the
     /// front rather than the back of the list.
+    ///
+    /// ### Note
+    ///
+    /// Like all other modifications, this will do nothing if the backup is frozen.
     pub(super) fn truncate_front(&mut self, size: usize) {
-        while self.frames.len() > size {
-            self.frames.pop_front();
+        if !self.frozen {
+            while self.frames.len() > size {
+                self.frames.pop_front();
+            }
         }
     }
 }

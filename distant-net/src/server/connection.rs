@@ -1,7 +1,7 @@
 use super::{ServerState, ShutdownTimer};
 use crate::{
-    auth::Verifier, ConnectionCtx, FramedTransport, Interest, Response, ServerCtx, ServerHandler,
-    ServerReply, Transport, UntypedRequest,
+    auth::Verifier, ConnectionCtx, Interest, Response, ServerCtx, ServerHandler, ServerReply,
+    Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -17,9 +17,6 @@ use tokio::{
 
 /// Time to wait inbetween connection read/write when nothing was read or written on last pass
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
-
-/// Id associated with an active connection
-pub type ConnectionId = u64;
 
 /// Represents an individual connection on the server
 pub struct Connection {
@@ -203,6 +200,21 @@ where
             };
         }
 
+        // Properly establish the connection's transport
+        let mut transport = match Weak::upgrade(&verifier) {
+            Some(verifier) => {
+                match crate::Connection::server(transport, verifier.as_ref(), keychain).await {
+                    Ok(connection) => connection.into_transport(),
+                    Err(x) => {
+                        terminate_connection!(@error "[Conn {id}] Failed to setup connection: {x}");
+                    }
+                }
+            }
+            None => {
+                terminate_connection!(@error "[Conn {id}] Verifier has been dropped");
+            }
+        };
+
         // Attempt to upgrade our handler for use with the connection going forward
         let handler = match Weak::upgrade(&handler) {
             Some(handler) => handler,
@@ -213,29 +225,6 @@ where
 
         // Construct a queue of outgoing responses
         let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
-
-        // Perform a handshake to ensure that the connection is properly established
-        debug!("[Conn {id}] Performing handshake");
-        let mut transport: FramedTransport<T> =
-            match FramedTransport::from_server_handshake(transport).await {
-                Ok(x) => x,
-                Err(x) => {
-                    terminate_connection!(@error "[Conn {id}] Handshake failed: {x}");
-                }
-            };
-
-        // Perform authentication to ensure the connection is valid
-        debug!("[Conn {id}] Verifying connection");
-        match Weak::upgrade(&verifier) {
-            Some(verifier) => {
-                if let Err(x) = verifier.verify(&mut transport).await {
-                    terminate_connection!(@error "[Conn {id}] Verification failed: {x}");
-                }
-            }
-            None => {
-                terminate_connection!(@error "[Conn {id}] Verifier has been dropped");
-            }
-        };
 
         // Create local data for the connection and then process it as well as perform
         // authentication and any other tasks on first connecting
