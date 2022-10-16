@@ -1,5 +1,5 @@
 use super::{InmemoryTransport, Interest, Ready, Reconnectable, Transport};
-use crate::utils;
+use crate::common::utils;
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use log::*;
@@ -802,7 +802,7 @@ impl FramedTransport<InmemoryTransport> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TestTransport;
+    use crate::common::TestTransport;
     use bytes::BufMut;
     use test_log::test;
 

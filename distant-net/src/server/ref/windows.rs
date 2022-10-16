@@ -1,4 +1,4 @@
-use crate::ServerRef;
+use super::ServerRef;
 use std::ffi::{OsStr, OsString};
 
 /// Reference to a unix socket server instance

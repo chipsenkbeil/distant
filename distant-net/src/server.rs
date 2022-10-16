@@ -1,4 +1,4 @@
-use crate::{auth::Verifier, Listener, Transport};
+use crate::common::{auth::Verifier, Listener, Transport};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -12,7 +12,6 @@ mod config;
 pub use config::*;
 
 mod connection;
-pub use connection::ConnectionId;
 use connection::*;
 
 mod context;
@@ -198,7 +197,7 @@ where
             // Ensure that the shutdown timer is cancelled now that we have a connection
             timer.read().await.stop();
 
-            let connection = Connection::build()
+            let connection = ConnectionTask::build()
                 .handler(Arc::downgrade(&handler))
                 .state(Arc::downgrade(&state))
                 .transport(transport)
@@ -219,9 +218,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::common::{
         auth::{Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
-        FramedTransport, InmemoryTransport, MpscListener, Request, Response, ServerConfig,
+        FramedTransport, InmemoryTransport, MpscListener, Request, Response,
     };
     use async_trait::async_trait;
     use std::time::Duration;

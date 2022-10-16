@@ -1,4 +1,4 @@
-use crate::HeapSecretKey;
+use crate::common::HeapSecretKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

@@ -1,4 +1,4 @@
-use crate::{Request, Response};
+use crate::common::{Request, Response};
 use std::{convert, io, sync::Weak};
 use tokio::{sync::mpsc, time::Duration};
 
@@ -134,7 +134,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, FramedTransport, InmemoryTransport};
+    use crate::client::Client;
+    use crate::common::{FramedTransport, InmemoryTransport};
     use std::time::Duration;
     use test_log::test;
 

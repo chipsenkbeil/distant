@@ -1,4 +1,5 @@
-use crate::{Listener, PortRange, TcpTransport};
+use super::Listener;
+use crate::common::{PortRange, TcpTransport};
 use async_trait::async_trait;
 use std::{fmt, io, net::IpAddr};
 use tokio::net::TcpListener as TokioTcpListener;
@@ -64,7 +65,7 @@ impl Listener for TcpListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Transport;
+    use crate::common::Transport;
     use std::net::{Ipv6Addr, SocketAddr};
     use test_log::test;
     use tokio::{sync::oneshot, task::JoinHandle};

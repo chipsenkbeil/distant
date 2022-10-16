@@ -231,7 +231,9 @@ where
     /// performing the following:
     ///
     /// 1. Handshakes to derive the appropriate [`Codec`](crate::Codec) to use
-    /// 2. Authenticates the established connection to ensure it is valid
+    /// 2. Authenticates the established connection to ensure it is valid by either using the
+    ///    given `verifier` or, if working with an existing client connection, will validate an OTP
+    ///    from our database
     /// 3. Restores pre-existing state using the provided backup, replaying any missing frames and
     ///    receiving any frames from the other side
     pub async fn server(transport: T, verifier: &Verifier, keychain: Keychain) -> io::Result<Self> {

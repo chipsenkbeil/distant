@@ -1,6 +1,5 @@
-use crate::{
-    auth::Verifier, Server, ServerConfig, ServerHandler, WindowsPipeListener, WindowsPipeServerRef,
-};
+use crate::common::{auth::Verifier, WindowsPipeListener};
+use crate::server::{Server, ServerConfig, ServerHandler, WindowsPipeServerRef};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     ffi::{OsStr, OsString},
@@ -70,10 +69,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        auth::{Client, DummyAuthHandler, Request, ServerCtx},
-        Client, ConnectionCtx, Request, ServerCtx,
-    };
+    use crate::client::Client;
+    use crate::common::{auth::DummyAuthHandler, Request};
+    use crate::server::ServerCtx;
     use async_trait::async_trait;
     use test_log::test;
 

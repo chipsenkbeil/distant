@@ -1,4 +1,4 @@
-use crate::ServerRef;
+use super::ServerRef;
 use std::path::{Path, PathBuf};
 
 /// Reference to a unix socket server instance

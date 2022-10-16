@@ -13,9 +13,10 @@ mod windows;
 #[cfg(windows)]
 pub use windows::*;
 
-use crate::{
+use crate::client::Client;
+use crate::common::{
     auth::{AuthHandler, Authenticate},
-    Client, FramedTransport, Transport,
+    FramedTransport, Transport,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, future::Future, io, time::Duration};

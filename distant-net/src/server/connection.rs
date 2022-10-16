@@ -1,7 +1,6 @@
-use super::{ServerState, ShutdownTimer};
-use crate::{
-    auth::Verifier, ConnectionCtx, Interest, Response, ServerCtx, ServerHandler, ServerReply,
-    Transport, UntypedRequest,
+use super::{ConnectionCtx, ServerCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
+use crate::common::{
+    auth::Verifier, Connection, ConnectionId, Interest, Response, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -19,7 +18,7 @@ use tokio::{
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 /// Represents an individual connection on the server
-pub struct Connection {
+pub struct ConnectionTask {
     /// Unique identifier tied to the connection
     id: ConnectionId,
 
@@ -27,11 +26,11 @@ pub struct Connection {
     task: JoinHandle<()>,
 }
 
-impl Connection {
+impl ConnectionTask {
     /// Starts building a new connection
-    pub fn build() -> ConnectionBuilder<(), ()> {
+    pub fn build() -> ConnectionTaskBuilder<(), ()> {
         let id: ConnectionId = rand::random();
-        ConnectionBuilder {
+        ConnectionTaskBuilder {
             id,
             handler: Weak::new(),
             state: Weak::new(),
@@ -53,7 +52,7 @@ impl Connection {
     }
 }
 
-pub struct ConnectionBuilder<H, T> {
+pub struct ConnectionTaskBuilder<H, T> {
     id: ConnectionId,
     handler: Weak<H>,
     state: Weak<ServerState>,
@@ -63,9 +62,9 @@ pub struct ConnectionBuilder<H, T> {
     verifier: Weak<Verifier>,
 }
 
-impl<H, T> ConnectionBuilder<H, T> {
-    pub fn handler<U>(self, handler: Weak<U>) -> ConnectionBuilder<U, T> {
-        ConnectionBuilder {
+impl<H, T> ConnectionTaskBuilder<H, T> {
+    pub fn handler<U>(self, handler: Weak<U>) -> ConnectionTaskBuilder<U, T> {
+        ConnectionTaskBuilder {
             id: self.id,
             handler,
             state: self.state,
@@ -76,8 +75,8 @@ impl<H, T> ConnectionBuilder<H, T> {
         }
     }
 
-    pub fn state(self, state: Weak<ServerState>) -> ConnectionBuilder<H, T> {
-        ConnectionBuilder {
+    pub fn state(self, state: Weak<ServerState>) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
             state,
@@ -88,8 +87,8 @@ impl<H, T> ConnectionBuilder<H, T> {
         }
     }
 
-    pub fn transport<U>(self, transport: U) -> ConnectionBuilder<H, U> {
-        ConnectionBuilder {
+    pub fn transport<U>(self, transport: U) -> ConnectionTaskBuilder<H, U> {
+        ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
             state: self.state,
@@ -103,8 +102,8 @@ impl<H, T> ConnectionBuilder<H, T> {
     pub(crate) fn shutdown_timer(
         self,
         shutdown_timer: Weak<RwLock<ShutdownTimer>>,
-    ) -> ConnectionBuilder<H, T> {
-        ConnectionBuilder {
+    ) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
             state: self.state,
@@ -115,8 +114,8 @@ impl<H, T> ConnectionBuilder<H, T> {
         }
     }
 
-    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionBuilder<H, T> {
-        ConnectionBuilder {
+    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
             state: self.state,
@@ -127,8 +126,8 @@ impl<H, T> ConnectionBuilder<H, T> {
         }
     }
 
-    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionBuilder<H, T> {
-        ConnectionBuilder {
+    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
             state: self.state,
@@ -140,7 +139,7 @@ impl<H, T> ConnectionBuilder<H, T> {
     }
 }
 
-impl<H, T> ConnectionBuilder<H, T>
+impl<H, T> ConnectionTaskBuilder<H, T>
 where
     H: ServerHandler + Sync + 'static,
     H::Request: DeserializeOwned + Send + Sync + 'static,
@@ -148,17 +147,17 @@ where
     H::LocalData: Default + Send + Sync + 'static,
     T: Transport + Send + Sync + 'static,
 {
-    pub fn spawn(self) -> Connection {
+    pub fn spawn(self) -> ConnectionTask {
         let id = self.id;
 
-        Connection {
+        ConnectionTask {
             id,
             task: tokio::spawn(self.run()),
         }
     }
 
     async fn run(self) {
-        let ConnectionBuilder {
+        let ConnectionTaskBuilder {
             id,
             handler,
             state,
@@ -203,7 +202,7 @@ where
         // Properly establish the connection's transport
         let mut transport = match Weak::upgrade(&verifier) {
             Some(verifier) => {
-                match crate::Connection::server(transport, verifier.as_ref(), keychain).await {
+                match Connection::server(transport, verifier.as_ref(), keychain).await {
                     Ok(connection) => connection.into_transport(),
                     Err(x) => {
                         terminate_connection!(@error "[Conn {id}] Failed to setup connection: {x}");
@@ -299,7 +298,7 @@ where
                             }
                         },
                         Err(x) => {
-                            error!("[Conn {id}] Invalid request: {x}");
+                            error!("[Conn {id}] Invalid request payload: {x}");
                         }
                     },
                     Ok(None) => {

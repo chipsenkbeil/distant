@@ -1,4 +1,5 @@
-use crate::{Listener, UnixSocketTransport};
+use super::Listener;
+use crate::common::UnixSocketTransport;
 use async_trait::async_trait;
 use std::{
     fmt, io,
@@ -94,7 +95,7 @@ impl Listener for UnixSocketListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Transport;
+    use crate::common::Transport;
     use tempfile::NamedTempFile;
     use test_log::test;
     use tokio::{sync::oneshot, task::JoinHandle};

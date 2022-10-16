@@ -1,12 +1,7 @@
-use crate::{
-    auth::{AuthHandler, Authenticate},
-    Client, ClientBuilder, FramedTransport, WindowsPipeTransport,
-};
+use crate::client::{Client, ClientBuilder};
+use crate::common::{auth::AuthHandler, WindowsPipeTransport};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    convert,
-    ffi::{OsStr, OsString},
-};
+use std::ffi::{OsStr, OsString};
 use tokio::{io, time::Duration};
 
 /// Builder for a client that will connect over a Windows pipe
@@ -35,7 +30,7 @@ impl<T> WindowsPipeClientBuilder<T> {
     pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {
         Self {
             inner: self.inner.timeout(timeout),
-            timeout: timeout.into(),
+            local: self.local,
         }
     }
 }

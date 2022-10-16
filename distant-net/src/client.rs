@@ -1,4 +1,6 @@
-use crate::{FramedTransport, Interest, Reconnectable, Request, Transport, UntypedResponse};
+use crate::common::{
+    FramedTransport, Interest, Reconnectable, Request, Transport, UntypedResponse,
+};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};

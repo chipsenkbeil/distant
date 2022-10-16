@@ -1,4 +1,5 @@
-use crate::{Listener, NamedPipe, WindowsPipeTransport};
+use super::Listener;
+use crate::common::{NamedPipe, WindowsPipeTransport};
 use async_trait::async_trait;
 use std::{
     ffi::{OsStr, OsString},
@@ -66,7 +67,7 @@ impl Listener for WindowsPipeListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Transport;
+    use crate::common::Transport;
     use test_log::test;
     use tokio::{sync::oneshot, task::JoinHandle};
 

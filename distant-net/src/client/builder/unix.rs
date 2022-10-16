@@ -1,4 +1,5 @@
-use crate::{auth::AuthHandler, Client, ClientBuilder, UnixSocketTransport};
+use crate::client::{Client, ClientBuilder};
+use crate::common::{auth::AuthHandler, UnixSocketTransport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::Path;
 use tokio::{io, time::Duration};

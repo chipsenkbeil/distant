@@ -1,4 +1,4 @@
-use crate::ServerRef;
+use super::ServerRef;
 use std::net::IpAddr;
 
 /// Reference to a TCP server instance

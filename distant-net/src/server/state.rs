@@ -1,12 +1,12 @@
-use super::{Connection, ConnectionId};
-use crate::HeapSecretKey;
+use super::ConnectionTask;
+use crate::common::{ConnectionId, HeapSecretKey};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// Contains all top-level state for the server
 pub struct ServerState {
     /// Mapping of connection ids to their transports
-    pub connections: RwLock<HashMap<ConnectionId, Connection>>,
+    pub connections: RwLock<HashMap<ConnectionId, ConnectionTask>>,
 
     /// Mapping of connection ids to their authenticated keys
     pub authenticated: RwLock<HashMap<ConnectionId, HeapSecretKey>>,

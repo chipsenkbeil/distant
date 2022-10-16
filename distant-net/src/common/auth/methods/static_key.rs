@@ -1,5 +1,5 @@
 use super::{AuthenticationMethod, Authenticator, Challenge, Error, Question};
-use crate::HeapSecretKey;
+use crate::common::HeapSecretKey;
 use async_trait::async_trait;
 use std::io;
 
@@ -50,7 +50,7 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::common::{
         auth::msg::{AuthenticationResponse, ChallengeResponse},
         FramedTransport,
     };

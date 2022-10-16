@@ -99,7 +99,7 @@ pub trait AuthenticationMethod: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FramedTransport;
+    use crate::common::FramedTransport;
     use test_log::test;
 
     struct SuccessAuthenticationMethod;

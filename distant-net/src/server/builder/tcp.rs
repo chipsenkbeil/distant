@@ -1,6 +1,5 @@
-use crate::{
-    auth::Verifier, PortRange, Server, ServerConfig, ServerHandler, TcpListener, TcpServerRef,
-};
+use crate::common::{auth::Verifier, PortRange, TcpListener};
+use crate::server::{Server, ServerConfig, ServerHandler, TcpServerRef};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, net::IpAddr};
 
@@ -54,7 +53,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{auth::DummyAuthHandler, Client, Request, ServerCtx};
+    use crate::client::Client;
+    use crate::common::{auth::DummyAuthHandler, Request};
+    use crate::server::ServerCtx;
     use async_trait::async_trait;
     use std::net::{Ipv6Addr, SocketAddr};
     use test_log::test;
