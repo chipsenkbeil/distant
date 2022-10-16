@@ -1,5 +1,5 @@
 use super::{
-    auth::{AuthHandler, Authenticate, Keychain, Verifier},
+    authentication::{AuthHandler, Authenticate, Keychain, Verifier},
     FramedTransport, HeapSecretKey, Reconnectable, Transport,
 };
 use async_trait::async_trait;

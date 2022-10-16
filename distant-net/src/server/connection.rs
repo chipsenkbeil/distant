@@ -1,6 +1,6 @@
 use super::{ConnectionCtx, ServerCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
 use crate::common::{
-    auth::Verifier, Connection, ConnectionId, Interest, Response, Transport, UntypedRequest,
+    authentication::Verifier, Connection, ConnectionId, Interest, Response, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};

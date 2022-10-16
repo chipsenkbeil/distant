@@ -1,4 +1,4 @@
-use crate::common::{auth::Verifier, Listener, Transport};
+use crate::common::{authentication::Verifier, Listener, Transport};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -219,7 +219,7 @@ where
 mod tests {
     use super::*;
     use crate::common::{
-        auth::{Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
+        authentication::{Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
         FramedTransport, InmemoryTransport, MpscListener, Request, Response,
     };
     use async_trait::async_trait;

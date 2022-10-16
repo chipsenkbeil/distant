@@ -1,4 +1,4 @@
-use crate::common::{auth::Verifier, WindowsPipeListener};
+use crate::common::{authentication::Verifier, WindowsPipeListener};
 use crate::server::{Server, ServerConfig, ServerHandler, WindowsPipeServerRef};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -70,7 +70,7 @@ where
 mod tests {
     use super::*;
     use crate::client::Client;
-    use crate::common::{auth::DummyAuthHandler, Request};
+    use crate::common::{authentication::DummyAuthHandler, Request};
     use crate::server::ServerCtx;
     use async_trait::async_trait;
     use test_log::test;

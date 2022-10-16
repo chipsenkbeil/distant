@@ -1,5 +1,5 @@
 use crate::client::{Client, ClientBuilder};
-use crate::common::{auth::AuthHandler, WindowsPipeTransport};
+use crate::common::{authentication::AuthHandler, WindowsPipeTransport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::ffi::{OsStr, OsString};
 use tokio::{io, time::Duration};

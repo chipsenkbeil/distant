@@ -79,6 +79,24 @@ where
             false
         }
     }
+
+    /// Cancels delivery to the mailbox with the specified `id`.
+    pub async fn cancel(&self, id: &Id) {
+        self.mailboxes.lock().await.remove(id);
+    }
+
+    /// Cancels delivery to the mailboxes with the specified `id`s.
+    pub async fn cancel_many(&self, ids: impl Iterator<Item = &Id>) {
+        let mut lock = self.mailboxes.lock().await;
+        for id in ids {
+            lock.remove(id);
+        }
+    }
+
+    /// Cancels delivery to all mailboxes.
+    pub async fn cancel_all(&self) {
+        self.mailboxes.lock().await.clear();
+    }
 }
 
 impl<T> PostOffice<Response<T>>

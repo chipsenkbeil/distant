@@ -1,4 +1,4 @@
-use crate::common::{auth::Verifier, UnixSocketListener};
+use crate::common::{authentication::Verifier, UnixSocketListener};
 use crate::server::{Server, ServerConfig, ServerHandler, UnixSocketServerRef};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, path::Path};
@@ -55,7 +55,7 @@ where
 mod tests {
     use super::*;
     use crate::client::Client;
-    use crate::common::{auth::DummyAuthHandler, Request};
+    use crate::common::{authentication::DummyAuthHandler, Request};
     use crate::server::ServerCtx;
     use async_trait::async_trait;
     use tempfile::NamedTempFile;

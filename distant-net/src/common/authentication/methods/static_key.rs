@@ -51,7 +51,7 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
 mod tests {
     use super::*;
     use crate::common::{
-        auth::msg::{AuthenticationResponse, ChallengeResponse},
+        authentication::msg::{AuthenticationResponse, ChallengeResponse},
         FramedTransport,
     };
     use test_log::test;

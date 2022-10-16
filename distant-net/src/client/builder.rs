@@ -15,7 +15,7 @@ pub use windows::*;
 
 use crate::client::Client;
 use crate::common::{
-    auth::{AuthHandler, Authenticate},
+    authentication::{AuthHandler, Authenticate},
     FramedTransport, Transport,
 };
 use serde::{de::DeserializeOwned, Serialize};

@@ -1,5 +1,5 @@
 use crate::client::{Client, ClientBuilder};
-use crate::common::{auth::AuthHandler, TcpTransport};
+use crate::common::{authentication::AuthHandler, TcpTransport};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{io, net::ToSocketAddrs, time::Duration};
 

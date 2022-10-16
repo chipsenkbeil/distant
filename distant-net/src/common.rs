@@ -1,5 +1,5 @@
 mod any;
-pub mod auth;
+pub mod authentication;
 mod connection;
 mod listener;
 mod packet;
