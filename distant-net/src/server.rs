@@ -200,6 +200,7 @@ where
             let connection = ConnectionTask::build()
                 .handler(Arc::downgrade(&handler))
                 .state(Arc::downgrade(&state))
+                .keychain(state.keychain.clone())
                 .transport(transport)
                 .shutdown_timer(Arc::downgrade(&timer))
                 .sleep_duration(config.connection_sleep)
@@ -219,7 +220,9 @@ where
 mod tests {
     use super::*;
     use crate::common::{
-        authentication::{Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
+        authentication::{
+            Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod,
+        },
         FramedTransport, InmemoryTransport, MpscListener, Request, Response,
     };
     use async_trait::async_trait;

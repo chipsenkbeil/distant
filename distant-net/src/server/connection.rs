@@ -1,6 +1,7 @@
 use super::{ConnectionCtx, ServerCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
 use crate::common::{
-    authentication::Verifier, Connection, ConnectionId, Interest, Response, Transport, UntypedRequest,
+    authentication::{Keychain, Verifier},
+    Backup, Connection, ConnectionId, Interest, Response, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -10,7 +11,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, RwLock},
+    sync::{mpsc, oneshot, RwLock},
     task::JoinHandle,
 };
 
@@ -34,6 +35,7 @@ impl ConnectionTask {
             id,
             handler: Weak::new(),
             state: Weak::new(),
+            keychain: Keychain::new(),
             transport: (),
             shutdown_timer: Weak::new(),
             sleep_duration: SLEEP_DURATION,
@@ -56,6 +58,7 @@ pub struct ConnectionTaskBuilder<H, T> {
     id: ConnectionId,
     handler: Weak<H>,
     state: Weak<ServerState>,
+    keychain: Keychain<oneshot::Receiver<Backup>>,
     transport: T,
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
     sleep_duration: Duration,
@@ -68,6 +71,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             id: self.id,
             handler,
             state: self.state,
+            keychain: self.keychain,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
@@ -80,6 +84,23 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             id: self.id,
             handler: self.handler,
             state,
+            keychain: self.keychain,
+            transport: self.transport,
+            shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn keychain(
+        self,
+        keychain: Keychain<oneshot::Receiver<Backup>>,
+    ) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
+            id: self.id,
+            handler: self.handler,
+            state: self.state,
+            keychain,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
@@ -91,6 +112,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
+            keychain: self.keychain,
             state: self.state,
             transport,
             shutdown_timer: self.shutdown_timer,
@@ -107,6 +129,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             id: self.id,
             handler: self.handler,
             state: self.state,
+            keychain: self.keychain,
             transport: self.transport,
             shutdown_timer,
             sleep_duration: self.sleep_duration,
@@ -119,6 +142,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             id: self.id,
             handler: self.handler,
             state: self.state,
+            keychain: self.keychain,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration,
@@ -131,6 +155,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             id: self.id,
             handler: self.handler,
             state: self.state,
+            keychain: self.keychain,
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
@@ -161,6 +186,7 @@ where
             id,
             handler,
             state,
+            keychain,
             transport,
             shutdown_timer,
             sleep_duration,
@@ -200,10 +226,10 @@ where
         }
 
         // Properly establish the connection's transport
-        let mut transport = match Weak::upgrade(&verifier) {
+        let mut connection = match Weak::upgrade(&verifier) {
             Some(verifier) => {
                 match Connection::server(transport, verifier.as_ref(), keychain).await {
-                    Ok(connection) => connection.into_transport(),
+                    Ok(connection) => connection,
                     Err(x) => {
                         terminate_connection!(@error "[Conn {id}] Failed to setup connection: {x}");
                     }
@@ -225,8 +251,7 @@ where
         // Construct a queue of outgoing responses
         let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
 
-        // Create local data for the connection and then process it as well as perform
-        // authentication and any other tasks on first connecting
+        // Create local data for the connection and then process it
         debug!("[Conn {id}] Accepting connection");
         let mut local_data = H::LocalData::default();
         if let Err(x) = handler
@@ -241,16 +266,8 @@ where
 
         let local_data = Arc::new(local_data);
 
-        macro_rules! store_backup {
-            () => {{
-                // TODO: We want to store the transport's backup in our state with a mapping
-                //       like id -> backup so when a new connection happens, we can
-                //       repopulate the backup if it exists.
-            }};
-        }
-
         loop {
-            let ready = match transport
+            let ready = match connection
                 .ready(Interest::READABLE | Interest::WRITABLE)
                 .await
             {
@@ -265,7 +282,7 @@ where
             let mut write_blocked = !ready.is_writable();
 
             if ready.is_readable() {
-                match transport.try_read_frame() {
+                match connection.try_read_frame() {
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
                         Ok(request) => match request.to_typed_request() {
                             Ok(request) => {
@@ -334,7 +351,7 @@ where
                     }
 
                     match response.to_vec() {
-                        Ok(data) => match transport.try_write_frame(data) {
+                        Ok(data) => match connection.try_write_frame(data) {
                             Ok(()) => (),
                             Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
                             Err(x) => error!("[Conn {id}] Send failed: {x}"),
@@ -350,7 +367,7 @@ where
                     // 1. When flush did not write any bytes, which can happen when the buffer
                     //    is empty
                     // 2. When the call to write bytes blocks
-                    match transport.try_flush() {
+                    match connection.try_flush() {
                         Ok(0) => write_blocked = true,
                         Ok(_) => (),
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,

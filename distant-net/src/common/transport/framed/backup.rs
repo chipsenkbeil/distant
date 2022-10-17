@@ -128,12 +128,12 @@ impl Backup {
         self.received_cnt
     }
 
-    /// Sets  the total received frames to the specified `cnt`.
+    /// Sets the total received frames to the specified `cnt`.
     ///
     /// ### Note
     ///
     /// Like all other modifications, this will do nothing if the backup is frozen.
-    pub(super) fn set_received_cnt(&self, cnt: usize) {
+    pub(super) fn set_received_cnt(&mut self, cnt: usize) {
         if !self.frozen {
             self.received_cnt = cnt;
         }

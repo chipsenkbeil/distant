@@ -37,9 +37,6 @@ pub struct Client<T, U> {
 
     /// Contains the task that is running to send requests and receive responses from a server
     task: JoinHandle<()>,
-    // TODO: We need to change the task type above to return the transport when finished so we
-    //       can reuse it via `reconnect`. We also want some form of retry strategy that determines
-    //       how often we attempt to reconnect, handshake, reauthenticate, and synchronize.
 }
 
 impl<T, U> Client<T, U>
@@ -73,7 +70,7 @@ where
                 let ready = tokio::select! {
                     _ = shutdown_rx.recv() => {
                         debug!("Client got shutdown signal, so exiting event loop");
-                        break transport;
+                        break;
                     }
                     cb = reconnect_rx.recv() => {
                         debug!("Client got reconnect signal, so attempting to reconnect");
@@ -88,7 +85,7 @@ where
                             continue;
                         } else {
                             error!("Client callback for reconnect missing! Corrupt state!");
-                            break transport;
+                            break;
                         }
                     }
                     result = transport.ready(Interest::READABLE | Interest::WRITABLE) => {
@@ -96,7 +93,7 @@ where
                             Ok(result) => result,
                             Err(x) => {
                                 error!("Failed to examine ready state: {x}");
-                                break transport;
+                                break;
                             }
                         }
                     }
@@ -136,7 +133,7 @@ where
                         }
                         Ok(None) => {
                             debug!("Connection closed");
-                            break transport;
+                            break;
                         }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                         Err(x) => {

@@ -7,6 +7,7 @@ use log::*;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::ops::{Deref, DerefMut};
+use tokio::sync::oneshot;
 
 /// Id of the connection
 pub type ConnectionId = u32;
@@ -30,6 +31,9 @@ pub enum Connection<T> {
         /// Unique id associated with the connection
         id: ConnectionId,
 
+        /// Used to send the backup into storage when the connection is dropped
+        tx: oneshot::Sender<Backup>,
+
         /// Underlying transport used to communicate
         transport: FramedTransport<T>,
     },
@@ -51,6 +55,23 @@ impl<T> DerefMut for Connection<T> {
         match self {
             Self::Client { transport, .. } => transport,
             Self::Server { transport, .. } => transport,
+        }
+    }
+}
+
+impl<T> Drop for Connection<T> {
+    /// On drop for a server connection, the connection's backup will be sent via `tx`. For a
+    /// client connection, nothing happens.
+    fn drop(&mut self) {
+        match self {
+            Self::Client { .. } => (),
+            Self::Server { tx, transport, .. } => {
+                // NOTE: We grab the current backup state and store it using the tx, replacing
+                //       the backup with a default and the tx with a disconnected one
+                let backup = std::mem::take(&mut transport.backup);
+                let tx = std::mem::replace(tx, oneshot::channel().0);
+                let _ = tx.send(backup);
+            }
         }
     }
 }
@@ -165,16 +186,6 @@ enum ConnectType {
     },
 }
 
-impl<T> Connection<T> {
-    /// Consume the connection and return the underlying transport.
-    pub fn into_transport(self) -> FramedTransport<T> {
-        match self {
-            Self::Client { transport, .. } => transport,
-            Self::Server { transport, .. } => transport,
-        }
-    }
-}
-
 impl<T> Connection<T>
 where
     T: Transport + Send + Sync,
@@ -238,7 +249,7 @@ where
     pub async fn server(
         transport: T,
         verifier: &Verifier,
-        keychain: Keychain<Backup>,
+        keychain: Keychain<oneshot::Receiver<Backup>>,
     ) -> io::Result<Self> {
         let id: ConnectionId = rand::random();
 
@@ -263,6 +274,9 @@ where
             .await?
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Missing connection type frame"))?;
 
+        // Create a oneshot channel used to relay the backup when the connection is dropped
+        let (tx, rx) = oneshot::channel();
+
         // Based on the connection type, we either try to find and validate an existing connection
         // or we perform normal verification
         match connection_type {
@@ -278,6 +292,9 @@ where
                 // Derive an OTP for reauthentication
                 debug!("[Conn {id}] Deriving future OTP for reauthentication");
                 let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
+
+                // Store the id, OTP, and backup retrieval in our database
+                keychain.insert(id.to_string(), reauth_otp, rx).await;
             }
             ConnectType::Reconnect { id: other_id, otp } => {
                 let reauth_otp = HeapSecretKey::from(otp);
@@ -287,7 +304,7 @@ where
                     .remove_if_has_key(other_id.to_string(), reauth_otp)
                     .await
                 {
-                    KeychainResult::Ok(backup) => {
+                    KeychainResult::Ok(x) => {
                         // Communicate the connection id
                         debug!("[Conn {id}] Telling other side to change connection id");
                         transport.write_frame_for(&id).await?;
@@ -298,10 +315,19 @@ where
 
                         // Synchronize using the provided backup
                         debug!("[Conn {id}] Synchronizing frame state");
-                        transport.backup = backup;
+                        match x.await {
+                            Ok(backup) => {
+                                transport.backup = backup;
+                            }
+                            Err(_) => {
+                                warn!("[Conn {id}] Missing backup");
+                            }
+                        }
                         transport.synchronize().await?;
-                    }
 
+                        // Store the id, OTP, and backup retrieval in our database
+                        keychain.insert(id.to_string(), reauth_otp, rx).await;
+                    }
                     KeychainResult::InvalidPassword => {
                         return Err(io::Error::new(
                             io::ErrorKind::PermissionDenied,
@@ -318,9 +344,6 @@ where
             }
         }
 
-        // Store the id and OTP in our database
-        keychain.insert(id.to_string(), reauth_otp).await;
-
-        Ok(Self::Server { id, transport })
+        Ok(Self::Server { id, tx, transport })
     }
 }

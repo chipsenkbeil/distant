@@ -49,9 +49,17 @@ impl<T> From<KeychainResult<T>> for Option<T> {
 
 /// Manages keys with associated ids. Cloning will result in a copy pointing to the same underlying
 /// storage, which enables support of managing the keys across multiple threads.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Keychain<T = ()> {
     map: Arc<RwLock<HashMap<String, (HeapSecretKey, T)>>>,
+}
+
+impl<T> Clone for Keychain<T> {
+    fn clone(&self) -> Self {
+        Self {
+            map: Arc::clone(&self.map),
+        }
+    }
 }
 
 impl<T> Keychain<T> {
@@ -102,10 +110,7 @@ impl<T> Keychain<T> {
         let mut lock = self.map.write().await;
 
         match lock.get(id) {
-            Some((k, _)) if key.eq(k) => {
-                drop(k);
-                KeychainResult::Ok(lock.remove(id).unwrap().1)
-            }
+            Some((k, _)) if key.eq(k) => KeychainResult::Ok(lock.remove(id).unwrap().1),
             Some(_) => KeychainResult::InvalidPassword,
             None => KeychainResult::InvalidId,
         }
