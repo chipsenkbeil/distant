@@ -134,48 +134,59 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Connection, FramedTransport, InmemoryTransport};
+    use std::sync::Arc;
     use std::time::Duration;
     use test_log::test;
 
     type TestChannel = Channel<u8, u8>;
+    type Setup = (
+        TestChannel,
+        mpsc::Receiver<Request<u8>>,
+        Arc<PostOffice<Response<u8>>>,
+    );
 
-    /// Set up two connected transports without any handshake or authentication. This should be
-    /// okay since we are creating a raw client that
-    async fn setup(buffer: usize) -> (TestChannel, Connection<InmemoryTransport>) {
-        let (t1, t2) = FramedTransport::pair(buffer);
-        let channel = TestClient::new(t1);
+    fn setup(buffer: usize) -> Setup {
+        let post_office = Arc::new(PostOffice::default());
+        let (tx, rx) = mpsc::channel(buffer);
+        let channel = {
+            let post_office = Arc::downgrade(&post_office);
+            TestChannel { tx, post_office }
+        };
 
-        (channel, t2)
+        (channel, rx, post_office)
     }
 
     #[test(tokio::test)]
-    async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
-        let (mut channel, mut server) = setup(100).await;
+    async fn mail_should_return_mailbox_that_receives_responses_until_post_office_drops_it() {
+        let (mut channel, _server, post_office) = setup(100);
 
         let req = Request::new(0);
         let res = Response::new(req.id.clone(), 1);
 
         let mut mailbox = channel.mail(req).await.unwrap();
 
-        // Get first response
-        match tokio::join!(mailbox.next(), server.write_frame(res.to_vec().unwrap())) {
-            (Some(actual), _) => assert_eq!(actual, res),
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        // Send and receive first response
+        assert!(
+            post_office.deliver_response(res.clone()).await,
+            "Failed to deliver: {res:?}"
+        );
+        assert_eq!(mailbox.next().await, Some(res.clone()));
 
-        // Get second response
-        match tokio::join!(mailbox.next(), server.write_frame(res.to_vec().unwrap())) {
-            (Some(actual), _) => assert_eq!(actual, res),
-            x => panic!("Unexpected response: {:?}", x),
-        }
+        // Send and receive second response
+        assert!(
+            post_office.deliver_response(res.clone()).await,
+            "Failed to deliver: {res:?}"
+        );
+        assert_eq!(mailbox.next().await, Some(res.clone()));
 
-        // Trigger the mailbox to wait BEFORE closing our transport to ensure that
+        // Trigger the mailbox to wait BEFORE closing our mailbox to ensure that
         // we don't get stuck if the mailbox was already waiting
         let next_task = tokio::spawn(async move { mailbox.next().await });
         tokio::task::yield_now().await;
 
-        drop(server);
+        // Close our specific mailbox
+        post_office.cancel(&res.origin_id).await;
+
         match next_task.await {
             Ok(None) => {}
             x => panic!("Unexpected response: {:?}", x),
@@ -184,13 +195,13 @@ mod tests {
 
     #[test(tokio::test)]
     async fn send_should_wait_until_response_received() {
-        let (mut channel, mut server) = setup(100).await;
+        let (mut channel, _server, post_office) = setup(100);
 
         let req = Request::new(0);
         let res = Response::new(req.id.clone(), 1);
 
         let (actual, _) =
-            tokio::join!(channel.send(req), server.write_frame(res.to_vec().unwrap()));
+            tokio::join!(channel.send(req), post_office.deliver_response(res.clone()));
         match actual {
             Ok(actual) => assert_eq!(actual, res),
             x => panic!("Unexpected response: {:?}", x),
@@ -199,7 +210,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (mut channel, mut server) = setup(100).await;
+        let (mut channel, mut server, _post_office) = setup(100);
 
         let req = Request::new(0);
         match channel.send_timeout(req, Duration::from_millis(30)).await {
@@ -207,13 +218,12 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let frame = server.read_frame().await.unwrap().unwrap();
-        let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
+        let _frame = server.recv().await.unwrap();
     }
 
     #[test(tokio::test)]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (mut channel, mut server) = setup(100).await;
+        let (mut channel, mut server, _post_office) = setup(100);
 
         let req = Request::new(0);
         match channel.fire(req).await {
@@ -221,7 +231,6 @@ mod tests {
             x => panic!("Unexpected response: {:?}", x),
         }
 
-        let frame = server.read_frame().await.unwrap().unwrap();
-        let _req: Request<u8> = Request::from_slice(frame.as_item()).unwrap();
+        let _frame = server.recv().await.unwrap();
     }
 }
