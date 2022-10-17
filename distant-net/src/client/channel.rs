@@ -134,26 +134,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::Client;
-    use crate::common::{FramedTransport, InmemoryTransport};
+    use crate::common::{Connection, FramedTransport, InmemoryTransport};
     use std::time::Duration;
     use test_log::test;
 
-    type TestClient = Client<u8, u8>;
+    type TestChannel = Channel<u8, u8>;
 
     /// Set up two connected transports without any handshake or authentication. This should be
     /// okay since we are creating a raw client that
-    async fn setup(buffer: usize) -> (TestClient, FramedTransport<InmemoryTransport>) {
+    async fn setup(buffer: usize) -> (TestChannel, Connection<InmemoryTransport>) {
         let (t1, t2) = FramedTransport::pair(buffer);
-        let client = TestClient::new(t1);
+        let channel = TestClient::new(t1);
 
-        (client, t2)
+        (channel, t2)
     }
 
     #[test(tokio::test)]
     async fn mail_should_return_mailbox_that_receives_responses_until_transport_closes() {
-        let (client, mut server) = setup(100).await;
-        let mut channel = client.clone_channel();
+        let (mut channel, mut server) = setup(100).await;
 
         let req = Request::new(0);
         let res = Response::new(req.id.clone(), 1);
@@ -186,8 +184,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn send_should_wait_until_response_received() {
-        let (client, mut server) = setup(100).await;
-        let mut channel = client.clone_channel();
+        let (mut channel, mut server) = setup(100).await;
 
         let req = Request::new(0);
         let res = Response::new(req.id.clone(), 1);
@@ -202,8 +199,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn send_timeout_should_fail_if_response_not_received_in_time() {
-        let (client, mut server) = setup(100).await;
-        let mut channel = client.clone_channel();
+        let (mut channel, mut server) = setup(100).await;
 
         let req = Request::new(0);
         match channel.send_timeout(req, Duration::from_millis(30)).await {
@@ -217,8 +213,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn fire_should_send_request_and_not_wait_for_response() {
-        let (client, mut server) = setup(100).await;
-        let mut channel = client.clone_channel();
+        let (mut channel, mut server) = setup(100).await;
 
         let req = Request::new(0);
         match channel.fire(req).await {

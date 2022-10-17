@@ -14,10 +14,7 @@ mod windows;
 pub use windows::*;
 
 use crate::client::Client;
-use crate::common::{
-    authentication::{AuthHandler, Authenticate},
-    FramedTransport, Transport,
-};
+use crate::common::{authentication::AuthHandler, Connection, Transport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, future::Future, io, time::Duration};
 
@@ -99,12 +96,8 @@ where
         let transport = self.transport;
 
         let f = async move {
-            // Establish our framed transport, perform a handshake to set the codec, and do
-            // authentication to ensure the connection can be used
-            let mut transport = FramedTransport::from_client_handshake(transport).await?;
-            transport.authenticate(auth_handler).await?;
-
-            Ok(Client::new(transport))
+            let connection = Connection::client(transport, auth_handler).await?;
+            Ok(Client::spawn(connection))
         };
 
         match timeout {

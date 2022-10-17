@@ -220,10 +220,8 @@ where
 mod tests {
     use super::*;
     use crate::common::{
-        authentication::{
-            Authenticate, AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod,
-        },
-        FramedTransport, InmemoryTransport, MpscListener, Request, Response,
+        authentication::{AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
+        Connection, InmemoryTransport, MpscListener, Request, Response,
     };
     use async_trait::async_trait;
     use std::time::Duration;
@@ -286,18 +284,17 @@ mod tests {
             .expect("Failed to start server");
 
         // Perform handshake and authentication with the server before beginning to send data
-        let mut transport = FramedTransport::from_client_handshake(transport)
+        let mut connection = Connection::client(transport, DummyAuthHandler)
             .await
-            .unwrap();
-        transport.authenticate(DummyAuthHandler).await.unwrap();
+            .expect("Failed to connect to server");
 
-        transport
+        connection
             .write_frame(Request::new(123).to_vec().unwrap())
             .await
             .expect("Failed to send request");
 
         // Wait for a response
-        let frame = transport.read_frame().await.unwrap().unwrap();
+        let frame = connection.read_frame().await.unwrap().unwrap();
         let response: Response<String> = Response::from_slice(frame.as_item()).unwrap();
         assert_eq!(response.payload, "hello");
     }
