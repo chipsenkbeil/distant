@@ -1394,7 +1394,30 @@ mod tests {
 
     #[test(tokio::test)]
     async fn synchronize_should_resend_some_frames_if_some_missing_on_other_side() {
-        todo!("test N frames where N > 0, but N < total available frames");
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Configure the backup such that we have sent two frames
+        t2.backup.push_frame(Frame::new(b"hello"));
+        t2.backup.push_frame(Frame::new(b"world"));
+        t2.backup.increment_sent_cnt();
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 1, 0
+        // expected (sent, received, available) = 2, 0, 2
+        test_synchronize_stats(&mut t1, 0, 1, 0, 2, 0, 2).await;
+
+        // Recieve both frames and then the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
     }
 
     #[test(tokio::test)]
@@ -1427,54 +1450,360 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn synchronize_should_resend_all_frames_if_more_than_all_missing_on_other_side() {
-        todo!();
+    async fn synchronize_should_resend_available_frames_if_more_than_available_missing_on_other_side(
+    ) {
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Configure the backup such that we have sent two frames, and believe that we have
+        // sent 3 in total, a situation that happens once we reach the peak possible size of
+        // old frames to store
+        t2.backup.push_frame(Frame::new(b"hello"));
+        t2.backup.push_frame(Frame::new(b"world"));
+        t2.backup.increment_sent_cnt();
+        t2.backup.increment_sent_cnt();
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 0, 0
+        // expected (sent, received, available) = 3, 0, 2
+        test_synchronize_stats(&mut t1, 0, 0, 0, 3, 0, 2).await;
+
+        // Recieve both frames and then the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_receive_no_frames_if_other_side_claims_it_has_more_than_us() {
-        todo!("test 0 frames");
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Mark other side as having received a frame
+        t2.backup.increment_received_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 0, 0
+        // expected (sent, received, available) = 0, 1, 0
+        test_synchronize_stats(&mut t1, 0, 0, 0, 0, 1, 0).await;
+
+        // Recieve the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_receive_no_frames_if_none_missing_from_other_side() {
-        todo!("test 0 frames");
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Mark other side as having received a frame
+        t2.backup.increment_received_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 1, 0, 1
+        // expected (sent, received, available) = 0, 1, 0
+        test_synchronize_stats(&mut t1, 1, 0, 1, 0, 1, 0).await;
+
+        // Recieve the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_receive_some_frames_if_some_missing_from_other_side() {
-        todo!("test N frames where N > 0, but N < total available frames");
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Mark other side as having received a frame
+        t2.backup.increment_received_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 2, 0, 2
+        // expected (sent, received, available) = 0, 1, 0
+        test_synchronize_stats(&mut t1, 2, 0, 2, 0, 1, 0).await;
+
+        // Send a frame to fill the gap
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+
+        // Recieve the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+
+        // Drop the transport such that the other side will get a definite termination
+        drop(t1);
+
+        // Verify that the frame was captured on the other side
+        let mut t2 = task.await.unwrap();
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t2.read_frame().await.unwrap(), None);
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_receive_all_frames_if_all_missing_from_other_side() {
-        todo!("test N frames where N == total available frames");
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 2, 0, 2
+        // expected (sent, received, available) = 0, 0, 0
+        test_synchronize_stats(&mut t1, 2, 0, 2, 0, 0, 0).await;
+
+        // Send frames to fill the gap
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+        t1.write_frame(Frame::new(b"world")).await.unwrap();
+
+        // Recieve the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+
+        // Drop the transport such that the other side will get a definite termination
+        drop(t1);
+
+        // Verify that the frame was captured on the other side
+        let mut t2 = task.await.unwrap();
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t2.read_frame().await.unwrap(), None);
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_receive_all_frames_if_more_than_all_missing_from_other_side() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 3, 0, 2
+        // expected (sent, received, available) = 0, 0, 0
+        test_synchronize_stats(&mut t1, 2, 0, 2, 0, 0, 0).await;
+
+        // Send frames to fill the gap
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+        t1.write_frame(Frame::new(b"world")).await.unwrap();
+
+        // Recieve the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+
+        // Drop the transport such that the other side will get a definite termination
+        drop(t1);
+
+        // Verify that the frame was captured on the other side
+        let mut t2 = task.await.unwrap();
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t2.read_frame().await.unwrap(), None);
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_fail_if_connection_terminated_before_receiving_missing_frames() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 2, 0, 2
+        // expected (sent, received, available) = 0, 0, 0
+        test_synchronize_stats(&mut t1, 2, 0, 2, 0, 0, 0).await;
+
+        // Send one frame to fill the gap
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+
+        // Drop the transport to cause a failure
+        drop(t1);
+
+        // Verify that the other side's synchronization failed
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_fail_if_connection_terminated_while_waiting_for_frame_stats() {
-        todo!();
+        let (t1, mut t2) = FramedTransport::pair(100);
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // Drop the transport to cause a failure
+        drop(t1);
+
+        // Verify that the other side's synchronization failed
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_clear_any_prexisting_incoming_and_outgoing_data() {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Put some frames into the incoming and outgoing of our transport
+        Frame::new(b"bad incoming").write(&mut t2.incoming).unwrap();
+        Frame::new(b"bad outgoing").write(&mut t2.outgoing).unwrap();
+
+        // Configure the backup such that we have sent two frames
+        t2.backup.push_frame(Frame::new(b"hello"));
+        t2.backup.push_frame(Frame::new(b"world"));
+        t2.backup.increment_sent_cnt();
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 2, 0, 2
+        // expected (sent, received, available) = 2, 0, 2
+        test_synchronize_stats(&mut t1, 2, 0, 2, 2, 0, 2).await;
+
+        // Send frames to fill the gap
+        t1.write_frame(Frame::new(b"one")).await.unwrap();
+        t1.write_frame(Frame::new(b"two")).await.unwrap();
+
+        // Recieve both frames and then the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+
+        // Drop the transport such that the other side will get a definite termination
+        drop(t1);
+
+        // Verify that the frame was captured on the other side
+        let mut t2 = task.await.unwrap();
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"one");
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"two");
+        assert_eq!(t2.read_frame().await.unwrap(), None);
     }
 
     #[test(tokio::test)]
     async fn synchronize_should_not_increment_the_sent_frames_or_store_replayed_frames_in_the_backup(
     ) {
-        todo!();
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Configure the backup such that we have sent two frames
+        t2.backup.push_frame(Frame::new(b"hello"));
+        t2.backup.push_frame(Frame::new(b"world"));
+        t2.backup.increment_sent_cnt();
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+
+            t2.backup.freeze();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2.backup.unfreeze();
+
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 0, 0
+        // expected (sent, received, available) = 2, 0, 2
+        test_synchronize_stats(&mut t1, 0, 0, 0, 2, 0, 2).await;
+
+        // Recieve both frames and then the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+
+        // Drop the transport such that the other side will get a definite termination
+        drop(t1);
+
+        // Verify that the backup on the other side was unaltered by the frames being sent
+        let t2 = task.await.unwrap();
+        assert_eq!(t2.backup.sent_cnt(), 2, "Wrong sent cnt");
+        assert_eq!(t2.backup.received_cnt(), 0, "Wrong received cnt");
+        assert_eq!(t2.backup.frame_cnt(), 2, "Wrong frame cnt");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_update_the_backup_received_cnt_to_match_other_side_sent() {
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+
+            t2.backup.freeze();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2.backup.unfreeze();
+
+            t2
+        });
+
+        // fake     (sent, received, available) = 2, 0, 1
+        // expected (sent, received, available) = 0, 0, 0
+        test_synchronize_stats(&mut t1, 2, 0, 1, 0, 0, 0).await;
+
+        // Send frames to fill the gap
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+
+        // Recieve both frames and then the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+
+        // Drop the transport such that the other side will get a definite termination
+        drop(t1);
+
+        // Verify that the backup on the other side updated based on sent count and not available
+        let t2 = task.await.unwrap();
+        assert_eq!(t2.backup.sent_cnt(), 0, "Wrong sent cnt");
+        assert_eq!(t2.backup.received_cnt(), 2, "Wrong received cnt");
+        assert_eq!(t2.backup.frame_cnt(), 0, "Wrong frame cnt");
     }
 
     #[test(tokio::test)]
