@@ -387,3 +387,146 @@ impl Connection<InmemoryTransport> {
         (client, server)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_log::test;
+
+    #[test(tokio::test)]
+    async fn client_should_fail_if_codec_handshake_fails() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn client_should_fail_if_unable_to_send_connect_type() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn client_should_fail_if_unable_to_receive_connection_id_from_server() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn client_should_fail_if_authentication_fails() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn client_should_fail_if_unable_to_exchange_otp_for_reauthentication() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn client_should_succeed_if_establishes_connection_with_server() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_codec_handshake_fails() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_receive_connect_type() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_send_id_to_new_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_verify_new_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_exchange_otp_for_reauthentication_with_new_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_existing_client_id_is_invalid() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_existing_client_otp_is_invalid() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_send_id_to_existing_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_exchange_otp_for_reauthentication_with_existing_client(
+    ) {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_fail_if_unable_to_synchronize_with_existing_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_succeed_if_establishes_connection_with_new_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_succeed_if_establishes_connection_with_existing_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_synchronize_previous_backup_with_existing_client() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_client_side_connection_unable_to_reconnect_transport() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_client_side_connection_handshake_fails() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_client_side_connection_unable_to_send_connect_type() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_client_side_connection_unable_to_receive_new_connection_id() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_client_side_connection_unable_to_exchange_otp_with_server() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_client_side_connection_unable_to_synchronize_with_server() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_succeed_if_client_side_connection_fully_connects_and_synchronizes_with_server(
+    ) {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_fail_if_connection_is_server_side() {
+        todo!();
+    }
+}
