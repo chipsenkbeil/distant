@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use log::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt, io, time::Duration};
+use std::{fmt, future::Future, io, time::Duration};
 
 mod backup;
 mod codec;
@@ -388,6 +388,19 @@ impl<T: Transport> FramedTransport<T> {
         self.write_frame(data).await
     }
 
+    /// Executes the async function while the [`Backup`] of this transport is frozen.
+    pub async fn do_frozen<F, X>(&mut self, mut f: F) -> io::Result<()>
+    where
+        F: FnMut(&mut Self) -> X,
+        X: Future<Output = io::Result<()>>,
+    {
+        let is_frozen = self.backup.is_frozen();
+        self.backup.freeze();
+        let result = f(self).await;
+        self.backup.set_frozen(is_frozen);
+        result
+    }
+
     /// Places the transport in **synchronize mode** where it communicates with the other side how
     /// many frames have been sent and received. From there, any frames not received by the other
     /// side are sent again and then this transport waits for any missing frames that it did not
@@ -398,89 +411,114 @@ impl<T: Transport> FramedTransport<T> {
     /// This will clear the internal incoming and outgoing buffers, so any frame that was in
     /// transit in either direction will be dropped.
     pub async fn synchronize(&mut self) -> io::Result<()> {
-        #[derive(Debug, Serialize, Deserialize)]
-        struct FrameStats {
-            sent_cnt: usize,
-            received_cnt: usize,
-            available_cnt: usize,
+        async fn synchronize_impl<T: Transport>(
+            this: &mut FramedTransport<T>,
+            backup: &mut Backup,
+        ) -> io::Result<()> {
+            type Stats = (u64, u64, u64);
+
+            // Stats in the form of (sent, received, available)
+            let sent_cnt: u64 = backup.sent_cnt();
+            let received_cnt: u64 = backup.received_cnt();
+            let available_cnt: u64 = backup
+                .frame_cnt()
+                .try_into()
+                .expect("Cannot case usize to u64");
+
+            // Clear our internal buffers
+            this.incoming.clear();
+            this.outgoing.clear();
+
+            // Communicate frame counters with other side so we can determine how many frames to send
+            // and how many to receive. Wait until we get the stats from the other side, and then send
+            // over any missing frames.
+            trace!(
+                "Stats: sent = {sent_cnt}, received = {received_cnt}, available = {available_cnt}"
+            );
+            this.write_frame_for(&(sent_cnt, received_cnt, available_cnt))
+                .await?;
+            let (other_sent_cnt, other_received_cnt, other_available_cnt) =
+                this.read_frame_as::<Stats>().await?.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Transport terminated before getting replay stats",
+                    )
+                })?;
+            trace!("Other stats: sent = {other_sent_cnt}, received = {other_received_cnt}, available = {other_available_cnt}");
+
+            // Determine how many frames we need to resend. This will either be (sent - received) or
+            // available frames, whichever is smaller.
+            let resend_cnt = std::cmp::min(
+                if sent_cnt > other_received_cnt {
+                    sent_cnt - other_received_cnt
+                } else {
+                    0
+                },
+                available_cnt,
+            );
+
+            // Determine how many frames we expect to receive. This will either be (received - sent) or
+            // available frames, whichever is smaller.
+            let expected_cnt = std::cmp::min(
+                if received_cnt < other_sent_cnt {
+                    other_sent_cnt - received_cnt
+                } else {
+                    0
+                },
+                other_available_cnt,
+            );
+
+            // Send all missing frames, removing any frames that we know have been received
+            trace!("Reducing internal replay frames to {resend_cnt}");
+            backup.truncate_front(resend_cnt.try_into().expect("Cannot cast usize to u64"));
+
+            debug!("Sending {resend_cnt} frames");
+            backup.write(&mut this.outgoing)?;
+            this.flush().await?;
+
+            // Receive all expected frames, placing their contents into our incoming queue
+            //
+            // NOTE: We do not increment our counter as this is done during `try_read_frame`, even
+            //       when the frame comes from our internal queue. To avoid duplicating the increment,
+            //       we do not increment the counter here.
+            debug!("Waiting for {expected_cnt} frames");
+            for i in 0..expected_cnt {
+                let frame = this.read_frame().await?.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!(
+                            "Transport terminated before getting frame {}/{expected_cnt}",
+                            i + 1
+                        ),
+                    )
+                })?;
+                frame.write(&mut this.incoming)?;
+            }
+
+            // Catch up our read count as we can have the case where the other side has a higher
+            // count than frames sent if some frames were fully dropped due to size limits
+            if backup.received_cnt() != other_sent_cnt {
+                warn!(
+                    "Backup received count ({}) != other sent count ({}), so resetting to match",
+                    backup.received_cnt(),
+                    other_sent_cnt
+                );
+                backup.set_received_cnt(other_sent_cnt);
+            }
+
+            Ok(())
         }
 
-        let stats = FrameStats {
-            sent_cnt: self.backup.sent_cnt(),
-            received_cnt: self.backup.received_cnt(),
-            available_cnt: self.backup.frame_cnt(),
-        };
+        // Swap out our backup so we don't mutate it from synchronization efforts
+        let mut backup = std::mem::take(&mut self.backup);
 
-        // Clear our internal buffers
-        self.clear();
+        // Perform our operation, but don't return immediately so we can restore our backup
+        let result = synchronize_impl(self, &mut backup).await;
 
-        // Communicate frame counters with other side so we can determine how many frames to send
-        // and how many to receive. Wait until we get the stats from the other side, and then send
-        // over any missing frames.
-        trace!("Communicating stats to other side: {stats:?}");
-        self.write_frame_for(&stats).await?;
-        let other_stats = self.read_frame_as::<FrameStats>().await?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Transport terminated before getting replay stats",
-            )
-        })?;
-        trace!("Received stats from other side: {stats:?}");
+        // Reset our backup to the real version
+        self.backup = backup;
 
-        // Determine how many frames we need to resend. This will either be (sent - received) or
-        // available frames, whichever is smaller.
-        let resend_cnt = std::cmp::min(
-            if stats.sent_cnt > other_stats.received_cnt {
-                stats.sent_cnt - other_stats.received_cnt
-            } else {
-                0
-            },
-            stats.available_cnt,
-        );
-
-        // Determine how many frames we expect to receive. This will either be (received - sent) or
-        // available frames, whichever is smaller.
-        let expected_cnt = std::cmp::min(
-            if stats.received_cnt < other_stats.sent_cnt {
-                other_stats.sent_cnt - stats.received_cnt
-            } else {
-                0
-            },
-            other_stats.available_cnt,
-        );
-
-        // Send all missing frames, removing any frames that we know have been received
-        trace!("Reducing internal replay frames to {resend_cnt}");
-        self.backup.truncate_front(resend_cnt);
-
-        debug!("Sending {resend_cnt} frames");
-        self.backup.write(&mut self.outgoing)?;
-        self.flush().await?;
-
-        // Receive all expected frames, placing their contents into our incoming queue
-        //
-        // NOTE: We do not increment our counter as this is done during `try_read_frame`, even
-        //       when the frame comes from our internal queue. To avoid duplicating the increment,
-        //       we do not increment the counter here.
-        debug!("Waiting for {expected_cnt} frames");
-        for i in 0..expected_cnt {
-            let frame = self.read_frame().await?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    format!(
-                        "Transport terminated before getting frame {}/{expected_cnt}",
-                        i + 1
-                    ),
-                )
-            })?;
-            frame.write(&mut self.incoming)?;
-        }
-
-        // Catch up our read count as we can have the case where the other side has a higher
-        // count than frames sent if some frames were fully dropped due to size limits
-        self.backup.set_received_cnt(other_stats.sent_cnt);
-
-        Ok(())
+        result
     }
 
     /// Shorthand for creating a [`FramedTransport`] with a [`PlainCodec`] and then immediately
@@ -1271,6 +1309,169 @@ mod tests {
             rx.try_recv().unwrap_err(),
             std::sync::mpsc::TryRecvError::Empty
         );
+    }
+
+    #[inline]
+    async fn test_synchronize_stats(
+        transport: &mut FramedTransport<InmemoryTransport>,
+        sent_cnt: u64,
+        received_cnt: u64,
+        available_cnt: u64,
+        expected_sent_cnt: u64,
+        expected_received_cnt: u64,
+        expected_available_cnt: u64,
+    ) {
+        // From the other side, claim that we have received 2 frames
+        // (sent, received, available)
+        transport
+            .write_frame_for(&(sent_cnt, received_cnt, available_cnt))
+            .await
+            .unwrap();
+
+        // Receive stats from the other side
+        let (sent, received, available) = transport
+            .read_frame_as::<(u64, u64, u64)>()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sent, expected_sent_cnt, "Wrong sent cnt");
+        assert_eq!(received, expected_received_cnt, "Wrong received cnt");
+        assert_eq!(available, expected_available_cnt, "Wrong available cnt");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_resend_no_frames_if_other_side_claims_it_has_more_than_us() {
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Configure the backup such that we have sent one frame
+        t2.backup.push_frame(Frame::new(b"hello world"));
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 2, 0
+        // expected (sent, received, available) = 1, 0, 1
+        test_synchronize_stats(&mut t1, 0, 2, 0, 1, 0, 1).await;
+
+        // Should not receive anything before our done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_resend_no_frames_if_none_missing_on_other_side() {
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Configure the backup such that we have sent one frame
+        t2.backup.push_frame(Frame::new(b"hello world"));
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 1, 0
+        // expected (sent, received, available) = 1, 0, 1
+        test_synchronize_stats(&mut t1, 0, 1, 0, 1, 0, 1).await;
+
+        // Should not receive anything before our done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_resend_some_frames_if_some_missing_on_other_side() {
+        todo!("test N frames where N > 0, but N < total available frames");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_resend_all_frames_if_all_missing_on_other_side() {
+        let (mut t1, mut t2) = FramedTransport::pair(100);
+
+        // Configure the backup such that we have sent two frames
+        t2.backup.push_frame(Frame::new(b"hello"));
+        t2.backup.push_frame(Frame::new(b"world"));
+        t2.backup.increment_sent_cnt();
+        t2.backup.increment_sent_cnt();
+
+        // Spawn a separate task to do synchronization simulation so we don't deadlock, and also
+        // send a frame to indicate when finished so we can know when synchronization is done
+        // during our test
+        let _task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2.write_frame(Frame::new(b"done")).await.unwrap();
+            t2
+        });
+
+        // fake     (sent, received, available) = 0, 0, 0
+        // expected (sent, received, available) = 2, 0, 2
+        test_synchronize_stats(&mut t1, 0, 0, 0, 2, 0, 2).await;
+
+        // Recieve both frames and then the done indicator
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"world");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"done");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_resend_all_frames_if_more_than_all_missing_on_other_side() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_receive_no_frames_if_other_side_claims_it_has_more_than_us() {
+        todo!("test 0 frames");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_receive_no_frames_if_none_missing_from_other_side() {
+        todo!("test 0 frames");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_receive_some_frames_if_some_missing_from_other_side() {
+        todo!("test N frames where N > 0, but N < total available frames");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_receive_all_frames_if_all_missing_from_other_side() {
+        todo!("test N frames where N == total available frames");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_receive_all_frames_if_more_than_all_missing_from_other_side() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_fail_if_connection_terminated_before_receiving_missing_frames() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_fail_if_connection_terminated_while_waiting_for_frame_stats() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_clear_any_prexisting_incoming_and_outgoing_data() {
+        todo!();
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_not_increment_the_sent_frames_or_store_replayed_frames_in_the_backup(
+    ) {
+        todo!();
     }
 
     #[test(tokio::test)]

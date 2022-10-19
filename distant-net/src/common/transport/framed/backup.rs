@@ -21,10 +21,10 @@ pub struct Backup {
     frames: VecDeque<OwnedFrame>,
 
     /// Counter keeping track of total frames sent
-    sent_cnt: usize,
+    sent_cnt: u64,
 
     /// Counter keeping track of total frames received
-    received_cnt: usize,
+    received_cnt: u64,
 
     /// Indicates whether the backup is frozen, which indicates that mutations are ignored
     frozen: bool,
@@ -64,16 +64,25 @@ impl Backup {
     }
 
     /// Returns true if the backup is frozen, meaning that modifications will be ignored.
+    #[inline]
     pub fn is_frozen(&self) -> bool {
         self.frozen
     }
 
+    /// Sets the frozen status.
+    #[inline]
+    pub fn set_frozen(&mut self, frozen: bool) {
+        self.frozen = frozen;
+    }
+
     /// Marks the backup as frozen.
+    #[inline]
     pub fn freeze(&mut self) {
         self.frozen = true;
     }
 
     /// Marks the backup as no longer frozen.
+    #[inline]
     pub fn unfreeze(&mut self) {
         self.frozen = false;
     }
@@ -108,7 +117,7 @@ impl Backup {
     }
 
     /// Returns how many frames have been sent.
-    pub(super) fn sent_cnt(&self) -> usize {
+    pub(super) fn sent_cnt(&self) -> u64 {
         self.sent_cnt
     }
 
@@ -124,7 +133,7 @@ impl Backup {
     }
 
     /// Returns how many frames have been received.
-    pub(super) fn received_cnt(&self) -> usize {
+    pub(super) fn received_cnt(&self) -> u64 {
         self.received_cnt
     }
 
@@ -133,7 +142,7 @@ impl Backup {
     /// ### Note
     ///
     /// Like all other modifications, this will do nothing if the backup is frozen.
-    pub(super) fn set_received_cnt(&mut self, cnt: usize) {
+    pub(super) fn set_received_cnt(&mut self, cnt: u64) {
         if !self.frozen {
             self.received_cnt = cnt;
         }

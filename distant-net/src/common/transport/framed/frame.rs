@@ -134,6 +134,7 @@ impl Frame<'_> {
 }
 
 impl<'a> From<&'a [u8]> for Frame<'a> {
+    /// Consumes the byte slice and returns a [`Frame`] whose item references those bytes.
     fn from(item: &'a [u8]) -> Self {
         Self {
             item: Cow::Borrowed(item),
@@ -142,6 +143,7 @@ impl<'a> From<&'a [u8]> for Frame<'a> {
 }
 
 impl<'a, const N: usize> From<&'a [u8; N]> for Frame<'a> {
+    /// Consumes the byte array slice and returns a [`Frame`] whose item references those bytes.
     fn from(item: &'a [u8; N]) -> Self {
         Self {
             item: Cow::Borrowed(item),
@@ -150,6 +152,8 @@ impl<'a, const N: usize> From<&'a [u8; N]> for Frame<'a> {
 }
 
 impl<const N: usize> From<[u8; N]> for OwnedFrame {
+    /// Consumes an array of bytes and returns a [`Frame`] with an owned item of those bytes
+    /// allocated as a [`Vec`].
     fn from(item: [u8; N]) -> Self {
         Self {
             item: Cow::Owned(item.to_vec()),
@@ -158,6 +162,7 @@ impl<const N: usize> From<[u8; N]> for OwnedFrame {
 }
 
 impl From<Vec<u8>> for OwnedFrame {
+    /// Consumes a [`Vec`] of bytes and returns a [`Frame`] with an owned item of those bytes.
     fn from(item: Vec<u8>) -> Self {
         Self {
             item: Cow::Owned(item),
@@ -166,12 +171,15 @@ impl From<Vec<u8>> for OwnedFrame {
 }
 
 impl AsRef<[u8]> for Frame<'_> {
+    /// Returns a reference to this [`Frame`]'s item as bytes.
     fn as_ref(&self) -> &[u8] {
         AsRef::as_ref(&self.item)
     }
 }
 
 impl Extend<u8> for Frame<'_> {
+    /// Extends the [`Frame`]'s item with the provided bytes, allocating an owned [`Vec`]
+    /// underneath if this frame had borrowed bytes as an item.
     fn extend<T: IntoIterator<Item = u8>>(&mut self, iter: T) {
         match &mut self.item {
             // If we only have a borrowed item, we need to allocate it into a new vec so we can
@@ -191,24 +199,28 @@ impl Extend<u8> for Frame<'_> {
 }
 
 impl PartialEq<[u8]> for Frame<'_> {
+    /// Test if [`Frame`]'s item matches the provided bytes.
     fn eq(&self, item: &[u8]) -> bool {
         self.item.as_ref().eq(item)
     }
 }
 
 impl<'a> PartialEq<&'a [u8]> for Frame<'_> {
+    /// Test if [`Frame`]'s item matches the provided bytes.
     fn eq(&self, item: &&'a [u8]) -> bool {
         self.item.as_ref().eq(*item)
     }
 }
 
 impl<const N: usize> PartialEq<[u8; N]> for Frame<'_> {
+    /// Test if [`Frame`]'s item matches the provided bytes.
     fn eq(&self, item: &[u8; N]) -> bool {
         self.item.as_ref().eq(item)
     }
 }
 
 impl<'a, const N: usize> PartialEq<&'a [u8; N]> for Frame<'_> {
+    /// Test if [`Frame`]'s item matches the provided bytes.
     fn eq(&self, item: &&'a [u8; N]) -> bool {
         self.item.as_ref().eq(*item)
     }

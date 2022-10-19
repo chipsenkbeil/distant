@@ -155,6 +155,10 @@ impl HeapSecretKey {
     }
 
     /// Generates a random key of `n` bytes in length.
+    ///
+    /// ### Note
+    ///
+    /// Will return an error if `n` < 1 or `n` > `isize::MAX`.
     pub fn generate(n: usize) -> Result<Self, SecretKeyError> {
         // Limitation described in https://github.com/orion-rs/orion/issues/130
         if n < 1 || n > (isize::MAX as usize) {

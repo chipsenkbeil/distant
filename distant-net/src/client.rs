@@ -226,7 +226,7 @@ impl<T, U> Client<T, U> {
         self.channel.clone()
     }
 
-    /// Waits for the client to terminate, which results when the receiving end of the network
+    /// Waits for the client to terminate, which resolves when the receiving end of the network
     /// connection is closed (or the client is shutdown)
     pub async fn wait(self) -> Result<(), JoinError> {
         self.task.await

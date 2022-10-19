@@ -1,6 +1,6 @@
 use super::{
     authentication::{AuthHandler, Authenticate, Keychain, KeychainResult, Verifier},
-    Backup, FramedTransport, HeapSecretKey, Reconnectable, Transport,
+    Backup, FramedTransport, HeapSecretKey, InmemoryTransport, Reconnectable, Transport,
 };
 use async_trait::async_trait;
 use log::*;
@@ -37,6 +37,18 @@ pub enum Connection<T> {
         /// Underlying transport used to communicate
         transport: FramedTransport<T>,
     },
+}
+
+impl<T> Connection<T> {
+    /// Returns true if this is a connection on the client-side.
+    pub fn is_client(&self) -> bool {
+        matches!(self, Self::Client { .. })
+    }
+
+    /// Returns true if this is a connection on the server-side.
+    pub fn is_server(&self) -> bool {
+        matches!(self, Self::Server { .. })
+    }
 }
 
 impl<T> Deref for Connection<T> {
@@ -345,5 +357,33 @@ where
         }
 
         Ok(Self::Server { id, tx, transport })
+    }
+}
+
+impl Connection<InmemoryTransport> {
+    /// Establishes a pair of [`Connection`]s using [`InmemoryTransport`] underneath, returning
+    /// them in the form (client, server).
+    ///
+    /// ### Note
+    ///
+    /// This skips handshakes, authentication, and backup processing. These connections cannot be
+    /// reconnected and have no encryption.
+    pub fn pair(buffer: usize) -> (Self, Self) {
+        let id = rand::random::<ConnectionId>();
+        let (t1, t2) = FramedTransport::pair(buffer);
+
+        let client = Connection::Client {
+            id,
+            reauth_otp: HeapSecretKey::generate(32).unwrap(),
+            transport: t1,
+        };
+
+        let server = Connection::Server {
+            id,
+            tx: oneshot::channel().0,
+            transport: t2,
+        };
+
+        (client, server)
     }
 }
