@@ -93,11 +93,10 @@ impl<T> FramedTransport<T> {
         self.codec.as_mut()
     }
 
-    /// Clears the internal buffers and backup used by the transport.
+    /// Clears the internal transport buffers.
     pub fn clear(&mut self) {
         self.incoming.clear();
         self.outgoing.clear();
-        self.backup.clear();
     }
 }
 
@@ -426,8 +425,7 @@ impl<T: Transport> FramedTransport<T> {
                 .expect("Cannot case usize to u64");
 
             // Clear our internal buffers
-            this.incoming.clear();
-            this.outgoing.clear();
+            this.clear();
 
             // Communicate frame counters with other side so we can determine how many frames to send
             // and how many to receive. Wait until we get the stats from the other side, and then send
@@ -599,17 +597,22 @@ impl<T: Transport> FramedTransport<T> {
         let old_codec = std::mem::replace(&mut self.codec, Box::new(PlainCodec::new()));
         self.clear();
 
+        // Swap out our backup so we don't mutate it from synchronization efforts
+        let backup = std::mem::take(&mut self.backup);
+
         // Transform the transport's codec to abide by the choice. In the case of an error, we
         // reset the codec back to what it was prior to attempting the handshake and clear the
         // internal buffers as they may be corrupt.
         match self.handshake_impl(handshake).await {
             Ok(codec) => {
                 self.set_codec(codec);
+                self.backup = backup;
                 Ok(())
             }
             Err(x) => {
                 self.set_codec(old_codec);
                 self.clear();
+                self.backup = backup;
                 Err(x)
             }
         }
