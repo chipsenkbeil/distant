@@ -857,6 +857,53 @@ mod tests {
         let (mut t1, t2) = FramedTransport::pair(100);
         let verifier = Verifier::none();
         let keychain = Keychain::new();
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn({
+            let keychain = keychain.clone();
+            async move {
+                Connection::server(t2.into_inner(), &verifier, keychain)
+                    .await
+                    .unwrap()
+            }
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate a new connection
+        t1.write_frame_for(&ConnectType::Connect).await.unwrap();
+
+        // Receive the connection id
+        let id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
+
+        // Pass verification using the dummy handler since our verifier supports no authentication
+        t1.authenticate(DummyAuthHandler).await.unwrap();
+
+        // Perform otp exchange
+        let otp = t1.exchange_keys().await.unwrap();
+
+        // Server connection should be established, and have received some replayed frames
+        let server = task.await.unwrap();
+
+        // Validate the connection ids match
+        assert_eq!(server.id(), id);
+
+        // Validate the OTP was stored in our keychain
+        assert!(
+            keychain
+                .has_key(id.to_string(), otp.into_heap_secret_key())
+                .await,
+            "Missing OTP"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn server_should_succeed_if_establishes_connection_with_existing_client() {
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
         let key = HeapSecretKey::generate(32).unwrap();
 
         keychain
@@ -926,21 +973,16 @@ mod tests {
         // Validate the connection ids match
         assert_eq!(server.id(), id);
 
+        // Check that our old connection id is no longer contained in the keychain
+        assert!(!keychain.has_id("1234").await, "Old OTP still exists");
+
         // Validate the OTP was stored in our keychain
         assert!(
-            keychain.has_key("1234", otp.into_heap_secret_key()).await,
+            keychain
+                .has_key(id.to_string(), otp.into_heap_secret_key())
+                .await,
             "Missing OTP"
         );
-    }
-
-    #[test(tokio::test)]
-    async fn server_should_succeed_if_establishes_connection_with_existing_client() {
-        todo!();
-    }
-
-    #[test(tokio::test)]
-    async fn server_should_synchronize_previous_backup_with_existing_client() {
-        todo!();
     }
 
     #[test(tokio::test)]

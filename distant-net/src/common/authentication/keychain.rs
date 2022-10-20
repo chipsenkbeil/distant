@@ -80,6 +80,11 @@ impl<T> Keychain<T> {
             .map(|(_, data)| data)
     }
 
+    /// Checks if there is an `id` stored within the keychain.
+    pub async fn has_id(&self, id: impl AsRef<str>) -> bool {
+        self.map.read().await.contains_key(id.as_ref())
+    }
+
     /// Checks if there is a key with the given `id` that matches the provided `key`.
     pub async fn has_key(&self, id: impl AsRef<str>, key: impl PartialEq<HeapSecretKey>) -> bool {
         self.map
