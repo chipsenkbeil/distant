@@ -323,18 +323,21 @@ impl<T: Transport> FramedTransport<T> {
         F: TryInto<Frame<'a>>,
         F::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
+        // Grab the frame to send
+        let frame = frame
+            .try_into()
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
+
         // Encode the frame and store it in our outgoing queue
-        let frame = self.codec.encode(
-            frame
-                .try_into()
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-        )?;
-        frame.write(&mut self.outgoing)?;
+        self.codec
+            .encode(frame.as_borrowed())?
+            .write(&mut self.outgoing)?;
 
         // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
         self.backup.increment_sent_cnt();
 
-        // Then we store the frame for the future in case we need to retry sending it later
+        // Then we store the raw frame (non-encoded) for the future in case we need to retry
+        // sending it later (possibly with a different codec)
         self.backup.push_frame(frame);
 
         // Attempt to write everything in our queue
@@ -476,7 +479,9 @@ impl<T: Transport> FramedTransport<T> {
             backup.truncate_front(resend_cnt.try_into().expect("Cannot cast usize to u64"));
 
             debug!("Sending {resend_cnt} frames");
-            backup.write(&mut this.outgoing)?;
+            for frame in backup.frames() {
+                this.try_write_frame(frame.as_borrowed())?;
+            }
             this.flush().await?;
 
             // Receive all expected frames, placing their contents into our incoming queue
@@ -495,7 +500,10 @@ impl<T: Transport> FramedTransport<T> {
                         ),
                     )
                 })?;
-                frame.write(&mut this.incoming)?;
+
+                // Encode our frame and write it to be queued in our incoming data
+                // NOTE: We have to do encoding here as incoming bytes are expected to be encoded
+                this.codec.encode(frame)?.write(&mut this.incoming)?;
             }
 
             // Catch up our read count as we can have the case where the other side has a higher
@@ -815,10 +823,10 @@ where
 }
 
 impl FramedTransport<InmemoryTransport> {
-    /// Produces a pair of inmemory transports that are connected to each other using
-    /// a standard codec.
+    /// Produces a pair of inmemory transports that are connected to each other using a
+    /// [`PlainCodec`].
     ///
-    /// Sets the buffer for message passing for each underlying transport to the given buffer size
+    /// Sets the buffer for message passing for each underlying transport to the given buffer size.
     pub fn pair(
         buffer: usize,
     ) -> (
@@ -829,6 +837,11 @@ impl FramedTransport<InmemoryTransport> {
         let a = FramedTransport::new(a, Box::new(PlainCodec::new()));
         let b = FramedTransport::new(b, Box::new(PlainCodec::new()));
         (a, b)
+    }
+
+    /// Links the underlying transports together using [`InmemoryTransport::link`].
+    pub fn link(&mut self, other: &mut Self, buffer: usize) {
+        self.inner.link(&mut other.inner, buffer)
     }
 }
 
@@ -1809,6 +1822,41 @@ mod tests {
         assert_eq!(t2.backup.sent_cnt(), 0, "Wrong sent cnt");
         assert_eq!(t2.backup.received_cnt(), 2, "Wrong received cnt");
         assert_eq!(t2.backup.frame_cnt(), 0, "Wrong frame cnt");
+    }
+
+    #[test(tokio::test)]
+    async fn synchronize_should_work_even_if_codec_changes_between_attempts() {
+        let (mut t1, _t1_other) = FramedTransport::pair(100);
+        let (mut t2, _t2_other) = FramedTransport::pair(100);
+
+        // Send some frames from each side
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+        t1.write_frame(Frame::new(b"world")).await.unwrap();
+        t2.write_frame(Frame::new(b"foo")).await.unwrap();
+        t2.write_frame(Frame::new(b"bar")).await.unwrap();
+
+        // Drop the other transports, link our real transports together, and change the codec
+        drop(_t1_other);
+        drop(_t2_other);
+        t1.link(&mut t2, 100);
+        let codec = EncryptionCodec::new_xchacha20poly1305(Default::default());
+        t1.codec = Box::new(codec.clone());
+        t2.codec = Box::new(codec);
+
+        // Spawn a separate task to do synchronization so we don't deadlock
+        let task = tokio::spawn(async move {
+            t2.synchronize().await.unwrap();
+            t2
+        });
+
+        t1.synchronize().await.unwrap();
+
+        // Verify that we get the appropriate frames from both sides
+        let mut t2 = task.await.unwrap();
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"foo");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"bar");
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t2.read_frame().await.unwrap().unwrap(), b"world");
     }
 
     #[test(tokio::test)]

@@ -342,8 +342,8 @@ where
                         debug!("[Conn {id}] Deriving future OTP for reauthentication");
                         let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
 
-                        // Synchronize using the provided backup
-                        debug!("[Conn {id}] Synchronizing frame state");
+                        // Grab the old backup and swap it into our transport
+                        debug!("[Conn {id}] Acquiring backup for existing connection");
                         match x.await {
                             Ok(backup) => {
                                 transport.backup = backup;
@@ -352,6 +352,9 @@ where
                                 warn!("[Conn {id}] Missing backup");
                             }
                         }
+
+                        // Synchronize using the provided backup
+                        debug!("[Conn {id}] Synchronizing frame state");
                         transport.synchronize().await?;
 
                         // Store the id, OTP, and backup retrieval in our database
@@ -617,8 +620,8 @@ mod tests {
         // Perform first step of completing client-side of handshake
         t1.client_handshake().await.unwrap();
 
-        // Drop the transport to cause the server connection to fail waiting on connect type
-        drop(t1);
+        // Send some garbage that is not the connection type
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
 
         // Server should fail
         task.await.unwrap_err();
@@ -651,6 +654,7 @@ mod tests {
         t1.authenticate(DummyAuthHandler).await.unwrap_err();
 
         // Drop the transport so we kill the server-side connection
+        // NOTE: If we don't drop here, the above authentication failure won't kill the server
         drop(t1);
 
         // Server should fail
@@ -659,38 +663,274 @@ mod tests {
 
     #[test(tokio::test)]
     async fn server_should_fail_if_unable_to_exchange_otp_for_reauthentication_with_new_client() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate a new connection
+        t1.write_frame_for(&ConnectType::Connect).await.unwrap();
+
+        // Receive the connection id
+        let _id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
+
+        // Pass verification using the dummy handler since our verifier supports no authentication
+        t1.authenticate(DummyAuthHandler).await.unwrap();
+
+        // Send some garbage to fail the exchange
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_existing_client_id_is_invalid() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate an existing connection, which should cause the server-side to fail
+        // because there is no matching id
+        t1.write_frame_for(&ConnectType::Reconnect {
+            id: 1234,
+            otp: HeapSecretKey::generate(32)
+                .unwrap()
+                .unprotected_into_bytes(),
+        })
+        .await
+        .unwrap();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_existing_client_otp_is_invalid() {
-        todo!();
-    }
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
 
-    #[test(tokio::test)]
-    async fn server_should_fail_if_unable_to_send_id_to_existing_client() {
-        todo!();
+        keychain
+            .insert(
+                1234.to_string(),
+                HeapSecretKey::generate(32).unwrap(),
+                oneshot::channel().1,
+            )
+            .await;
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate an existing connection, which should cause the server-side to fail
+        // because the OTP is wrong for the given id
+        t1.write_frame_for(&ConnectType::Reconnect {
+            id: 1234,
+            otp: HeapSecretKey::generate(32)
+                .unwrap()
+                .unprotected_into_bytes(),
+        })
+        .await
+        .unwrap();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_unable_to_exchange_otp_for_reauthentication_with_existing_client(
     ) {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
+        let key = HeapSecretKey::generate(32).unwrap();
+
+        keychain
+            .insert(1234.to_string(), key.clone(), oneshot::channel().1)
+            .await;
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate an existing connection, which should cause the server-side to fail
+        // because the OTP is wrong for the given id
+        t1.write_frame_for(&ConnectType::Reconnect {
+            id: 1234,
+            otp: key.unprotected_into_bytes(),
+        })
+        .await
+        .unwrap();
+
+        // Receive a new client id
+        let _id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
+
+        // Send garbage to fail the otp exchange
+        t1.write_frame(Frame::new(b"hello")).await.unwrap();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_unable_to_synchronize_with_existing_client() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
+        let key = HeapSecretKey::generate(32).unwrap();
+
+        keychain
+            .insert(1234.to_string(), key.clone(), oneshot::channel().1)
+            .await;
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate an existing connection, which should cause the server-side to fail
+        // because the OTP is wrong for the given id
+        t1.write_frame_for(&ConnectType::Reconnect {
+            id: 1234,
+            otp: key.unprotected_into_bytes(),
+        })
+        .await
+        .unwrap();
+
+        // Receive a new client id
+        let _id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
+
+        // Perform otp exchange
+        let _otp = t1.exchange_keys().await.unwrap();
+
+        // Send garbage to fail synchronization
+        t1.write_frame(b"hello").await.unwrap();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_succeed_if_establishes_connection_with_new_client() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
+        let key = HeapSecretKey::generate(32).unwrap();
+
+        keychain
+            .insert(1234.to_string(), key.clone(), {
+                // Create a custom backup we'll use to replay frames from the server-side
+                let mut backup = Backup::new();
+
+                backup.push_frame(Frame::new(b"hello"));
+                backup.push_frame(Frame::new(b"world"));
+                backup.increment_sent_cnt();
+                backup.increment_sent_cnt();
+
+                let (tx, rx) = oneshot::channel();
+                tx.send(backup).unwrap();
+                rx
+            })
+            .await;
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn({
+            let keychain = keychain.clone();
+            async move {
+                Connection::server(t2.into_inner(), &verifier, keychain)
+                    .await
+                    .unwrap()
+            }
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate an existing connection, which should cause the server-side to fail
+        // because the OTP is wrong for the given id
+        t1.write_frame_for(&ConnectType::Reconnect {
+            id: 1234,
+            otp: key.unprotected_into_bytes(),
+        })
+        .await
+        .unwrap();
+
+        // Receive a new client id
+        let id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
+
+        // Perform otp exchange
+        let otp = t1.exchange_keys().await.unwrap();
+
+        // Queue up some frames to send to the server
+        t1.backup.clear();
+        t1.backup.push_frame(Frame::new(b"foo"));
+        t1.backup.push_frame(Frame::new(b"bar"));
+        t1.backup.increment_sent_cnt();
+        t1.backup.increment_sent_cnt();
+
+        // Perform synchronization
+        t1.synchronize().await.unwrap();
+
+        // Verify that we received frames from the server
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"hello");
+        assert_eq!(t1.read_frame().await.unwrap().unwrap(), b"world");
+
+        // Server connection should be established, and have received some replayed frames
+        let mut server = task.await.unwrap();
+        assert_eq!(server.read_frame().await.unwrap().unwrap(), b"foo");
+        assert_eq!(server.read_frame().await.unwrap().unwrap(), b"bar");
+
+        // Validate the connection ids match
+        assert_eq!(server.id(), id);
+
+        // Validate the OTP was stored in our keychain
+        assert!(
+            keychain.has_key("1234", otp.into_heap_secret_key()).await,
+            "Missing OTP"
+        );
     }
 
     #[test(tokio::test)]

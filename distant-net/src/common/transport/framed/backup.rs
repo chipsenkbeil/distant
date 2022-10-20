@@ -1,7 +1,5 @@
 use super::{Frame, OwnedFrame};
-use bytes::BytesMut;
 use std::collections::VecDeque;
-use std::io;
 
 /// Maximum size (in bytes) for saved frames (256MiB)
 const MAX_BACKUP_SIZE: usize = 256 * 1024 * 1024;
@@ -110,7 +108,7 @@ impl Backup {
     /// ### Note
     ///
     /// Like all other modifications, this will do nothing if the backup is frozen.
-    pub(super) fn increment_sent_cnt(&mut self) {
+    pub(crate) fn increment_sent_cnt(&mut self) {
         if !self.frozen {
             self.sent_cnt += 1;
         }
@@ -153,7 +151,7 @@ impl Backup {
     /// ### Note
     ///
     /// Like all other modifications, this will do nothing if the backup is frozen.
-    pub(super) fn push_frame(&mut self, frame: Frame) {
+    pub(crate) fn push_frame(&mut self, frame: Frame) {
         if self.max_backup_size > 0 && !self.frozen {
             self.current_backup_size += frame.len();
             self.frames.push_back(frame.into_owned());
@@ -179,15 +177,9 @@ impl Backup {
         self.frames.len()
     }
 
-    /// Writes all stored frames to the `dst` by invoking [`Frame::write`] in sequence.
-    ///
-    /// [`Frame::write`]: super::Frame::write
-    pub(super) fn write(&self, dst: &mut BytesMut) -> io::Result<()> {
-        for frame in self.frames.iter() {
-            frame.write(dst)?;
-        }
-
-        Ok(())
+    /// Returns an iterator over the frames contained in the backup.
+    pub(super) fn frames(&self) -> impl Iterator<Item = &Frame> {
+        self.frames.iter()
     }
 
     /// Truncates the stored frames to be no larger than `size` total frames by popping from the

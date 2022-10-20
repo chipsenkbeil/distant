@@ -57,6 +57,25 @@ impl InmemoryTransport {
         (transport, Self::new(tx, rx))
     }
 
+    /// Links two independent [`InmemoryTransport`] together by dropping their internal channels
+    /// and generating new ones of `buffer` capacity to connect these transports.
+    ///
+    /// ### Note
+    ///
+    /// This will drop any pre-existing data in the internal storage to avoid corruption.
+    pub fn link(&mut self, other: &mut InmemoryTransport, buffer: usize) {
+        let (incoming_tx, incoming_rx) = mpsc::channel(buffer);
+        let (outgoing_tx, outgoing_rx) = mpsc::channel(buffer);
+
+        self.buf = Mutex::new(None);
+        self.tx = outgoing_tx;
+        self.rx = Mutex::new(incoming_rx);
+
+        other.buf = Mutex::new(None);
+        other.tx = incoming_tx;
+        other.rx = Mutex::new(outgoing_rx);
+    }
+
     /// Returns true if the read channel is closed, meaning it will no longer receive more data.
     /// This does not factor in data remaining in the internal buffer, meaning that this may return
     /// true while the transport still has data remaining in the internal buffer.
