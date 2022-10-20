@@ -650,6 +650,9 @@ mod tests {
         // Fail verification using the dummy handler that will fail when asked for a static key
         t1.authenticate(DummyAuthHandler).await.unwrap_err();
 
+        // Drop the transport so we kill the server-side connection
+        drop(t1);
+
         // Server should fail
         task.await.unwrap_err();
     }
