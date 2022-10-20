@@ -1,4 +1,4 @@
-use super::{msg::*, Authenticator};
+use super::{super::HeapSecretKey, msg::*, Authenticator};
 use async_trait::async_trait;
 use log::*;
 use std::collections::HashMap;
@@ -40,6 +40,13 @@ impl Verifier {
     pub fn none() -> Self {
         Self::new(vec![
             Box::new(NoneAuthenticationMethod::new()) as Box<dyn AuthenticationMethod>
+        ])
+    }
+
+    /// Creates a verifier that uses the [`StaticKeyAuthenticationMethod`] exclusively.
+    pub fn static_key(key: impl Into<HeapSecretKey>) -> Self {
+        Self::new(vec![
+            Box::new(StaticKeyAuthenticationMethod::new(key)) as Box<dyn AuthenticationMethod>
         ])
     }
 

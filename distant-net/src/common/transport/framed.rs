@@ -98,6 +98,11 @@ impl<T> FramedTransport<T> {
         self.incoming.clear();
         self.outgoing.clear();
     }
+
+    /// Consumes this transport, returning the inner value that it wraps.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
 }
 
 impl<T> fmt::Debug for FramedTransport<T> {

@@ -13,6 +13,7 @@ use tokio::sync::oneshot;
 pub type ConnectionId = u32;
 
 /// Represents a connection from either the client or server side
+#[derive(Debug)]
 pub enum Connection<T> {
     /// Connection from the client side
     Client {
@@ -48,6 +49,22 @@ impl<T> Connection<T> {
     /// Returns true if this is a connection on the server-side.
     pub fn is_server(&self) -> bool {
         matches!(self, Self::Server { .. })
+    }
+
+    /// Returns the id of the connection.
+    pub fn id(&self) -> ConnectionId {
+        match self {
+            Self::Client { id, .. } => *id,
+            Self::Server { id, .. } => *id,
+        }
+    }
+
+    /// Returns the OTP associated with the connection, or none if connection is server-side.
+    pub fn otp(&self) -> Option<&HeapSecretKey> {
+        match self {
+            Self::Client { reauth_otp, .. } => Some(reauth_otp),
+            Self::Server { .. } => None,
+        }
     }
 }
 
@@ -391,56 +408,250 @@ impl Connection<InmemoryTransport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::{
+        authentication::{msg::Challenge, Authenticator, DummyAuthHandler},
+        Frame,
+    };
     use test_log::test;
 
     #[test(tokio::test)]
     async fn client_should_fail_if_codec_handshake_fails() {
-        todo!();
-    }
+        let (mut t1, t2) = FramedTransport::pair(100);
 
-    #[test(tokio::test)]
-    async fn client_should_fail_if_unable_to_send_connect_type() {
-        todo!();
+        // Spawn a task to perform the client connection so we don't deadlock while simulating the
+        // server actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::client(t2.into_inner(), DummyAuthHandler)
+                .await
+                .unwrap()
+        });
+
+        // Send garbage to fail the handshake
+        t1.write_frame(Frame::new(b"invalid")).await.unwrap();
+
+        // Client should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn client_should_fail_if_unable_to_receive_connection_id_from_server() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+
+        // Spawn a task to perform the client connection so we don't deadlock while simulating the
+        // server actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::client(t2.into_inner(), DummyAuthHandler)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of connection by establishing the codec
+        t1.server_handshake().await.unwrap();
+
+        // Receive a type that indicates a new connection
+        let ct = t1.read_frame_as::<ConnectType>().await.unwrap().unwrap();
+        assert!(
+            matches!(ct, ConnectType::Connect),
+            "Unexpected connect type: {ct:?}"
+        );
+
+        // Drop to cause id retrieval on client to fail
+        drop(t1);
+
+        // Client should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn client_should_fail_if_authentication_fails() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+
+        // Spawn a task to perform the client connection so we don't deadlock while simulating the
+        // server actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::client(t2.into_inner(), DummyAuthHandler)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of connection by establishing the codec
+        t1.server_handshake().await.unwrap();
+
+        // Receive a type that indicates a new connection
+        let ct = t1.read_frame_as::<ConnectType>().await.unwrap().unwrap();
+        assert!(
+            matches!(ct, ConnectType::Connect),
+            "Unexpected connect type: {ct:?}"
+        );
+
+        // Send a connection id as second step of connection
+        t1.write_frame_for(&rand::random::<ConnectionId>())
+            .await
+            .unwrap();
+
+        // Perform an authentication request that will fail on the client side, which will
+        // cause the client to drop and therefore this transport to fail in getting a response
+        t1.challenge(Challenge {
+            questions: Vec::new(),
+            options: Default::default(),
+        })
+        .await
+        .unwrap_err();
+
+        // Client should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn client_should_fail_if_unable_to_exchange_otp_for_reauthentication() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+
+        // Spawn a task to perform the client connection so we don't deadlock while simulating the
+        // server actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::client(t2.into_inner(), DummyAuthHandler)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of connection by establishing the codec
+        t1.server_handshake().await.unwrap();
+
+        // Receive a type that indicates a new connection
+        let ct = t1.read_frame_as::<ConnectType>().await.unwrap().unwrap();
+        assert!(
+            matches!(ct, ConnectType::Connect),
+            "Unexpected connect type: {ct:?}"
+        );
+
+        // Send a connection id as second step of connection
+        t1.write_frame_for(&rand::random::<ConnectionId>())
+            .await
+            .unwrap();
+
+        // Perform verification as third step using none method, which should always succeed
+        // without challenging
+        Verifier::none().verify(&mut t1).await.unwrap();
+
+        // Send garbage to fail the key exchange
+        t1.write_frame(Frame::new(b"invalid")).await.unwrap();
+
+        // Client should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn client_should_succeed_if_establishes_connection_with_server() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+
+        // Spawn a task to perform the client connection so we don't deadlock while simulating the
+        // server actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::client(t2.into_inner(), DummyAuthHandler)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of connection by establishing the codec
+        t1.server_handshake().await.unwrap();
+
+        // Receive a type that indicates a new connection
+        let ct = t1.read_frame_as::<ConnectType>().await.unwrap().unwrap();
+        assert!(
+            matches!(ct, ConnectType::Connect),
+            "Unexpected connect type: {ct:?}"
+        );
+
+        // Send a connection id as second step of connection
+        t1.write_frame_for(&rand::random::<ConnectionId>())
+            .await
+            .unwrap();
+
+        // Perform verification as third step using none method, which should always succeed
+        // without challenging
+        Verifier::none().verify(&mut t1).await.unwrap();
+
+        // Perform fourth step of key exchange for OTP
+        let otp = t1.exchange_keys().await.unwrap().into_heap_secret_key();
+
+        // Client should succeed and have an OTP that matches the server-side version
+        let client = task.await.unwrap();
+        assert_eq!(client.otp(), Some(&otp));
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_codec_handshake_fails() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Send garbage to fail the handshake
+        t1.write_frame(Frame::new(b"invalid")).await.unwrap();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_unable_to_receive_connect_type() {
-        todo!();
-    }
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::none();
+        let keychain = Keychain::new();
 
-    #[test(tokio::test)]
-    async fn server_should_fail_if_unable_to_send_id_to_new_client() {
-        todo!();
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Drop the transport to cause the server connection to fail waiting on connect type
+        drop(t1);
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn server_should_fail_if_unable_to_verify_new_client() {
-        todo!();
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let verifier = Verifier::static_key(HeapSecretKey::generate(32).unwrap());
+        let keychain = Keychain::new();
+
+        // Spawn a task to perform the server connection so we don't deadlock while simulating the
+        // client actions on the other side
+        let task = tokio::spawn(async move {
+            Connection::server(t2.into_inner(), &verifier, keychain)
+                .await
+                .unwrap()
+        });
+
+        // Perform first step of completing client-side of handshake
+        t1.client_handshake().await.unwrap();
+
+        // Send type to indicate a new connection
+        t1.write_frame_for(&ConnectType::Connect).await.unwrap();
+
+        // Receive the connection id
+        let _id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
+
+        // Fail verification using the dummy handler that will fail when asked for a static key
+        t1.authenticate(DummyAuthHandler).await.unwrap_err();
+
+        // Server should fail
+        task.await.unwrap_err();
     }
 
     #[test(tokio::test)]
