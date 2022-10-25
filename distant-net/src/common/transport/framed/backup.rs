@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 const MAX_BACKUP_SIZE: usize = 256 * 1024 * 1024;
 
 /// Stores [`Frame`]s for reuse later.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Backup {
     /// Maximum size (in bytes) to save frames in case we need to backup them
     ///
@@ -115,7 +115,7 @@ impl Backup {
     }
 
     /// Returns how many frames have been sent.
-    pub(super) fn sent_cnt(&self) -> u64 {
+    pub(crate) fn sent_cnt(&self) -> u64 {
         self.sent_cnt
     }
 
@@ -131,7 +131,7 @@ impl Backup {
     }
 
     /// Returns how many frames have been received.
-    pub(super) fn received_cnt(&self) -> u64 {
+    pub(crate) fn received_cnt(&self) -> u64 {
         self.received_cnt
     }
 
@@ -191,7 +191,10 @@ impl Backup {
     pub(super) fn truncate_front(&mut self, size: usize) {
         if !self.frozen {
             while self.frames.len() > size {
-                self.frames.pop_front();
+                if let Some(frame) = self.frames.pop_front() {
+                    self.current_backup_size -=
+                        std::cmp::min(frame.len(), self.current_backup_size);
+                }
             }
         }
     }

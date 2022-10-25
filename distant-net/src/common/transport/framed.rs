@@ -99,6 +99,16 @@ impl<T> FramedTransport<T> {
         self.outgoing.clear();
     }
 
+    /// Returns a reference to the inner value this transport wraps.
+    pub fn as_inner(&self) -> &T {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner value this transport wraps.
+    pub fn as_mut_inner(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
     /// Consumes this transport, returning the inner value that it wraps.
     pub fn into_inner(self) -> T {
         self.inner
