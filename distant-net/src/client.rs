@@ -150,7 +150,11 @@ where
                                 Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                                     write_blocked = true
                                 }
-                                Err(x) => error!("Send failed: {x}"),
+                                Err(x) => {
+                                    error!("Send failed: {x}");
+                                    needs_reconnect = true;
+                                    continue;
+                                }
                             },
                             Err(x) => {
                                 error!("Unable to serialize outgoing request: {x}");
@@ -169,6 +173,8 @@ where
                             Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
                             Err(x) => {
                                 error!("Failed to flush outgoing data: {x}");
+                                needs_reconnect = true;
+                                continue;
                             }
                         }
                     }
