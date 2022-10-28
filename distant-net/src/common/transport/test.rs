@@ -6,6 +6,7 @@ pub struct TestTransport {
     pub f_try_read: Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync>,
     pub f_try_write: Box<dyn Fn(&[u8]) -> io::Result<usize> + Send + Sync>,
     pub f_ready: Box<dyn Fn(Interest) -> io::Result<Ready> + Send + Sync>,
+    pub f_reconnect: Box<dyn Fn() -> io::Result<()> + Send + Sync>,
 }
 
 impl Default for TestTransport {
@@ -14,6 +15,7 @@ impl Default for TestTransport {
             f_try_read: Box::new(|_| unimplemented!()),
             f_try_write: Box::new(|_| unimplemented!()),
             f_ready: Box::new(|_| unimplemented!()),
+            f_reconnect: Box::new(|| unimplemented!()),
         }
     }
 }
@@ -21,7 +23,7 @@ impl Default for TestTransport {
 #[async_trait]
 impl Reconnectable for TestTransport {
     async fn reconnect(&mut self) -> io::Result<()> {
-        unimplemented!();
+        (self.f_reconnect)()
     }
 }
 

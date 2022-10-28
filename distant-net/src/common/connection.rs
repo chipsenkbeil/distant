@@ -425,6 +425,25 @@ impl Connection<InmemoryTransport> {
 }
 
 #[cfg(test)]
+impl<T: Transport> Connection<T> {
+    pub fn test_client(transport: T) -> Self {
+        Self::Client {
+            id: rand::random(),
+            reauth_otp: HeapSecretKey::generate(32).unwrap(),
+            transport: FramedTransport::plain(transport),
+        }
+    }
+
+    pub fn test_server(transport: T) -> Self {
+        Self::Server {
+            id: rand::random(),
+            tx: oneshot::channel().0,
+            transport: FramedTransport::plain(transport),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::common::{
