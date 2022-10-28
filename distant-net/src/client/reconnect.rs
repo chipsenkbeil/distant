@@ -5,6 +5,9 @@ use std::time::Duration;
 /// Represents the strategy to apply when attempting to reconnect the client to the server.
 #[derive(Clone, Debug)]
 pub enum ReconnectStrategy {
+    /// A retry strategy that will fail immediately if a reconnect is attempted.
+    Fail,
+
     /// A retry strategy driven by exponential back-off.
     ExponentialBackoff {
         /// Represents the initial time to wait between reconnect attempts.
@@ -52,22 +55,19 @@ pub enum ReconnectStrategy {
 }
 
 impl Default for ReconnectStrategy {
-    /// Creates a default strategy using exponential backoff logic starting from 1 second with
-    /// a factor of 2, a maximum duration of 30 seconds, a maximum retry count of 10, and a timeout
-    /// of 5 minutes per attempt.
+    /// Creates a reconnect strategy that will immediately fail.
     fn default() -> Self {
-        Self::ExponentialBackoff {
-            base: Duration::from_millis(1000),
-            factor: 2.0,
-            max_duration: Some(Duration::from_secs(30)),
-            max_retries: Some(10),
-            timeout: Some(Duration::from_secs(60 * 5)),
-        }
+        Self::Fail
     }
 }
 
 impl ReconnectStrategy {
     pub async fn reconnect<T: Reconnectable>(&mut self, reconnectable: &mut T) -> io::Result<()> {
+        // If our strategy is to immediately fail, do so
+        if self.is_fail() {
+            return Err(io::Error::from(io::ErrorKind::ConnectionAborted));
+        }
+
         // Keep track of last sleep length for use in adjustment
         let mut previous_sleep = None;
         let mut current_sleep = self.initial_sleep_duration();
@@ -125,9 +125,30 @@ impl ReconnectStrategy {
         result
     }
 
+    /// Returns true if this strategy is the fail variant.
+    pub fn is_fail(&self) -> bool {
+        matches!(self, Self::Fail)
+    }
+
+    /// Returns true if this strategy is the exponential backoff variant.
+    pub fn is_exponential_backoff(&self) -> bool {
+        matches!(self, Self::ExponentialBackoff { .. })
+    }
+
+    /// Returns true if this strategy is the fibonacci backoff variant.
+    pub fn is_fibonacci_backoff(&self) -> bool {
+        matches!(self, Self::FibonacciBackoff { .. })
+    }
+
+    /// Returns true if this strategy is the fixed interval variant.
+    pub fn is_fixed_interval(&self) -> bool {
+        matches!(self, Self::FixedInterval { .. })
+    }
+
     /// Returns the maximum duration between reconnect attempts, or None if there is no limit.
     pub fn max_duration(&self) -> Option<Duration> {
         match self {
+            ReconnectStrategy::Fail => None,
             ReconnectStrategy::ExponentialBackoff { max_duration, .. } => *max_duration,
             ReconnectStrategy::FibonacciBackoff { max_duration, .. } => *max_duration,
             ReconnectStrategy::FixedInterval { .. } => None,
@@ -138,6 +159,7 @@ impl ReconnectStrategy {
     /// forever.
     pub fn max_retries(&self) -> Option<usize> {
         match self {
+            ReconnectStrategy::Fail => None,
             ReconnectStrategy::ExponentialBackoff { max_retries, .. } => *max_retries,
             ReconnectStrategy::FibonacciBackoff { max_retries, .. } => *max_retries,
             ReconnectStrategy::FixedInterval { max_retries, .. } => *max_retries,
@@ -147,6 +169,7 @@ impl ReconnectStrategy {
     /// Returns the timeout per reconnect attempt that is associated with the strategy.
     pub fn timeout(&self) -> Option<Duration> {
         match self {
+            ReconnectStrategy::Fail => None,
             ReconnectStrategy::ExponentialBackoff { timeout, .. } => *timeout,
             ReconnectStrategy::FibonacciBackoff { timeout, .. } => *timeout,
             ReconnectStrategy::FixedInterval { timeout, .. } => *timeout,
@@ -156,6 +179,7 @@ impl ReconnectStrategy {
     /// Returns the initial duration to sleep.
     fn initial_sleep_duration(&self) -> Duration {
         match self {
+            ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { base, .. } => *base,
             ReconnectStrategy::FibonacciBackoff { base, .. } => *base,
             ReconnectStrategy::FixedInterval { interval, .. } => *interval,
@@ -165,6 +189,7 @@ impl ReconnectStrategy {
     /// Adjusts next sleep duration based on the strategy.
     fn adjust_sleep(&self, prev: Option<Duration>, curr: Duration) -> Duration {
         match self {
+            ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { factor, .. } => {
                 let next_millis = (curr.as_millis() as f64) * factor;
                 Duration::from_millis(if next_millis > (std::u64::MAX as f64) {

@@ -57,16 +57,20 @@ where
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let task = tokio::spawn(async move {
-            let mut needs_retry = false;
+            let mut needs_reconnect = false;
 
             loop {
-                if needs_retry {
+                // If we have flagged that a reconnect is needed, attempt to do so
+                if needs_reconnect {
                     info!("Client encountered issue, attempting to reconnect");
                     if log::log_enabled!(log::Level::Debug) {
                         debug!("Using strategy {strategy:?}");
                     }
                     match strategy.reconnect(&mut connection).await {
-                        Ok(x) => x,
+                        Ok(x) => {
+                            needs_reconnect = false;
+                            x
+                        }
                         Err(x) => {
                             error!("Unable to re-establish connection: {x}");
                             break;
@@ -84,7 +88,7 @@ where
                             Ok(result) => result,
                             Err(x) => {
                                 error!("Failed to examine ready state: {x}");
-                                needs_retry = true;
+                                needs_reconnect = true;
                                 continue;
                             }
                         }
@@ -125,7 +129,7 @@ where
                         }
                         Ok(None) => {
                             debug!("Connection closed");
-                            needs_retry = true;
+                            needs_reconnect = true;
                             continue;
                         }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
