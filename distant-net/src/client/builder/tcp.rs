@@ -1,4 +1,4 @@
-use crate::client::{Client, ClientBuilder};
+use crate::client::{Client, ClientBuilder, ReconnectStrategy};
 use crate::common::{authentication::AuthHandler, TcpTransport};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{io, net::ToSocketAddrs, time::Duration};
@@ -9,6 +9,10 @@ pub struct TcpClientBuilder<T>(ClientBuilder<T, ()>);
 impl<T> TcpClientBuilder<T> {
     pub fn auth_handler<A: AuthHandler>(self, auth_handler: A) -> TcpClientBuilder<A> {
         TcpClientBuilder(self.0.auth_handler(auth_handler))
+    }
+
+    pub fn reconnect_strategy(self, reconnect_strategy: ReconnectStrategy) -> TcpClientBuilder<T> {
+        TcpClientBuilder(self.0.reconnect_strategy(reconnect_strategy))
     }
 
     pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {

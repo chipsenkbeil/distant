@@ -1,4 +1,4 @@
-use crate::client::{Client, ClientBuilder};
+use crate::client::{Client, ClientBuilder, ReconnectStrategy};
 use crate::common::{authentication::AuthHandler, UnixSocketTransport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::Path;
@@ -10,6 +10,13 @@ pub struct UnixSocketClientBuilder<T>(ClientBuilder<T, ()>);
 impl<T> UnixSocketClientBuilder<T> {
     pub fn auth_handler<A: AuthHandler>(self, auth_handler: A) -> UnixSocketClientBuilder<A> {
         UnixSocketClientBuilder(self.0.auth_handler(auth_handler))
+    }
+
+    pub fn reconnect_strategy(
+        self,
+        reconnect_strategy: ReconnectStrategy,
+    ) -> UnixSocketClientBuilder<T> {
+        UnixSocketClientBuilder(self.0.reconnect_strategy(reconnect_strategy))
     }
 
     pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {

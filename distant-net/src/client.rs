@@ -1,15 +1,14 @@
 use crate::common::{Connection, Interest, Reconnectable, Request, Transport, UntypedResponse};
-use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
+    io,
     ops::{Deref, DerefMut},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
-    io,
-    sync::{mpsc, oneshot},
+    sync::mpsc,
     task::{JoinError, JoinHandle},
 };
 
@@ -19,6 +18,9 @@ pub use builder::*;
 mod channel;
 pub use channel::*;
 
+mod reconnect;
+pub use reconnect::*;
+
 /// Time to wait inbetween connection read/write when nothing was read or written on last pass
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
@@ -26,9 +28,6 @@ const SLEEP_DURATION: Duration = Duration::from_millis(50);
 pub struct Client<T, U> {
     /// Used to send requests to a server
     channel: Channel<T, U>,
-
-    /// Used to send reconnect request to inner transport
-    reconnect_tx: mpsc::Sender<oneshot::Sender<io::Result<()>>>,
 
     /// Used to send shutdown request to inner transport
     shutdown_tx: mpsc::Sender<()>,
@@ -43,14 +42,13 @@ where
     U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Spawns a client using the provided [`Connection`].
-    fn spawn<V>(mut connection: Connection<V>) -> Self
+    fn spawn<V>(mut connection: Connection<V>, mut strategy: ReconnectStrategy) -> Self
     where
         V: Transport + Send + Sync + 'static,
     {
         let post_office = Arc::new(PostOffice::default());
         let weak_post_office = Arc::downgrade(&post_office);
         let (tx, mut rx) = mpsc::channel::<Request<T>>(1);
-        let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<oneshot::Sender<io::Result<()>>>(1);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
         // Ensure that our transport starts off clean (nothing in buffers or backup)
@@ -59,34 +57,35 @@ where
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let task = tokio::spawn(async move {
+            let mut needs_retry = false;
+
             loop {
+                if needs_retry {
+                    info!("Client encountered issue, attempting to reconnect");
+                    if log::log_enabled!(log::Level::Debug) {
+                        debug!("Using strategy {strategy:?}");
+                    }
+                    match strategy.reconnect(&mut connection).await {
+                        Ok(x) => x,
+                        Err(x) => {
+                            error!("Unable to re-establish connection: {x}");
+                            break;
+                        }
+                    }
+                }
+
                 let ready = tokio::select! {
                     _ = shutdown_rx.recv() => {
                         debug!("Client got shutdown signal, so exiting event loop");
                         break;
-                    }
-                    cb = reconnect_rx.recv() => {
-                        debug!("Client got reconnect signal, so attempting to reconnect");
-                        if let Some(cb) = cb {
-                            let _ = match Reconnectable::reconnect(&mut connection).await {
-                                Ok(()) => cb.send(Ok(())),
-                                Err(x) => {
-                                    error!("Client reconnect failed: {x}");
-                                    cb.send(Err(x))
-                                }
-                            };
-                            continue;
-                        } else {
-                            error!("Client callback for reconnect missing! Corrupt state!");
-                            break;
-                        }
                     }
                     result = connection.ready(Interest::READABLE | Interest::WRITABLE) => {
                         match result {
                             Ok(result) => result,
                             Err(x) => {
                                 error!("Failed to examine ready state: {x}");
-                                break;
+                                needs_retry = true;
+                                continue;
                             }
                         }
                     }
@@ -126,7 +125,8 @@ where
                         }
                         Ok(None) => {
                             debug!("Connection closed");
-                            break;
+                            needs_retry = true;
+                            continue;
                         }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                         Err(x) => {
@@ -184,7 +184,6 @@ where
 
         Self {
             channel,
-            reconnect_tx,
             shutdown_tx,
             task,
         }
@@ -245,26 +244,6 @@ impl<T, U> Client<T, U> {
     /// Returns true if client's underlying event processing has finished/terminated
     pub fn is_finished(&self) -> bool {
         self.task.is_finished()
-    }
-}
-
-#[async_trait]
-impl<T, U> Reconnectable for Client<T, U>
-where
-    T: Send,
-    U: Send + Sync,
-{
-    async fn reconnect(&mut self) -> io::Result<()> {
-        let (tx, rx) = oneshot::channel();
-        if self.reconnect_tx.send(tx).await.is_ok() {
-            rx.await
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "Callback lost"))?
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Client internal task dead",
-            ))
-        }
     }
 }
 

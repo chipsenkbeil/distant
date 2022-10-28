@@ -1,4 +1,4 @@
-use crate::client::{Client, ClientBuilder};
+use crate::client::{Client, ClientBuilder, ReconnectStrategy};
 use crate::common::{authentication::AuthHandler, WindowsPipeTransport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::ffi::{OsStr, OsString};
@@ -16,6 +16,10 @@ impl<T> WindowsPipeClientBuilder<T> {
             inner: self.inner.auth_handler(auth_handler),
             local: self.local,
         }
+    }
+
+    pub fn reconnect_strategy(self, reconnect_strategy: ReconnectStrategy) -> WindowsPipeClientBuilder<T> {
+        WindowsPipeClientBuilder(self.0.reconnect_strategy(reconnect_strategy))
     }
 
     /// If true, will connect to a server listening on a Windows pipe at the specified address
