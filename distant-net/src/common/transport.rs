@@ -30,21 +30,21 @@ pub use windows::*;
 
 pub use tokio::io::{Interest, Ready};
 
-/// Duration to wait after WouldBlock received during looping operations like `read_exact`
+/// Duration to wait after WouldBlock received during looping operations like `read_exact`.
 const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
-/// Interface representing a connection that is reconnectable
+/// Interface representing a connection that is reconnectable.
 #[async_trait]
 pub trait Reconnectable {
-    /// Attempts to reconnect an already-established connection
+    /// Attempts to reconnect an already-established connection.
     async fn reconnect(&mut self) -> io::Result<()>;
 }
 
-/// Interface representing a transport of raw bytes into and out of the system
+/// Interface representing a transport of raw bytes into and out of the system.
 #[async_trait]
 pub trait Transport: Reconnectable {
     /// Tries to read data from the transport into the provided buffer, returning how many bytes
-    /// were read
+    /// were read.
     ///
     /// This call may return an error with [`ErrorKind::WouldBlock`] in the case that the transport
     /// is not ready to read data.
@@ -52,7 +52,7 @@ pub trait Transport: Reconnectable {
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize>;
 
-    /// Try to write a buffer to the transport, returning how many bytes were written
+    /// Try to write a buffer to the transport, returning how many bytes were written.
     ///
     /// This call may return an error with [`ErrorKind::WouldBlock`] in the case that the transport
     /// is not ready to write data.
@@ -60,16 +60,17 @@ pub trait Transport: Reconnectable {
     /// [`ErrorKind::WouldBlock`]: io::ErrorKind::WouldBlock
     fn try_write(&self, buf: &[u8]) -> io::Result<usize>;
 
-    /// Waits for the transport to be ready based on the given interest, returning the ready status
+    /// Waits for the transport to be ready based on the given interest, returning the ready
+    /// status.
     async fn ready(&self, interest: Interest) -> io::Result<Ready>;
 
-    /// Waits for the transport to be readable to follow up with `try_read`
+    /// Waits for the transport to be readable to follow up with `try_read`.
     async fn readable(&self) -> io::Result<()> {
         self.ready(Interest::READABLE).await?;
         Ok(())
     }
 
-    /// Waits for the transport to be writeable to follow up with `try_write`
+    /// Waits for the transport to be writeable to follow up with `try_write`.
     async fn writeable(&self) -> io::Result<()> {
         self.ready(Interest::WRITABLE).await?;
         Ok(())

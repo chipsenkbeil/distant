@@ -306,207 +306,303 @@ impl<T, U> From<Client<T, U>> for Channel<T, U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::{Ready, Response, TestTransport};
+    use test_log::test;
 
     type TestClient = Client<u8, u8>;
 
-    /// Tests for the spawned client task.
-    mod spawned {
-        use super::*;
-        use crate::common::{Ready, Response, TestTransport};
-        use test_log::test;
-        use tokio::sync::mpsc::error::TryRecvError;
-
-        /// Creates a new test transport whose operations do not panic, but do nothing.
-        #[inline]
-        fn new_test_transport() -> TestTransport {
-            TestTransport {
-                f_try_read: Box::new(|_| Err(io::ErrorKind::WouldBlock.into())),
-                f_try_write: Box::new(|_| Err(io::ErrorKind::WouldBlock.into())),
-                f_ready: Box::new(|_| Ok(Ready::EMPTY)),
-                f_reconnect: Box::new(|| Ok(())),
-            }
+    /// Creates a new test transport whose operations do not panic, but do nothing.
+    #[inline]
+    fn new_test_transport() -> TestTransport {
+        TestTransport {
+            f_try_read: Box::new(|_| Err(io::ErrorKind::WouldBlock.into())),
+            f_try_write: Box::new(|_| Err(io::ErrorKind::WouldBlock.into())),
+            f_ready: Box::new(|_| Ok(Ready::EMPTY)),
+            f_reconnect: Box::new(|| Ok(())),
         }
+    }
 
-        #[test(tokio::test)]
-        async fn should_write_queued_requests_as_outgoing_frames() {
-            let (client, mut server) = Connection::pair(100);
+    #[test(tokio::test)]
+    async fn should_write_queued_requests_as_outgoing_frames() {
+        let (client, mut server) = Connection::pair(100);
 
-            let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
-            client.fire(Request::new(1u8)).await.unwrap();
-            client.fire(Request::new(2u8)).await.unwrap();
-            client.fire(Request::new(3u8)).await.unwrap();
+        let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
+        client.fire(Request::new(1u8)).await.unwrap();
+        client.fire(Request::new(2u8)).await.unwrap();
+        client.fire(Request::new(3u8)).await.unwrap();
 
-            assert_eq!(
-                server
-                    .read_frame_as::<Request<u8>>()
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .payload,
-                1
-            );
-            assert_eq!(
-                server
-                    .read_frame_as::<Request<u8>>()
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .payload,
-                2
-            );
-            assert_eq!(
-                server
-                    .read_frame_as::<Request<u8>>()
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .payload,
-                3
-            );
-        }
+        assert_eq!(
+            server
+                .read_frame_as::<Request<u8>>()
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            1
+        );
+        assert_eq!(
+            server
+                .read_frame_as::<Request<u8>>()
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            2
+        );
+        assert_eq!(
+            server
+                .read_frame_as::<Request<u8>>()
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            3
+        );
+    }
 
-        #[test(tokio::test)]
-        async fn should_read_incoming_frames_as_responses_and_deliver_them_to_waiting_mailboxes() {
-            let (client, mut server) = Connection::pair(100);
+    #[test(tokio::test)]
+    async fn should_read_incoming_frames_as_responses_and_deliver_them_to_waiting_mailboxes() {
+        let (client, mut server) = Connection::pair(100);
 
-            // NOTE: Spawn a separate task to handle the response so we do not deadlock
-            tokio::spawn(async move {
-                let request = server
-                    .read_frame_as::<Request<u8>>()
-                    .await
-                    .unwrap()
-                    .unwrap();
-                server
-                    .write_frame_for(&Response::new(request.id, 2u8))
-                    .await
-                    .unwrap();
-            });
+        // NOTE: Spawn a separate task to handle the response so we do not deadlock
+        tokio::spawn(async move {
+            let request = server
+                .read_frame_as::<Request<u8>>()
+                .await
+                .unwrap()
+                .unwrap();
+            server
+                .write_frame_for(&Response::new(request.id, 2u8))
+                .await
+                .unwrap();
+        });
 
-            let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
-            assert_eq!(client.send(Request::new(1u8)).await.unwrap().payload, 2);
-        }
+        let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
+        assert_eq!(client.send(Request::new(1u8)).await.unwrap().payload, 2);
+    }
 
-        #[test(tokio::test)]
-        async fn should_attempt_to_reconnect_if_connection_fails_to_determine_state() {
-            // Create a client with our test transport to simulate a failure, verifying that
-            // the client will work on the second attempt without caring about the retry
-            // logic itself.
-            let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
-            let client = TestClient::spawn(
-                Connection::test_client({
-                    let mut transport = new_test_transport();
+    #[test(tokio::test)]
+    async fn should_attempt_to_reconnect_if_connection_fails_to_determine_state() {
+        let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
+        TestClient::spawn(
+            Connection::test_client({
+                let mut transport = new_test_transport();
+
+                transport.f_ready = Box::new(|_| Err(io::ErrorKind::Other.into()));
+
+                // Send a signal that the reconnect happened while marking it successful
+                transport.f_reconnect = Box::new(move || {
+                    reconnect_tx.try_send(()).expect("reconnect tx blocked");
+                    Ok(())
+                });
+
+                transport
+            }),
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(50),
+                max_retries: None,
+                timeout: None,
+            },
+        );
+
+        reconnect_rx.recv().await.expect("Reconnect did not occur");
+    }
+
+    #[test(tokio::test)]
+    async fn should_attempt_to_reconnect_if_connection_closed_by_server() {
+        let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
+        TestClient::spawn(
+            Connection::test_client({
+                let mut transport = new_test_transport();
+
+                // Report back that we're readable to trigger try_read
+                transport.f_ready = Box::new(|_| Ok(Ready::READABLE));
+
+                // Report that no bytes were written, indicting the channel was closed
+                transport.f_try_read = Box::new(|_| Ok(0));
+
+                // Send a signal that the reconnect happened while marking it successful
+                transport.f_reconnect = Box::new(move || {
+                    reconnect_tx.try_send(()).expect("reconnect tx blocked");
+                    Ok(())
+                });
+
+                transport
+            }),
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(50),
+                max_retries: None,
+                timeout: None,
+            },
+        );
+
+        reconnect_rx.recv().await.expect("Reconnect did not occur");
+    }
+
+    #[test(tokio::test)]
+    async fn should_attempt_to_reconnect_if_connection_errors_while_reading_data() {
+        let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
+        TestClient::spawn(
+            Connection::test_client({
+                let mut transport = new_test_transport();
+
+                // Report back that we're readable to trigger try_read
+                transport.f_ready = Box::new(|_| Ok(Ready::READABLE));
+
+                // Fail the read
+                transport.f_try_read = Box::new(|_| Err(io::ErrorKind::Other.into()));
+
+                // Send a signal that the reconnect happened while marking it successful
+                transport.f_reconnect = Box::new(move || {
+                    reconnect_tx.try_send(()).expect("reconnect tx blocked");
+                    Ok(())
+                });
+
+                transport
+            }),
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(50),
+                max_retries: None,
+                timeout: None,
+            },
+        );
+
+        reconnect_rx.recv().await.expect("Reconnect did not occur");
+    }
+
+    #[test(tokio::test)]
+    async fn should_attempt_to_reconnect_if_connection_unable_to_send_new_request() {
+        let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
+        let mut client = TestClient::spawn(
+            Connection::test_client({
+                let mut transport = new_test_transport();
+
+                // Report back that we're readable to trigger try_read
+                transport.f_ready = Box::new(|_| Ok(Ready::WRITABLE));
+
+                // Fail the write
+                transport.f_try_write = Box::new(|_| Err(io::ErrorKind::Other.into()));
+
+                // Send a signal that the reconnect happened while marking it successful
+                transport.f_reconnect = Box::new(move || {
+                    reconnect_tx.try_send(()).expect("reconnect tx blocked");
+                    Ok(())
+                });
+
+                transport
+            }),
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(50),
+                max_retries: None,
+                timeout: None,
+            },
+        );
+
+        // Queue up a request to fail to send
+        client
+            .fire(Request::new(123u8))
+            .await
+            .expect("Failed to queue request");
+
+        reconnect_rx.recv().await.expect("Reconnect did not occur");
+    }
+
+    #[test(tokio::test)]
+    async fn should_attempt_to_reconnect_if_connection_unable_to_flush_an_existing_request() {
+        let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
+        let mut client = TestClient::spawn(
+            Connection::test_client({
+                let mut transport = new_test_transport();
+
+                // Report back that we're readable to trigger try_read
+                transport.f_ready = Box::new(|_| Ok(Ready::WRITABLE));
+
+                // Succeed partially with initial try_write, block on second call, and then
+                // fail during a try_flush
+                transport.f_try_write = Box::new(|buf| unsafe {
                     static mut CNT: u8 = 0;
+                    CNT += 1;
+                    if CNT == 1 {
+                        Ok(buf.len() / 2)
+                    } else if CNT == 2 {
+                        Err(io::ErrorKind::WouldBlock.into())
+                    } else {
+                        Err(io::ErrorKind::Other.into())
+                    }
+                });
 
-                    // First call fails, second call succeeds
-                    transport.f_ready = Box::new(|_| unsafe {
-                        CNT += 1;
-                        if CNT == 1 {
-                            Err(io::ErrorKind::Other.into())
-                        } else {
-                            Ok(Ready::EMPTY)
-                        }
-                    });
+                // Send a signal that the reconnect happened while marking it successful
+                transport.f_reconnect = Box::new(move || {
+                    reconnect_tx.try_send(()).expect("reconnect tx blocked");
+                    Ok(())
+                });
 
-                    // Send a signal that the reconnect happened while marking it successful
-                    transport.f_reconnect = Box::new(move || {
-                        reconnect_tx
-                            .try_send(unsafe { CNT })
-                            .expect("reconnect tx blocked");
-                        Ok(())
-                    });
+                transport
+            }),
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(50),
+                max_retries: None,
+                timeout: None,
+            },
+        );
 
-                    transport
-                }),
-                ReconnectStrategy::FixedInterval {
-                    interval: Duration::from_millis(50),
-                    max_retries: None,
-                    timeout: None,
-                },
-            );
+        // Queue up a request to fail to send
+        client
+            .fire(Request::new(123u8))
+            .await
+            .expect("Failed to queue request");
 
-            assert_eq!(
-                reconnect_rx.recv().await.unwrap(),
-                1,
-                "Reconnect triggered at wrong time"
-            );
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert_eq!(
-                reconnect_rx.try_recv(),
-                Err(TryRecvError::Empty),
-                "Reconnect triggered unexpectedly"
-            );
-            assert!(!client.is_finished(), "Client died trying to reconnect");
-        }
+        reconnect_rx.recv().await.expect("Reconnect did not occur");
+    }
 
-        #[test(tokio::test)]
-        async fn should_attempt_to_reconnect_if_connection_closed_by_server() {
-            todo!();
-        }
+    #[test(tokio::test)]
+    async fn should_exit_if_reconnect_strategy_has_failed_to_connect() {
+        let (client, server) = Connection::pair(100);
 
-        #[test(tokio::test)]
-        async fn should_attempt_to_reconnect_if_connection_errors_while_reading_data() {
-            todo!();
-        }
+        // Spawn the client, verify the task is running, kill our server, and verify that the
+        // client does not block trying to reconnect
+        let client = TestClient::spawn(client, ReconnectStrategy::Fail);
+        assert!(!client.is_finished(), "Client unexpectedly died");
+        drop(server);
+        assert_eq!(
+            client.wait().await.unwrap_err().kind(),
+            io::ErrorKind::ConnectionAborted
+        );
+    }
 
-        #[test(tokio::test)]
-        async fn should_attempt_to_reconnect_if_connection_unable_to_send_new_request() {
-            todo!();
-        }
+    #[test(tokio::test)]
+    async fn should_exit_if_shutdown_signal_detected() {
+        let (client, _server) = Connection::pair(100);
 
-        #[test(tokio::test)]
-        async fn should_attempt_to_reconnect_if_connection_unable_to_flush_an_existing_request() {
-            todo!();
-        }
+        let client = TestClient::spawn(client, ReconnectStrategy::Fail);
+        client.shutdown().await.unwrap();
 
-        #[test(tokio::test)]
-        async fn should_exit_if_reconnect_strategy_has_failed_to_connect() {
-            let (client, server) = Connection::pair(100);
+        // NOTE: We wait for the client's task to conclude by using `wait` to ensure we do not
+        //       have a race condition testing the task finished state. This will also verify
+        //       that the task exited cleanly, rather than panicking.
+        client.wait().await.unwrap();
+    }
 
-            // Spawn the client, verify the task is running, kill our server, and verify that the
-            // client does not block trying to reconnect
-            let client = TestClient::spawn(client, ReconnectStrategy::Fail);
-            assert!(!client.is_finished(), "Client unexpectedly died");
-            drop(server);
-            assert_eq!(
-                client.wait().await.unwrap_err().kind(),
-                io::ErrorKind::ConnectionAborted
-            );
-        }
+    #[test(tokio::test)]
+    async fn should_not_exit_if_shutdown_channel_is_closed() {
+        let (client, mut server) = Connection::pair(100);
 
-        #[test(tokio::test)]
-        async fn should_exit_if_shutdown_signal_detected() {
-            let (client, _server) = Connection::pair(100);
+        // NOTE: Spawn a separate task to handle the response so we do not deadlock
+        tokio::spawn(async move {
+            let request = server
+                .read_frame_as::<Request<u8>>()
+                .await
+                .unwrap()
+                .unwrap();
+            server
+                .write_frame_for(&Response::new(request.id, 2u8))
+                .await
+                .unwrap();
+        });
 
-            let client = TestClient::spawn(client, ReconnectStrategy::Fail);
-            client.shutdown().await.unwrap();
-
-            // NOTE: We wait for the client's task to conclude by using `wait` to ensure we do not
-            //       have a race condition testing the task finished state. This will also verify
-            //       that the task exited cleanly, rather than panicking.
-            client.wait().await.unwrap();
-        }
-
-        #[test(tokio::test)]
-        async fn should_not_exit_if_shutdown_channel_is_closed() {
-            let (client, mut server) = Connection::pair(100);
-
-            // NOTE: Spawn a separate task to handle the response so we do not deadlock
-            tokio::spawn(async move {
-                let request = server
-                    .read_frame_as::<Request<u8>>()
-                    .await
-                    .unwrap()
-                    .unwrap();
-                server
-                    .write_frame_for(&Response::new(request.id, 2u8))
-                    .await
-                    .unwrap();
-            });
-
-            // NOTE: We consume the client to produce a channel without maintaining the shutdown
-            //       channel in order to ensure that dropping the client does not kill the task.
-            let mut channel = TestClient::spawn(client, ReconnectStrategy::Fail).into_channel();
-            assert_eq!(channel.send(Request::new(1u8)).await.unwrap().payload, 2);
-        }
+        // NOTE: We consume the client to produce a channel without maintaining the shutdown
+        //       channel in order to ensure that dropping the client does not kill the task.
+        let mut channel = TestClient::spawn(client, ReconnectStrategy::Fail).into_channel();
+        assert_eq!(channel.send(Request::new(1u8)).await.unwrap().payload, 2);
     }
 }
