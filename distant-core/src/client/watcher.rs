@@ -4,7 +4,7 @@ use crate::{
     data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData},
     DistantMsg,
 };
-use distant_net::Request;
+use distant_net::common::Request;
 use log::*;
 use std::{
     fmt, io,
@@ -184,7 +184,10 @@ mod tests {
     use super::*;
     use crate::data::ChangeKind;
     use crate::DistantClient;
-    use distant_net::{Client, FramedTransport, InmemoryTransport, Response};
+    use distant_net::{
+        common::{FramedTransport, InmemoryTransport, Response},
+        Client,
+    };
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

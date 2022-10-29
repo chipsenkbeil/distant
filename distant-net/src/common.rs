@@ -8,7 +8,7 @@ mod transport;
 pub(crate) mod utils;
 
 pub use any::*;
-pub use connection::*;
+pub(crate) use connection::*;
 pub use listener::*;
 pub use packet::*;
 pub use port::*;

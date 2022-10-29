@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use distant_net::auth::{
+use distant_net::common::authentication::{
     msg::{ErrorKind, Question, VerificationKind},
     AuthHandler,
 };

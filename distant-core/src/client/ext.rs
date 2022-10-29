@@ -9,7 +9,7 @@ use crate::{
     },
     DistantMsg,
 };
-use distant_net::{Channel, Request};
+use distant_net::{client::Channel, common::Request};
 use std::{future::Future, io, path::PathBuf, pin::Pin};
 
 pub type AsyncReturn<'a, T, E = io::Error> =

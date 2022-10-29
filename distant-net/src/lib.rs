@@ -1,9 +1,9 @@
-mod client;
+pub mod client;
 pub mod common;
-mod server;
+pub mod server;
 
-pub use client::*;
-pub use server::*;
+pub use client::{Client, ReconnectStrategy};
+pub use server::Server;
 
 pub use log;
 pub use paste;

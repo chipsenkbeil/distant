@@ -1,6 +1,7 @@
 use crate::{DistantManager, DistantManagerConfig};
 use distant_net::{
-    Codec, FramedTransport, IntoSplit, MappedListener, UnixSocketListener, UnixSocketServerRef,
+    common::{Codec, FramedTransport, MappedListener, UnixSocketListener},
+    server::UnixSocketServerRef,
 };
 use std::{io, path::Path};
 

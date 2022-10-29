@@ -3,7 +3,11 @@ use super::data::{
     ManagerResponse,
 };
 use crate::{DistantChannel, DistantClient, Map};
-use distant_net::{Client, FramedTransport, InmemoryTransport, ServerRef, Transport};
+use distant_net::{
+    common::{FramedTransport, InmemoryTransport, Transport},
+    server::ServerRef,
+    Client,
+};
 use log::*;
 use std::{
     collections::HashMap,
@@ -335,7 +339,7 @@ impl DistantManagerClient {
 mod tests {
     use super::*;
     use crate::data::{Error, ErrorKind};
-    use distant_net::{Request, Response};
+    use distant_net::common::{Request, Response};
 
     fn setup() -> (DistantManagerClient, FramedTransport<InmemoryTransport>) {
         let (t1, t2) = FramedTransport::test_pair(100);

@@ -4,7 +4,7 @@ use crate::{
     },
     data::{DistantResponseData, Environment, ProcessId, PtySize},
 };
-use distant_net::Reply;
+use distant_net::server::Reply;
 use log::*;
 use std::{future::Future, io, path::PathBuf};
 use tokio::task::JoinHandle;

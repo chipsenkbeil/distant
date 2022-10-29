@@ -2,7 +2,7 @@ use crate::{
     serde_str::{deserialize_from_str, serialize_to_str},
     Destination, Host,
 };
-use distant_net::SecretKey32;
+use distant_net::common::SecretKey32;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{convert::TryFrom, fmt, io, str::FromStr};
 

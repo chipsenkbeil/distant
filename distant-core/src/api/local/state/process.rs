@@ -1,5 +1,5 @@
 use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
-use distant_net::Reply;
+use distant_net::server::Reply;
 use std::{collections::HashMap, io, ops::Deref, path::PathBuf};
 use tokio::{
     sync::{mpsc, oneshot},

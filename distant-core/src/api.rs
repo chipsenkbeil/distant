@@ -6,7 +6,7 @@ use crate::{
     ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::{Reply, ServerConfig, ServerCtx, ServerHandler};
+use distant_net::server::{Reply, ServerConfig, ServerCtx, ServerHandler};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
 

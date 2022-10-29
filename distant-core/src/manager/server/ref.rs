@@ -1,5 +1,5 @@
 use super::{BoxedConnectHandler, BoxedLaunchHandler, ConnectHandler, LaunchHandler};
-use distant_net::ServerRef;
+use distant_net::server::ServerRef;
 use std::{collections::HashMap, io, sync::Weak};
 use tokio::sync::RwLock;
 

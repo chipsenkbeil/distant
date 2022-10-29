@@ -4,7 +4,10 @@ use crate::{
     data::{Cmd, DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize},
     DistantMsg,
 };
-use distant_net::{Mailbox, Request, Response};
+use distant_net::{
+    client::Mailbox,
+    common::{Request, Response},
+};
 use log::*;
 use std::{path::PathBuf, sync::Arc};
 use tokio::{
@@ -608,7 +611,10 @@ mod tests {
         client::DistantClient,
         data::{Error, ErrorKind},
     };
-    use distant_net::{Client, FramedTransport, InmemoryTransport, Response};
+    use distant_net::{
+        common::{FramedTransport, InmemoryTransport, Response},
+        Client,
+    };
     use std::time::Duration;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {

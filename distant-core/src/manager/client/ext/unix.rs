@@ -1,6 +1,6 @@
 use crate::{DistantManagerClient, DistantManagerClientConfig};
 use async_trait::async_trait;
-use distant_net::{Codec, FramedTransport, UnixSocketTransport};
+use distant_net::common::{Codec, FramedTransport, UnixSocketTransport};
 use std::{convert, path::Path};
 use tokio::{io, time::Duration};
 

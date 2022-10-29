@@ -3,7 +3,7 @@ use crate::data::{
     SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
     SearchQueryTarget,
 };
-use distant_net::Reply;
+use distant_net::server::Reply;
 use grep::{
     matcher::Matcher,
     regex::{RegexMatcher, RegexMatcherBuilder},

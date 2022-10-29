@@ -1,6 +1,6 @@
 use crate::{DistantManagerClient, DistantManagerClientConfig};
 use async_trait::async_trait;
-use distant_net::{Codec, FramedTransport, WindowsPipeTransport};
+use distant_net::common::{Codec, FramedTransport, WindowsPipeTransport};
 use std::{
     convert,
     ffi::{OsStr, OsString},

@@ -1,6 +1,6 @@
 use crate::{data::Map, manager::data::Destination};
 use async_trait::async_trait;
-use distant_net::{auth::Authenticator, FramedTransport, Transport};
+use distant_net::common::{authentication::Authenticator, FramedTransport, Transport};
 use std::{future::Future, io};
 
 pub type BoxedLaunchHandler = Box<dyn LaunchHandler>;

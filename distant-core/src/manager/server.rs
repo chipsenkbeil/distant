@@ -4,7 +4,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use distant_net::{
-    Client, Listener, MpscListener, Request, Response, Server, ServerCtx, ServerHandler,
+    common::{Listener, MpscListener, Request, Response},
+    server::{Server, ServerCtx, ServerHandler},
+    Client,
 };
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
@@ -412,7 +414,8 @@ impl ServerHandler for DistantManager {
 mod tests {
     use super::*;
     use distant_net::{
-        FramedTransport, InmemoryTransport, MappedListener, OneshotListener, PlainCodec, ServerRef,
+        common::{FramedTransport, InmemoryTransport, MappedListener, OneshotListener, PlainCodec},
+        server::ServerRef,
     };
 
     /// Create a new server, bypassing the start loop

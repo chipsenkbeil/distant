@@ -4,7 +4,8 @@ use crate::{
     DistantMsg, DistantRequestData, DistantResponseData, ManagerResponse,
 };
 use distant_net::{
-    FramedTransport, Interest, Request, ServerReply, Transport, UntypedRequest, UntypedResponse,
+    common::{FramedTransport, Interest, Request, Transport},
+    server::{ServerRef, ServerReply},
 };
 use log::*;
 use std::{collections::HashMap, io, time::Duration};

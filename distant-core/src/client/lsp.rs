@@ -410,7 +410,10 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspMsg>)>
 mod tests {
     use super::*;
     use crate::data::{DistantRequestData, DistantResponseData};
-    use distant_net::{Client, FramedTransport, InmemoryTransport, PlainCodec, Request, Response};
+    use distant_net::{
+        common::{FramedTransport, InmemoryTransport, PlainCodec, Request, Response},
+        Client,
+    };
     use std::{future::Future, time::Duration};
 
     /// Timeout used with timeout function

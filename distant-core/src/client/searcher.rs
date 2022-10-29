@@ -4,7 +4,7 @@ use crate::{
     data::{DistantRequestData, DistantResponseData, SearchId, SearchQuery, SearchQueryMatch},
     DistantMsg,
 };
-use distant_net::Request;
+use distant_net::common::Request;
 use log::*;
 use std::{fmt, io};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -196,7 +196,10 @@ mod tests {
         SearchQuerySubmatch, SearchQueryTarget,
     };
     use crate::DistantClient;
-    use distant_net::{Client, FramedTransport, InmemoryTransport, Response};
+    use distant_net::{
+        common::{FramedTransport, InmemoryTransport, Response},
+        Client,
+    };
     use std::{path::PathBuf, sync::Arc};
     use tokio::sync::Mutex;
 

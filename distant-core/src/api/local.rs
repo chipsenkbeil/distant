@@ -6,7 +6,7 @@ use crate::{
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
-use distant_net::ServerConfig;
+use distant_net::server::ServerConfig;
 use log::*;
 use std::{
     io,
@@ -511,7 +511,7 @@ mod tests {
     use super::*;
     use crate::data::DistantResponseData;
     use assert_fs::prelude::*;
-    use distant_net::Reply;
+    use distant_net::server::Reply;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
     use std::{sync::Arc, time::Duration};

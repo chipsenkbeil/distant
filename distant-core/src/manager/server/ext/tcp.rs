@@ -1,6 +1,7 @@
 use crate::{DistantManager, DistantManagerConfig};
 use distant_net::{
-    Codec, FramedTransport, IntoSplit, MappedListener, PortRange, TcpListener, TcpServerRef,
+    common::{Codec, FramedTransport, MappedListener, PortRange, TcpListener},
+    server::TcpServerRef,
 };
 use std::{io, net::IpAddr};
 
