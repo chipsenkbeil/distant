@@ -1,13 +1,11 @@
-use crate::{data::Map, manager::data::Destination};
+use crate::common::{authentication::Authenticator, Destination, FramedTransport, Map, Transport};
 use async_trait::async_trait;
-use distant_net::common::{authentication::Authenticator, FramedTransport, Transport};
 use std::{future::Future, io};
 
 pub type BoxedLaunchHandler = Box<dyn LaunchHandler>;
 pub type BoxedConnectHandler = Box<dyn ConnectHandler>;
 
-/// Represents an interface to start a server at some remote `destination` and then connect to the
-/// started server.
+/// Represents an interface to start a server at some remote `destination`.
 ///
 /// * `destination` is the location where the server will be started.
 /// * `options` is provided to include extra information needed to launch or establish the

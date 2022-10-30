@@ -1,5 +1,4 @@
-use super::{ConnectionId, Destination};
-use crate::data::Map;
+use crate::common::{ConnectionId, Destination, Map};
 use serde::{Deserialize, Serialize};
 
 /// Information about a specific connection

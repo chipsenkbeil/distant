@@ -1,97 +1,23 @@
-use super::data::{
-    ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities, ManagerRequest,
-    ManagerResponse,
-};
-use crate::{DistantChannel, DistantClient, Map};
-use distant_net::{
-    common::{FramedTransport, InmemoryTransport, Transport},
-    server::ServerRef,
-    Client,
+use crate::{
+    client::Client,
+    common::{ConnectionId, Destination, Map},
+    manager::data::{
+        ConnectionInfo, ConnectionList, ManagerCapabilities, ManagerRequest, ManagerResponse,
+    },
 };
 use log::*;
-use std::{
-    collections::HashMap,
-    io,
-    ops::{Deref, DerefMut},
-};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::io;
 
-mod config;
-pub use config::*;
+mod channel;
+pub use channel::*;
 
-mod ext;
-pub use ext::*;
+/// Represents a client that can connect to a remote server manager.
+pub type ManagerClient = Client<ManagerRequest, ManagerResponse>;
 
-/// Represents a client that can connect to a remote distant manager
-pub struct DistantManagerClient {
-    client: Client<ManagerRequest, ManagerResponse>,
-    distant_clients: HashMap<ConnectionId, ClientHandle>,
-}
-
-impl Drop for DistantManagerClient {
-    fn drop(&mut self) {
-        self.client.abort();
-    }
-}
-
-/// Represents a raw channel between a manager client and some remote server
-pub struct RawDistantChannel {
-    pub transport: FramedTransport<InmemoryTransport>,
-    forward_task: JoinHandle<()>,
-    mailbox_task: JoinHandle<()>,
-}
-
-impl RawDistantChannel {
-    pub fn abort(&self) {
-        self.forward_task.abort();
-        self.mailbox_task.abort();
-    }
-}
-
-impl Deref for RawDistantChannel {
-    type Target = FramedTransport<InmemoryTransport>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.transport
-    }
-}
-
-impl DerefMut for RawDistantChannel {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.transport
-    }
-}
-
-struct ClientHandle {
-    client: DistantClient,
-    forward_task: JoinHandle<()>,
-    mailbox_task: JoinHandle<()>,
-}
-
-impl Drop for ClientHandle {
-    fn drop(&mut self) {
-        self.forward_task.abort();
-        self.mailbox_task.abort();
-    }
-}
-
-impl DistantManagerClient {
-    /// Initializes a client using the provided [`Transport`]
-    pub async fn new<T>(config: DistantManagerClientConfig, transport: T) -> io::Result<Self>
-    where
-        T: Transport + 'static,
-    {
-        let transport = FramedTransport::from_client_handshake(transport).await?;
-
-        Ok(Self {
-            client: Client::new(transport),
-            distant_clients: HashMap::new(),
-        })
-    }
-
+impl ManagerClient {
     /// Request that the manager launches a new server at the given `destination`
     /// with `options` being passed for destination-specific details, returning the new
-    /// `destination` of the spawned server to connect to
+    /// `destination` of the spawned server.
     pub async fn launch(
         &mut self,
         destination: impl Into<Destination>,
@@ -102,7 +28,6 @@ impl DistantManagerClient {
         trace!("launch({}, {})", destination, options);
 
         let res = self
-            .client
             .send(ManagerRequest::Launch {
                 destination,
                 options,
@@ -130,7 +55,6 @@ impl DistantManagerClient {
         trace!("connect({}, {})", destination, options);
 
         let res = self
-            .client
             .send(ManagerRequest::Connect {
                 destination,
                 options,
@@ -147,127 +71,24 @@ impl DistantManagerClient {
     }
 
     /// Establishes a channel with the server represented by the `connection_id`,
-    /// returning a [`DistantChannel`] acting as the connection
-    ///
-    /// ### Note
-    ///
-    /// Multiple calls to open a channel against the same connection will result in
-    /// clones of the same [`DistantChannel`] rather than establishing a duplicate
-    /// remote connection to the same server
-    pub async fn open_channel(
-        &mut self,
-        connection_id: ConnectionId,
-    ) -> io::Result<DistantChannel> {
-        trace!("open_channel({})", connection_id);
-        if let Some(handle) = self.distant_clients.get(&connection_id) {
-            Ok(handle.client.clone_channel())
-        } else {
-            let RawDistantChannel {
-                transport,
-                forward_task,
-                mailbox_task,
-            } = self.open_raw_channel(connection_id).await?;
-            let client = DistantClient::new(transport);
-            let channel = client.clone_channel();
-            self.distant_clients.insert(
-                connection_id,
-                ClientHandle {
-                    client,
-                    forward_task,
-                    mailbox_task,
-                },
-            );
-            Ok(channel)
-        }
-    }
-
-    /// Establishes a channel with the server represented by the `connection_id`,
-    /// returning a [`Transport`] acting as the connection
+    /// returning a [`RawChannel`] acting as the connection.
     ///
     /// ### Note
     ///
     /// Multiple calls to open a channel against the same connection will result in establishing a
-    /// duplicate remote connections to the same server, so take care when using this method
+    /// duplicate channel to the same server, so take care when using this method.
     pub async fn open_raw_channel(
         &mut self,
         connection_id: ConnectionId,
-    ) -> io::Result<RawDistantChannel> {
+    ) -> io::Result<RawChannel> {
         trace!("open_raw_channel({})", connection_id);
-        let mut mailbox = self
-            .client
-            .mail(ManagerRequest::OpenChannel { id: connection_id })
-            .await?;
-
-        // Wait for the first response, which should be channel confirmation
-        let channel_id = match mailbox.next().await {
-            Some(response) => match response.payload {
-                ManagerResponse::ChannelOpened { id } => Ok(id),
-                ManagerResponse::Error(x) => Err(x.into()),
-                x => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Got unexpected response: {x:?}"),
-                )),
-            },
-            None => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "open_channel mailbox aborted",
-            )),
-        }?;
-
-        // Spawn reader and writer tasks to forward requests and replies
-        // using our opened channel
-        let (tx, rx, transport) = InmemoryTransport::make(1);
-        let (channel_close_tx, channel_close_rx) = oneshot::channel();
-        let mailbox_task = tokio::spawn(async move {
-            while let Some(response) = mailbox.next().await {
-                match response.payload {
-                    ManagerResponse::Channel { data, .. } => {
-                        if let Err(x) = tx.send(data).await {
-                            error!("[Conn {connection_id}] {x}");
-                        }
-                    }
-                    ManagerResponse::ChannelClosed { .. } => {
-                        let _ = channel_close_tx.send(());
-                        break;
-                    }
-                    _ => continue,
-                }
-            }
-        });
-
-        let mut manager_channel = self.client.clone_channel();
-        let forward_task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = channel_close_rx => { break }
-                    data = rx.recv() => {
-                        // NOTE: In this situation, we do not expect a response to this
-                        //       request (even if the server sends something back)
-                        if let Err(x) = manager_channel
-                            .fire(ManagerRequest::Channel {
-                                id: channel_id,
-                                data,
-                            })
-                            .await
-                        {
-                            error!("[Conn {connection_id}] {x}");
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok(RawDistantChannel {
-            transport,
-            forward_task,
-            mailbox_task,
-        })
+        RawChannel::spawn(connection_id, self).await
     }
 
     /// Retrieves a list of supported capabilities
     pub async fn capabilities(&mut self) -> io::Result<ManagerCapabilities> {
         trace!("capabilities()");
-        let res = self.client.send(ManagerRequest::Capabilities).await?;
+        let res = self.send(ManagerRequest::Capabilities).await?;
         match res.payload {
             ManagerResponse::Capabilities { supported } => Ok(supported),
             ManagerResponse::Error(x) => Err(x.into()),
@@ -281,7 +102,7 @@ impl DistantManagerClient {
     /// Retrieves information about a specific connection
     pub async fn info(&mut self, id: ConnectionId) -> io::Result<ConnectionInfo> {
         trace!("info({})", id);
-        let res = self.client.send(ManagerRequest::Info { id }).await?;
+        let res = self.send(ManagerRequest::Info { id }).await?;
         match res.payload {
             ManagerResponse::Info(info) => Ok(info),
             ManagerResponse::Error(x) => Err(x.into()),
@@ -295,7 +116,7 @@ impl DistantManagerClient {
     /// Kills the specified connection
     pub async fn kill(&mut self, id: ConnectionId) -> io::Result<()> {
         trace!("kill({})", id);
-        let res = self.client.send(ManagerRequest::Kill { id }).await?;
+        let res = self.send(ManagerRequest::Kill { id }).await?;
         match res.payload {
             ManagerResponse::Killed => Ok(()),
             ManagerResponse::Error(x) => Err(x.into()),
@@ -309,23 +130,9 @@ impl DistantManagerClient {
     /// Retrieves a list of active connections
     pub async fn list(&mut self) -> io::Result<ConnectionList> {
         trace!("list()");
-        let res = self.client.send(ManagerRequest::List).await?;
+        let res = self.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
-            ManagerResponse::Error(x) => Err(x.into()),
-            x => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
-            )),
-        }
-    }
-
-    /// Requests that the manager shuts down
-    pub async fn shutdown(&mut self) -> io::Result<()> {
-        trace!("shutdown()");
-        let res = self.client.send(ManagerRequest::Shutdown).await?;
-        match res.payload {
-            ManagerResponse::Shutdown => Ok(()),
             ManagerResponse::Error(x) => Err(x.into()),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -338,14 +145,15 @@ impl DistantManagerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{Error, ErrorKind};
-    use distant_net::common::{Request, Response};
+    use crate::{
+        common::{Request, Response},
+        manager::data::{Error, ErrorKind},
+    };
 
-    fn setup() -> (DistantManagerClient, FramedTransport<InmemoryTransport>) {
+    fn setup() -> (ManagerClient, FramedTransport<InmemoryTransport>) {
         let (t1, t2) = FramedTransport::test_pair(100);
         let client =
-            DistantManagerClient::new(DistantManagerClientConfig::with_empty_prompts(), t1)
-                .unwrap();
+            ManagerClient::new(DistantManagerClientConfig::with_empty_prompts(), t1).unwrap();
         (client, t2)
     }
 
@@ -667,74 +475,5 @@ mod tests {
         });
 
         client.kill(123).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn shutdown_should_report_error_if_receives_error_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Connected { id: 0 },
-                ))
-                .await
-                .unwrap();
-        });
-
-        let err = client.shutdown().await.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    }
-
-    #[tokio::test]
-    async fn shutdown_should_report_error_if_receives_unexpected_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Error(test_error()),
-                ))
-                .await
-                .unwrap();
-        });
-
-        let err = client.shutdown().await.unwrap_err();
-        assert_eq!(err.kind(), test_io_error().kind());
-        assert_eq!(err.to_string(), test_io_error().to_string());
-    }
-
-    #[tokio::test]
-    async fn shutdown_should_return_success_from_successful_response() {
-        let (mut client, mut transport) = setup();
-
-        tokio::spawn(async move {
-            let request = transport
-                .read::<Request<ManagerRequest>>()
-                .await
-                .unwrap()
-                .unwrap();
-
-            transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
-                .await
-                .unwrap();
-        });
-
-        client.shutdown().await.unwrap();
     }
 }

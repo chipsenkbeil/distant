@@ -1,4 +1,4 @@
-use crate::serde_str::{deserialize_from_str, serialize_to_str};
+use super::utils::{deserialize_from_str, serialize_to_str};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{fmt, hash::Hash, str::FromStr};
 
@@ -38,17 +38,8 @@ pub struct Destination {
 }
 
 impl Destination {
-    /// Returns true if destination represents a distant server
-    pub fn is_distant(&self) -> bool {
-        self.scheme_eq("distant")
-    }
-
-    /// Returns true if destination represents an ssh server
-    pub fn is_ssh(&self) -> bool {
-        self.scheme_eq("ssh")
-    }
-
-    fn scheme_eq(&self, s: &str) -> bool {
+    /// Returns true if the destination's scheme represents the specified (case-insensitive).
+    pub fn scheme_eq(&self, s: &str) -> bool {
         match self.scheme.as_ref() {
             Some(scheme) => scheme.eq_ignore_ascii_case(s),
             None => false,

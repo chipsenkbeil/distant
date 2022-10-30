@@ -1,18 +1,18 @@
 use crate::{
-    data::Map,
-    manager::data::{ChannelId, ConnectionId, Destination},
-    DistantMsg, DistantRequestData, DistantResponseData, ManagerResponse,
-};
-use distant_net::{
-    common::{FramedTransport, Interest, Request, Transport},
+    common::{
+        ConnectionId, Destination, FramedTransport, Interest, Map, Request, Transport,
+        UntypedRequest, UntypedResponse,
+    },
+    manager::data::ManagerResponse,
     server::{ServerRef, ServerReply},
 };
 use log::*;
+use serde::Serialize;
 use std::{collections::HashMap, io, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 /// Represents a connection a distant manager has with some distant-compatible server
-pub struct DistantManagerConnection {
+pub struct ManagerConnection {
     pub id: ConnectionId,
     pub destination: Destination,
     pub options: Map,
@@ -22,17 +22,17 @@ pub struct DistantManagerConnection {
 }
 
 #[derive(Clone)]
-pub struct DistantManagerChannel {
+pub struct ManagerChannel {
     channel_id: ChannelId,
     tx: mpsc::Sender<Action>,
 }
 
-impl DistantManagerChannel {
+impl ManagerChannel {
     pub fn id(&self) -> ChannelId {
         self.channel_id
     }
 
-    pub async fn send(&self, request: Request<DistantMsg<DistantRequestData>>) -> io::Result<()> {
+    pub async fn send<T: Serialize>(&self, request: Request<T>) -> io::Result<()> {
         let channel_id = self.channel_id;
         self.tx
             .send(Action::Write {
@@ -62,7 +62,7 @@ impl DistantManagerChannel {
     }
 }
 
-impl DistantManagerConnection {
+impl ManagerConnection {
     pub fn new<T: Transport>(
         destination: Destination,
         options: Map,
@@ -84,7 +84,7 @@ impl DistantManagerConnection {
     pub async fn open_channel(
         &self,
         reply: ServerReply<ManagerResponse>,
-    ) -> io::Result<DistantManagerChannel> {
+    ) -> io::Result<ManagerChannel> {
         let channel_id = rand::random();
         self.tx
             .send(Action::Register {
@@ -98,14 +98,14 @@ impl DistantManagerConnection {
                     format!("open_channel failed: {x}"),
                 )
             })?;
-        Ok(DistantManagerChannel {
+        Ok(ManagerChannel {
             channel_id,
             tx: self.tx.clone(),
         })
     }
 }
 
-impl Drop for DistantManagerConnection {
+impl Drop for ManagerConnection {
     fn drop(&mut self) {
         self.transport_task.abort();
         self.action_task.abort();

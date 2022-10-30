@@ -1,7 +1,8 @@
-use crate::{BoxedConnectHandler, BoxedLaunchHandler};
+use super::{BoxedConnectHandler, BoxedLaunchHandler};
 use std::collections::HashMap;
 
-pub struct DistantManagerConfig {
+/// Configuration settings for a manager.
+pub struct Config {
     /// Scheme to use when none is provided in a destination for launch
     pub launch_fallback_scheme: String,
 
@@ -21,7 +22,7 @@ pub struct DistantManagerConfig {
     pub connect_handlers: HashMap<String, BoxedConnectHandler>,
 }
 
-impl Default for DistantManagerConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             // Default to using ssh to launch distant

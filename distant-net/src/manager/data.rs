@@ -1,12 +1,6 @@
 mod capabilities;
 pub use capabilities::*;
 
-mod destination;
-pub use destination::*;
-
-mod id;
-pub use id::*;
-
 mod info;
 pub use info::*;
 

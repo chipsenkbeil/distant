@@ -1,5 +1,4 @@
-use super::{ChannelId, ConnectionId, Destination};
-use crate::Map;
+use crate::common::{ConnectionId, Destination, Map};
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
@@ -33,7 +32,7 @@ pub enum ManagerRequest {
     Capabilities,
 
     /// Launch a server using the manager
-    #[strum_discriminants(strum(message = "Supports launching distant on remote servers"))]
+    #[strum_discriminants(strum(message = "Supports launching a server on remote machines"))]
     Launch {
         // NOTE: Boxed per clippy's large_enum_variant warning
         destination: Box<Destination>,
@@ -94,8 +93,4 @@ pub enum ManagerRequest {
     /// Retrieve list of connections being managed
     #[strum_discriminants(strum(message = "Supports retrieving a list of managed connections"))]
     List,
-
-    /// Signals the manager to shutdown
-    #[strum_discriminants(strum(message = "Supports being shut down on demand"))]
-    Shutdown,
 }

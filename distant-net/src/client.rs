@@ -45,7 +45,7 @@ where
     U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Spawns a client using the provided [`Connection`].
-    fn spawn<V>(mut connection: Connection<V>, mut strategy: ReconnectStrategy) -> Self
+    pub(crate) fn spawn<V>(mut connection: Connection<V>, mut strategy: ReconnectStrategy) -> Self
     where
         V: Transport + Send + Sync + 'static,
     {

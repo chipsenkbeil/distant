@@ -1,4 +1,4 @@
-use super::{ConnectionId, Destination};
+use crate::common::{ConnectionId, Destination};
 use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
 use std::{

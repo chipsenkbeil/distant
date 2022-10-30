@@ -1,13 +1,13 @@
 use crate::{
-    ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities,
-    ManagerRequest, ManagerResponse, Map,
+    client::Client,
+    common::{Listener, Map, MpscListener, Request, Response},
+    manager::{
+        ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities,
+        ManagerRequest, ManagerResponse,
+    },
+    server::{Server, ServerCtx, ServerHandler},
 };
 use async_trait::async_trait;
-use distant_net::{
-    common::{Listener, MpscListener, Request, Response},
-    server::{Server, ServerCtx, ServerHandler},
-    Client,
-};
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
@@ -21,97 +21,26 @@ pub use config::*;
 mod connection;
 pub use connection::*;
 
-mod ext;
-pub use ext::*;
-
 mod handler;
 pub use handler::*;
 
-mod r#ref;
-pub use r#ref::*;
-
-/// Represents a manager of multiple distant server connections
-pub struct DistantManager {
+/// Represents a manager of multiple server connections.
+pub struct ManagerServer {
     /// Configuration settings for the server
-    config: DistantManagerConfig,
+    config: Config,
 
     /// Mapping of connection id -> connection
-    connections: RwLock<HashMap<ConnectionId, DistantManagerConnection>>,
-
-    /// Handlers for launch requests
-    launch_handlers: Arc<RwLock<HashMap<String, BoxedLaunchHandler>>>,
-
-    /// Handlers for connect requests
-    connect_handlers: Arc<RwLock<HashMap<String, BoxedConnectHandler>>>,
-
-    /// Primary task of server
-    task: JoinHandle<()>,
+    connections: RwLock<HashMap<ConnectionId, ManagerConnection>>,
 }
 
-impl DistantManager {
-    /// Initializes a new instance of [`DistantManagerServer`] using the provided [`UntypedTransport`]
-    pub fn start<L, T>(
-        mut config: DistantManagerConfig,
-        mut listener: L,
-    ) -> io::Result<DistantManagerRef>
-    where
-        L: Listener<Output = T> + 'static,
-        T: IntoSplit + Send + 'static,
-        T::Read: UntypedTransportRead + 'static,
-        T::Write: UntypedTransportWrite + 'static,
-    {
-        let (conn_tx, mpsc_listener) = MpscListener::channel(config.connection_buffer_size);
-        let (auth_client_tx, auth_client_rx) = mpsc::channel(1);
-
-        // Spawn task that uses our input listener to get both auth and manager events,
-        // forwarding manager events to the internal mpsc listener
-        let task = tokio::spawn(async move {
-            while let Ok(transport) = listener.accept().await {
-                let DistantManagerRouter {
-                    auth_transport,
-                    manager_transport,
-                    ..
-                } = DistantManagerRouter::new(transport);
-
-                let (writer, reader) = auth_transport.into_split();
-                let client = match Client::new(writer, reader) {
-                    Ok(client) => client,
-                    Err(x) => {
-                        error!("Creating auth client failed: {}", x);
-                        continue;
-                    }
-                };
-                let auth_client = AuthClient::from(client);
-
-                // Forward auth client for new connection in server
-                if auth_client_tx.send(auth_client).await.is_err() {
-                    break;
-                }
-
-                // Forward connected and routed transport to server
-                if conn_tx.send(manager_transport.into_split()).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        let launch_handlers = Arc::new(RwLock::new(config.launch_handlers.drain().collect()));
-        let weak_launch_handlers = Arc::downgrade(&launch_handlers);
-        let connect_handlers = Arc::new(RwLock::new(config.connect_handlers.drain().collect()));
-        let weak_connect_handlers = Arc::downgrade(&connect_handlers);
-        let server_ref = Self {
+impl ManagerServer {
+    /// Creates a new [`Server`] starting with a default configuration and no authentication
+    /// methods. The provided `config` will be used to configure the launch and connect handlers
+    /// for the server as well as provide other defaults.
+    pub fn new(mut config: Config) -> Server<Self> {
+        Server::new().handler(Self {
             config,
-            launch_handlers,
-            connect_handlers,
             connections: RwLock::new(HashMap::new()),
-            task,
-        }
-        .start(mpsc_listener)?;
-
-        Ok(DistantManagerRef {
-            launch_handlers: weak_launch_handlers,
-            connect_handlers: weak_connect_handlers,
-            inner: server_ref,
         })
     }
 
@@ -148,8 +77,7 @@ impl DistantManager {
         .to_lowercase();
 
         let credentials = {
-            let lock = self.launch_handlers.read().await;
-            let handler = lock.get(&scheme).ok_or_else(|| {
+            let handler = self.config.launch_handlers.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("No launch handler registered for {}", scheme),
@@ -193,8 +121,7 @@ impl DistantManager {
         .to_lowercase();
 
         let transport = {
-            let lock = self.connect_handlers.read().await;
-            let handler = lock.get(&scheme).ok_or_else(|| {
+            let handler = self.config.connect_handlers.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("No connect handler registered for {}", scheme),
@@ -203,7 +130,7 @@ impl DistantManager {
             handler.connect(&destination, &options, auth).await?
         };
 
-        let connection = DistantManagerConnection::new(destination, options, transport);
+        let connection = ManagerConnection::new(destination, options, transport);
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
@@ -257,29 +184,14 @@ impl DistantManager {
 pub struct DistantManagerServerConnection {
     /// Holds on to open channels feeding data back from a server to some connected client,
     /// enabling us to cancel the tasks on demand
-    channels: RwLock<HashMap<ChannelId, DistantManagerChannel>>,
+    channels: RwLock<HashMap<ChannelId, ManagerChannel>>,
 }
 
 #[async_trait]
-impl ServerHandler for DistantManager {
+impl ServerHandler for ManagerServer {
     type Request = ManagerRequest;
     type Response = ManagerResponse;
     type LocalData = DistantManagerServerConnection;
-
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        local_data.auth_client = self
-            .auth_client_rx
-            .lock()
-            .await
-            .recv()
-            .await
-            .map(Mutex::new);
-
-        // Enable jit handshake
-        if let Some(auth_client) = local_data.auth_client.as_ref() {
-            auth_client.lock().await.set_jit_handshake(true);
-        }
-    }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         let ServerCtx {
@@ -386,22 +298,6 @@ impl ServerHandler for DistantManager {
                 Ok(()) => ManagerResponse::Killed,
                 Err(x) => ManagerResponse::Error(x.into()),
             },
-            ManagerRequest::Shutdown => {
-                if let Err(x) = reply.send(ManagerResponse::Shutdown).await {
-                    error!("[Conn {}] {}", connection_id, x);
-                }
-
-                // Clear out handler state in order to trigger drops
-                self.launch_handlers.write().await.clear();
-                self.connect_handlers.write().await.clear();
-
-                // Shutdown the primary server task
-                self.task.abort();
-
-                // TODO: Perform a graceful shutdown instead of this?
-                //       Review https://tokio.rs/tokio/topics/shutdown
-                std::process::exit(0);
-            }
         };
 
         if let Err(x) = reply.send(response).await {
@@ -413,14 +309,14 @@ impl ServerHandler for DistantManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use distant_net::{
+    use crate::{
         common::{FramedTransport, InmemoryTransport, MappedListener, OneshotListener, PlainCodec},
         server::ServerRef,
     };
 
     /// Create a new server, bypassing the start loop
-    fn setup() -> DistantManager {
-        DistantManager {
+    fn setup() -> ManagerServer {
+        ManagerServer {
             config: Default::default(),
             connections: RwLock::new(HashMap::new()),
             launch_handlers: Arc::new(RwLock::new(HashMap::new())),
@@ -612,7 +508,7 @@ mod tests {
         let server = setup();
 
         let (writer, reader) = dummy_distant_writer_reader();
-        let connection = DistantManagerConnection::new(
+        let connection = ManagerConnection::new(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
             writer,
@@ -645,7 +541,7 @@ mod tests {
         let server = setup();
 
         let (writer, reader) = dummy_distant_writer_reader();
-        let connection = DistantManagerConnection::new(
+        let connection = ManagerConnection::new(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
             writer,
@@ -655,7 +551,7 @@ mod tests {
         server.connections.write().await.insert(id_1, connection);
 
         let (writer, reader) = dummy_distant_writer_reader();
-        let connection = DistantManagerConnection::new(
+        let connection = ManagerConnection::new(
             "other://host2".parse().unwrap(),
             "key=value".parse().unwrap(),
             writer,
@@ -688,7 +584,7 @@ mod tests {
         let server = setup();
 
         let (writer, reader) = dummy_distant_writer_reader();
-        let connection = DistantManagerConnection::new(
+        let connection = ManagerConnection::new(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
             writer,

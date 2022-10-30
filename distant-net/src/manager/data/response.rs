@@ -1,5 +1,5 @@
-use crate::{data::Error, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities};
-use crate::{ChannelId, ConnectionId};
+use super::{ConnectionInfo, ConnectionList, Error, ManagerCapabilities};
+use crate::common::{ConnectionId, Destination};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -8,16 +8,13 @@ pub enum ManagerResponse {
     /// Acknowledgement that a connection was killed
     Killed,
 
-    /// Broadcast that the manager is shutting down (not guaranteed to be sent)
-    Shutdown,
-
     /// Indicates that some error occurred during a request
     Error(Error),
 
     /// Response to retrieving information about the manager's capabilities
     Capabilities { supported: ManagerCapabilities },
 
-    /// Confirmation of a distant server being launched
+    /// Confirmation of a server being launched
     Launched {
         /// Updated location of the spawned server
         destination: Destination,
