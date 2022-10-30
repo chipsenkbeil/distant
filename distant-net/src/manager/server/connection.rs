@@ -3,7 +3,7 @@ use crate::{
         ConnectionId, Destination, FramedTransport, Interest, Map, Request, Transport,
         UntypedRequest, UntypedResponse,
     },
-    manager::data::ManagerResponse,
+    manager::data::{ManagerChannelId, ManagerResponse},
     server::{ServerRef, ServerReply},
 };
 use log::*;
@@ -16,19 +16,19 @@ pub struct ManagerConnection {
     pub id: ConnectionId,
     pub destination: Destination,
     pub options: Map,
-    tx: mpsc::Sender<Action>,
+    tx: mpsc::UnboundedSender<Action>,
     transport_task: JoinHandle<()>,
     action_task: JoinHandle<()>,
 }
 
 #[derive(Clone)]
 pub struct ManagerChannel {
-    channel_id: ChannelId,
+    channel_id: ManagerChannelId,
     tx: mpsc::Sender<Action>,
 }
 
 impl ManagerChannel {
-    pub fn id(&self) -> ChannelId {
+    pub fn id(&self) -> ManagerChannelId {
         self.channel_id
     }
 
@@ -63,13 +63,23 @@ impl ManagerChannel {
 }
 
 impl ManagerConnection {
-    pub fn new<T: Transport>(
+    pub fn new<T: Transport + Send + Sync + 'static>(
         destination: Destination,
         options: Map,
         transport: FramedTransport<T>,
     ) -> Self {
         let connection_id = rand::random();
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
+        let transport_task = tokio::spawn(transport_task(
+            connection_id,
+            transport,
+            outgoing_rx,
+            tx.clone(),
+            Duration::from_millis(50),
+        ));
+        let action_task = tokio::spawn(action_task(connection_id, rx, outgoing_tx));
 
         Self {
             id: connection_id,
@@ -91,7 +101,6 @@ impl ManagerConnection {
                 id: channel_id,
                 reply,
             })
-            .await
             .map_err(|x| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -114,12 +123,12 @@ impl Drop for ManagerConnection {
 
 enum Action {
     Register {
-        id: ChannelId,
+        id: ManagerChannelId,
         reply: ServerReply<ManagerResponse>,
     },
 
     Unregister {
-        id: ChannelId,
+        id: ManagerChannelId,
     },
 
     Read {
@@ -127,7 +136,7 @@ enum Action {
     },
 
     Write {
-        id: ChannelId,
+        id: ManagerChannelId,
         data: Vec<u8>,
     },
 }
@@ -138,11 +147,11 @@ enum Action {
 /// * `transport` - the fully-authenticated transport.
 /// * `rx` - used to receive outgoing data to send through the connection.
 /// * `tx` - used to send new [`Action`]s to process.
-async fn transport_task<T>(
+async fn transport_task<T: Transport>(
     id: ConnectionId,
-    transport: FramedTransport<T>,
+    mut transport: FramedTransport<T>,
     mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
-    mut tx: mpsc::UnboundedSender<Action>,
+    tx: mpsc::UnboundedSender<Action>,
     sleep_duration: Duration,
 ) {
     loop {
@@ -165,12 +174,9 @@ async fn transport_task<T>(
         if ready.is_readable() {
             match transport.try_read_frame() {
                 Ok(Some(frame)) => {
-                    if let Err(x) = tx
-                        .send(Action::Read {
-                            data: frame.into_item().into_owned(),
-                        })
-                        .await
-                    {
+                    if let Err(x) = tx.send(Action::Read {
+                        data: frame.into_item().into_owned(),
+                    }) {
                         error!("[Conn {id}] Failed to forward frame: {x}");
                     }
                 }
@@ -226,7 +232,7 @@ async fn transport_task<T>(
 async fn action_task(
     id: ConnectionId,
     mut rx: mpsc::UnboundedReceiver<Action>,
-    mut tx: mpsc::UnboundedSender<Vec<u8>>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
 ) {
     let mut registered = HashMap::new();
 
@@ -252,8 +258,8 @@ async fn action_task(
                 // update the origin id to match the request id only
                 let channel_id = match response.origin_id.split_once('_') {
                     Some((cid_str, oid_str)) => {
-                        if let Ok(cid) = cid_str.parse::<ChannelId>() {
-                            response.set_origin_id(oid_str);
+                        if let Ok(cid) = cid_str.parse::<ManagerChannelId>() {
+                            response.set_origin_id(oid_str.to_string());
                             cid
                         } else {
                             continue;
@@ -286,7 +292,7 @@ async fn action_task(
                 // the response containing this in the origin id
                 request.set_id(format!("{id}_{}", request.id));
 
-                if let Err(x) = tx.send(request.to_bytes()).await {
+                if let Err(x) = tx.send(request.to_bytes()) {
                     error!("[Conn {id}] {x}");
                 }
             }

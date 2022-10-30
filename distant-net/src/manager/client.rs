@@ -1,6 +1,6 @@
 use crate::{
     client::Client,
-    common::{ConnectionId, Destination, Map},
+    common::{authentication::AuthHandler, ConnectionId, Destination, Map},
     manager::data::{
         ConnectionInfo, ConnectionList, ManagerCapabilities, ManagerRequest, ManagerResponse,
     },
@@ -15,13 +15,17 @@ pub use channel::*;
 pub type ManagerClient = Client<ManagerRequest, ManagerResponse>;
 
 impl ManagerClient {
-    /// Request that the manager launches a new server at the given `destination`
-    /// with `options` being passed for destination-specific details, returning the new
-    /// `destination` of the spawned server.
+    /// Request that the manager launches a new server at the given `destination` with `options`
+    /// being passed for destination-specific details, returning the new `destination` of the
+    /// spawned server.
+    ///
+    ///  The provided `handler` will be used for any authentication requirements when connecting to
+    ///  the remote machine to spawn the server.
     pub async fn launch(
         &mut self,
         destination: impl Into<Destination>,
         options: impl Into<Map>,
+        handler: impl AuthHandler,
     ) -> io::Result<Destination> {
         let destination = Box::new(destination.into());
         let options = options.into();
@@ -44,29 +48,40 @@ impl ManagerClient {
     }
 
     /// Request that the manager establishes a new connection at the given `destination`
-    /// with `options` being passed for destination-specific details
+    /// with `options` being passed for destination-specific details.
+    ///
+    /// The provided `handler` will be used for any authentication requirements when connecting to
+    /// the server.
     pub async fn connect(
         &mut self,
         destination: impl Into<Destination>,
         options: impl Into<Map>,
+        handler: impl AuthHandler,
     ) -> io::Result<ConnectionId> {
         let destination = Box::new(destination.into());
         let options = options.into();
         trace!("connect({}, {})", destination, options);
 
-        let res = self
-            .send(ManagerRequest::Connect {
+        let mailbox = self
+            .mail(ManagerRequest::Connect {
                 destination,
                 options,
             })
             .await?;
-        match res.payload {
-            ManagerResponse::Connected { id } => Ok(id),
-            ManagerResponse::Error(x) => Err(x.into()),
-            x => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
-            )),
+
+        // Continue to process authentication challenges and other details until we are either
+        // connected or fail
+        while let Some(res) = mailbox.next().await {
+            match res.payload {
+                ManagerResponse::Connected { id } => return Ok(id),
+                ManagerResponse::Error(x) => return Err(x.into()),
+                x => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Got unexpected response: {:?}", x),
+                    ))
+                }
+            }
         }
     }
 

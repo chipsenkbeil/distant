@@ -1,3 +1,5 @@
+pub type ManagerChannelId = u32;
+
 mod capabilities;
 pub use capabilities::*;
 

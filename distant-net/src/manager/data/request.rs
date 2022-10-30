@@ -1,11 +1,11 @@
-use crate::common::{ConnectionId, Destination, Map};
+use super::ManagerChannelId;
+use crate::common::{authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map};
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, EnumDiscriminants, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[strum_discriminants(derive(
     AsRefStr,
     strum::Display,
@@ -38,7 +38,6 @@ pub enum ManagerRequest {
         destination: Box<Destination>,
 
         /// Additional options specific to the connection
-        #[cfg_attr(feature = "clap", clap(short, long, action = clap::ArgAction::Append))]
         options: Map,
     },
 
@@ -49,12 +48,20 @@ pub enum ManagerRequest {
         destination: Box<Destination>,
 
         /// Additional options specific to the connection
-        #[cfg_attr(feature = "clap", clap(short, long, action = clap::ArgAction::Append))]
         options: Map,
     },
 
-    /// Opens a channel for communication with a server
-    #[cfg_attr(feature = "clap", clap(skip))]
+    /// Submit some authentication message for the manager to use with an active connection
+    #[strum_discriminants(strum(message = "Supports authenticating with a remote server"))]
+    Authenticate {
+        /// Id of the authentication request that is being responded to
+        id: String,
+
+        /// Response being sent to some active connection
+        msg: AuthenticationResponse,
+    },
+
+    /// Opens a channel for communication with an already-connected server
     #[strum_discriminants(strum(message = "Supports opening a channel with a remote server"))]
     OpenChannel {
         /// Id of the connection
@@ -62,24 +69,22 @@ pub enum ManagerRequest {
     },
 
     /// Sends data through channel
-    #[cfg_attr(feature = "clap", clap(skip))]
     #[strum_discriminants(strum(
         message = "Supports sending data through a channel with a remote server"
     ))]
     Channel {
         /// Id of the channel
-        id: ChannelId,
+        id: ManagerChannelId,
 
         /// Raw data to send through the channel
         data: Vec<u8>,
     },
 
     /// Closes an open channel
-    #[cfg_attr(feature = "clap", clap(skip))]
     #[strum_discriminants(strum(message = "Supports closing a channel with a remote server"))]
     CloseChannel {
         /// Id of the channel to close
-        id: ChannelId,
+        id: ManagerChannelId,
     },
 
     /// Retrieve information about a specific connection

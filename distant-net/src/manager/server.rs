@@ -1,6 +1,8 @@
 use crate::{
     client::Client,
-    common::{Listener, Map, MpscListener, Request, Response},
+    common::{
+        authentication::msg::AuthenticationResponse, Listener, Map, MpscListener, Request, Response,
+    },
     manager::{
         ChannelId, ConnectionId, ConnectionInfo, ConnectionList, Destination, ManagerCapabilities,
         ManagerRequest, ManagerResponse,
@@ -11,7 +13,7 @@ use async_trait::async_trait;
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
-    sync::{mpsc, Mutex, RwLock},
+    sync::{mpsc, oneshot, Mutex, RwLock},
     task::JoinHandle,
 };
 
@@ -31,6 +33,9 @@ pub struct ManagerServer {
 
     /// Mapping of connection id -> connection
     connections: RwLock<HashMap<ConnectionId, ManagerConnection>>,
+
+    /// Mapping of auth id -> callback
+    authentication: RwLock<HashMap<String, oneshot::Sender<AuthenticationResponse>>>,
 }
 
 impl ManagerServer {
@@ -41,6 +46,7 @@ impl ManagerServer {
         Server::new().handler(Self {
             config,
             connections: RwLock::new(HashMap::new()),
+            authentication: RwLock::new(HashMap::new()),
         })
     }
 
@@ -48,19 +54,7 @@ impl ManagerServer {
     /// and authentication client (if needed) to retrieve additional information needed to
     /// enter the destination prior to starting the server, returning the destination of the
     /// launched server
-    async fn launch(
-        &self,
-        destination: Destination,
-        options: Map,
-        auth: Option<&mut AuthClient>,
-    ) -> io::Result<Destination> {
-        let auth = auth.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "Authentication client not initialized",
-            )
-        })?;
-
+    async fn launch(&self, destination: Destination, options: Map) -> io::Result<Destination> {
         let scheme = match destination.scheme.as_deref() {
             Some(scheme) => {
                 trace!("Using scheme {}", scheme);
@@ -92,19 +86,7 @@ impl ManagerServer {
     /// Connects to a new server at the specified `destination` using the given `options` information
     /// and authentication client (if needed) to retrieve additional information needed to
     /// establish the connection to the server
-    async fn connect(
-        &self,
-        destination: Destination,
-        options: Map,
-        auth: Option<&mut AuthClient>,
-    ) -> io::Result<ConnectionId> {
-        let auth = auth.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "Authentication client not initialized",
-            )
-        })?;
-
+    async fn connect(&self, destination: Destination, options: Map) -> io::Result<ConnectionId> {
         let scheme = match destination.scheme.as_deref() {
             Some(scheme) => {
                 trace!("Using scheme {}", scheme);
@@ -209,35 +191,27 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::Launch {
                 destination,
                 options,
-            } => {
-                let mut auth = match local_data.auth_client.as_ref() {
-                    Some(client) => Some(client.lock().await),
-                    None => None,
-                };
-
-                match self
-                    .launch(*destination, options, auth.as_deref_mut())
-                    .await
-                {
-                    Ok(destination) => ManagerResponse::Launched { destination },
-                    Err(x) => ManagerResponse::Error(x.into()),
-                }
-            }
+            } => match self.launch(*destination, options).await {
+                Ok(destination) => ManagerResponse::Launched { destination },
+                Err(x) => ManagerResponse::Error(x.into()),
+            },
             ManagerRequest::Connect {
                 destination,
                 options,
-            } => {
-                let mut auth = match local_data.auth_client.as_ref() {
-                    Some(client) => Some(client.lock().await),
-                    None => None,
-                };
-
-                match self
-                    .connect(*destination, options, auth.as_deref_mut())
-                    .await
-                {
-                    Ok(id) => ManagerResponse::Connected { id },
-                    Err(x) => ManagerResponse::Error(x.into()),
+            } => match self.connect(*destination, options).await {
+                Ok(id) => ManagerResponse::Connected { id },
+                Err(x) => ManagerResponse::Error(x.into()),
+            },
+            ManagerRequest::Authenticate { id, msg } => {
+                match self.authentication.write().await.remove(&id) {
+                    Some(cb) => match cb.send(msg) {
+                        Ok(_) => ManagerResponse::Ok,
+                        Err(x) => ManagerResponse::Error(x.into()),
+                    },
+                    None => ManagerResponse::Error(
+                        io::Error::new(io::ErrorKind::InvalidInput, "Invalid authenticate id")
+                            .into(),
+                    ),
                 }
             }
             ManagerRequest::OpenChannel { id } => match self.connections.read().await.get(&id) {
