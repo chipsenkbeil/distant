@@ -1,4 +1,4 @@
-use super::ManagerChannelId;
+use super::{ManagerAuthenticationId, ManagerChannelId};
 use crate::common::{authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map};
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
@@ -55,7 +55,7 @@ pub enum ManagerRequest {
     #[strum_discriminants(strum(message = "Supports authenticating with a remote server"))]
     Authenticate {
         /// Id of the authentication request that is being responded to
-        id: String,
+        id: ManagerAuthenticationId,
 
         /// Response being sent to some active connection
         msg: AuthenticationResponse,

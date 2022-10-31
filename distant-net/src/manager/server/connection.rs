@@ -4,7 +4,7 @@ use crate::{
         UntypedRequest, UntypedResponse,
     },
     manager::data::{ManagerChannelId, ManagerResponse},
-    server::{ServerRef, ServerReply},
+    server::ServerReply,
 };
 use log::*;
 use serde::Serialize;

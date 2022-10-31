@@ -1,4 +1,7 @@
-use super::{ConnectionInfo, ConnectionList, Error, ManagerCapabilities, ManagerChannelId};
+use super::{
+    ConnectionInfo, ConnectionList, Error, ManagerAuthenticationId, ManagerCapabilities,
+    ManagerChannelId,
+};
 use crate::common::{authentication::msg::Authentication, ConnectionId, Destination};
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +32,7 @@ pub enum ManagerResponse {
     /// Authentication information being sent to a client
     Authenticate {
         /// Id tied to authentication information in case a response is needed
-        id: String,
+        id: ManagerAuthenticationId,
 
         /// Authentication message
         msg: Authentication,

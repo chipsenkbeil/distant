@@ -107,11 +107,11 @@ where
 
             // Get an answer from user input, or use a blank string as an answer
             // if we fail to get input from the user
-            let answer = self.password_prompt(line).unwrap_or_default();
+            let answer = (self.password_prompt)(line).unwrap_or_default();
 
             answers.push(answer);
         }
-        Ok(answers)
+        Ok(ChallengeResponse { answers })
     }
 
     async fn on_verification(
@@ -123,13 +123,15 @@ where
             VerificationKind::Host => {
                 eprintln!("{}", verification.text);
 
-                let answer = self.text_prompt("Enter [y/N]> ")?;
+                let answer = (self.text_prompt)("Enter [y/N]> ")?;
                 trace!("Verify? Answer = '{answer}'");
-                Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES"))
+                Ok(VerificationResponse {
+                    valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
+                })
             }
             x => {
                 error!("Unsupported verify kind: {x}");
-                Ok(false)
+                Ok(VerificationResponse { valid: false })
             }
         }
     }
