@@ -185,7 +185,7 @@ impl ManagerServer {
 pub struct DistantManagerServerConnection {
     /// Holds on to open channels feeding data back from a server to some connected client,
     /// enabling us to cancel the tasks on demand
-    channels: RwLock<HashMap<ChannelId, ManagerChannel>>,
+    channels: RwLock<HashMap<ManagerChannelId, ManagerChannel>>,
 }
 
 #[async_trait]
@@ -244,7 +244,7 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::Authenticate { id, msg } => {
                 match self.registry.write().await.remove(&id) {
                     Some(cb) => match cb.send(msg) {
-                        Ok(_) => ManagerResponse::Ok,
+                        Ok(_) => return,
                         Err(x) => ManagerResponse::Error(x.into()),
                     },
                     None => ManagerResponse::Error(

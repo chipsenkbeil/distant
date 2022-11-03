@@ -41,16 +41,16 @@ impl DerefMut for ConnectionList {
     }
 }
 
-impl Index<u64> for ConnectionList {
+impl Index<ConnectionId> for ConnectionList {
     type Output = Destination;
 
-    fn index(&self, connection_id: u64) -> &Self::Output {
+    fn index(&self, connection_id: ConnectionId) -> &Self::Output {
         &self.0[&connection_id]
     }
 }
 
-impl IndexMut<u64> for ConnectionList {
-    fn index_mut(&mut self, connection_id: u64) -> &mut Self::Output {
+impl IndexMut<ConnectionId> for ConnectionList {
+    fn index_mut(&mut self, connection_id: ConnectionId) -> &mut Self::Output {
         self.0
             .get_mut(&connection_id)
             .expect("No connection with id")

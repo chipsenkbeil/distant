@@ -8,9 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum ManagerResponse {
-    /// Acknowledgement of a response being processed
-    Ok,
-
     /// Acknowledgement that a connection was killed
     Killed,
 
