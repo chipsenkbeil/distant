@@ -24,7 +24,7 @@ pub struct ManagerConnection {
 #[derive(Clone)]
 pub struct ManagerChannel {
     channel_id: ManagerChannelId,
-    tx: mpsc::Sender<Action>,
+    tx: mpsc::UnboundedSender<Action>,
 }
 
 impl ManagerChannel {
@@ -32,14 +32,13 @@ impl ManagerChannel {
         self.channel_id
     }
 
-    pub async fn send<T: Serialize>(&self, request: Request<T>) -> io::Result<()> {
+    pub fn send<T: Serialize>(&self, request: Request<T>) -> io::Result<()> {
         let channel_id = self.channel_id;
         self.tx
             .send(Action::Write {
                 id: channel_id,
                 data: request.to_vec()?,
             })
-            .await
             .map_err(|x| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -48,11 +47,10 @@ impl ManagerChannel {
             })
     }
 
-    pub async fn close(&self) -> io::Result<()> {
+    pub fn close(&self) -> io::Result<()> {
         let channel_id = self.channel_id;
         self.tx
             .send(Action::Unregister { id: channel_id })
-            .await
             .map_err(|x| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -91,10 +89,7 @@ impl ManagerConnection {
         }
     }
 
-    pub async fn open_channel(
-        &self,
-        reply: ServerReply<ManagerResponse>,
-    ) -> io::Result<ManagerChannel> {
+    pub fn open_channel(&self, reply: ServerReply<ManagerResponse>) -> io::Result<ManagerChannel> {
         let channel_id = rand::random();
         self.tx
             .send(Action::Register {
