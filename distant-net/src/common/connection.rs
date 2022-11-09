@@ -124,7 +124,7 @@ impl<T> Drop for Connection<T> {
 #[async_trait]
 impl<T> Reconnectable for Connection<T>
 where
-    T: Transport + Send + Sync,
+    T: Transport,
 {
     /// Attempts to re-establish a connection.
     ///
@@ -141,7 +141,7 @@ where
     ///
     /// [`reconnect`]: Reconnectable::reconnect
     async fn reconnect(&mut self) -> io::Result<()> {
-        async fn reconnect_client<T: Transport + Send + Sync>(
+        async fn reconnect_client<T: Transport>(
             id: &mut ConnectionId,
             reauth_otp: &mut HeapSecretKey,
             transport: &mut FramedTransport<T>,
@@ -233,7 +233,7 @@ enum ConnectType {
 
 impl<T> Connection<T>
 where
-    T: Transport + Send + Sync,
+    T: Transport,
 {
     /// Transforms a raw [`Transport`] into an established [`Connection`] from the client-side by
     /// performing the following:

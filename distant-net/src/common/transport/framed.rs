@@ -825,7 +825,7 @@ impl<T: Transport> FramedTransport<T> {
 #[async_trait]
 impl<T> Reconnectable for FramedTransport<T>
 where
-    T: Transport + Send + Sync,
+    T: Transport,
 {
     async fn reconnect(&mut self) -> io::Result<()> {
         Reconnectable::reconnect(&mut self.inner).await

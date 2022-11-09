@@ -62,6 +62,7 @@ impl Transport for UnixSocketTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::TransportExt;
     use tempfile::NamedTempFile;
     use test_log::test;
     use tokio::{

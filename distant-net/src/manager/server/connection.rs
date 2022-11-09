@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        ConnectionId, Destination, FramedTransport, Interest, Map, Request, Transport,
-        UntypedRequest, UntypedResponse,
+        ConnectionId, Destination, FramedTransport, Interest, Map, Transport, UntypedRequest,
+        UntypedResponse,
     },
     manager::data::{ManagerChannelId, ManagerResponse},
     server::ServerReply,
@@ -32,12 +32,12 @@ impl ManagerChannel {
         self.channel_id
     }
 
-    pub fn send<T: Serialize>(&self, request: Request<T>) -> io::Result<()> {
+    pub fn send<T: Serialize>(&self, data: Vec<u8>) -> io::Result<()> {
         let channel_id = self.channel_id;
         self.tx
             .send(Action::Write {
                 id: channel_id,
-                data: request.to_vec()?,
+                data,
             })
             .map_err(|x| {
                 io::Error::new(
@@ -61,7 +61,7 @@ impl ManagerChannel {
 }
 
 impl ManagerConnection {
-    pub fn new<T: Transport + Send + Sync + 'static>(
+    pub fn new<T: Transport + 'static>(
         destination: Destination,
         options: Map,
         transport: FramedTransport<T>,

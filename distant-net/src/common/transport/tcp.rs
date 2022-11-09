@@ -69,6 +69,7 @@ impl Transport for TcpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::TransportExt;
     use std::net::{Ipv6Addr, SocketAddr};
     use test_log::test;
     use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};

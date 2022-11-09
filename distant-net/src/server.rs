@@ -145,7 +145,7 @@ where
     pub fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
     where
         L: Listener + 'static,
-        L::Output: Transport + Send + Sync + 'static,
+        L::Output: Transport + 'static,
     {
         let state = Arc::new(ServerState::new());
         let task = tokio::spawn(self.task(Arc::clone(&state), listener));
@@ -157,7 +157,7 @@ where
     async fn task<L>(self, state: Arc<ServerState>, mut listener: L)
     where
         L: Listener + 'static,
-        L::Output: Transport + Send + Sync + 'static,
+        L::Output: Transport + 'static,
     {
         let Server {
             config,

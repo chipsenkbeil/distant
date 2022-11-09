@@ -203,6 +203,7 @@ fn copy_and_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::TransportExt;
     use test_log::test;
 
     #[test]

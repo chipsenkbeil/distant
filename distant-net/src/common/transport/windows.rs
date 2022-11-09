@@ -88,6 +88,7 @@ impl Transport for WindowsPipeTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::TransportExt;
     use test_log::test;
     use tokio::{
         net::windows::named_pipe::{NamedPipeServer, ServerOptions},

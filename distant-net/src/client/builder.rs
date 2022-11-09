@@ -98,7 +98,7 @@ impl Default for ClientBuilder<(), ()> {
 impl<H, T> ClientBuilder<H, T>
 where
     H: AuthHandler + Send,
-    T: Transport + Send + Sync + 'static,
+    T: Transport + 'static,
 {
     pub async fn connect<U, V>(self) -> io::Result<Client<U, V>>
     where

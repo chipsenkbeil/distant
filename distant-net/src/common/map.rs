@@ -1,4 +1,4 @@
-use crate::serde_str::{deserialize_from_str, serialize_to_str};
+use crate::common::utils::{deserialize_from_str, serialize_to_str};
 use derive_more::{Display, Error, From, IntoIterator};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{
@@ -207,7 +207,7 @@ macro_rules! map {
             _map.insert($key.to_string(), $value.to_string());
         )*
 
-        $crate::Map::from(_map)
+        $crate::common::Map::from(_map)
     }};
 }
 

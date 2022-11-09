@@ -53,23 +53,21 @@ pub trait ConnectHandler: Send + Sync {
         destination: &Destination,
         options: &Map,
         authenticator: &mut dyn Authenticator,
-    ) -> io::Result<FramedTransport<Box<dyn Transport + Send + Sync>>>;
+    ) -> io::Result<FramedTransport<Box<dyn Transport>>>;
 }
 
 #[async_trait]
 impl<F, R> ConnectHandler for F
 where
     F: for<'a> Fn(&'a Destination, &'a Map, &'a mut dyn Authenticator) -> R + Send + Sync + 'static,
-    R: Future<Output = io::Result<FramedTransport<Box<dyn Transport + Send + Sync>>>>
-        + Send
-        + 'static,
+    R: Future<Output = io::Result<FramedTransport<Box<dyn Transport>>>> + Send + 'static,
 {
     async fn connect(
         &self,
         destination: &Destination,
         options: &Map,
         authenticator: &mut dyn Authenticator,
-    ) -> io::Result<FramedTransport<Box<dyn Transport + Send + Sync>>> {
+    ) -> io::Result<FramedTransport<Box<dyn Transport>>> {
         self(destination, options, authenticator).await
     }
 }

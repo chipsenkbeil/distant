@@ -67,7 +67,7 @@ impl Listener for WindowsPipeListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::Transport;
+    use crate::common::TransportExt;
     use test_log::test;
     use tokio::{sync::oneshot, task::JoinHandle};
 

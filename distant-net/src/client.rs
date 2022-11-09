@@ -47,7 +47,7 @@ where
     /// Spawns a client using the provided [`Connection`].
     pub(crate) fn spawn<V>(mut connection: Connection<V>, mut strategy: ReconnectStrategy) -> Self
     where
-        V: Transport + Send + Sync + 'static,
+        V: Transport + 'static,
     {
         let post_office = Arc::new(PostOffice::default());
         let weak_post_office = Arc::downgrade(&post_office);

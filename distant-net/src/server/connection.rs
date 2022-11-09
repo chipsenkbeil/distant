@@ -170,7 +170,7 @@ where
     H::Request: DeserializeOwned + Send + Sync + 'static,
     H::Response: Serialize + Send + 'static,
     H::LocalData: Default + Send + Sync + 'static,
-    T: Transport + Send + Sync + 'static,
+    T: Transport + 'static,
 {
     pub fn spawn(self) -> ConnectionTask {
         let id = self.id;

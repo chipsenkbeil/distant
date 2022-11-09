@@ -254,7 +254,7 @@ impl ServerHandler for ManagerServer {
                 }
             }
             ManagerRequest::OpenChannel { id } => match self.connections.read().await.get(&id) {
-                Some(connection) => match connection.open_channel(reply.clone()).await {
+                Some(connection) => match connection.open_channel(reply.clone()) {
                     Ok(channel) => {
                         let id = channel.id();
                         local_data.channels.write().await.insert(id, channel);
@@ -271,7 +271,7 @@ impl ServerHandler for ManagerServer {
                     // TODO: For now, we are NOT sending back a response to acknowledge
                     //       a successful channel send. We could do this in order for
                     //       the client to listen for a complete send, but is it worth it?
-                    Some(channel) => match channel.send(data).await {
+                    Some(channel) => match channel.send(data) {
                         Ok(_) => return,
                         Err(x) => ManagerResponse::Error(x.into()),
                     },
@@ -286,7 +286,7 @@ impl ServerHandler for ManagerServer {
             }
             ManagerRequest::CloseChannel { id } => {
                 match local_data.channels.write().await.remove(&id) {
-                    Some(channel) => match channel.close().await {
+                    Some(channel) => match channel.close() {
                         Ok(_) => ManagerResponse::ChannelClosed { id },
                         Err(x) => ManagerResponse::Error(x.into()),
                     },

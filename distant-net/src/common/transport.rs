@@ -42,7 +42,7 @@ pub trait Reconnectable {
 
 /// Interface representing a transport of raw bytes into and out of the system.
 #[async_trait]
-pub trait Transport: Reconnectable {
+pub trait Transport: Reconnectable + Send + Sync {
     /// Tries to read data from the transport into the provided buffer, returning how many bytes
     /// were read.
     ///
@@ -63,18 +63,37 @@ pub trait Transport: Reconnectable {
     /// Waits for the transport to be ready based on the given interest, returning the ready
     /// status.
     async fn ready(&self, interest: Interest) -> io::Result<Ready>;
+}
 
-    /// Waits for the transport to be readable to follow up with `try_read`.
-    async fn readable(&self) -> io::Result<()> {
-        self.ready(Interest::READABLE).await?;
-        Ok(())
+#[async_trait]
+impl Transport for Box<dyn Transport> {
+    fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        Transport::try_read(AsRef::as_ref(self), buf)
     }
+
+    fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
+        Transport::try_write(AsRef::as_ref(self), buf)
+    }
+
+    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
+        Transport::ready(AsRef::as_ref(self), interest).await
+    }
+}
+
+#[async_trait]
+impl Reconnectable for Box<dyn Transport> {
+    async fn reconnect(&mut self) -> io::Result<()> {
+        Reconnectable::reconnect(AsMut::as_mut(self)).await
+    }
+}
+
+#[async_trait]
+pub trait TransportExt {
+    /// Waits for the transport to be readable to follow up with `try_read`.
+    async fn readable(&self) -> io::Result<()>;
 
     /// Waits for the transport to be writeable to follow up with `try_write`.
-    async fn writeable(&self) -> io::Result<()> {
-        self.ready(Interest::WRITABLE).await?;
-        Ok(())
-    }
+    async fn writeable(&self) -> io::Result<()>;
 
     /// Reads exactly `n` bytes where `n` is the length of `buf` by continuing to call [`try_read`]
     /// until completed. Calls to [`readable`] are made to ensure the transport is ready. Returns
@@ -82,6 +101,28 @@ pub trait Transport: Reconnectable {
     ///
     /// [`try_read`]: Transport::try_read
     /// [`readable`]: Transport::readable
+    async fn read_exact(&self, buf: &mut [u8]) -> io::Result<usize>;
+
+    /// Writes all of `buf` by continuing to call [`try_write`] until completed. Calls to
+    /// [`writeable`] are made to ensure the transport is ready.
+    ///
+    /// [`try_write`]: Transport::try_write
+    /// [`writable`]: Transport::writable
+    async fn write_all(&self, buf: &[u8]) -> io::Result<()>;
+}
+
+#[async_trait]
+impl<T: Transport> TransportExt for T {
+    async fn readable(&self) -> io::Result<()> {
+        self.ready(Interest::READABLE).await?;
+        Ok(())
+    }
+
+    async fn writeable(&self) -> io::Result<()> {
+        self.ready(Interest::WRITABLE).await?;
+        Ok(())
+    }
+
     async fn read_exact(&self, buf: &mut [u8]) -> io::Result<usize> {
         let mut i = 0;
 
@@ -113,11 +154,6 @@ pub trait Transport: Reconnectable {
         Ok(i)
     }
 
-    /// Writes all of `buf` by continuing to call [`try_write`] until completed. Calls to
-    /// [`writeable`] are made to ensure the transport is ready.
-    ///
-    /// [`try_write`]: Transport::try_write
-    /// [`writable`]: Transport::writable
     async fn write_all(&self, buf: &[u8]) -> io::Result<()> {
         let mut i = 0;
 

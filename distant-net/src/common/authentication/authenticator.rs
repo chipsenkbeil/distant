@@ -91,7 +91,7 @@ macro_rules! next_frame_as {
 #[async_trait]
 impl<T> Authenticate for FramedTransport<T>
 where
-    T: Transport + Send + Sync,
+    T: Transport,
 {
     async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()> {
         loop {
@@ -140,7 +140,7 @@ where
 #[async_trait]
 impl<T> Authenticator for FramedTransport<T>
 where
-    T: Transport + Send + Sync,
+    T: Transport,
 {
     async fn initialize(
         &mut self,
