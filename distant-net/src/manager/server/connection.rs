@@ -7,7 +7,6 @@ use crate::{
     server::ServerReply,
 };
 use log::*;
-use serde::Serialize;
 use std::{collections::HashMap, io, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -32,7 +31,7 @@ impl ManagerChannel {
         self.channel_id
     }
 
-    pub fn send<T: Serialize>(&self, data: Vec<u8>) -> io::Result<()> {
+    pub fn send(&self, data: Vec<u8>) -> io::Result<()> {
         let channel_id = self.channel_id;
         self.tx
             .send(Action::Write {

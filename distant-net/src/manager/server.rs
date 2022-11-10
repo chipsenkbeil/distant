@@ -1,9 +1,5 @@
 use crate::{
-    client::Client,
-    common::{
-        authentication::msg::AuthenticationResponse, ConnectionId, Destination, Listener, Map,
-        MpscListener, Request, Response,
-    },
+    common::{authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map},
     manager::{
         ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities,
         ManagerChannelId, ManagerRequest, ManagerResponse,
@@ -13,10 +9,7 @@ use crate::{
 use async_trait::async_trait;
 use log::*;
 use std::{collections::HashMap, io, sync::Arc};
-use tokio::{
-    sync::{mpsc, oneshot, Mutex, RwLock},
-    task::JoinHandle,
-};
+use tokio::sync::{oneshot, RwLock};
 
 mod authentication;
 pub use authentication::*;
@@ -47,7 +40,7 @@ impl ManagerServer {
     /// Creates a new [`Server`] starting with a default configuration and no authentication
     /// methods. The provided `config` will be used to configure the launch and connect handlers
     /// for the server as well as provide other defaults.
-    pub fn new(mut config: Config) -> Server<Self> {
+    pub fn new(config: Config) -> Server<Self> {
         Server::new().handler(Self {
             config,
             connections: RwLock::new(HashMap::new()),
@@ -205,7 +198,7 @@ impl ServerHandler for ManagerServer {
         let response = match request.payload {
             ManagerRequest::Capabilities {} => match self.capabilities().await {
                 Ok(supported) => ManagerResponse::Capabilities { supported },
-                Err(x) => ManagerResponse::Error(x.into()),
+                Err(x) => ManagerResponse::from(x),
             },
             ManagerRequest::Launch {
                 destination,
@@ -215,14 +208,14 @@ impl ServerHandler for ManagerServer {
                     *destination,
                     options,
                     ManagerAuthenticator {
-                        reply,
+                        reply: reply.clone(),
                         registry: Arc::clone(&self.registry),
                     },
                 )
                 .await
             {
                 Ok(destination) => ManagerResponse::Launched { destination },
-                Err(x) => ManagerResponse::Error(x.into()),
+                Err(x) => ManagerResponse::from(x),
             },
             ManagerRequest::Connect {
                 destination,
@@ -232,25 +225,27 @@ impl ServerHandler for ManagerServer {
                     *destination,
                     options,
                     ManagerAuthenticator {
-                        reply,
+                        reply: reply.clone(),
                         registry: Arc::clone(&self.registry),
                     },
                 )
                 .await
             {
                 Ok(id) => ManagerResponse::Connected { id },
-                Err(x) => ManagerResponse::Error(x.into()),
+                Err(x) => ManagerResponse::from(x),
             },
             ManagerRequest::Authenticate { id, msg } => {
                 match self.registry.write().await.remove(&id) {
                     Some(cb) => match cb.send(msg) {
                         Ok(_) => return,
-                        Err(x) => ManagerResponse::Error(x.into()),
+                        Err(_) => ManagerResponse::Error {
+                            description: "Unable to forward authentication callback".to_string(),
+                        },
                     },
-                    None => ManagerResponse::Error(
-                        io::Error::new(io::ErrorKind::InvalidInput, "Invalid authentication id")
-                            .into(),
-                    ),
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Invalid authentication id",
+                    )),
                 }
             }
             ManagerRequest::OpenChannel { id } => match self.connections.read().await.get(&id) {
@@ -260,11 +255,12 @@ impl ServerHandler for ManagerServer {
                         local_data.channels.write().await.insert(id, channel);
                         ManagerResponse::ChannelOpened { id }
                     }
-                    Err(x) => ManagerResponse::Error(x.into()),
+                    Err(x) => ManagerResponse::from(x),
                 },
-                None => ManagerResponse::Error(
-                    io::Error::new(io::ErrorKind::NotConnected, "Connection does not exist").into(),
-                ),
+                None => ManagerResponse::from(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "Connection does not exist",
+                )),
             },
             ManagerRequest::Channel { id, data } => {
                 match local_data.channels.read().await.get(&id) {
@@ -273,43 +269,37 @@ impl ServerHandler for ManagerServer {
                     //       the client to listen for a complete send, but is it worth it?
                     Some(channel) => match channel.send(data) {
                         Ok(_) => return,
-                        Err(x) => ManagerResponse::Error(x.into()),
+                        Err(x) => ManagerResponse::from(x),
                     },
-                    None => ManagerResponse::Error(
-                        io::Error::new(
-                            io::ErrorKind::NotConnected,
-                            "Channel is not open or does not exist",
-                        )
-                        .into(),
-                    ),
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "Channel is not open or does not exist",
+                    )),
                 }
             }
             ManagerRequest::CloseChannel { id } => {
                 match local_data.channels.write().await.remove(&id) {
                     Some(channel) => match channel.close() {
                         Ok(_) => ManagerResponse::ChannelClosed { id },
-                        Err(x) => ManagerResponse::Error(x.into()),
+                        Err(x) => ManagerResponse::from(x),
                     },
-                    None => ManagerResponse::Error(
-                        io::Error::new(
-                            io::ErrorKind::NotConnected,
-                            "Channel is not open or does not exist",
-                        )
-                        .into(),
-                    ),
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "Channel is not open or does not exist",
+                    )),
                 }
             }
             ManagerRequest::Info { id } => match self.info(id).await {
                 Ok(info) => ManagerResponse::Info(info),
-                Err(x) => ManagerResponse::Error(x.into()),
+                Err(x) => ManagerResponse::from(x),
             },
             ManagerRequest::List => match self.list().await {
                 Ok(list) => ManagerResponse::List(list),
-                Err(x) => ManagerResponse::Error(x.into()),
+                Err(x) => ManagerResponse::from(x),
             },
             ManagerRequest::Kill { id } => match self.kill(id).await {
                 Ok(()) => ManagerResponse::Killed,
-                Err(x) => ManagerResponse::Error(x.into()),
+                Err(x) => ManagerResponse::from(x),
             },
         };
 
@@ -322,7 +312,9 @@ impl ServerHandler for ManagerServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::{FramedTransport, Transport};
     use crate::server::ServerReply;
+    use tokio::sync::mpsc;
 
     fn test_config() -> Config {
         Config {
@@ -333,6 +325,11 @@ mod tests {
             launch_handlers: HashMap::new(),
             connect_handlers: HashMap::new(),
         }
+    }
+
+    /// Create a framed transport that is detached such that reads and writes will fail
+    fn detached_framed_transport() -> FramedTransport<Box<dyn Transport>> {
+        FramedTransport::pair(1).0.into_boxed()
     }
 
     /// Create a new server and authenticator
@@ -457,7 +454,7 @@ mod tests {
         let mut config = test_config();
 
         let handler: Box<dyn ConnectHandler> =
-            Box::new(|_: &_, _: &_, _: &mut _| async { Ok(dummy_distant_writer_reader()) });
+            Box::new(|_: &_, _: &_, _: &mut _| async { Ok(detached_framed_transport()) });
 
         config
             .connect_handlers
@@ -490,12 +487,10 @@ mod tests {
     async fn info_should_return_information_about_established_connection() {
         let (server, _) = setup(test_config());
 
-        let (writer, reader) = dummy_distant_writer_reader();
         let connection = ManagerConnection::new(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
-            writer,
-            reader,
+            detached_framed_transport(),
         );
         let id = connection.id;
         server.connections.write().await.insert(id, connection);
@@ -523,22 +518,18 @@ mod tests {
     async fn list_should_return_a_list_of_established_connections() {
         let (server, _) = setup(test_config());
 
-        let (writer, reader) = dummy_distant_writer_reader();
         let connection = ManagerConnection::new(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
-            writer,
-            reader,
+            detached_framed_transport(),
         );
         let id_1 = connection.id;
         server.connections.write().await.insert(id_1, connection);
 
-        let (writer, reader) = dummy_distant_writer_reader();
         let connection = ManagerConnection::new(
             "other://host2".parse().unwrap(),
             "key=value".parse().unwrap(),
-            writer,
-            reader,
+            detached_framed_transport(),
         );
         let id_2 = connection.id;
         server.connections.write().await.insert(id_2, connection);
@@ -566,12 +557,10 @@ mod tests {
     async fn kill_should_terminate_established_connection_and_remove_it_from_the_list() {
         let (server, _) = setup(test_config());
 
-        let (writer, reader) = dummy_distant_writer_reader();
         let connection = ManagerConnection::new(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
-            writer,
-            reader,
+            detached_framed_transport(),
         );
         let id = connection.id;
         server.connections.write().await.insert(id, connection);

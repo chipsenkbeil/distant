@@ -125,6 +125,19 @@ impl<T> fmt::Debug for FramedTransport<T> {
     }
 }
 
+impl<T: Transport + 'static> FramedTransport<T> {
+    /// Converts this instance to a [`FramedTransport`] whose inner [`Transport`] is [`Box`]ed.
+    pub fn into_boxed(self) -> FramedTransport<Box<dyn Transport>> {
+        FramedTransport {
+            inner: Box::new(self.inner),
+            codec: self.codec,
+            incoming: self.incoming,
+            outgoing: self.outgoing,
+            backup: self.backup,
+        }
+    }
+}
+
 impl<T: Transport> FramedTransport<T> {
     /// Waits for the transport to be ready based on the given interest, returning the ready status
     pub async fn ready(&self, interest: Interest) -> io::Result<Ready> {

@@ -31,15 +31,15 @@ impl ManagerClient {
         &mut self,
         destination: impl Into<Destination>,
         options: impl Into<Map>,
-        handler: impl AuthHandler + Send,
+        mut handler: impl AuthHandler + Send,
     ) -> io::Result<Destination> {
         let destination = Box::new(destination.into());
         let options = options.into();
         trace!("launch({}, {})", destination, options);
 
-        let mailbox = self
+        let mut mailbox = self
             .mail(ManagerRequest::Launch {
-                destination,
+                destination: destination.clone(),
                 options,
             })
             .await?;
@@ -53,7 +53,11 @@ impl ManagerClient {
                         if log::log_enabled!(Level::Debug) {
                             debug!(
                                 "Initializing authentication, supporting {}",
-                                x.methods.into_iter().collect::<Vec<_>>().join(",")
+                                x.methods
+                                    .iter()
+                                    .map(ToOwned::to_owned)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
                             );
                         }
                         let msg = AuthenticationResponse::Initialization(
@@ -99,7 +103,9 @@ impl ManagerClient {
                     }
                 },
                 ManagerResponse::Launched { destination } => return Ok(destination),
-                ManagerResponse::Error(x) => return Err(x.into()),
+                ManagerResponse::Error { description } => {
+                    return Err(io::Error::new(io::ErrorKind::Other, description))
+                }
                 x => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -124,15 +130,15 @@ impl ManagerClient {
         &mut self,
         destination: impl Into<Destination>,
         options: impl Into<Map>,
-        handler: impl AuthHandler + Send,
+        mut handler: impl AuthHandler + Send,
     ) -> io::Result<ConnectionId> {
         let destination = Box::new(destination.into());
         let options = options.into();
         trace!("connect({}, {})", destination, options);
 
-        let mailbox = self
+        let mut mailbox = self
             .mail(ManagerRequest::Connect {
-                destination,
+                destination: destination.clone(),
                 options,
             })
             .await?;
@@ -146,7 +152,11 @@ impl ManagerClient {
                         if log::log_enabled!(Level::Debug) {
                             debug!(
                                 "Initializing authentication, supporting {}",
-                                x.methods.into_iter().collect::<Vec<_>>().join(",")
+                                x.methods
+                                    .iter()
+                                    .map(ToOwned::to_owned)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
                             );
                         }
                         let msg = AuthenticationResponse::Initialization(
@@ -192,7 +202,9 @@ impl ManagerClient {
                     }
                 },
                 ManagerResponse::Connected { id } => return Ok(id),
-                ManagerResponse::Error(x) => return Err(x.into()),
+                ManagerResponse::Error { description } => {
+                    return Err(io::Error::new(io::ErrorKind::Other, description))
+                }
                 x => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -229,7 +241,9 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::Capabilities).await?;
         match res.payload {
             ManagerResponse::Capabilities { supported } => Ok(supported),
-            ManagerResponse::Error(x) => Err(x.into()),
+            ManagerResponse::Error { description } => {
+                Err(io::Error::new(io::ErrorKind::Other, description))
+            }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -243,7 +257,9 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::Info { id }).await?;
         match res.payload {
             ManagerResponse::Info(info) => Ok(info),
-            ManagerResponse::Error(x) => Err(x.into()),
+            ManagerResponse::Error { description } => {
+                Err(io::Error::new(io::ErrorKind::Other, description))
+            }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -257,7 +273,9 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::Kill { id }).await?;
         match res.payload {
             ManagerResponse::Killed => Ok(()),
-            ManagerResponse::Error(x) => Err(x.into()),
+            ManagerResponse::Error { description } => {
+                Err(io::Error::new(io::ErrorKind::Other, description))
+            }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -271,7 +289,9 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
-            ManagerResponse::Error(x) => Err(x.into()),
+            ManagerResponse::Error { description } => {
+                Err(io::Error::new(io::ErrorKind::Other, description))
+            }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {:?}", x),
@@ -283,24 +303,24 @@ impl ManagerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        common::{Request, Response},
-        manager::data::{Error, ErrorKind},
-    };
+    use crate::client::ReconnectStrategy;
+    use crate::common::authentication::DummyAuthHandler;
+    use crate::common::{Connection, InmemoryTransport, Request, Response};
 
-    fn setup() -> (ManagerClient, FramedTransport<InmemoryTransport>) {
-        let (t1, t2) = FramedTransport::test_pair(100);
-        let client =
-            ManagerClient::new(DistantManagerClientConfig::with_empty_prompts(), t1).unwrap();
-        (client, t2)
+    fn setup() -> (ManagerClient, Connection<InmemoryTransport>) {
+        let (client, server) = Connection::pair(100);
+        let client = ManagerClient::spawn(client, ReconnectStrategy::Fail);
+        (client, server)
     }
 
     #[inline]
-    fn test_error() -> Error {
-        Error {
-            kind: ErrorKind::Interrupted,
-            description: "test error".to_string(),
-        }
+    fn test_error() -> io::Error {
+        io::Error::new(io::ErrorKind::Interrupted, "test error")
+    }
+
+    #[inline]
+    fn test_error_response() -> ManagerResponse {
+        ManagerResponse::from(test_error())
     }
 
     #[inline]
@@ -320,10 +340,7 @@ mod tests {
                 .unwrap();
 
             transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Error(test_error()),
-                ))
+                .write_frame_for(&Response::new(request.id, test_error_response()))
                 .await
                 .unwrap();
         });
@@ -332,10 +349,11 @@ mod tests {
             .connect(
                 "scheme://host".parse::<Destination>().unwrap(),
                 "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
             )
             .await
             .unwrap_err();
-        assert_eq!(err.kind(), test_io_error().kind());
+        assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), test_io_error().to_string());
     }
 
@@ -345,13 +363,13 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
                 .await
                 .unwrap();
         });
@@ -360,6 +378,7 @@ mod tests {
             .connect(
                 "scheme://host".parse::<Destination>().unwrap(),
                 "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
             )
             .await
             .unwrap_err();
@@ -373,13 +392,13 @@ mod tests {
         let expected_id = 999;
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(
+                .write_frame_for(&Response::new(
                     request.id,
                     ManagerResponse::Connected { id: expected_id },
                 ))
@@ -391,6 +410,7 @@ mod tests {
             .connect(
                 "scheme://host".parse::<Destination>().unwrap(),
                 "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
             )
             .await
             .unwrap();
@@ -403,22 +423,19 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Error(test_error()),
-                ))
+                .write_frame_for(&Response::new(request.id, test_error_response()))
                 .await
                 .unwrap();
         });
 
         let err = client.info(123).await.unwrap_err();
-        assert_eq!(err.kind(), test_io_error().kind());
+        assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), test_io_error().to_string());
     }
 
@@ -428,13 +445,13 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
                 .await
                 .unwrap();
         });
@@ -449,7 +466,7 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
@@ -461,7 +478,7 @@ mod tests {
             };
 
             transport
-                .write(Response::new(request.id, ManagerResponse::Info(info)))
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Info(info)))
                 .await
                 .unwrap();
         });
@@ -481,22 +498,19 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Error(test_error()),
-                ))
+                .write_frame_for(&Response::new(request.id, test_error_response()))
                 .await
                 .unwrap();
         });
 
         let err = client.list().await.unwrap_err();
-        assert_eq!(err.kind(), test_io_error().kind());
+        assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), test_io_error().to_string());
     }
 
@@ -506,13 +520,13 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(request.id, ManagerResponse::Shutdown))
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
                 .await
                 .unwrap();
         });
@@ -527,7 +541,7 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
@@ -536,7 +550,7 @@ mod tests {
             list.insert(123, "scheme://host".parse::<Destination>().unwrap());
 
             transport
-                .write(Response::new(request.id, ManagerResponse::List(list)))
+                .write_frame_for(&Response::new(request.id, ManagerResponse::List(list)))
                 .await
                 .unwrap();
         });
@@ -555,22 +569,19 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(
-                    request.id,
-                    ManagerResponse::Error(test_error()),
-                ))
+                .write_frame_for(&Response::new(request.id, test_error_response()))
                 .await
                 .unwrap();
         });
 
         let err = client.kill(123).await.unwrap_err();
-        assert_eq!(err.kind(), test_io_error().kind());
+        assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), test_io_error().to_string());
     }
 
@@ -580,13 +591,13 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(
+                .write_frame_for(&Response::new(
                     request.id,
                     ManagerResponse::Connected { id: 0 },
                 ))
@@ -604,13 +615,13 @@ mod tests {
 
         tokio::spawn(async move {
             let request = transport
-                .read::<Request<ManagerRequest>>()
+                .read_frame_as::<Request<ManagerRequest>>()
                 .await
                 .unwrap()
                 .unwrap();
 
             transport
-                .write(Response::new(request.id, ManagerResponse::Killed))
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
                 .await
                 .unwrap();
         });

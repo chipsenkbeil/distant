@@ -1,6 +1,5 @@
 use super::{
-    ConnectionInfo, ConnectionList, Error, ManagerAuthenticationId, ManagerCapabilities,
-    ManagerChannelId,
+    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
 };
 use crate::common::{authentication::msg::Authentication, ConnectionId, Destination};
 use serde::{Deserialize, Serialize};
@@ -12,7 +11,7 @@ pub enum ManagerResponse {
     Killed,
 
     /// Indicates that some error occurred during a request
-    Error(Error),
+    Error { description: String },
 
     /// Response to retrieving information about the manager's capabilities
     Capabilities { supported: ManagerCapabilities },
@@ -61,4 +60,12 @@ pub enum ManagerResponse {
         /// Id of the channel
         id: ManagerChannelId,
     },
+}
+
+impl<T: std::error::Error> From<T> for ManagerResponse {
+    fn from(x: T) -> Self {
+        Self::Error {
+            description: x.to_string(),
+        }
+    }
 }

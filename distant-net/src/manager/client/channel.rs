@@ -75,7 +75,9 @@ impl RawChannel {
         let channel_id = match mailbox.next().await {
             Some(response) => match response.payload {
                 ManagerResponse::ChannelOpened { id } => Ok(id),
-                ManagerResponse::Error(x) => Err(x.into()),
+                ManagerResponse::Error { description } => {
+                    Err(io::Error::new(io::ErrorKind::Other, description))
+                }
                 x => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("[Conn {connection_id}] Raw channel open unexpected response: {x:?}"),
@@ -88,8 +90,8 @@ impl RawChannel {
         }?;
 
         // Spawn our channel proxy transport
-        let (tx, rx, transport) = InmemoryTransport::make(1);
-        let (channel_close_tx, channel_close_rx) = oneshot::channel();
+        let (tx, mut rx, transport) = InmemoryTransport::make(1);
+        let (channel_close_tx, mut channel_close_rx) = oneshot::channel();
         let mailbox_task = tokio::spawn(async move {
             while let Some(response) = mailbox.next().await {
                 match response.payload {
@@ -111,7 +113,7 @@ impl RawChannel {
         let forward_task = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = channel_close_rx => { break }
+                    _ = &mut channel_close_rx => { break }
                     data = rx.recv() => {
                         match data {
                             Some(data) => {

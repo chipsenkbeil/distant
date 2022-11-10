@@ -26,7 +26,7 @@ pub trait LaunchHandler: Send + Sync {
 #[async_trait]
 impl<F, R> LaunchHandler for F
 where
-    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut dyn Authenticator) -> R + Send + Sync + 'static,
+    F: Fn(&Destination, &Map, &mut dyn Authenticator) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<Destination>> + Send + 'static,
 {
     async fn launch(
@@ -59,7 +59,7 @@ pub trait ConnectHandler: Send + Sync {
 #[async_trait]
 impl<F, R> ConnectHandler for F
 where
-    F: for<'a> Fn(&'a Destination, &'a Map, &'a mut dyn Authenticator) -> R + Send + Sync + 'static,
+    F: Fn(&Destination, &Map, &mut dyn Authenticator) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<FramedTransport<Box<dyn Transport>>>> + Send + 'static,
 {
     async fn connect(
