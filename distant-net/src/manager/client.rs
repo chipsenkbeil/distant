@@ -323,11 +323,6 @@ mod tests {
         ManagerResponse::from(test_error())
     }
 
-    #[inline]
-    fn test_io_error() -> io::Error {
-        test_error().into()
-    }
-
     #[tokio::test]
     async fn connect_should_report_error_if_receives_error_response() {
         let (mut client, mut transport) = setup();
@@ -354,7 +349,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.to_string(), test_io_error().to_string());
+        assert_eq!(err.to_string(), test_error().to_string());
     }
 
     #[tokio::test]
@@ -436,7 +431,7 @@ mod tests {
 
         let err = client.info(123).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.to_string(), test_io_error().to_string());
+        assert_eq!(err.to_string(), test_error().to_string());
     }
 
     #[tokio::test]
@@ -511,7 +506,7 @@ mod tests {
 
         let err = client.list().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.to_string(), test_io_error().to_string());
+        assert_eq!(err.to_string(), test_error().to_string());
     }
 
     #[tokio::test]
@@ -582,7 +577,7 @@ mod tests {
 
         let err = client.kill(123).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.to_string(), test_io_error().to_string());
+        assert_eq!(err.to_string(), test_error().to_string());
     }
 
     #[tokio::test]

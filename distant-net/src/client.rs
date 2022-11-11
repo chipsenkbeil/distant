@@ -1,4 +1,7 @@
-use crate::common::{Connection, Interest, Reconnectable, Request, Transport, UntypedResponse};
+use crate::common::{
+    Connection, FramedTransport, HeapSecretKey, InmemoryTransport, Interest, Reconnectable,
+    Request, Transport, UntypedResponse,
+};
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -44,6 +47,26 @@ where
     T: Send + Sync + Serialize + 'static,
     U: Send + Sync + DeserializeOwned + 'static,
 {
+    /// Spawns a client using the provided [`FramedTransport`] of [`InmemoryTransport`] and a
+    /// specific [`ReconnectStrategy`].
+    ///
+    /// ### Note
+    ///
+    /// This will NOT perform any handshakes or authentication procedures nor will it replay any
+    /// missing frames. This is to be used when establishing a [`Client`] to be run internally
+    /// within a program.
+    pub fn spawn_inmemory(
+        transport: FramedTransport<InmemoryTransport>,
+        strategy: ReconnectStrategy,
+    ) -> Self {
+        let connection = Connection::Client {
+            id: rand::random(),
+            reauth_otp: HeapSecretKey::generate(32).unwrap(),
+            transport,
+        };
+        Self::spawn(connection, strategy)
+    }
+
     /// Spawns a client using the provided [`Connection`].
     pub(crate) fn spawn<V>(mut connection: Connection<V>, mut strategy: ReconnectStrategy) -> Self
     where

@@ -1,7 +1,7 @@
 use async_compat::CompatExt;
 use distant_core::{
     data::{DistantResponseData, Environment, ProcessId, PtySize},
-    net::Reply,
+    net::server::Reply,
 };
 use log::*;
 use std::{
