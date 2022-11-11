@@ -39,6 +39,47 @@ where
     }
 }
 
+/// Generates a new [`LaunchHandler`] for the provided anonymous function in the form of
+///
+/// ```
+/// use distant_net::boxed_launch_handler;
+///
+/// let _handler = boxed_launch_handler!(|destination, options, authenticator| {
+///     todo!("Implement handler logic.");
+/// });
+///
+/// let _handler = boxed_launch_handler!(|destination, options, authenticator| async {
+///     todo!("We support async within as well regardless of the keyword!");
+/// });
+///
+/// let _handler = boxed_launch_handler!(move |destination, options, authenticator| {
+///     todo!("You can also explicitly mark to move into the closure");
+/// });
+/// ```
+#[macro_export]
+macro_rules! boxed_launch_handler {
+    (|$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
+        let x: $crate::manager::BoxedLaunchHandler = Box::new(
+            |$destination: &$crate::common::Destination,
+             $options: &$crate::common::Map,
+             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async {
+                $body
+            },
+        );
+        x
+    }};
+    (move |$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
+        let x: $crate::manager::BoxedLaunchHandler = Box::new(
+            move |$destination: &$crate::common::Destination,
+             $options: &$crate::common::Map,
+             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async move {
+                $body
+            },
+        );
+        x
+    }};
+}
+
 /// Represents an interface to perform a connection to some remote `destination`.
 ///
 /// * `destination` is the location of the server to connect to.
@@ -69,5 +110,202 @@ where
         authenticator: &mut dyn Authenticator,
     ) -> io::Result<FramedTransport<Box<dyn Transport>>> {
         self(destination, options, authenticator).await
+    }
+}
+
+/// Generates a new [`ConnectHandler`] for the provided anonymous function in the form of
+///
+/// ```
+/// use distant_net::boxed_connect_handler;
+///
+/// let _handler = boxed_connect_handler!(|destination, options, authenticator| {
+///     todo!("Implement handler logic.");
+/// });
+///
+/// let _handler = boxed_connect_handler!(|destination, options, authenticator| async {
+///     todo!("We support async within as well regardless of the keyword!");
+/// });
+///
+/// let _handler = boxed_connect_handler!(move |destination, options, authenticator| {
+///     todo!("You can also explicitly mark to move into the closure");
+/// });
+/// ```
+#[macro_export]
+macro_rules! boxed_connect_handler {
+    (|$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
+        let x: $crate::manager::BoxedConnectHandler = Box::new(
+            |$destination: &$crate::common::Destination,
+             $options: &$crate::common::Map,
+             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async {
+                $body
+            },
+        );
+        x
+    }};
+    (move |$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
+        let x: $crate::manager::BoxedConnectHandler = Box::new(
+            move |$destination: &$crate::common::Destination,
+             $options: &$crate::common::Map,
+             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async move {
+                $body
+            },
+        );
+        x
+    }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::FramedTransport;
+    use test_log::test;
+
+    #[inline]
+    fn test_destination() -> Destination {
+        "scheme://host:1234".parse().unwrap()
+    }
+
+    #[inline]
+    fn test_options() -> Map {
+        Map::default()
+    }
+
+    #[inline]
+    fn test_authenticator() -> impl Authenticator {
+        FramedTransport::pair(1).0
+    }
+
+    #[test(tokio::test)]
+    async fn boxed_launch_handler_should_generate_valid_boxed_launch_handler() {
+        let handler = boxed_launch_handler!(|_destination, _options, _authenticator| {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .launch(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let handler = boxed_launch_handler!(|_destination, _options, _authenticator| async {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .launch(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let handler = boxed_launch_handler!(move |_destination, _options, _authenticator| {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .launch(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let handler = boxed_launch_handler!(move |_destination, _options, _authenticator| async {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .launch(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn boxed_connect_handler_should_generate_valid_boxed_connect_handler() {
+        let handler = boxed_connect_handler!(|_destination, _options, _authenticator| {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .connect(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let handler = boxed_connect_handler!(|_destination, _options, _authenticator| async {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .connect(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let handler = boxed_connect_handler!(move |_destination, _options, _authenticator| {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .connect(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let handler = boxed_connect_handler!(move |_destination, _options, _authenticator| async {
+            Err(io::Error::from(io::ErrorKind::Other))
+        });
+        assert_eq!(
+            handler
+                .connect(
+                    &test_destination(),
+                    &test_options(),
+                    &mut test_authenticator()
+                )
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
     }
 }

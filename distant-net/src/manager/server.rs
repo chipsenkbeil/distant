@@ -314,6 +314,7 @@ mod tests {
     use super::*;
     use crate::common::{FramedTransport, Transport};
     use crate::server::ServerReply;
+    use crate::{boxed_connect_handler, boxed_launch_handler};
     use tokio::sync::mpsc;
 
     fn test_config() -> Config {
@@ -370,7 +371,7 @@ mod tests {
     async fn launch_should_fail_if_handler_tied_to_scheme_fails() {
         let mut config = test_config();
 
-        let handler: Box<dyn LaunchHandler> = Box::new(|_: &_, _: &_, _: &mut _| async {
+        let handler = boxed_launch_handler!(|_a, _b, _c| {
             Err(io::Error::new(io::ErrorKind::Other, "test failure"))
         });
 
@@ -391,11 +392,9 @@ mod tests {
     async fn launch_should_return_new_destination_on_success() {
         let mut config = test_config();
 
-        let handler: Box<dyn LaunchHandler> = {
-            Box::new(|_: &_, _: &_, _: &mut _| async {
-                Ok("scheme2://host2".parse::<Destination>().unwrap())
-            })
-        };
+        let handler = boxed_launch_handler!(|_a, _b, _c| {
+            Ok("scheme2://host2".parse::<Destination>().unwrap())
+        });
 
         config.launch_handlers.insert("scheme".to_string(), handler);
 
@@ -430,7 +429,7 @@ mod tests {
     async fn connect_should_fail_if_handler_tied_to_scheme_fails() {
         let mut config = test_config();
 
-        let handler: Box<dyn ConnectHandler> = Box::new(|_: &_, _: &_, _: &mut _| async {
+        let handler = boxed_connect_handler!(|_a, _b, _c| {
             Err(io::Error::new(io::ErrorKind::Other, "test failure"))
         });
 
@@ -453,8 +452,7 @@ mod tests {
     async fn connect_should_return_id_of_new_connection_on_success() {
         let mut config = test_config();
 
-        let handler: Box<dyn ConnectHandler> =
-            Box::new(|_: &_, _: &_, _: &mut _| async { Ok(detached_framed_transport()) });
+        let handler = boxed_connect_handler!(|_a, _b, _c| { Ok(detached_framed_transport()) });
 
         config
             .connect_handlers

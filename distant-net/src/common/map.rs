@@ -198,6 +198,13 @@ impl<'de> Deserialize<'de> for Map {
     }
 }
 
+/// Generates a new [`Map`] of key/value pairs based on literals.
+///
+/// ```
+/// use distant_net::map;
+///
+/// let _map = map!("key" -> "value", "key2" -> "value2");
+/// ```
 #[macro_export]
 macro_rules! map {
     ($($key:literal -> $value:literal),* $(,)?) => {{
