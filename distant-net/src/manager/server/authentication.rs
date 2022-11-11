@@ -57,7 +57,7 @@ impl Authenticator for ManagerAuthenticator {
             Ok(AuthenticationResponse::Initialization(x)) => Ok(x),
             Ok(x) => Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Unexpected response: {x:?}",
+                format!("Unexpected response: {x:?}"),
             )),
             Err(x) => Err(x),
         }
@@ -68,7 +68,7 @@ impl Authenticator for ManagerAuthenticator {
             Ok(AuthenticationResponse::Challenge(x)) => Ok(x),
             Ok(x) => Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Unexpected response: {x:?}",
+                format!("Unexpected response: {x:?}"),
             )),
             Err(x) => Err(x),
         }
@@ -79,7 +79,7 @@ impl Authenticator for ManagerAuthenticator {
             Ok(AuthenticationResponse::Verification(x)) => Ok(x),
             Ok(x) => Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Unexpected response: {x:?}",
+                format!("Unexpected response: {x:?}"),
             )),
             Err(x) => Err(x),
         }
