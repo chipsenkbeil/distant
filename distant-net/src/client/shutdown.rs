@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 
 /// Interface representing functionality to shut down an active client.
 #[async_trait]
-pub trait Shutdown: DynClone {
+pub trait Shutdown: DynClone + Send + Sync {
     /// Attempts to shutdown the client.
     async fn shutdown(&self) -> io::Result<()>;
 }
@@ -29,17 +29,8 @@ fn already_shutdown() -> io::Error {
     io::Error::new(io::ErrorKind::Other, "Client already shutdown")
 }
 
-macro_rules! impl_traits {
-    ($($x:tt)+) => {
-        impl Clone for Box<dyn $($x)+> {
-            fn clone(&self) -> Self {
-                dyn_clone::clone_box(&**self)
-            }
-        }
-    };
+impl Clone for Box<dyn Shutdown> {
+    fn clone(&self) -> Self {
+        dyn_clone::clone_box(&**self)
+    }
 }
-
-impl_traits!(Shutdown);
-impl_traits!(Shutdown + Send);
-impl_traits!(Shutdown + Sync);
-impl_traits!(Shutdown + Send + Sync);
