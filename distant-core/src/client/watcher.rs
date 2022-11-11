@@ -186,14 +186,14 @@ mod tests {
     use crate::DistantClient;
     use distant_net::{
         common::{FramedTransport, InmemoryTransport, Response},
-        Client,
+        Client, ReconnectStrategy,
     };
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
-        let (t1, t2) = FramedTransport::test_pair(100);
-        (t1, Client::new(t2))
+        let (t1, t2) = FramedTransport::pair(100);
+        (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
     }
 
     #[tokio::test]
@@ -215,11 +215,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id, DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id, DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -247,11 +247,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -260,7 +260,7 @@ mod tests {
 
         // Send some changes related to the file
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 vec![
                     DistantResponseData::Changed(Change {
@@ -315,11 +315,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -328,7 +328,7 @@ mod tests {
 
         // Send a change from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Access,
@@ -340,7 +340,7 @@ mod tests {
 
         // Send a change from a different origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone() + "1",
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Content,
@@ -352,7 +352,7 @@ mod tests {
 
         // Send a change from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Remove,
@@ -401,17 +401,17 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
         // Send some changes from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 vec![
                     DistantResponseData::Changed(Change {
@@ -457,10 +457,10 @@ mod tests {
         let watcher_2 = Arc::clone(&watcher);
         let unwatch_task = tokio::spawn(async move { watcher_2.lock().await.unwatch().await });
 
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -468,7 +468,7 @@ mod tests {
         unwatch_task.await.unwrap().unwrap();
 
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Unknown,
