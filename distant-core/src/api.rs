@@ -3,10 +3,11 @@ use crate::{
         Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize,
         SearchId, SearchQuery, SystemInfo,
     },
-    ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
+    DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::server::{Reply, ServerConfig, ServerCtx, ServerHandler};
+use distant_net::common::ConnectionId;
+use distant_net::server::{ConnectionCtx, Reply, ServerConfig, ServerCtx, ServerHandler};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
 
@@ -71,7 +72,9 @@ pub trait DistantApi {
     /// Invoked whenever a new connection is established, providing a mutable reference to the
     /// newly-created local data. This is a way to support modifying local data before it is used.
     #[allow(unused_variables)]
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {}
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        Ok(())
+    }
 
     /// Retrieves information about the server's capabilities.
     ///
@@ -430,8 +433,8 @@ where
     type LocalData = D;
 
     /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        T::on_accept(&self.api, local_data).await
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        T::on_accept(&self.api, ctx).await
     }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {

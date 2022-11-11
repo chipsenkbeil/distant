@@ -10,7 +10,8 @@ mod transport;
 pub(crate) mod utils;
 
 pub use any::*;
-pub(crate) use connection::*;
+pub(crate) use connection::Connection;
+pub use connection::ConnectionId;
 pub use destination::*;
 pub use listener::*;
 pub use map::*;

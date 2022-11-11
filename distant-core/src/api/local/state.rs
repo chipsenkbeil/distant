@@ -1,7 +1,5 @@
-use crate::{
-    data::{ProcessId, SearchId},
-    ConnectionId,
-};
+use crate::data::{ProcessId, SearchId};
+use distant_net::common::ConnectionId;
 use std::{io, path::PathBuf};
 
 mod process;

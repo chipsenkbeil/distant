@@ -8,10 +8,7 @@ mod credentials;
 pub use credentials::*;
 
 pub mod data;
-pub use data::{DistantMsg, DistantRequestData, DistantResponseData, Map};
-
-mod manager;
-pub use manager::*;
+pub use data::{DistantMsg, DistantRequestData, DistantResponseData};
 
 mod constants;
 mod serde_str;

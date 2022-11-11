@@ -6,7 +6,7 @@ use crate::{
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
-use distant_net::server::ServerConfig;
+use distant_net::server::{ConnectionCtx, ServerConfig};
 use log::*;
 use std::{
     io,
@@ -49,9 +49,10 @@ impl DistantApi for LocalDistantApi {
     }
 
     /// Injects the global channels into the local connection
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        local_data.process_channel = self.state.process.clone_channel();
-        local_data.watcher_channel = self.state.watcher.clone_channel();
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        ctx.local_data.process_channel = self.state.process.clone_channel();
+        ctx.local_data.watcher_channel = self.state.watcher.clone_channel();
+        Ok(())
     }
 
     async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
@@ -585,10 +586,18 @@ mod tests {
     ) {
         let api = LocalDistantApi::initialize(Default::default()).unwrap();
         let (reply, rx) = make_reply(buffer);
+        let connection_id = rand::random();
         let mut local_data = ConnectionState::default();
-        DistantApi::on_accept(&api, &mut local_data).await;
+        DistantApi::on_accept(
+            &api,
+            ConnectionCtx {
+                connection_id,
+                local_data: &mut local_data,
+            },
+        )
+        .await;
         let ctx = DistantCtx {
-            connection_id: rand::random(),
+            connection_id,
             reply,
             local_data: Arc::new(local_data),
         };

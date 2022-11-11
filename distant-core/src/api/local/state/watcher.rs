@@ -1,4 +1,5 @@
-use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind, ConnectionId};
+use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind};
+use distant_net::common::ConnectionId;
 use log::*;
 use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
