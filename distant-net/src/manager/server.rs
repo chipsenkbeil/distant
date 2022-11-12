@@ -124,7 +124,7 @@ impl ManagerServer {
                 .await?
         };
 
-        let connection = ManagerConnection::new(destination, options, client);
+        let connection = ManagerConnection::spawn(destination, options, client).await?;
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
@@ -312,7 +312,8 @@ impl ServerHandler for ManagerServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{FramedTransport, Transport};
+    use crate::client::{ReconnectStrategy, UntypedClient};
+    use crate::common::FramedTransport;
     use crate::server::ServerReply;
     use crate::{boxed_connect_handler, boxed_launch_handler};
     use tokio::sync::mpsc;
@@ -328,9 +329,9 @@ mod tests {
         }
     }
 
-    /// Create a framed transport that is detached such that reads and writes will fail
-    fn detached_framed_transport() -> FramedTransport<Box<dyn Transport>> {
-        FramedTransport::pair(1).0.into_boxed()
+    /// Create an untyped client that is detached such that reads and writes will fail
+    fn detached_untyped_client() -> UntypedClient {
+        UntypedClient::spawn_inmemory(FramedTransport::pair(1).0, ReconnectStrategy::Fail)
     }
 
     /// Create a new server and authenticator
@@ -452,7 +453,7 @@ mod tests {
     async fn connect_should_return_id_of_new_connection_on_success() {
         let mut config = test_config();
 
-        let handler = boxed_connect_handler!(|_a, _b, _c| { Ok(detached_framed_transport()) });
+        let handler = boxed_connect_handler!(|_a, _b, _c| { Ok(detached_untyped_client()) });
 
         config
             .connect_handlers
@@ -485,11 +486,13 @@ mod tests {
     async fn info_should_return_information_about_established_connection() {
         let (server, _) = setup(test_config());
 
-        let connection = ManagerConnection::new(
+        let connection = ManagerConnection::spawn(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
-            detached_framed_transport(),
-        );
+            detached_untyped_client(),
+        )
+        .await
+        .unwrap();
         let id = connection.id;
         server.connections.write().await.insert(id, connection);
 
@@ -516,19 +519,23 @@ mod tests {
     async fn list_should_return_a_list_of_established_connections() {
         let (server, _) = setup(test_config());
 
-        let connection = ManagerConnection::new(
+        let connection = ManagerConnection::spawn(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
-            detached_framed_transport(),
-        );
+            detached_untyped_client(),
+        )
+        .await
+        .unwrap();
         let id_1 = connection.id;
         server.connections.write().await.insert(id_1, connection);
 
-        let connection = ManagerConnection::new(
+        let connection = ManagerConnection::spawn(
             "other://host2".parse().unwrap(),
             "key=value".parse().unwrap(),
-            detached_framed_transport(),
-        );
+            detached_untyped_client(),
+        )
+        .await
+        .unwrap();
         let id_2 = connection.id;
         server.connections.write().await.insert(id_2, connection);
 
@@ -555,11 +562,13 @@ mod tests {
     async fn kill_should_terminate_established_connection_and_remove_it_from_the_list() {
         let (server, _) = setup(test_config());
 
-        let connection = ManagerConnection::new(
+        let connection = ManagerConnection::spawn(
             "scheme://host".parse().unwrap(),
             "key=value".parse().unwrap(),
-            detached_framed_transport(),
-        );
+            detached_untyped_client(),
+        )
+        .await
+        .unwrap();
         let id = connection.id;
         server.connections.write().await.insert(id, connection);
 

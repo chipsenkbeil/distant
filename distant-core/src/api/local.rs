@@ -595,7 +595,8 @@ mod tests {
                 local_data: &mut local_data,
             },
         )
-        .await;
+        .await
+        .unwrap();
         let ctx = DistantCtx {
             connection_id,
             reply,

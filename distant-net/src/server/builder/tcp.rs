@@ -86,11 +86,12 @@ mod tests {
             .await
             .expect("Failed to start TCP server");
 
-        let mut client: Client<String, String> = Client::tcp()
-            .auth_handler(DummyAuthHandler)
-            .connect(SocketAddr::from((server.ip_addr(), server.port())))
-            .await
-            .expect("Client failed to connect");
+        let mut client: Client<String, String> =
+            Client::tcp(SocketAddr::from((server.ip_addr(), server.port())))
+                .auth_handler(DummyAuthHandler)
+                .connect()
+                .await
+                .expect("Client failed to connect");
 
         let response = client
             .send(Request::new("hello".to_string()))

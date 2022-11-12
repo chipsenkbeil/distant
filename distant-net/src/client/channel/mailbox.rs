@@ -7,13 +7,14 @@ use std::{
 };
 use tokio::{
     io,
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Mutex, RwLock},
     time,
 };
 
 #[derive(Clone, Debug)]
 pub struct PostOffice<T> {
     mailboxes: Arc<Mutex<HashMap<Id, mpsc::Sender<T>>>>,
+    default_box: Arc<RwLock<Option<mpsc::Sender<T>>>>,
 }
 
 impl<T> Default for PostOffice<T>
@@ -52,7 +53,10 @@ where
             }
         });
 
-        Self { mailboxes }
+        Self {
+            mailboxes,
+            default_box: Arc::new(RwLock::new(None)),
+        }
     }
 
     /// Creates a new mailbox using the given id and buffer size for maximum values that
@@ -79,9 +83,35 @@ where
             }
 
             success
+        } else if let Some(tx) = self.default_box.read().await.as_ref() {
+            tx.send(value).await.is_ok()
         } else {
             false
         }
+    }
+
+    /// Creates a new default mailbox that will be used whenever no mailbox is found to deliver
+    /// mail. This will replace any existing default mailbox.
+    pub async fn assign_default_mailbox(&self, buffer: usize) -> Mailbox<T> {
+        let (tx, rx) = mpsc::channel(buffer);
+        *self.default_box.write().await = Some(tx);
+
+        Mailbox {
+            id: "".to_string(),
+            rx: Box::new(rx),
+        }
+    }
+
+    /// Removes the default mailbox such that any mail without a matching mailbox will be dropped
+    /// instead of being delivered to a default mailbox.
+    pub async fn remove_default_mailbox(&self) {
+        *self.default_box.write().await = None;
+    }
+
+    /// Returns true if the post office is using a default mailbox for all mail that does not map
+    /// to another mailbox.
+    pub async fn has_default_mailbox(&self) -> bool {
+        self.default_box.read().await.is_some()
     }
 
     /// Cancels delivery to the mailbox with the specified `id`.

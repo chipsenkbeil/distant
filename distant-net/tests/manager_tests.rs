@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use distant_net::boxed_connect_handler;
 use distant_net::client::{Client, ReconnectStrategy};
 use distant_net::common::authentication::{DummyAuthHandler, Verifier};
-use distant_net::common::{Destination, FramedTransport, InmemoryTransport, Map, OneshotListener};
+use distant_net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_net::manager::{Config, ManagerClient, ManagerServer};
 use distant_net::server::{Server, ServerCtx, ServerHandler};
 use std::io;
@@ -42,23 +42,23 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
             let client = Client::build()
                 .auth_handler(DummyAuthHandler)
                 .reconnect_strategy(ReconnectStrategy::Fail)
-                .transport(t1)
-                .connect()
+                .connector(t1)
+                .connect_untyped()
                 .await?;
 
             Ok(client)
         }),
     );
 
-    let manager_ref = ManagerServer::new(Config::default())
+    let _manager_ref = ManagerServer::new(Config::default())
         .verifier(Verifier::none())
         .start(OneshotListener::from_value(t2))
         .expect("Failed to start manager server");
 
-    let mut client = ManagerClient::build()
+    let mut client: ManagerClient = Client::build()
         .auth_handler(DummyAuthHandler)
         .reconnect_strategy(ReconnectStrategy::Fail)
-        .transport(t1)
+        .connector(t1)
         .connect()
         .await
         .expect("Failed to connect to manager");
@@ -91,14 +91,18 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     assert_eq!(info.options, "key=value".parse::<Map>().unwrap());
 
     // Create a new channel and request some data
-    let mut channel = client
+    let mut channel_client: Client<u8, u8> = client
         .open_raw_channel(id)
         .await
-        .expect("Failed to open channel");
-    let _ = channel
-        .system_info()
+        .expect("Failed to open channel")
+        .spawn_client(DummyAuthHandler)
         .await
-        .expect("Failed to get system information");
+        .expect("Failed to spawn client for channel");
+    let res = channel_client
+        .send(123u8)
+        .await
+        .expect("Failed to send request to server");
+    assert_eq!(res.payload, 123u8, "Invalid response payload");
 
     // Test killing a connection
     client.kill(id).await.expect("Failed to kill connection");

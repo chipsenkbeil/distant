@@ -1,51 +1,30 @@
-use crate::client::{Client, ClientBuilder, ReconnectStrategy};
-use crate::common::{authentication::AuthHandler, UnixSocketTransport};
-use serde::{de::DeserializeOwned, Serialize};
-use std::path::Path;
-use tokio::{io, time::Duration};
+use super::Connector;
+use crate::common::UnixSocketTransport;
+use async_trait::async_trait;
+use std::{io, path::PathBuf};
 
-/// Builder for a client that will connect over a Unix socket
-pub struct UnixSocketClientBuilder<T>(ClientBuilder<T, ()>);
+/// Implementation of [`Connector`] to support connecting via a Unix socket.
+pub struct UnixSocketConnector {
+    path: PathBuf,
+}
 
-impl<T> UnixSocketClientBuilder<T> {
-    pub fn auth_handler<A: AuthHandler>(self, auth_handler: A) -> UnixSocketClientBuilder<A> {
-        UnixSocketClientBuilder(self.0.auth_handler(auth_handler))
-    }
-
-    pub fn reconnect_strategy(
-        self,
-        reconnect_strategy: ReconnectStrategy,
-    ) -> UnixSocketClientBuilder<T> {
-        UnixSocketClientBuilder(self.0.reconnect_strategy(reconnect_strategy))
-    }
-
-    pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {
-        Self(self.0.timeout(timeout))
+impl UnixSocketConnector {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
     }
 }
 
-impl UnixSocketClientBuilder<()> {
-    pub fn new() -> Self {
-        Self(ClientBuilder::new())
+impl<T: Into<PathBuf>> From<T> for UnixSocketConnector {
+    fn from(path: T) -> Self {
+        Self::new(path)
     }
 }
 
-impl Default for UnixSocketClientBuilder<()> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[async_trait]
+impl Connector for UnixSocketConnector {
+    type Transport = UnixSocketTransport;
 
-impl<A: AuthHandler + Send> UnixSocketClientBuilder<A> {
-    pub async fn connect<T, U>(self, path: impl AsRef<Path> + Send) -> io::Result<Client<T, U>>
-    where
-        T: Send + Sync + Serialize + 'static,
-        U: Send + Sync + DeserializeOwned + 'static,
-    {
-        self.0
-            .try_transport(UnixSocketTransport::connect(path.as_ref()))
-            .await?
-            .connect()
-            .await
+    async fn connect(self) -> io::Result<Self::Transport> {
+        UnixSocketTransport::connect(self.path).await
     }
 }

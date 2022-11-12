@@ -1,76 +1,44 @@
-use crate::client::{Client, ClientBuilder, ReconnectStrategy};
-use crate::common::{authentication::AuthHandler, WindowsPipeTransport};
-use serde::{de::DeserializeOwned, Serialize};
+use super::Connector;
+use crate::common::WindowsPipeTransport;
+use async_trait::async_trait;
 use std::ffi::{OsStr, OsString};
-use tokio::{io, time::Duration};
+use std::io;
 
-/// Builder for a client that will connect over a Windows pipe
-pub struct WindowsPipeClientBuilder<T> {
-    inner: ClientBuilder<T, ()>,
-    local: bool,
+/// Implementation of [`Connector`] to support connecting via a Windows named pipe.
+pub struct WindowsPipeConnector {
+    addr: OsString,
+    pub(crate) local: bool,
 }
 
-impl<T> WindowsPipeClientBuilder<T> {
-    pub fn auth_handler<A: AuthHandler>(self, auth_handler: A) -> WindowsPipeClientBuilder<A> {
-        WindowsPipeClientBuilder {
-            inner: self.inner.auth_handler(auth_handler),
-            local: self.local,
-        }
+impl WindowsPipeConnector {
+    /// Creates a new connector for a non-local pipe using the given `addr`.
+    pub fn new(addr: impl Into<OsString>) -> Self {
+        Self { addr: addr.into(), local: false }
     }
 
-    pub fn reconnect_strategy(self, reconnect_strategy: ReconnectStrategy) -> WindowsPipeClientBuilder<T> {
-        WindowsPipeClientBuilder(self.0.reconnect_strategy(reconnect_strategy))
-    }
-
-    /// If true, will connect to a server listening on a Windows pipe at the specified address
-    /// via `\\.\pipe\{name}`; otherwise, will connect using the address verbatim.
-    pub fn local(self, local: bool) -> Self {
-        Self {
-            inner: self.inner,
-            local,
-        }
-    }
-
-    pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {
-        Self {
-            inner: self.inner.timeout(timeout),
-            local: self.local,
-        }
+    /// Creates a new connector for a local pipe using the given `name`.
+    pub fn local(name: impl Into<OsString>) -> Self {
+        Self { addr: name.into(), local: true }
     }
 }
 
-impl WindowsPipeClientBuilder<()> {
-    pub fn new() -> Self {
-        Self {
-            inner: ClientBuilder::new(),
-            local: false,
-        }
+impl<T: Into<OsString>> From<T> for WindowsPipeConnector {
+    fn from(addr: T) -> Self {
+        Self::new(path)
     }
 }
 
-impl Default for WindowsPipeClientBuilder<()> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[async_trait]
+impl Connector for WindowsPipeConnector {
+    type Transport = WindowsPipeTransport;
 
-impl<A: AuthHandler + Send> WindowsPipeClientBuilder<A> {
-    pub async fn connect<T, U>(self, addr: impl AsRef<OsStr> + Send) -> io::Result<Client<T, U>>
-    where
-        T: Send + Sync + Serialize + 'static,
-        U: Send + Sync + DeserializeOwned + 'static,
-    {
-        let local = self.local;
-        self.0
-            .try_transport(if local {
+    async fn connect(self) -> io::Result<Self::Transport> {
+        WindowsPipeTransport::connect(if local {
                 let mut full_addr = OsString::from(r"\\.\pipe\");
                 full_addr.push(addr.as_ref());
                 WindowsPipeTransport::connect(full_addr)
             } else {
                 WindowsPipeTransport::connect(addr.as_ref())
-            })
-            .await?
-            .connect()
-            .await
+            }).await
     }
 }

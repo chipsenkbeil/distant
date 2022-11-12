@@ -58,31 +58,26 @@ where
         self.inner
     }
 
+    /// Assigns a default mailbox for any response received that does not match another mailbox.
+    pub async fn assign_default_mailbox(&self, buffer: usize) -> io::Result<Mailbox<Response<U>>> {
+        Ok(map_to_typed_mailbox(
+            self.inner.assign_default_mailbox(buffer).await?,
+        ))
+    }
+
+    /// Removes the default mailbox used for unmatched responses such that any response without a
+    /// matching mailbox will be dropped.
+    pub async fn remove_default_mailbox(&self) -> io::Result<()> {
+        self.inner.remove_default_mailbox().await
+    }
+
     /// Sends a request and returns a mailbox that can receive one or more responses, failing if
     /// unable to send a request or if the session's receiving line to the remote server has
     /// already been severed
     pub async fn mail(&mut self, req: impl Into<Request<T>>) -> io::Result<Mailbox<Response<U>>> {
-        Ok(self
-            .inner
-            .mail(req.into().to_untyped_request()?)
-            .await?
-            .map_opt(|res| match res.to_typed_response() {
-                Ok(res) => Some(res),
-                Err(x) => {
-                    if log::log_enabled!(Level::Trace) {
-                        trace!(
-                            "Invalid response payload: {}",
-                            String::from_utf8_lossy(&res.payload)
-                        );
-                    }
-
-                    error!(
-                        "Unable to parse response payload into {}: {x}",
-                        std::any::type_name::<U>()
-                    );
-                    None
-                }
-            }))
+        Ok(map_to_typed_mailbox(
+            self.inner.mail(req.into().to_untyped_request()?).await?,
+        ))
     }
 
     /// Sends a request and returns a mailbox, timing out after duration has passed
@@ -150,6 +145,28 @@ where
     }
 }
 
+fn map_to_typed_mailbox<T: Send + DeserializeOwned + 'static>(
+    mailbox: Mailbox<UntypedResponse<'static>>,
+) -> Mailbox<Response<T>> {
+    mailbox.map_opt(|res| match res.to_typed_response() {
+        Ok(res) => Some(res),
+        Err(x) => {
+            if log::log_enabled!(Level::Trace) {
+                trace!(
+                    "Invalid response payload: {}",
+                    String::from_utf8_lossy(&res.payload)
+                );
+            }
+
+            error!(
+                "Unable to parse response payload into {}: {x}",
+                std::any::type_name::<T>()
+            );
+            None
+        }
+    })
+}
+
 /// Represents a sender of requests tied to a session, holding onto a weak reference of
 /// mailboxes to relay responses, meaning that once the [`Client`] is closed or dropped,
 /// any sent request will no longer be able to receive responses.
@@ -189,6 +206,32 @@ impl UntypedChannel {
             inner: self,
             _request: PhantomData,
             _response: PhantomData,
+        }
+    }
+
+    /// Assigns a default mailbox for any response received that does not match another mailbox.
+    pub async fn assign_default_mailbox(
+        &self,
+        buffer: usize,
+    ) -> io::Result<Mailbox<UntypedResponse<'static>>> {
+        match Weak::upgrade(&self.post_office) {
+            Some(post_office) => Ok(post_office.assign_default_mailbox(buffer).await),
+            None => Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Channel's post office is no longer available",
+            )),
+        }
+    }
+
+    /// Removes the default mailbox used for unmatched responses such that any response without a
+    /// matching mailbox will be dropped.
+    pub async fn remove_default_mailbox(&self) -> io::Result<()> {
+        match Weak::upgrade(&self.post_office) {
+            Some(post_office) => Ok(post_office.remove_default_mailbox().await),
+            None => Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Channel's post office is no longer available",
+            )),
         }
     }
 

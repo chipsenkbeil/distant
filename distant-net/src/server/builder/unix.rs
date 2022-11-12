@@ -93,9 +93,9 @@ mod tests {
             .await
             .expect("Failed to start Unix socket server");
 
-        let mut client: Client<String, String> = Client::unix_socket()
+        let mut client: Client<String, String> = Client::unix_socket(server.path())
             .auth_handler(DummyAuthHandler)
-            .connect(server.path())
+            .connect()
             .await
             .expect("Client failed to connect");
 

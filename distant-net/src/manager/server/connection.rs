@@ -1,14 +1,11 @@
 use crate::{
-    client::UntypedClient,
-    common::{
-        ConnectionId, Destination, FramedTransport, Interest, Map, Transport, UntypedRequest,
-        UntypedResponse,
-    },
+    client::{Mailbox, UntypedClient},
+    common::{ConnectionId, Destination, Map, UntypedRequest, UntypedResponse},
     manager::data::{ManagerChannelId, ManagerResponse},
     server::ServerReply,
 };
 use log::*;
-use std::{collections::HashMap, io, time::Duration};
+use std::{collections::HashMap, io};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 /// Represents a connection a distant manager has with some distant-compatible server
@@ -17,8 +14,10 @@ pub struct ManagerConnection {
     pub destination: Destination,
     pub options: Map,
     tx: mpsc::UnboundedSender<Action>,
-    transport_task: JoinHandle<()>,
+
     action_task: JoinHandle<()>,
+    request_task: JoinHandle<()>,
+    response_task: JoinHandle<()>,
 }
 
 #[derive(Clone)]
@@ -34,10 +33,14 @@ impl ManagerChannel {
 
     pub fn send(&self, data: Vec<u8>) -> io::Result<()> {
         let channel_id = self.channel_id;
+        let req = UntypedRequest::from_slice(&data)
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
+            .into_owned();
+
         self.tx
             .send(Action::Write {
                 id: channel_id,
-                data,
+                req,
             })
             .map_err(|x| {
                 io::Error::new(
@@ -61,28 +64,32 @@ impl ManagerChannel {
 }
 
 impl ManagerConnection {
-    pub fn new(destination: Destination, options: Map, client: UntypedClient) -> Self {
+    pub async fn spawn(
+        spawn: Destination,
+        options: Map,
+        client: UntypedClient,
+    ) -> io::Result<Self> {
         let connection_id = rand::random();
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
-        let transport_task = tokio::spawn(transport_task(
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let action_task = tokio::spawn(action_task(connection_id, rx, request_tx));
+        let response_task = tokio::spawn(response_task(
             connection_id,
-            client,
-            outgoing_rx,
+            client.assign_default_mailbox(100).await?,
             tx.clone(),
-            Duration::from_millis(50),
         ));
-        let action_task = tokio::spawn(action_task(connection_id, rx, outgoing_tx));
+        let request_task = tokio::spawn(request_task(connection_id, client, request_rx));
 
-        Self {
+        Ok(Self {
             id: connection_id,
-            destination,
+            destination: spawn,
             options,
             tx,
-            transport_task,
             action_task,
-        }
+            request_task,
+            response_task,
+        })
     }
 
     pub fn open_channel(&self, reply: ServerReply<ManagerResponse>) -> io::Result<ManagerChannel> {
@@ -107,8 +114,9 @@ impl ManagerConnection {
 
 impl Drop for ManagerConnection {
     fn drop(&mut self) {
-        self.transport_task.abort();
         self.action_task.abort();
+        self.request_task.abort();
+        self.response_task.abort();
     }
 }
 
@@ -123,91 +131,37 @@ enum Action {
     },
 
     Read {
-        data: Vec<u8>,
+        res: UntypedResponse<'static>,
     },
 
     Write {
         id: ManagerChannelId,
-        data: Vec<u8>,
+        req: UntypedRequest<'static>,
     },
 }
 
-/// Internal task to read and write from a [`Transport`].
-///
-/// * `id` - the id of the connection.
-/// * `transport` - the fully-authenticated transport.
-/// * `rx` - used to receive outgoing data to send through the connection.
-/// * `tx` - used to send new [`Action`]s to process.
-async fn transport_task(
+/// Internal task to process outgoing [`UntypedRequest`]s.
+async fn request_task(
     id: ConnectionId,
     mut client: UntypedClient,
-    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
-    tx: mpsc::UnboundedSender<Action>,
-    sleep_duration: Duration,
+    mut rx: mpsc::UnboundedReceiver<UntypedRequest<'static>>,
 ) {
-    loop {
-        let ready = match client.ready(Interest::READABLE | Interest::WRITABLE).await {
-            Ok(ready) => ready,
-            Err(x) => {
-                error!("[Conn {id}] Querying ready status failed: {x}");
-                break;
-            }
-        };
-
-        // Keep track of whether we read or wrote anything
-        let mut read_blocked = !ready.is_readable();
-        let mut write_blocked = !ready.is_writable();
-
-        // If transport is readable, attempt to read a frame and forward it to our action task
-        if ready.is_readable() {
-            match client.try_read_frame() {
-                Ok(Some(frame)) => {
-                    if let Err(x) = tx.send(Action::Read {
-                        data: frame.into_item().into_owned(),
-                    }) {
-                        error!("[Conn {id}] Failed to forward frame: {x}");
-                    }
-                }
-                Ok(None) => {
-                    debug!("[Conn {id}] Connection closed");
-                    break;
-                }
-                Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
-                Err(x) => {
-                    error!("[Conn {id}] {x}");
-                }
-            }
+    while let Some(req) = rx.recv().await {
+        if let Err(x) = client.fire(req).await {
+            error!("[Conn {id}] Failed to send request: {x}");
         }
+    }
+}
 
-        // If transport is writable, check if we have something to write
-        if ready.is_writable() {
-            if let Ok(data) = rx.try_recv() {
-                match client.try_write_frame(data) {
-                    Ok(()) => (),
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
-                    Err(x) => error!("[Conn {id}] Send failed: {x}"),
-                }
-            } else {
-                // In the case of flushing, there are two scenarios in which we want to
-                // mark no write occurring:
-                //
-                // 1. When flush did not write any bytes, which can happen when the buffer
-                //    is empty
-                // 2. When the call to write bytes blocks
-                match client.try_flush() {
-                    Ok(0) => write_blocked = true,
-                    Ok(_) => (),
-                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
-                    Err(x) => {
-                        error!("[Conn {id}] {x}");
-                    }
-                }
-            }
-        }
-
-        // If we did not read or write anything, sleep a bit to offload CPU usage
-        if read_blocked && write_blocked {
-            tokio::time::sleep(sleep_duration).await;
+/// Internal task to process incoming [`UntypedResponse`]s.
+async fn response_task(
+    id: ConnectionId,
+    mut mailbox: Mailbox<UntypedResponse<'static>>,
+    tx: mpsc::UnboundedSender<Action>,
+) {
+    while let Some(res) = mailbox.next().await {
+        if let Err(x) = tx.send(Action::Read { res }) {
+            error!("[Conn {id}] Failed to forward received response: {x}");
         }
     }
 }
@@ -216,11 +170,11 @@ async fn transport_task(
 ///
 /// * `id` - the id of the connection.
 /// * `rx` - used to receive new [`Action`]s to process.
-/// * `tx` - used to send outgoing data through the connection.
+/// * `tx` - used to send outgoing requests through the connection.
 async fn action_task(
     id: ConnectionId,
     mut rx: mpsc::UnboundedReceiver<Action>,
-    tx: mpsc::UnboundedSender<Vec<u8>>,
+    tx: mpsc::UnboundedSender<UntypedRequest<'static>>,
 ) {
     let mut registered = HashMap::new();
 
@@ -232,22 +186,13 @@ async fn action_task(
             Action::Unregister { id } => {
                 registered.remove(&id);
             }
-            Action::Read { data } => {
-                // Partially parse data into a request so we can modify the origin id
-                let mut response = match UntypedResponse::from_slice(&data) {
-                    Ok(response) => response,
-                    Err(x) => {
-                        error!("[Conn {id}] Failed to parse response during read: {x}");
-                        continue;
-                    }
-                };
-
+            Action::Read { mut res } => {
                 // Split {channel id}_{request id} back into pieces and
                 // update the origin id to match the request id only
-                let channel_id = match response.origin_id.split_once('_') {
+                let channel_id = match res.origin_id.split_once('_') {
                     Some((cid_str, oid_str)) => {
                         if let Ok(cid) = cid_str.parse::<ManagerChannelId>() {
-                            response.set_origin_id(oid_str.to_string());
+                            res.set_origin_id(oid_str.to_string());
                             cid
                         } else {
                             continue;
@@ -259,28 +204,19 @@ async fn action_task(
                 if let Some(reply) = registered.get(&channel_id) {
                     let response = ManagerResponse::Channel {
                         id: channel_id,
-                        data: response.to_bytes(),
+                        data: res.to_bytes(),
                     };
                     if let Err(x) = reply.send(response).await {
                         error!("[Conn {id}] {x}");
                     }
                 }
             }
-            Action::Write { id, data } => {
-                // Partially parse data into a request so we can modify the id
-                let mut request = match UntypedRequest::from_slice(&data) {
-                    Ok(request) => request,
-                    Err(x) => {
-                        error!("[Conn {id}] Failed to parse request during write: {x}");
-                        continue;
-                    }
-                };
-
+            Action::Write { id, mut req } => {
                 // Combine channel id with request id so we can properly forward
                 // the response containing this in the origin id
-                request.set_id(format!("{id}_{}", request.id));
+                req.set_id(format!("{id}_{}", req.id));
 
-                if let Err(x) = tx.send(request.to_bytes()) {
+                if let Err(x) = tx.send(req) {
                     error!("[Conn {id}] {x}");
                 }
             }

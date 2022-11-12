@@ -365,21 +365,35 @@ impl Client<(), ()> {
         ClientBuilder::new()
     }
 
-    /// Creates a new [`TcpClientBuilder`].
-    pub fn tcp() -> TcpClientBuilder<()> {
-        TcpClientBuilder::new()
+    /// Creates a new [`ClientBuilder`] configured to use a [`TcpConnector`].
+    pub fn tcp<T>(connector: impl Into<TcpConnector<T>>) -> ClientBuilder<(), TcpConnector<T>> {
+        ClientBuilder::new().connector(connector.into())
     }
 
-    /// Creates a new [`UnixSocketClientBuilder`].
+    /// Creates a new [`ClientBuilder`] configured to use a [`UnixSocketConnector`].
     #[cfg(unix)]
-    pub fn unix_socket() -> UnixSocketClientBuilder<()> {
-        UnixSocketClientBuilder::new()
+    pub fn unix_socket(
+        connector: impl Into<UnixSocketConnector>,
+    ) -> ClientBuilder<(), UnixSocketConnector> {
+        ClientBuilder::new().connector(connector.into())
     }
 
-    /// Creates a new [`WindowsPipeClientBuilder`].
+    /// Creates a new [`ClientBuilder`] configured to use a local [`WindowsPipeConnector`].
     #[cfg(windows)]
-    pub fn windows_pipe() -> WindowsPipeClientBuilder<()> {
-        WindowsPipeClientBuilder::new()
+    pub fn local_windows_pipe(
+        connector: impl Into<WindowsPipeConnector>,
+    ) -> ClientBuilder<(), WindowsPipeConnector> {
+        let mut connector = connector.into();
+        connector.local = true;
+        ClientBuilder::new().connector(connector)
+    }
+
+    /// Creates a new [`ClientBuilder`] configured to use a [`WindowsPipeConnector`].
+    #[cfg(windows)]
+    pub fn windows_pipe(
+        connector: impl Into<WindowsPipeConnector>,
+    ) -> ClientBuilder<(), WindowsPipeConnector> {
+        ClientBuilder::new().connector(connector.into())
     }
 }
 

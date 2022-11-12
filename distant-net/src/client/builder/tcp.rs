@@ -1,47 +1,31 @@
-use crate::client::{Client, ClientBuilder, ReconnectStrategy};
-use crate::common::{authentication::AuthHandler, TcpTransport};
-use serde::{de::DeserializeOwned, Serialize};
-use tokio::{io, net::ToSocketAddrs, time::Duration};
+use super::Connector;
+use crate::common::TcpTransport;
+use async_trait::async_trait;
+use std::io;
+use tokio::net::ToSocketAddrs;
 
-/// Builder for a client that will connect over TCP
-pub struct TcpClientBuilder<T>(ClientBuilder<T, ()>);
+/// Implementation of [`Connector`] to support connecting via TCP.
+pub struct TcpConnector<T> {
+    addr: T,
+}
 
-impl<T> TcpClientBuilder<T> {
-    pub fn auth_handler<A: AuthHandler>(self, auth_handler: A) -> TcpClientBuilder<A> {
-        TcpClientBuilder(self.0.auth_handler(auth_handler))
-    }
-
-    pub fn reconnect_strategy(self, reconnect_strategy: ReconnectStrategy) -> TcpClientBuilder<T> {
-        TcpClientBuilder(self.0.reconnect_strategy(reconnect_strategy))
-    }
-
-    pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {
-        Self(self.0.timeout(timeout))
+impl<T> TcpConnector<T> {
+    pub fn new(addr: T) -> Self {
+        Self { addr }
     }
 }
 
-impl TcpClientBuilder<()> {
-    pub fn new() -> Self {
-        Self(ClientBuilder::new())
+impl<T> From<T> for TcpConnector<T> {
+    fn from(addr: T) -> Self {
+        Self::new(addr)
     }
 }
 
-impl Default for TcpClientBuilder<()> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[async_trait]
+impl<T: ToSocketAddrs + Send> Connector for TcpConnector<T> {
+    type Transport = TcpTransport;
 
-impl<A: AuthHandler + Send> TcpClientBuilder<A> {
-    pub async fn connect<T, U>(self, addr: impl ToSocketAddrs) -> io::Result<Client<T, U>>
-    where
-        T: Send + Sync + Serialize + 'static,
-        U: Send + Sync + DeserializeOwned + 'static,
-    {
-        self.0
-            .try_transport(TcpTransport::connect(addr))
-            .await?
-            .connect()
-            .await
+    async fn connect(self) -> io::Result<Self::Transport> {
+        TcpTransport::connect(self.addr).await
     }
 }
