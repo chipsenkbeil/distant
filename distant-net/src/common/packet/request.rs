@@ -38,6 +38,14 @@ where
     pub fn to_payload_vec(&self) -> io::Result<Vec<u8>> {
         utils::serialize_to_vec(&self.payload)
     }
+
+    /// Attempts to convert a typed request to an untyped request
+    pub fn to_untyped_request(&self) -> io::Result<UntypedRequest> {
+        Ok(UntypedRequest {
+            id: Cow::Borrowed(&self.id),
+            payload: Cow::Owned(self.to_payload_vec()?),
+        })
+    }
 }
 
 impl<T> Request<T>

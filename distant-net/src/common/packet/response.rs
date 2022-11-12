@@ -42,6 +42,15 @@ where
     pub fn to_payload_vec(&self) -> io::Result<Vec<u8>> {
         utils::serialize_to_vec(&self.payload)
     }
+
+    /// Attempts to convert a typed response to an untyped response
+    pub fn to_untyped_response(&self) -> io::Result<UntypedResponse> {
+        Ok(UntypedResponse {
+            id: Cow::Borrowed(&self.id),
+            origin_id: Cow::Borrowed(&self.origin_id),
+            payload: Cow::Owned(self.to_payload_vec()?),
+        })
+    }
 }
 
 impl<T> Response<T>
