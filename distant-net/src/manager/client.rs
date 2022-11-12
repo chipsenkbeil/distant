@@ -1,5 +1,5 @@
 use crate::{
-    client::Client,
+    client::{Client, ClientBuilder},
     common::{
         authentication::{
             msg::{Authentication, AuthenticationResponse},

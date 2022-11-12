@@ -240,23 +240,23 @@ where
 }
 
 impl Client<(), ()> {
-    /// Creates a new [`ClientBuilder`]
+    /// Creates a new [`ClientBuilder`].
     pub fn build() -> ClientBuilder<(), ()> {
         ClientBuilder::new()
     }
 
-    /// Creates a new [`TcpClientBuilder`]
+    /// Creates a new [`TcpClientBuilder`].
     pub fn tcp() -> TcpClientBuilder<()> {
         TcpClientBuilder::new()
     }
 
-    /// Creates a new [`UnixSocketClientBuilder`]
+    /// Creates a new [`UnixSocketClientBuilder`].
     #[cfg(unix)]
     pub fn unix_socket() -> UnixSocketClientBuilder<()> {
         UnixSocketClientBuilder::new()
     }
 
-    /// Creates a new [`WindowsPipeClientBuilder`]
+    /// Creates a new [`WindowsPipeClientBuilder`].
     #[cfg(windows)]
     pub fn windows_pipe() -> WindowsPipeClientBuilder<()> {
         WindowsPipeClientBuilder::new()

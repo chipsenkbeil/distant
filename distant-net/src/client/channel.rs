@@ -9,8 +9,10 @@ pub use mailbox::*;
 const CHANNEL_MAILBOX_CAPACITY: usize = 10000;
 
 /// Represents a sender of requests tied to a session, holding onto a weak reference of
-/// mailboxes to relay responses, meaning that once the [`Session`] is closed or dropped,
-/// any sent request will no longer be able to receive responses
+/// mailboxes to relay responses, meaning that once the [`Client`] is closed or dropped,
+/// any sent request will no longer be able to receive responses.
+///
+/// [`Client`]: crate::client::Client
 pub struct Channel<T, U> {
     /// Used to send requests to a server
     pub(crate) tx: mpsc::Sender<Request<T>>,

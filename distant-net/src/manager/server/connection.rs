@@ -66,7 +66,7 @@ impl ManagerConnection {
         transport: FramedTransport<T>,
     ) -> Self {
         let connection_id = rand::random();
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
         let transport_task = tokio::spawn(transport_task(

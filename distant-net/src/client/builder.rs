@@ -18,7 +18,7 @@ use crate::common::{authentication::AuthHandler, Connection, Transport};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{convert, future::Future, io, time::Duration};
 
-/// Builder for a [`Client`]
+/// Builder for a [`Client`].
 pub struct ClientBuilder<H, T> {
     auth_handler: H,
     reconnect_strategy: ReconnectStrategy,
@@ -100,6 +100,9 @@ where
     H: AuthHandler + Send,
     T: Transport + 'static,
 {
+    /// Establishes a connection with a remote server using the configured [`Transport`]
+    /// and other settings, returning a new [`Client`] instance once the connection
+    /// is fully established and authenticated.
     pub async fn connect<U, V>(self) -> io::Result<Client<U, V>>
     where
         U: Send + Sync + Serialize + 'static,
