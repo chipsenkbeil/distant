@@ -112,7 +112,7 @@ impl ManagerServer {
         }
         .to_lowercase();
 
-        let transport = {
+        let client = {
             let handler = self.config.connect_handlers.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -124,7 +124,7 @@ impl ManagerServer {
                 .await?
         };
 
-        let connection = ManagerConnection::new(destination, options, transport);
+        let connection = ManagerConnection::new(destination, options, client);
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)

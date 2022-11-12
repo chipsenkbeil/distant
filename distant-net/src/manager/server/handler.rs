@@ -1,4 +1,5 @@
-use crate::common::{authentication::Authenticator, Destination, FramedTransport, Map, Transport};
+use crate::client::UntypedClient;
+use crate::common::{authentication::Authenticator, Destination, Map};
 use async_trait::async_trait;
 use std::{future::Future, io};
 
@@ -86,7 +87,7 @@ macro_rules! boxed_launch_handler {
 /// * `options` is provided to include extra information needed to establish the connection.
 /// * `authenticator` is provided to support a challenge-based authentication while connecting.
 ///
-/// Returns a [`FramedTransport`] representing the connection.
+/// Returns an [`UntypedClient`] representing the connection.
 #[async_trait]
 pub trait ConnectHandler: Send + Sync {
     async fn connect(
@@ -94,21 +95,21 @@ pub trait ConnectHandler: Send + Sync {
         destination: &Destination,
         options: &Map,
         authenticator: &mut dyn Authenticator,
-    ) -> io::Result<FramedTransport<Box<dyn Transport>>>;
+    ) -> io::Result<UntypedClient>;
 }
 
 #[async_trait]
 impl<F, R> ConnectHandler for F
 where
     F: Fn(&Destination, &Map, &mut dyn Authenticator) -> R + Send + Sync + 'static,
-    R: Future<Output = io::Result<FramedTransport<Box<dyn Transport>>>> + Send + 'static,
+    R: Future<Output = io::Result<UntypedClient>> + Send + 'static,
 {
     async fn connect(
         &self,
         destination: &Destination,
         options: &Map,
         authenticator: &mut dyn Authenticator,
-    ) -> io::Result<FramedTransport<Box<dyn Transport>>> {
+    ) -> io::Result<UntypedClient> {
         self(destination, options, authenticator).await
     }
 }

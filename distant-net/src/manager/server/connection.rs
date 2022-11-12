@@ -1,4 +1,5 @@
 use crate::{
+    client::UntypedClient,
     common::{
         ConnectionId, Destination, FramedTransport, Interest, Map, Transport, UntypedRequest,
         UntypedResponse,
@@ -60,18 +61,14 @@ impl ManagerChannel {
 }
 
 impl ManagerConnection {
-    pub fn new<T: Transport + 'static>(
-        destination: Destination,
-        options: Map,
-        transport: FramedTransport<T>,
-    ) -> Self {
+    pub fn new(destination: Destination, options: Map, client: UntypedClient) -> Self {
         let connection_id = rand::random();
         let (tx, rx) = mpsc::unbounded_channel();
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();
         let transport_task = tokio::spawn(transport_task(
             connection_id,
-            transport,
+            client,
             outgoing_rx,
             tx.clone(),
             Duration::from_millis(50),
@@ -141,18 +138,15 @@ enum Action {
 /// * `transport` - the fully-authenticated transport.
 /// * `rx` - used to receive outgoing data to send through the connection.
 /// * `tx` - used to send new [`Action`]s to process.
-async fn transport_task<T: Transport>(
+async fn transport_task(
     id: ConnectionId,
-    mut transport: FramedTransport<T>,
+    mut client: UntypedClient,
     mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
     tx: mpsc::UnboundedSender<Action>,
     sleep_duration: Duration,
 ) {
     loop {
-        let ready = match transport
-            .ready(Interest::READABLE | Interest::WRITABLE)
-            .await
-        {
+        let ready = match client.ready(Interest::READABLE | Interest::WRITABLE).await {
             Ok(ready) => ready,
             Err(x) => {
                 error!("[Conn {id}] Querying ready status failed: {x}");
@@ -166,7 +160,7 @@ async fn transport_task<T: Transport>(
 
         // If transport is readable, attempt to read a frame and forward it to our action task
         if ready.is_readable() {
-            match transport.try_read_frame() {
+            match client.try_read_frame() {
                 Ok(Some(frame)) => {
                     if let Err(x) = tx.send(Action::Read {
                         data: frame.into_item().into_owned(),
@@ -188,7 +182,7 @@ async fn transport_task<T: Transport>(
         // If transport is writable, check if we have something to write
         if ready.is_writable() {
             if let Ok(data) = rx.try_recv() {
-                match transport.try_write_frame(data) {
+                match client.try_write_frame(data) {
                     Ok(()) => (),
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
                     Err(x) => error!("[Conn {id}] Send failed: {x}"),
@@ -200,7 +194,7 @@ async fn transport_task<T: Transport>(
                 // 1. When flush did not write any bytes, which can happen when the buffer
                 //    is empty
                 // 2. When the call to write bytes blocks
-                match transport.try_flush() {
+                match client.try_flush() {
                     Ok(0) => write_blocked = true,
                     Ok(_) => (),
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
