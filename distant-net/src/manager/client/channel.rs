@@ -106,7 +106,7 @@ impl RawChannel {
 
                         match maybe_response.unwrap().payload {
                             ManagerResponse::Channel { response, .. } => {
-                                if let Err(x) = proxy.write_frame_for(&response).await {
+                                if let Err(x) = proxy.write_frame(response.to_bytes()).await {
                                     error!(
                                         "[Conn {connection_id} :: Chan {channel_id}] Write response failed: {x}"
                                     );
@@ -118,9 +118,17 @@ impl RawChannel {
                             _ => continue,
                         }
                     }
-                    result = proxy.read_frame_as::<UntypedRequest>() => {
+                    result = proxy.read_frame() => {
                         match result {
-                            Ok(Some(request)) => {
+                            Ok(Some(frame)) => {
+                                let request = match UntypedRequest::from_slice(frame.as_item()) {
+                                    Ok(x) => x.into_owned(),
+                                    Err(x) => {
+                                        error!("[Conn {connection_id} :: Chan {channel_id}] Parse request failed: {x}");
+                                        continue;
+                                    }
+                                };
+
                                 // NOTE: In this situation, we do not expect a response to this
                                 //       request (even if the server sends something back)
                                 if let Err(x) = manager_channel
@@ -138,7 +146,7 @@ impl RawChannel {
                                 break;
                             }
                             Err(x) => {
-                                error!("[Conn {connection_id} :: Chan {channel_id}] Read request failed: {x}");
+                                error!("[Conn {connection_id} :: Chan {channel_id}] Read frame failed: {x}");
                             }
                         }
                     }
