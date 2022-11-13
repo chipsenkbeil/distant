@@ -24,15 +24,15 @@ pub struct DistantCtx<T> {
     pub local_data: Arc<T>,
 }
 
-/// Represents a server that leverages an API compliant with `distant`
-pub struct DistantApiServer<T, D>
+/// Represents a [`ServerHandler`] that leverages an API compliant with `distant`
+pub struct DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D>,
 {
     api: T,
 }
 
-impl<T, D> DistantApiServer<T, D>
+impl<T, D> DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D>,
 {
@@ -41,7 +41,7 @@ where
     }
 }
 
-impl DistantApiServer<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
+impl DistantApiServerHandler<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
     /// Creates a new server using the [`LocalDistantApi`] implementation
     pub fn local(config: ServerConfig) -> io::Result<Self> {
         Ok(Self {
@@ -423,7 +423,7 @@ pub trait DistantApi {
 }
 
 #[async_trait]
-impl<T, D> ServerHandler for DistantApiServer<T, D>
+impl<T, D> ServerHandler for DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D> + Send + Sync,
     D: Send + Sync,
@@ -516,7 +516,7 @@ where
 
 /// Processes an incoming request
 async fn handle_request<T, D>(
-    server: &DistantApiServer<T, D>,
+    server: &DistantApiServerHandler<T, D>,
     ctx: DistantCtx<D>,
     request: DistantRequestData,
 ) -> DistantResponseData

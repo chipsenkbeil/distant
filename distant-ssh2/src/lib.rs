@@ -10,7 +10,7 @@ use distant_core::{
         FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
         XChaCha20Poly1305Codec,
     },
-    BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, DistantApiServer,
+    BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, DistantApiServerHandler,
     DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
 };
 use log::*;
@@ -728,7 +728,7 @@ impl Ssh {
                 ..
             } = self;
             let (writer, reader) = t2.into_split();
-            DistantApiServer::new(SshDistantApi::new(wez_session))
+            DistantApiServerHandler::new(SshDistantApi::new(wez_session))
                 .start(OneshotListener::from_value((writer, reader)))?
         };
 

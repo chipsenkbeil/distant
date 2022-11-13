@@ -9,7 +9,7 @@ use distant_core::{
         SecretKey32, ServerConfig as NetServerConfig, ServerRef, TcpServerExt,
         XChaCha20Poly1305Codec,
     },
-    DistantApiServer, DistantSingleKeyCredentials, Host,
+    DistantApiServerHandler, DistantSingleKeyCredentials, Host,
 };
 use log::*;
 use std::io::{self, Read, Write};
@@ -173,7 +173,7 @@ impl ServerSubcommand {
                         None => "using an ephemeral port".to_string(),
                     }
                 );
-                let server = DistantApiServer::local(NetServerConfig {
+                let server = DistantApiServerHandler::local(NetServerConfig {
                     shutdown: get!(shutdown).unwrap_or_default(),
                 })
                 .context("Failed to create local distant api")?
