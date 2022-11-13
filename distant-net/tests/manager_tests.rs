@@ -13,13 +13,13 @@ struct TestServerHandler;
 
 #[async_trait]
 impl ServerHandler for TestServerHandler {
-    type Request = u8;
-    type Response = u8;
+    type Request = String;
+    type Response = String;
     type LocalData = ();
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         ctx.reply
-            .send(ctx.request.payload)
+            .send(format!("echo {}", ctx.request.payload))
             .await
             .expect("Failed to send response")
     }
@@ -99,7 +99,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
 
     // Create a new channel and request some data
     info!("Submitting server channel open request to manager");
-    let mut channel_client: Client<u8, u8> = client
+    let mut channel_client: Client<String, String> = client
         .open_raw_channel(id)
         .await
         .expect("Failed to open channel")
@@ -107,10 +107,10 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
 
     info!("Verifying server channel can send and receive data");
     let res = channel_client
-        .send(123u8)
+        .send("hello".to_string())
         .await
         .expect("Failed to send request to server");
-    assert_eq!(res.payload, 123u8, "Invalid response payload");
+    assert_eq!(res.payload, "echo hello", "Invalid response payload");
 
     // Test killing a connection
     info!("Submitting connection kill request to manager");

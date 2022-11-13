@@ -30,7 +30,6 @@ impl ServerHandler for TestServerHandler {
 async fn should_be_able_to_send_and_receive_typed_payloads_between_client_and_server() {
     let (t1, t2) = InmemoryTransport::pair(100);
 
-    // Spawn a server on one end and connect to it on the other
     let _ = Server::new()
         .handler(TestServerHandler)
         .verifier(Verifier::none())
