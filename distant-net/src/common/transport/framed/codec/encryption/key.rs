@@ -191,6 +191,12 @@ impl<const N: usize> From<[u8; N]> for HeapSecretKey {
     }
 }
 
+impl<const N: usize> From<SecretKey<N>> for HeapSecretKey {
+    fn from(key: SecretKey<N>) -> Self {
+        key.into_heap_secret_key()
+    }
+}
+
 impl FromStr for HeapSecretKey {
     type Err = SecretKeyError;
 

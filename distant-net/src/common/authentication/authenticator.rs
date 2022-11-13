@@ -197,8 +197,80 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::authentication::AuthMethodHandler;
     use test_log::test;
     use tokio::sync::mpsc;
+
+    #[async_trait]
+    trait TestAuthHandler {
+        async fn on_initialization(
+            &mut self,
+            _: Initialization,
+        ) -> io::Result<InitializationResponse> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        async fn on_start_method(&mut self, _: StartMethod) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        async fn on_finished(&mut self) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        async fn on_info(&mut self, _: Info) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+
+        async fn on_error(&mut self, _: Error) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        }
+    }
+
+    #[async_trait]
+    impl<T: TestAuthHandler + Send> AuthHandler for T {
+        async fn on_initialization(
+            &mut self,
+            x: Initialization,
+        ) -> io::Result<InitializationResponse> {
+            TestAuthHandler::on_initialization(self, x).await
+        }
+
+        async fn on_start_method(&mut self, x: StartMethod) -> io::Result<()> {
+            TestAuthHandler::on_start_method(self, x).await
+        }
+
+        async fn on_finished(&mut self) -> io::Result<()> {
+            TestAuthHandler::on_finished(self).await
+        }
+    }
+
+    #[async_trait]
+    impl<T: TestAuthHandler + Send> AuthMethodHandler for T {
+        async fn on_challenge(&mut self, x: Challenge) -> io::Result<ChallengeResponse> {
+            TestAuthHandler::on_challenge(self, x).await
+        }
+
+        async fn on_verification(&mut self, x: Verification) -> io::Result<VerificationResponse> {
+            TestAuthHandler::on_verification(self, x).await
+        }
+
+        async fn on_info(&mut self, x: Info) -> io::Result<()> {
+            TestAuthHandler::on_info(self, x).await
+        }
+
+        async fn on_error(&mut self, x: Error) -> io::Result<()> {
+            TestAuthHandler::on_error(self, x).await
+        }
+    }
 
     macro_rules! auth_handler {
         (@no_challenge @no_verification @tx($tx:ident, $ty:ty) $($methods:item)*) => {
@@ -251,7 +323,7 @@ mod tests {
             }
 
             #[async_trait]
-            impl AuthHandler for __InlineAuthHandler {
+            impl TestAuthHandler for __InlineAuthHandler {
                 $($methods)*
             }
 

@@ -1,23 +1,17 @@
 use super::msg::*;
+use crate::common::HeapSecretKey;
 use async_trait::async_trait;
-use log::*;
+use std::collections::HashMap;
 use std::io;
 
-/// Interface for a handler of authentication requests.
+mod methods;
+pub use methods::*;
+
+/// Interface for a handler of authentication requests for all methods.
 #[async_trait]
-pub trait AuthHandler {
-    /// Callback when a challenge is received, returning answers to the given questions.
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse>;
-
-    /// Callback when a verification request is received, returning true if approvided or false if
-    /// unapproved.
-    async fn on_verification(
-        &mut self,
-        verification: Verification,
-    ) -> io::Result<VerificationResponse>;
-
+pub trait AuthHandler: AuthMethodHandler {
     /// Callback when authentication is beginning, providing available authentication methods and
-    /// returning selected authentication methods to pursue
+    /// returning selected authentication methods to pursue.
     async fn on_initialization(
         &mut self,
         initialization: Initialization,
@@ -27,28 +21,14 @@ pub trait AuthHandler {
         })
     }
 
-    /// Callback when authentication starts for a specific method
+    /// Callback when authentication starts for a specific method.
     #[allow(unused_variables)]
     async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
         Ok(())
     }
 
-    /// Callback when authentication is finished and no more requests will be received
+    /// Callback when authentication is finished and no more requests will be received.
     async fn on_finished(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
-    /// Callback when information is received. To fail, return an error from this function.
-    #[allow(unused_variables)]
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        Ok(())
-    }
-
-    /// Callback when an error is received. Regardless of the result returned, this will terminate
-    /// the authenticator. In the situation where a custom error would be preferred, have this
-    /// callback return an error.
-    #[allow(unused_variables)]
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
         Ok(())
     }
 }
@@ -58,7 +38,10 @@ pub trait AuthHandler {
 pub struct DummyAuthHandler;
 
 #[async_trait]
-impl AuthHandler for DummyAuthHandler {
+impl AuthHandler for DummyAuthHandler {}
+
+#[async_trait]
+impl AuthMethodHandler for DummyAuthHandler {
     async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
@@ -66,85 +49,153 @@ impl AuthHandler for DummyAuthHandler {
     async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
+
+    async fn on_info(&mut self, _: Info) -> io::Result<()> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    async fn on_error(&mut self, _: Error) -> io::Result<()> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
 }
 
-/// Blocking implementation of [`AuthHandler`] that uses prompts to communicate challenge &
-/// verification requests, receiving responses to relay back.
-pub struct PromptAuthHandler<T, U> {
-    text_prompt: T,
-    password_prompt: U,
+/// Implementation of [`AuthHandler`] that maintains a map of [`AuthMethodHandler`] implementations
+/// for specific methods, invoking [`on_challenge`], [`on_verification`], [`on_info`], and
+/// [`on_error`] for a specific handler based on an associated id.
+///
+/// [`on_challenge`]: AuthMethodHandler::on_challenge
+/// [`on_verification`]: AuthMethodHandler::on_verification
+/// [`on_info`]: AuthMethodHandler::on_info
+/// [`on_error`]: AuthMethodHandler::on_error
+pub struct AuthHandlerMap {
+    active: String,
+    map: HashMap<&'static str, Box<dyn AuthMethodHandler + Send>>,
 }
 
-impl<T, U> PromptAuthHandler<T, U> {
-    pub fn new(text_prompt: T, password_prompt: U) -> Self {
+impl AuthHandlerMap {
+    /// Creates a new, empty map of auth method handlers.
+    pub fn new() -> Self {
         Self {
-            text_prompt,
-            password_prompt,
+            active: String::new(),
+            map: HashMap::new(),
         }
+    }
+
+    /// Returns the `id` of the active [`AuthMethodHandler`].
+    pub fn active_id(&self) -> &str {
+        &self.active
+    }
+
+    /// Sets the active [`AuthMethodHandler`] by its `id`.
+    pub fn set_active_id(&mut self, id: impl Into<String>) {
+        self.active = id.into();
+    }
+
+    /// Inserts the specified `handler` into the map, associating it with `id` for determining the
+    /// method that would trigger this handler.
+    pub fn insert_method_handler<T: AuthMethodHandler + Send + 'static>(
+        &mut self,
+        id: &'static str,
+        handler: T,
+    ) -> Option<Box<dyn AuthMethodHandler + Send>> {
+        self.map.insert(id, Box::new(handler))
+    }
+
+    /// Removes a handler with the associated `id`.
+    pub fn remove_method_handler(
+        &mut self,
+        id: &'static str,
+    ) -> Option<Box<dyn AuthMethodHandler + Send>> {
+        self.map.remove(id)
+    }
+
+    /// Retrieves a mutable reference to the active [`AuthMethodHandler`] with the specified `id`,
+    /// returning an error if no handler for the active id is found.
+    pub fn get_mut_active_method_handler_or_error(
+        &mut self,
+    ) -> io::Result<&mut (dyn AuthMethodHandler + Send + 'static)> {
+        self.get_mut_active_method_handler()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No active handler for id"))
+    }
+
+    /// Retrieves a mutable reference to the active [`AuthMethodHandler`] with the specified `id`.
+    pub fn get_mut_active_method_handler(
+        &mut self,
+    ) -> Option<&mut (dyn AuthMethodHandler + Send + 'static)> {
+        // TODO: Optimize this
+        self.get_mut_method_handler(&self.active.clone())
+    }
+
+    /// Retrieves a mutable reference to the [`AuthMethodHandler`] with the specified `id`.
+    pub fn get_mut_method_handler(
+        &mut self,
+        id: &str,
+    ) -> Option<&mut (dyn AuthMethodHandler + Send + 'static)> {
+        self.map.get_mut(id).map(|h| h.as_mut())
+    }
+}
+
+impl AuthHandlerMap {
+    /// Consumes the map, returning a new map that supports the `static_key` method.
+    pub fn with_static_key(mut self, key: impl Into<HeapSecretKey>) -> Self {
+        self.insert_method_handler("static_key", StaticKeyAuthMethodHandler::simple(key));
+        self
+    }
+}
+
+impl Default for AuthHandlerMap {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
-impl<T, U> AuthHandler for PromptAuthHandler<T, U>
-where
-    T: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
-    U: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
-{
+impl AuthHandler for AuthHandlerMap {
+    async fn on_initialization(
+        &mut self,
+        initialization: Initialization,
+    ) -> io::Result<InitializationResponse> {
+        let methods = initialization
+            .methods
+            .into_iter()
+            .filter(|method| self.map.contains_key(method.as_str()))
+            .collect();
+
+        Ok(InitializationResponse { methods })
+    }
+
+    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+        self.set_active_id(start_method.method);
+        Ok(())
+    }
+
+    async fn on_finished(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AuthMethodHandler for AuthHandlerMap {
     async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        trace!("on_challenge({challenge:?})");
-        let mut answers = Vec::new();
-        for question in challenge.questions.iter() {
-            // Contains all prompt lines including same line
-            let mut lines = question.text.split('\n').collect::<Vec<_>>();
-
-            // Line that is prompt on same line as answer
-            let line = lines.pop().unwrap();
-
-            // Go ahead and display all other lines
-            for line in lines.into_iter() {
-                eprintln!("{}", line);
-            }
-
-            // Get an answer from user input, or use a blank string as an answer
-            // if we fail to get input from the user
-            let answer = (self.password_prompt)(line).unwrap_or_default();
-
-            answers.push(answer);
-        }
-        Ok(ChallengeResponse { answers })
+        let handler = self.get_mut_active_method_handler_or_error()?;
+        handler.on_challenge(challenge).await
     }
 
     async fn on_verification(
         &mut self,
         verification: Verification,
     ) -> io::Result<VerificationResponse> {
-        trace!("on_verify({verification:?})");
-        match verification.kind {
-            VerificationKind::Host => {
-                eprintln!("{}", verification.text);
-
-                let answer = (self.text_prompt)("Enter [y/N]> ")?;
-                trace!("Verify? Answer = '{answer}'");
-                Ok(VerificationResponse {
-                    valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
-                })
-            }
-            x => {
-                error!("Unsupported verify kind: {x}");
-                Ok(VerificationResponse { valid: false })
-            }
-        }
+        let handler = self.get_mut_active_method_handler_or_error()?;
+        handler.on_verification(verification).await
     }
 
     async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        trace!("on_info({info:?})");
-        println!("{}", info.text);
-        Ok(())
+        let handler = self.get_mut_active_method_handler_or_error()?;
+        handler.on_info(info).await
     }
 
     async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        trace!("on_error({error:?})");
-        eprintln!("{}: {}", error.kind, error.text);
-        Ok(())
+        let handler = self.get_mut_active_method_handler_or_error()?;
+        handler.on_error(error).await
     }
 }

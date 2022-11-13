@@ -25,7 +25,11 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
     async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()> {
         let response = authenticator
             .challenge(Challenge {
-                questions: vec![Question::new("key")],
+                questions: vec![Question {
+                    label: "key".to_string(),
+                    text: "Provide a key: ".to_string(),
+                    options: Default::default(),
+                }],
                 options: Default::default(),
             })
             .await?;
