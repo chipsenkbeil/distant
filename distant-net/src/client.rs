@@ -231,6 +231,10 @@ impl UntypedClient {
                     // writing any queued bytes as well. Othewise, we attempt to flush any pending
                     // outgoing bytes that weren't sent earlier.
                     if let Ok(request) = rx.try_recv() {
+                        trace!(
+                            "Client sending {}",
+                            String::from_utf8_lossy(&request.to_bytes()).to_string()
+                        );
                         match connection.try_write_frame(request.to_bytes()) {
                             Ok(()) => (),
                             Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
