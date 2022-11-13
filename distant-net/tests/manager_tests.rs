@@ -120,5 +120,6 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_
     // which we do by trying to access a connection that no longer exists
     info!("Verifying server connection held by manager has terminated");
     let err = client.info(id).await.unwrap_err();
-    assert_eq!(err.kind(), io::ErrorKind::NotConnected);
+    assert_eq!(err.kind(), io::ErrorKind::Other);
+    assert_eq!(err.to_string(), "No connection found");
 }
