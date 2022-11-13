@@ -1,5 +1,5 @@
 use clap::Args;
-use distant_core::Map;
+use distant_core::net::common::Map;
 use serde::{Deserialize, Serialize};
 
 #[derive(Args, Debug, Default, Serialize, Deserialize)]

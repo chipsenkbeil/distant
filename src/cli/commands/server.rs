@@ -4,13 +4,10 @@ use crate::{
 };
 use anyhow::Context;
 use clap::Subcommand;
-use distant_core::{
-    net::{
-        SecretKey32, ServerConfig as NetServerConfig, ServerRef, TcpServerExt,
-        XChaCha20Poly1305Codec,
-    },
-    DistantApiServerHandler, DistantSingleKeyCredentials, Host,
-};
+use distant_core::net::common::authentication::Verifier;
+use distant_core::net::common::{Host, SecretKey32};
+use distant_core::net::server::{Server, ServerConfig as NetServerConfig, ServerRef};
+use distant_core::{DistantApiServerHandler, DistantSingleKeyCredentials};
 use log::*;
 use std::io::{self, Read, Write};
 
@@ -163,8 +160,6 @@ impl ServerSubcommand {
                     SecretKey32::default()
                 };
 
-                let codec = XChaCha20Poly1305Codec::new(key.unprotected_as_bytes());
-
                 debug!(
                     "Starting local API server, binding to {} {}",
                     addr,
@@ -173,21 +168,25 @@ impl ServerSubcommand {
                         None => "using an ephemeral port".to_string(),
                     }
                 );
-                let server = DistantApiServerHandler::local(NetServerConfig {
+                let handler = DistantApiServerHandler::local(NetServerConfig {
                     shutdown: get!(shutdown).unwrap_or_default(),
+                    ..Default::default()
                 })
-                .context("Failed to create local distant api")?
-                .start(addr, get!(port).unwrap_or_else(|| 0.into()), codec)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to start server @ {} with {}",
-                        addr,
-                        get!(port)
-                            .map(|p| format!("port in range {p}"))
-                            .unwrap_or_else(|| String::from("ephemeral port"))
-                    )
-                })?;
+                .context("Failed to create local distant api")?;
+                let server = Server::tcp()
+                    .handler(handler)
+                    .verifier(Verifier::static_key(key.clone()))
+                    .start(addr, get!(port).unwrap_or_else(|| 0.into()))
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to start server @ {} with {}",
+                            addr,
+                            get!(port)
+                                .map(|p| format!("port in range {p}"))
+                                .unwrap_or_else(|| String::from("ephemeral port"))
+                        )
+                    })?;
 
                 let credentials = DistantSingleKeyCredentials {
                     host: Host::from(addr),
