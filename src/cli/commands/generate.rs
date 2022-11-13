@@ -3,7 +3,7 @@ use anyhow::Context;
 use clap::{CommandFactory, Subcommand};
 use clap_complete::{generate as clap_generate, Shell};
 use distant_core::{
-    net::{Request, Response},
+    net::common::{Request, Response},
     DistantMsg, DistantRequestData, DistantResponseData,
 };
 use std::{fs, io, path::PathBuf};

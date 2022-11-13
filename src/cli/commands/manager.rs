@@ -6,14 +6,16 @@ use crate::{
 };
 use anyhow::Context;
 use clap::{Subcommand, ValueHint};
-use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
+use distant_core::net::common::ConnectionId;
+use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
+use distant_core::net::server::ServerRef;
 use log::*;
 use once_cell::sync::Lazy;
 use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceManagerKind,
     ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
-use std::{ffi::OsString, path::PathBuf};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf};
 use tabled::{Table, Tabled};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
@@ -289,8 +291,37 @@ impl ManagerSubcommand {
                 );
                 let manager_ref = Manager {
                     access,
-                    config: DistantManagerConfig {
+                    config: NetManagerConfig {
                         user,
+                        launch_handlers: {
+                            let mut handlers: HashMap<String, Box<dyn LaunchHandler>> =
+                                HashMap::new();
+                            handlers.insert(
+                                "manager".to_string(),
+                                Box::new(handlers::ManagerLaunchHandler::new()),
+                            );
+
+                            #[cfg(any(feature = "libssh", feature = "ssh2"))]
+                            handlers
+                                .insert("ssh".to_string(), Box::new(handlers::SshLaunchHandler));
+
+                            handlers
+                        },
+                        connect_handlers: {
+                            let mut handlers: HashMap<String, Box<dyn ConnectHandler>> =
+                                HashMap::new();
+
+                            handlers.insert(
+                                "distant".to_string(),
+                                Box::new(handlers::DistantConnectHandler),
+                            );
+
+                            #[cfg(any(feature = "libssh", feature = "ssh2"))]
+                            handlers
+                                .insert("ssh".to_string(), Box::new(handlers::SshConnectHandler));
+
+                            handlers
+                        },
                         ..Default::default()
                     },
                     network,
@@ -298,30 +329,6 @@ impl ManagerSubcommand {
                 .listen()
                 .await
                 .context("Failed to start manager")?;
-
-                // Register our handlers for different schemes
-                debug!("Registering handlers with manager");
-                manager_ref
-                    .register_launch_handler("manager", handlers::ManagerLaunchHandler::new())
-                    .await
-                    .context("Failed to register launch handler for \"manager://\"")?;
-                manager_ref
-                    .register_connect_handler("distant", handlers::DistantConnectHandler)
-                    .await
-                    .context("Failed to register connect handler for \"distant://\"")?;
-
-                #[cfg(any(feature = "libssh", feature = "ssh2"))]
-                // Register ssh-specific handlers if either feature flag is enabled
-                {
-                    manager_ref
-                        .register_launch_handler("ssh", handlers::SshLaunchHandler)
-                        .await
-                        .context("Failed to register launch handler for \"ssh://\"")?;
-                    manager_ref
-                        .register_connect_handler("ssh", handlers::SshConnectHandler)
-                        .await
-                        .context("Failed to register connect handler for \"ssh://\"")?;
-                }
 
                 // Let our server run to completion
                 manager_ref

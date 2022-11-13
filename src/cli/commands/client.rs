@@ -15,9 +15,9 @@ use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
     data::{ChangeKindSet, Environment},
-    net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
-    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
-    DistantResponseData, Host, Map, RemoteCommand, Searcher, Watcher,
+    net::common::{ConnectionId, Destination, Host, Map, Request, Response},
+    net::manager::ManagerClient,
+    DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher, Watcher,
 };
 use log::*;
 use serde_json::{json, Value};
@@ -552,15 +552,20 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let channel = client.open_channel(connection_id).await.with_context(|| {
-                    format!("Failed to open channel to connection {connection_id}")
-                })?;
+                let channel = client
+                    .open_raw_channel(connection_id)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to open channel to connection {connection_id}")
+                    })?;
 
                 debug!(
                     "Spawning LSP server (persist = {}, pty = {}): {}",
                     persist, pty, cmd
                 );
-                Lsp::new(channel).spawn(cmd, persist, pty).await?;
+                Lsp::new(channel.into_client().into_channel())
+                    .spawn(cmd, persist, pty)
+                    .await?;
             }
             Self::Repl {
                 config: repl_config,
@@ -790,9 +795,12 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let channel = client.open_channel(connection_id).await.with_context(|| {
-                    format!("Failed to open channel to connection {connection_id}")
-                })?;
+                let channel = client
+                    .open_raw_channel(connection_id)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to open channel to connection {connection_id}")
+                    })?;
 
                 debug!(
                     "Spawning shell (environment = {:?}, persist = {}): {}",
@@ -800,7 +808,9 @@ impl ClientSubcommand {
                     persist,
                     cmd.as_deref().unwrap_or(r"$SHELL")
                 );
-                Shell::new(channel).spawn(cmd, environment, persist).await?;
+                Shell::new(channel.into_client().into_channel())
+                    .spawn(cmd, environment, persist)
+                    .await?;
             }
         }
 
@@ -811,7 +821,7 @@ impl ClientSubcommand {
 async fn use_or_lookup_connection_id(
     cache: &mut Cache,
     connection: Option<ConnectionId>,
-    client: &mut DistantManagerClient,
+    client: &mut ManagerClient,
 ) -> anyhow::Result<ConnectionId> {
     match connection {
         Some(id) => {
