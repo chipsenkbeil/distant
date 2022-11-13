@@ -26,7 +26,7 @@ impl ServerHandler for TestServerHandler {
 }
 
 #[test(tokio::test)]
-async fn should_be_able_to_establish_a_single_connection_and_communicate() {
+async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_manager() {
     let (t1, t2) = InmemoryTransport::pair(100);
 
     let mut config = Config::default();

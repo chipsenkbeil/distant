@@ -27,39 +27,32 @@ pub struct ManagerChannel {
 }
 
 impl ManagerChannel {
+    /// Returns the id associated with the channel.
     pub fn id(&self) -> ManagerChannelId {
         self.channel_id
     }
 
-    pub fn send(&self, data: Vec<u8>) -> io::Result<()> {
-        let channel_id = self.channel_id;
-        let req = UntypedRequest::from_slice(&data)
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?
-            .into_owned();
+    /// Sends the untyped request to the server on the other side of the channel.
+    pub fn send(&self, req: UntypedRequest<'static>) -> io::Result<()> {
+        let id = self.channel_id;
 
-        self.tx
-            .send(Action::Write {
-                id: channel_id,
-                req,
-            })
-            .map_err(|x| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("channel {channel_id} send failed: {x}"),
-                )
-            })
+        self.tx.send(Action::Write { id, req }).map_err(|x| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("channel {id} send failed: {x}"),
+            )
+        })
     }
 
+    /// Closes the channel, unregistering it with the connection.
     pub fn close(&self) -> io::Result<()> {
-        let channel_id = self.channel_id;
-        self.tx
-            .send(Action::Unregister { id: channel_id })
-            .map_err(|x| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("channel {channel_id} close failed: {x}"),
-                )
-            })
+        let id = self.channel_id;
+        self.tx.send(Action::Unregister { id }).map_err(|x| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("channel {id} close failed: {x}"),
+            )
+        })
     }
 }
 
@@ -204,7 +197,7 @@ async fn action_task(
                 if let Some(reply) = registered.get(&channel_id) {
                     let response = ManagerResponse::Channel {
                         id: channel_id,
-                        data: res.to_bytes(),
+                        response: res,
                     };
                     if let Err(x) = reply.send(response).await {
                         error!("[Conn {id}] {x}");

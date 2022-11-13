@@ -1,7 +1,9 @@
 use super::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
 };
-use crate::common::{authentication::msg::Authentication, ConnectionId, Destination};
+use crate::common::{
+    authentication::msg::Authentication, ConnectionId, Destination, UntypedResponse,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -45,8 +47,8 @@ pub enum ManagerResponse {
         /// Id of the channel
         id: ManagerChannelId,
 
-        /// Raw data to send through the channel
-        data: Vec<u8>,
+        /// Untyped response to send through the channel
+        response: UntypedResponse<'static>,
     },
 
     /// Indicates that a channel has been opened

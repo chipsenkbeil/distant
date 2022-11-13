@@ -45,6 +45,13 @@ impl Frame<'_> {
         &self.item
     }
 
+    /// Writes the frame to a new [`Vec`] of bytes, returning them on success
+    pub fn try_to_bytes(&self) -> io::Result<Vec<u8>> {
+        let mut bytes = BytesMut::new();
+        self.write(&mut bytes)?;
+        Ok(bytes.to_vec())
+    }
+
     /// Writes the frame to the end of `dst`, including the header representing the length of the
     /// item as part of the written bytes
     pub fn write(&self, dst: &mut BytesMut) -> io::Result<()> {

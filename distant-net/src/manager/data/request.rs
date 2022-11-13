@@ -1,5 +1,7 @@
 use super::{ManagerAuthenticationId, ManagerChannelId};
-use crate::common::{authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map};
+use crate::common::{
+    authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map, UntypedRequest,
+};
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
@@ -76,8 +78,8 @@ pub enum ManagerRequest {
         /// Id of the channel
         id: ManagerChannelId,
 
-        /// Raw data to send through the channel
-        data: Vec<u8>,
+        /// Untyped request to send through the channel
+        request: UntypedRequest<'static>,
     },
 
     /// Closes an open channel

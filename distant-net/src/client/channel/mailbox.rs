@@ -152,9 +152,17 @@ impl PostOffice<UntypedResponse<'static>> {
     }
 }
 
+/// Error encountered when invoking [`try_recv`] for [`MailboxReceiver`].
+pub enum MailboxTryNextError {
+    Empty,
+    Closed,
+}
+
 #[async_trait]
 trait MailboxReceiver: Send + Sync {
     type Output;
+
+    fn try_recv(&mut self) -> Result<Self::Output, MailboxTryNextError>;
 
     async fn recv(&mut self) -> Option<Self::Output>;
 
@@ -164,6 +172,14 @@ trait MailboxReceiver: Send + Sync {
 #[async_trait]
 impl<T: Send> MailboxReceiver for mpsc::Receiver<T> {
     type Output = T;
+
+    fn try_recv(&mut self) -> Result<Self::Output, MailboxTryNextError> {
+        match mpsc::Receiver::try_recv(self) {
+            Ok(x) => Ok(x),
+            Err(mpsc::error::TryRecvError::Empty) => Err(MailboxTryNextError::Empty),
+            Err(mpsc::error::TryRecvError::Disconnected) => Err(MailboxTryNextError::Closed),
+        }
+    }
 
     async fn recv(&mut self) -> Option<Self::Output> {
         mpsc::Receiver::recv(self).await
@@ -183,6 +199,13 @@ struct MappedMailboxReceiver<T, U> {
 impl<T: Send, U: Send> MailboxReceiver for MappedMailboxReceiver<T, U> {
     type Output = U;
 
+    fn try_recv(&mut self) -> Result<Self::Output, MailboxTryNextError> {
+        match self.rx.try_recv() {
+            Ok(x) => Ok((self.f)(x)),
+            Err(x) => Err(x),
+        }
+    }
+
     async fn recv(&mut self) -> Option<Self::Output> {
         let value = self.rx.recv().await?;
         Some((self.f)(value))
@@ -201,6 +224,16 @@ struct MappedOptMailboxReceiver<T, U> {
 #[async_trait]
 impl<T: Send, U: Send> MailboxReceiver for MappedOptMailboxReceiver<T, U> {
     type Output = U;
+
+    fn try_recv(&mut self) -> Result<Self::Output, MailboxTryNextError> {
+        match self.rx.try_recv() {
+            Ok(x) => match (self.f)(x) {
+                Some(x) => Ok(x),
+                None => Err(MailboxTryNextError::Empty),
+            },
+            Err(x) => Err(x),
+        }
+    }
 
     async fn recv(&mut self) -> Option<Self::Output> {
         // Continually receive a new value and convert it to Option<U>
@@ -231,6 +264,11 @@ impl<T> Mailbox<T> {
     /// Represents id associated with the mailbox
     pub fn id(&self) -> &Id {
         &self.id
+    }
+
+    /// Tries to receive the next value in mailbox without blocking or waiting async
+    pub fn try_next(&mut self) -> Result<T, MailboxTryNextError> {
+        self.rx.try_recv()
     }
 
     /// Receives next value in mailbox
