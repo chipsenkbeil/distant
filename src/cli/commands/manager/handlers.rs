@@ -1,19 +1,17 @@
 use crate::config::ClientLaunchConfig;
 use async_trait::async_trait;
-use distant_core::{
-    net::{
-        AuthClient, AuthQuestion, FramedTransport, IntoSplit, SecretKey32, TcpTransport,
-        XChaCha20Poly1305Codec,
-    },
-    BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, ConnectHandler, Destination,
-    LaunchHandler, Map,
-};
+use distant_core::net::client::{Client, ReconnectStrategy, UntypedClient};
+use distant_core::net::common::authentication::msg::*;
+use distant_core::net::common::authentication::{Authenticator, ProxyAuthHandler};
+use distant_core::net::common::{Destination, Map};
+use distant_core::net::manager::{ConnectHandler, LaunchHandler};
 use log::*;
 use std::{
     io,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     process::Stdio,
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -50,7 +48,7 @@ impl LaunchHandler for ManagerLaunchHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        _auth_client: &mut AuthClient,
+        _auth_client: &mut dyn Authenticator,
     ) -> io::Result<Destination> {
         debug!("Handling launch of {destination} with options '{options}'");
         let config = ClientLaunchConfig::from(options.clone());
@@ -163,7 +161,7 @@ impl LaunchHandler for SshLaunchHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
+        auth_client: &mut dyn Authenticator,
     ) -> io::Result<Destination> {
         debug!("Handling launch of {destination} with options '{options}'");
         let config = ClientLaunchConfig::from(options.clone());
@@ -196,14 +194,31 @@ impl LaunchHandler for SshLaunchHandler {
 pub struct DistantConnectHandler;
 
 impl DistantConnectHandler {
-    pub async fn try_connect(ips: Vec<IpAddr>, port: u16) -> io::Result<TcpTransport> {
+    pub async fn try_connect(
+        ips: Vec<IpAddr>,
+        port: u16,
+        authenticator: &mut dyn Authenticator,
+    ) -> io::Result<UntypedClient> {
         // Try each IP address with the same port to see if one works
         let mut err = None;
         for ip in ips {
             let addr = SocketAddr::new(ip, port);
             debug!("Attempting to connect to distant server @ {}", addr);
-            match TcpTransport::connect(addr).await {
-                Ok(transport) => return Ok(transport),
+
+            match Client::tcp(addr)
+                .auth_handler(ProxyAuthHandler::new(authenticator))
+                .reconnect_strategy(ReconnectStrategy::ExponentialBackoff {
+                    base: Duration::from_secs(1),
+                    factor: 2.0,
+                    max_duration: None,
+                    max_retries: None,
+                    timeout: None,
+                })
+                .timeout(Duration::from_secs(180))
+                .connect_untyped()
+                .await
+            {
+                Ok(client) => return Ok(client),
                 Err(x) => err = Some(x),
             }
         }
@@ -219,8 +234,8 @@ impl ConnectHandler for DistantConnectHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
-    ) -> io::Result<BoxedDistantWriterReader> {
+        authenticator: &mut dyn Authenticator,
+    ) -> io::Result<UntypedClient> {
         debug!("Handling connect of {destination} with options '{options}'");
         let host = destination.host.to_string();
         let port = destination.port.ok_or_else(|| missing("port"))?;
@@ -246,37 +261,7 @@ impl ConnectHandler for DistantConnectHandler {
             ));
         }
 
-        // Use provided password or options key if available, otherwise ask for it, and produce a
-        // codec using the key
-        let codec = {
-            let key = destination
-                .password
-                .as_deref()
-                .or_else(|| options.get("key").map(|s| s.as_str()));
-
-            let key = match key {
-                Some(key) => key.parse::<SecretKey32>().map_err(|_| invalid("key"))?,
-                None => {
-                    let answers = auth_client
-                        .challenge(vec![AuthQuestion::new("key")], Default::default())
-                        .await?;
-                    answers
-                        .first()
-                        .ok_or_else(|| missing("key"))?
-                        .parse::<SecretKey32>()
-                        .map_err(|_| invalid("key"))?
-                }
-            };
-            XChaCha20Poly1305Codec::from(key)
-        };
-
-        // Establish a TCP connection, wrap it, and split it out into a writer and reader
-        let transport = Self::try_connect(candidate_ips, port).await?;
-        let transport = FramedTransport::new(transport, codec);
-        let (writer, reader) = transport.into_split();
-        let writer: BoxedDistantWriter = Box::new(writer);
-        let reader: BoxedDistantReader = Box::new(reader);
-        Ok((writer, reader))
+        Self::try_connect(candidate_ips, port, authenticator).await
     }
 }
 
@@ -291,23 +276,23 @@ impl ConnectHandler for SshConnectHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut AuthClient,
-    ) -> io::Result<BoxedDistantWriterReader> {
+        auth_client: &mut dyn Authenticator,
+    ) -> io::Result<UntypedClient> {
         debug!("Handling connect of {destination} with options '{options}'");
         let mut ssh = load_ssh(destination, options)?;
         let handler = AuthClientSshAuthHandler::new(auth_client);
         let _ = ssh.authenticate(handler).await?;
-        ssh.into_distant_writer_reader().await
+        Ok(ssh.into_distant_client().await?.into_untyped_client())
     }
 }
 
 #[cfg(any(feature = "libssh", feature = "ssh2"))]
-struct AuthClientSshAuthHandler<'a>(Mutex<&'a mut AuthClient>);
+struct AuthClientSshAuthHandler<'a>(Mutex<&'a mut dyn Authenticator>);
 
 #[cfg(any(feature = "libssh", feature = "ssh2"))]
 impl<'a> AuthClientSshAuthHandler<'a> {
-    pub fn new(auth_client: &'a mut AuthClient) -> Self {
-        Self(Mutex::new(auth_client))
+    pub fn new(authenticator: &'a mut dyn Authenticator) -> Self {
+        Self(Mutex::new(authenticator))
     }
 }
 
@@ -322,7 +307,8 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
         for prompt in event.prompts {
             let mut options = HashMap::new();
             options.insert("echo".to_string(), prompt.echo.to_string());
-            questions.push(AuthQuestion {
+            questions.push(Question {
+                label: "ssh-prompt".to_string(),
                 text: prompt.prompt,
                 options,
             });
@@ -331,31 +317,51 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
         options.insert("instructions".to_string(), event.instructions);
         options.insert("username".to_string(), event.username);
 
-        self.0.lock().await.challenge(questions, options).await
+        Ok(self
+            .0
+            .lock()
+            .await
+            .challenge(Challenge { questions, options })
+            .await?
+            .answers)
     }
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
-        use distant_core::net::AuthVerifyKind;
-        self.0
+        Ok(self
+            .0
             .lock()
             .await
-            .verify(AuthVerifyKind::Host, host.to_string())
-            .await
+            .verify(Verification {
+                kind: VerificationKind::Host,
+                text: host.to_string(),
+            })
+            .await?
+            .valid)
     }
 
     async fn on_banner(&self, text: &str) {
-        if let Err(x) = self.0.lock().await.info(text.to_string()).await {
+        if let Err(x) = self
+            .0
+            .lock()
+            .await
+            .info(Info {
+                text: text.to_string(),
+            })
+            .await
+        {
             error!("ssh on_banner failed: {}", x);
         }
     }
 
     async fn on_error(&self, text: &str) {
-        use distant_core::net::AuthErrorKind;
         if let Err(x) = self
             .0
             .lock()
             .await
-            .error(AuthErrorKind::Unknown, text.to_string())
+            .error(Error {
+                kind: ErrorKind::Fatal,
+                text: text.to_string(),
+            })
             .await
         {
             error!("ssh on_error failed: {}", x);

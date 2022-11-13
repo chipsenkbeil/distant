@@ -1,6 +1,6 @@
 use super::{AccessControl, CommonConfig, NetworkConfig};
 use clap::Args;
-use distant_core::Destination;
+use distant_core::net::common::Destination;
 use serde::{Deserialize, Serialize};
 use service_manager::ServiceManagerKind;
 

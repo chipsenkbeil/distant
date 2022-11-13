@@ -1,4 +1,5 @@
 use super::msg::*;
+use crate::common::authentication::Authenticator;
 use crate::common::HeapSecretKey;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -9,7 +10,7 @@ pub use methods::*;
 
 /// Interface for a handler of authentication requests for all methods.
 #[async_trait]
-pub trait AuthHandler: AuthMethodHandler {
+pub trait AuthHandler: AuthMethodHandler + Send {
     /// Callback when authentication is beginning, providing available authentication methods and
     /// returning selected authentication methods to pursue.
     async fn on_initialization(
@@ -69,7 +70,7 @@ impl AuthMethodHandler for DummyAuthHandler {
 /// [`on_error`]: AuthMethodHandler::on_error
 pub struct AuthHandlerMap {
     active: String,
-    map: HashMap<&'static str, Box<dyn AuthMethodHandler + Send>>,
+    map: HashMap<&'static str, Box<dyn AuthMethodHandler>>,
 }
 
 impl AuthHandlerMap {
@@ -93,11 +94,11 @@ impl AuthHandlerMap {
 
     /// Inserts the specified `handler` into the map, associating it with `id` for determining the
     /// method that would trigger this handler.
-    pub fn insert_method_handler<T: AuthMethodHandler + Send + 'static>(
+    pub fn insert_method_handler<T: AuthMethodHandler + 'static>(
         &mut self,
         id: &'static str,
         handler: T,
-    ) -> Option<Box<dyn AuthMethodHandler + Send>> {
+    ) -> Option<Box<dyn AuthMethodHandler>> {
         self.map.insert(id, Box::new(handler))
     }
 
@@ -105,7 +106,7 @@ impl AuthHandlerMap {
     pub fn remove_method_handler(
         &mut self,
         id: &'static str,
-    ) -> Option<Box<dyn AuthMethodHandler + Send>> {
+    ) -> Option<Box<dyn AuthMethodHandler>> {
         self.map.remove(id)
     }
 
@@ -113,7 +114,7 @@ impl AuthHandlerMap {
     /// returning an error if no handler for the active id is found.
     pub fn get_mut_active_method_handler_or_error(
         &mut self,
-    ) -> io::Result<&mut (dyn AuthMethodHandler + Send + 'static)> {
+    ) -> io::Result<&mut (dyn AuthMethodHandler + 'static)> {
         self.get_mut_active_method_handler()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No active handler for id"))
     }
@@ -121,7 +122,7 @@ impl AuthHandlerMap {
     /// Retrieves a mutable reference to the active [`AuthMethodHandler`] with the specified `id`.
     pub fn get_mut_active_method_handler(
         &mut self,
-    ) -> Option<&mut (dyn AuthMethodHandler + Send + 'static)> {
+    ) -> Option<&mut (dyn AuthMethodHandler + 'static)> {
         // TODO: Optimize this
         self.get_mut_method_handler(&self.active.clone())
     }
@@ -130,7 +131,7 @@ impl AuthHandlerMap {
     pub fn get_mut_method_handler(
         &mut self,
         id: &str,
-    ) -> Option<&mut (dyn AuthMethodHandler + Send + 'static)> {
+    ) -> Option<&mut (dyn AuthMethodHandler + 'static)> {
         self.map.get_mut(id).map(|h| h.as_mut())
     }
 }
@@ -197,5 +198,54 @@ impl AuthMethodHandler for AuthHandlerMap {
     async fn on_error(&mut self, error: Error) -> io::Result<()> {
         let handler = self.get_mut_active_method_handler_or_error()?;
         handler.on_error(error).await
+    }
+}
+
+/// Implementation of [`AuthHandler`] that redirects all requests to an [`Authenticator`].
+pub struct ProxyAuthHandler<'a>(&'a mut dyn Authenticator);
+
+impl<'a> ProxyAuthHandler<'a> {
+    pub fn new(authenticator: &'a mut dyn Authenticator) -> Self {
+        Self(authenticator)
+    }
+}
+
+#[async_trait]
+impl<'a> AuthHandler for ProxyAuthHandler<'a> {
+    async fn on_initialization(
+        &mut self,
+        initialization: Initialization,
+    ) -> io::Result<InitializationResponse> {
+        Authenticator::initialize(self.0, initialization).await
+    }
+
+    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+        Authenticator::start_method(self.0, start_method).await
+    }
+
+    async fn on_finished(&mut self) -> io::Result<()> {
+        Authenticator::finished(self.0).await
+    }
+}
+
+#[async_trait]
+impl<'a> AuthMethodHandler for ProxyAuthHandler<'a> {
+    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+        Authenticator::challenge(self.0, challenge).await
+    }
+
+    async fn on_verification(
+        &mut self,
+        verification: Verification,
+    ) -> io::Result<VerificationResponse> {
+        Authenticator::verify(self.0, verification).await
+    }
+
+    async fn on_info(&mut self, info: Info) -> io::Result<()> {
+        Authenticator::info(self.0, info).await
+    }
+
+    async fn on_error(&mut self, error: Error) -> io::Result<()> {
+        Authenticator::error(self.0, error).await
     }
 }

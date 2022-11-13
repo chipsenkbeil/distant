@@ -12,16 +12,13 @@ use std::io;
 /// [`AuthMethodHandler`].
 pub struct StaticKeyAuthMethodHandler {
     key: HeapSecretKey,
-    handler: Box<dyn AuthMethodHandler + Send>,
+    handler: Box<dyn AuthMethodHandler>,
 }
 
 impl StaticKeyAuthMethodHandler {
     /// Creates a new [`StaticKeyAuthMethodHandler`] that responds to challenges using a static
     /// `key`. All other requests are passed to the `handler`.
-    pub fn new<T: AuthMethodHandler + Send + 'static>(
-        key: impl Into<HeapSecretKey>,
-        handler: T,
-    ) -> Self {
+    pub fn new<T: AuthMethodHandler + 'static>(key: impl Into<HeapSecretKey>, handler: T) -> Self {
         Self {
             key: key.into(),
             handler: Box::new(handler),

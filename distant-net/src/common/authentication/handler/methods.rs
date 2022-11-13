@@ -6,7 +6,7 @@ use std::io;
 
 /// Interface for a handler of authentication requests for a specific authentication method.
 #[async_trait]
-pub trait AuthMethodHandler {
+pub trait AuthMethodHandler: Send {
     /// Callback when a challenge is received, returning answers to the given questions.
     async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse>;
 
