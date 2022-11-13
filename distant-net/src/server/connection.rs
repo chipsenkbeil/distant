@@ -48,6 +48,11 @@ impl ConnectionTask {
         self.id
     }
 
+    /// Returns true if the task has finished
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+
     /// Aborts the connection
     pub fn abort(&self) {
         self.task.abort();

@@ -2,7 +2,7 @@ use crate::common::{authentication::Verifier, Listener, Transport};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{io, sync::Arc};
+use std::{io, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
 mod builder;
@@ -190,6 +190,12 @@ where
                         "Server shutdown triggered after {}s",
                         config.shutdown.duration().unwrap_or_default().as_secs_f32(),
                     );
+
+                    for (id, task) in state.connections.write().await.drain() {
+                        info!("Terminating task {id}");
+                        task.abort();
+                    }
+
                     break;
                 }
             };
@@ -213,6 +219,13 @@ where
                 .await
                 .insert(connection.id(), connection);
         }
+
+        // Once we stop listening, we still want to wait until all connections have terminated
+        info!("Server waiting for active connections to terminate");
+        while state.has_active_connections().await {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        info!("Server task terminated");
     }
 }
 

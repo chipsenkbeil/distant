@@ -685,7 +685,10 @@ impl<T: Transport> FramedTransport<T> {
                 // Receive options from the server and pick one
                 debug!("[{log_label}] Waiting on options");
                 let options = self.read_frame_as::<Options>().await?.ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+                    io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Transport closed early while waiting for options",
+                    )
                 })?;
 
                 // Choose a compression and encryption option from the options
@@ -734,7 +737,10 @@ impl<T: Transport> FramedTransport<T> {
                 // Get client's response with selected compression and encryption
                 debug!("[{log_label}] Waiting on choice");
                 self.read_frame_as::<Choice>().await?.ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+                    io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Transport closed early while waiting for choice",
+                    )
                 })?
             }
         };
@@ -826,7 +832,10 @@ impl<T: Transport> FramedTransport<T> {
             .read_frame_as::<KeyExchangeData>()
             .await?
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+                io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "Transport closed early while waiting for key data",
+                )
             })?;
 
         trace!("{log_label}Deriving shared secret key");

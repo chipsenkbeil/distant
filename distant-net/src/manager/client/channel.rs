@@ -1,6 +1,6 @@
 use crate::{
     client::{Client, ReconnectStrategy, UntypedClient},
-    common::{authentication::AuthHandler, Connection, ConnectionId, InmemoryTransport},
+    common::{ConnectionId, FramedTransport, InmemoryTransport},
     manager::data::{ManagerRequest, ManagerResponse},
 };
 use log::*;
@@ -29,40 +29,32 @@ impl RawChannel {
     ///
     /// ### Note
     ///
-    /// This will perform necessary handshakes and authentication (via `handler`) with the server.
-    ///
-    /// Because the underlying transport maps to the same, singular connection with the manager
-    /// of servers, the reconnect strategy is set up to fail immediately as the actual reconnect
-    /// logic is handled by the primary client connection with the manager, not the connection
-    /// with a proxied server.
-    pub async fn spawn_client<T, U>(
-        self,
-        handler: impl AuthHandler + Send,
-    ) -> io::Result<Client<T, U>>
+    /// This does not perform any additional handshakes or authentication. All authentication was
+    /// performed during separate connection and this merely wraps an inmemory transport that maps
+    /// to the primary connection.
+    pub fn into_client<T, U>(self) -> Client<T, U>
     where
         T: Send + Sync + Serialize + 'static,
         U: Send + Sync + DeserializeOwned + 'static,
     {
-        let connection = Connection::client(self.transport, handler).await?;
-        Ok(Client::spawn(connection, ReconnectStrategy::Fail))
+        Client::spawn_inmemory(
+            FramedTransport::plain(self.transport),
+            ReconnectStrategy::Fail,
+        )
     }
 
     /// Consumes this channel, returning an untyped client wrapping the transport.
     ///
     /// ### Note
     ///
-    /// This will perform necessary handshakes and authentication (via `handler`) with the server.
-    ///
-    /// Because the underlying transport maps to the same, singular connection with the manager
-    /// of servers, the reconnect strategy is set up to fail immediately as the actual reconnect
-    /// logic is handled by the primary client connection with the manager, not the connection
-    /// with a proxied server.
-    pub async fn spawn_untyped_client(
-        self,
-        handler: impl AuthHandler + Send,
-    ) -> io::Result<UntypedClient> {
-        let connection = Connection::client(self.transport, handler).await?;
-        Ok(UntypedClient::spawn(connection, ReconnectStrategy::Fail))
+    /// This does not perform any additional handshakes or authentication. All authentication was
+    /// performed during separate connection and this merely wraps an inmemory transport that maps
+    /// to the primary connection.
+    pub fn into_untyped_client(self) -> UntypedClient {
+        UntypedClient::spawn_inmemory(
+            FramedTransport::plain(self.transport),
+            ReconnectStrategy::Fail,
+        )
     }
 }
 

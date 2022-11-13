@@ -19,6 +19,15 @@ impl ServerState {
             keychain: Keychain::new(),
         }
     }
+
+    /// Returns true if there is at least one active connection
+    pub async fn has_active_connections(&self) -> bool {
+        self.connections
+            .read()
+            .await
+            .values()
+            .any(|task| !task.is_finished())
+    }
 }
 
 impl Default for ServerState {

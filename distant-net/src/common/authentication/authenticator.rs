@@ -67,7 +67,10 @@ macro_rules! next_frame_as {
     }};
     ($transport:expr, $type:ident) => {{
         let frame = $transport.read_frame().await?.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::UnexpectedEof, "Transport closed early")
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Transport closed early waiting for frame",
+            )
         })?;
 
         match utils::deserialize_from_slice::<$type>(frame.as_item()) {

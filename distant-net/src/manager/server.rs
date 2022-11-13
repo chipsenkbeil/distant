@@ -251,6 +251,7 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::OpenChannel { id } => match self.connections.read().await.get(&id) {
                 Some(connection) => match connection.open_channel(reply.clone()) {
                     Ok(channel) => {
+                        debug!("[Conn {id}] Channel {} has been opened", channel.id());
                         let id = channel.id();
                         local_data.channels.write().await.insert(id, channel);
                         ManagerResponse::ChannelOpened { id }
@@ -280,7 +281,10 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::CloseChannel { id } => {
                 match local_data.channels.write().await.remove(&id) {
                     Some(channel) => match channel.close() {
-                        Ok(_) => ManagerResponse::ChannelClosed { id },
+                        Ok(_) => {
+                            debug!("Channel {id} has been closed");
+                            ManagerResponse::ChannelClosed { id }
+                        }
                         Err(x) => ManagerResponse::from(x),
                     },
                     None => ManagerResponse::from(io::Error::new(

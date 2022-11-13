@@ -5,7 +5,9 @@ use distant_net::common::authentication::{DummyAuthHandler, Verifier};
 use distant_net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_net::manager::{Config, ManagerClient, ManagerServer};
 use distant_net::server::{Server, ServerCtx, ServerHandler};
+use log::*;
 use std::io;
+use test_log::test;
 
 struct TestServerHandler;
 
@@ -23,7 +25,7 @@ impl ServerHandler for TestServerHandler {
     }
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -50,11 +52,13 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         }),
     );
 
-    let _manager_ref = ManagerServer::new(Config::default())
+    info!("Starting manager");
+    let _manager_ref = ManagerServer::new(config)
         .verifier(Verifier::none())
         .start(OneshotListener::from_value(t2))
         .expect("Failed to start manager server");
 
+    info!("Connecting to manager");
     let mut client: ManagerClient = Client::build()
         .auth_handler(DummyAuthHandler)
         .reconnect_strategy(ReconnectStrategy::Fail)
@@ -64,6 +68,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         .expect("Failed to connect to manager");
 
     // Test establishing a connection to some remote server
+    info!("Submitting server connection request to manager");
     let id = client
         .connect(
             "scheme://host".parse::<Destination>().unwrap(),
@@ -74,6 +79,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
         .expect("Failed to connect to a remote server");
 
     // Test retrieving list of connections
+    info!("Submitting connection list request to manager");
     let list = client
         .list()
         .await
@@ -82,6 +88,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     assert_eq!(list.get(&id).unwrap().to_string(), "scheme://host");
 
     // Test retrieving information
+    info!("Submitting connection info request to manager");
     let info = client
         .info(id)
         .await
@@ -91,13 +98,14 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     assert_eq!(info.options, "key=value".parse::<Map>().unwrap());
 
     // Create a new channel and request some data
+    info!("Submitting server channel open request to manager");
     let mut channel_client: Client<u8, u8> = client
         .open_raw_channel(id)
         .await
         .expect("Failed to open channel")
-        .spawn_client(DummyAuthHandler)
-        .await
-        .expect("Failed to spawn client for channel");
+        .into_client();
+
+    info!("Verifying server channel can send and receive data");
     let res = channel_client
         .send(123u8)
         .await
@@ -105,10 +113,12 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate() {
     assert_eq!(res.payload, 123u8, "Invalid response payload");
 
     // Test killing a connection
+    info!("Submitting connection kill request to manager");
     client.kill(id).await.expect("Failed to kill connection");
 
     // Test getting an error to ensure that serialization of that data works,
     // which we do by trying to access a connection that no longer exists
+    info!("Verifying server connection held by manager has terminated");
     let err = client.info(id).await.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotConnected);
 }
