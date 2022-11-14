@@ -13,12 +13,18 @@ pub struct WindowsPipeConnector {
 impl WindowsPipeConnector {
     /// Creates a new connector for a non-local pipe using the given `addr`.
     pub fn new(addr: impl Into<OsString>) -> Self {
-        Self { addr: addr.into(), local: false }
+        Self {
+            addr: addr.into(),
+            local: false,
+        }
     }
 
     /// Creates a new connector for a local pipe using the given `name`.
     pub fn local(name: impl Into<OsString>) -> Self {
-        Self { addr: name.into(), local: true }
+        Self {
+            addr: name.into(),
+            local: true,
+        }
     }
 }
 
@@ -34,11 +40,11 @@ impl Connector for WindowsPipeConnector {
 
     async fn connect(self) -> io::Result<Self::Transport> {
         if self.local {
-                let mut full_addr = OsString::from(r"\\.\pipe\");
-                full_addr.push(self.addr);
-                WindowsPipeTransport::connect(full_addr).await
-            } else {
-                WindowsPipeTransport::connect(self.addr).await
-            }
+            let mut full_addr = OsString::from(r"\\.\pipe\");
+            full_addr.push(self.addr);
+            WindowsPipeTransport::connect(full_addr).await
+        } else {
+            WindowsPipeTransport::connect(self.addr).await
+        }
     }
 }
