@@ -350,6 +350,7 @@ impl ManagerSubcommand {
                     .capabilities()
                     .await
                     .context("Failed to get list of capabilities")?;
+                debug!("Got capabilities: {caps:?}");
 
                 #[derive(Tabled)]
                 struct CapabilityRow {
@@ -380,6 +381,7 @@ impl ManagerSubcommand {
                     .info(id)
                     .await
                     .context("Failed to get info about connection")?;
+                debug!("Got info: {info:?}");
 
                 #[derive(Tabled)]
                 struct InfoRow {
@@ -418,6 +420,7 @@ impl ManagerSubcommand {
                     .list()
                     .await
                     .context("Failed to get list of connections")?;
+                debug!("Got list: {list:?}");
 
                 debug!("Looking up selected connection");
                 let selected = Cache::read_from_disk_or_default(cache)
@@ -425,6 +428,7 @@ impl ManagerSubcommand {
                     .context("Failed to look up selected connection")?
                     .data
                     .selected;
+                debug!("Using selected: {selected}");
 
                 #[derive(Tabled)]
                 struct ListRow {
@@ -461,6 +465,7 @@ impl ManagerSubcommand {
                     .kill(id)
                     .await
                     .with_context(|| format!("Failed to kill connection to server {id}"))?;
+                debug!("Connection killed");
                 Ok(())
             }
             Self::Shutdown { network } => {

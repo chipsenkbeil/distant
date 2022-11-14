@@ -3,6 +3,7 @@ use crate::{
     paths::{global as global_paths, user as user_paths},
 };
 use anyhow::Context;
+use distant_core::net::common::authentication::Verifier;
 use distant_core::net::manager::{Config as ManagerConfig, ManagerServer};
 use distant_core::net::server::ServerRef;
 use log::*;
@@ -37,6 +38,7 @@ impl Manager {
             }
 
             let boxed_ref = ManagerServer::new(self.config)
+                .verifier(Verifier::none())
                 .start(
                     UnixSocketListener::bind_with_permissions(socket_path, self.access.into_mode())
                         .await?,
