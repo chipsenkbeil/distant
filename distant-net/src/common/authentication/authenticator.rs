@@ -644,7 +644,7 @@ mod tests {
     #[test(tokio::test)]
     async fn authenticator_finished_should_be_able_to_be_sent_to_auth_handler() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
-        let (tx, _) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
             t2.authenticate(auth_handler! {
@@ -653,6 +653,7 @@ mod tests {
                 @tx(tx, ())
 
                 async fn on_finished(&mut self) -> io::Result<()> {
+                    self.tx.send(()).await.unwrap();
                     Ok(())
                 }
             })
@@ -661,6 +662,9 @@ mod tests {
         });
 
         t1.finished().await.unwrap();
+
+        // Verify that the callback was triggered
+        rx.recv().await.unwrap();
 
         // Finished should signal that the handler completed successfully
         task.await.unwrap();
