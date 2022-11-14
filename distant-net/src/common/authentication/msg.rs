@@ -8,24 +8,31 @@ use std::collections::{HashMap, HashSet};
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Authentication {
     /// Indicates the beginning of authentication, providing available methods
+    #[serde(rename = "auth_initialization")]
     Initialization(Initialization),
 
     /// Indicates that authentication is starting for the specific `method`
+    #[serde(rename = "auth_start_method")]
     StartMethod(StartMethod),
 
     /// Issues a challenge to be answered
+    #[serde(rename = "auth_challenge")]
     Challenge(Challenge),
 
     /// Requests verification of some text
+    #[serde(rename = "auth_verification")]
     Verification(Verification),
 
     /// Reports some information associated with authentication
+    #[serde(rename = "auth_info")]
     Info(Info),
 
     /// Reports an error occurrred during authentication
+    #[serde(rename = "auth_error")]
     Error(Error),
 
     /// Indicates that the authentication of all methods is finished
+    #[serde(rename = "auth_finished")]
     Finished,
 }
 
@@ -68,12 +75,15 @@ pub struct Info {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AuthenticationResponse {
     /// Contains response to initialization, providing details about which methods to use
+    #[serde(rename = "auth_initialization_response")]
     Initialization(InitializationResponse),
 
     /// Contains answers to challenge request
+    #[serde(rename = "auth_challenge_response")]
     Challenge(ChallengeResponse),
 
     /// Contains response to a verification request
+    #[serde(rename = "auth_verification_response")]
     Verification(VerificationResponse),
 }
 

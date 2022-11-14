@@ -136,6 +136,7 @@ where
                 }
                 Authentication::Finished => {
                     trace!("Authenticate::Finished");
+                    handler.on_finished().await?;
                     return Ok(());
                 }
             }

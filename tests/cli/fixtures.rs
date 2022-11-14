@@ -287,12 +287,18 @@ pub async fn validate_authentication(repl: &mut Repl) {
         .await
         .unwrap()
         .expect("Missing authentication initialization");
-    assert_eq!(json, json!({"type": "initialization", "methods": ["none"]}));
+    assert_eq!(
+        json,
+        json!({"type": "auth_initialization", "methods": ["none"]})
+    );
 
     let json = repl
-        .write_and_read_json(json!({"type": "initialization", "methods": ["none"]}))
+        .write_and_read_json(json!({
+            "type": "auth_initialization_response",
+            "methods": ["none"]
+        }))
         .await
         .unwrap()
         .expect("Missing authentication finalization");
-    assert_eq!(json, json!({"type": "finished"}));
+    assert_eq!(json, json!({"type": "auth_finished"}));
 }

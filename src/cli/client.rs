@@ -173,6 +173,7 @@ impl AuthHandler for JsonAuthHandler {
     }
 
     async fn on_finished(&mut self) -> io::Result<()> {
+        self.tx.send_blocking(&Authentication::Finished)?;
         Ok(())
     }
 }
