@@ -283,3 +283,59 @@ impl<'a> AuthMethodHandler for ProxyAuthHandler<'a> {
         Authenticator::error(self.0, error).await
     }
 }
+
+/// Implementation of [`AuthHandler`] that holds a mutable reference to another [`AuthHandler`]
+/// trait object to use underneath.
+pub struct DynAuthHandler<'a>(&'a mut dyn AuthHandler);
+
+impl<'a> DynAuthHandler<'a> {
+    pub fn new(handler: &'a mut dyn AuthHandler) -> Self {
+        Self(handler)
+    }
+}
+
+impl<'a, T: AuthHandler> From<&'a mut T> for DynAuthHandler<'a> {
+    fn from(handler: &'a mut T) -> Self {
+        Self::new(handler as &mut dyn AuthHandler)
+    }
+}
+
+#[async_trait]
+impl<'a> AuthHandler for DynAuthHandler<'a> {
+    async fn on_initialization(
+        &mut self,
+        initialization: Initialization,
+    ) -> io::Result<InitializationResponse> {
+        self.0.on_initialization(initialization).await
+    }
+
+    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+        self.0.on_start_method(start_method).await
+    }
+
+    async fn on_finished(&mut self) -> io::Result<()> {
+        self.0.on_finished().await
+    }
+}
+
+#[async_trait]
+impl<'a> AuthMethodHandler for DynAuthHandler<'a> {
+    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+        self.0.on_challenge(challenge).await
+    }
+
+    async fn on_verification(
+        &mut self,
+        verification: Verification,
+    ) -> io::Result<VerificationResponse> {
+        self.0.on_verification(verification).await
+    }
+
+    async fn on_info(&mut self, info: Info) -> io::Result<()> {
+        self.0.on_info(info).await
+    }
+
+    async fn on_error(&mut self, error: Error) -> io::Result<()> {
+        self.0.on_error(error).await
+    }
+}

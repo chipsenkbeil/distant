@@ -2,8 +2,11 @@ use crate::config::ClientLaunchConfig;
 use async_trait::async_trait;
 use distant_core::net::client::{Client, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::authentication::msg::*;
-use distant_core::net::common::authentication::{Authenticator, ProxyAuthHandler};
-use distant_core::net::common::{Destination, Map};
+use distant_core::net::common::authentication::{
+    AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
+    StaticKeyAuthMethodHandler,
+};
+use distant_core::net::common::{Destination, Map, SecretKey32};
 use distant_core::net::manager::{ConnectHandler, LaunchHandler};
 use log::*;
 use std::{
@@ -48,7 +51,7 @@ impl LaunchHandler for ManagerLaunchHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        _auth_client: &mut dyn Authenticator,
+        _authenticator: &mut dyn Authenticator,
     ) -> io::Result<Destination> {
         debug!("Handling launch of {destination} with options '{options}'");
         let config = ClientLaunchConfig::from(options.clone());
@@ -161,14 +164,14 @@ impl LaunchHandler for SshLaunchHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut dyn Authenticator,
+        authenticator: &mut dyn Authenticator,
     ) -> io::Result<Destination> {
         debug!("Handling launch of {destination} with options '{options}'");
         let config = ClientLaunchConfig::from(options.clone());
 
         use distant_ssh2::DistantLaunchOpts;
         let mut ssh = load_ssh(destination, options)?;
-        let handler = AuthClientSshAuthHandler::new(auth_client);
+        let handler = AuthClientSshAuthHandler::new(authenticator);
         let _ = ssh.authenticate(handler).await?;
         let opts = {
             let opts = DistantLaunchOpts::default();
@@ -194,10 +197,10 @@ impl LaunchHandler for SshLaunchHandler {
 pub struct DistantConnectHandler;
 
 impl DistantConnectHandler {
-    pub async fn try_connect(
+    async fn try_connect(
         ips: Vec<IpAddr>,
         port: u16,
-        authenticator: &mut dyn Authenticator,
+        mut auth_handler: impl AuthHandler,
     ) -> io::Result<UntypedClient> {
         // Try each IP address with the same port to see if one works
         let mut err = None;
@@ -206,7 +209,7 @@ impl DistantConnectHandler {
             debug!("Attempting to connect to distant server @ {}", addr);
 
             match Client::tcp(addr)
-                .auth_handler(ProxyAuthHandler::new(authenticator))
+                .auth_handler(DynAuthHandler::from(&mut auth_handler))
                 .reconnect_strategy(ReconnectStrategy::ExponentialBackoff {
                     base: Duration::from_secs(1),
                     factor: 2.0,
@@ -261,7 +264,24 @@ impl ConnectHandler for DistantConnectHandler {
             ));
         }
 
-        Self::try_connect(candidate_ips, port, authenticator).await
+        // For legacy reasons, we need to support a static key being provided
+        // via part of the destination OR an option, and attempt to use it
+        // during authentication if it is provided
+        if let Some(key) = destination
+            .password
+            .as_deref()
+            .or_else(|| options.get("key").map(|s| s.as_str()))
+        {
+            let key = key.parse::<SecretKey32>().map_err(|_| invalid("key"))?;
+            Self::try_connect(
+                candidate_ips,
+                port,
+                SingleAuthHandler::new(StaticKeyAuthMethodHandler::simple(key)),
+            )
+            .await
+        } else {
+            Self::try_connect(candidate_ips, port, ProxyAuthHandler::new(authenticator)).await
+        }
     }
 }
 
@@ -276,11 +296,11 @@ impl ConnectHandler for SshConnectHandler {
         &self,
         destination: &Destination,
         options: &Map,
-        auth_client: &mut dyn Authenticator,
+        authenticator: &mut dyn Authenticator,
     ) -> io::Result<UntypedClient> {
         debug!("Handling connect of {destination} with options '{options}'");
         let mut ssh = load_ssh(destination, options)?;
-        let handler = AuthClientSshAuthHandler::new(auth_client);
+        let handler = AuthClientSshAuthHandler::new(authenticator);
         let _ = ssh.authenticate(handler).await?;
         Ok(ssh.into_distant_client().await?.into_untyped_client())
     }
