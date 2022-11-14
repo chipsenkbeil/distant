@@ -36,9 +36,9 @@ impl Connector for WindowsPipeConnector {
         WindowsPipeTransport::connect(if self.local {
                 let mut full_addr = OsString::from(r"\\.\pipe\");
                 full_addr.push(self.addr.as_ref());
-                WindowsPipeTransport::connect(full_addr)
+                WindowsPipeTransport::connect(full_addr).await
             } else {
-                WindowsPipeTransport::connect(self.addr.as_ref())
+                WindowsPipeTransport::connect(self.addr).await
             }).await
     }
 }
