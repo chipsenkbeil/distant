@@ -22,7 +22,7 @@ pub use handshake::*;
 const READ_BUF_SIZE: usize = 8 * 1024;
 
 /// Duration to wait after WouldBlock received during looping operations like `read_frame`
-const SLEEP_DURATION: Duration = Duration::from_nanos(1);
+const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 /// Represents a wrapper around a [`Transport`] that reads and writes using frames defined by a
 /// [`Codec`].

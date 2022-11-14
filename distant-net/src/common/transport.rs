@@ -31,7 +31,7 @@ pub use windows::*;
 pub use tokio::io::{Interest, Ready};
 
 /// Duration to wait after WouldBlock received during looping operations like `read_exact`.
-const SLEEP_DURATION: Duration = Duration::from_nanos(1);
+const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 /// Interface representing a connection that is reconnectable.
 #[async_trait]
@@ -106,6 +106,45 @@ pub trait TransportExt {
     /// [`readable`]: Transport::readable
     async fn read_exact(&self, buf: &mut [u8]) -> io::Result<usize>;
 
+    /// Reads all bytes until EOF in this source, placing them into `buf`.
+    ///
+    /// All bytes read from this source will be appended to the specified buffer `buf`. This
+    /// function will continuously call [`try_read`] to append more data to `buf` until
+    /// [`try_read`] returns either [`Ok(0)`] or an error that is neither [`Interrupted`] or
+    /// [`WouldBlock`].
+    ///
+    /// If successful, this function will return the total number of bytes read.
+    ///
+    /// ### Errors
+    ///
+    /// If this function encounters an error of the kind [`Interrupted`] or [`WouldBlock`], then
+    /// the error is ignored and the operation will continue.
+    ///
+    /// If any other read error is encountered then this function immediately returns. Any bytes
+    /// which have already been read will be appended to `buf`.
+    ///
+    /// [`Ok(0)`]: Ok
+    /// [`try_read`]: Transport::try_read
+    /// [`readable`]: Transport::readable
+    async fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize>;
+
+    /// Reads all bytes until EOF in this source, placing them into `buf`.
+    ///
+    /// If successful, this function will return the total number of bytes read.
+    ///
+    /// ### Errors
+    ///
+    /// If the data in this stream is *not* valid UTF-8 then an error is returned and `buf` is
+    /// unchanged.
+    ///
+    /// See [`read_to_end`] for other error semantics.
+    ///
+    /// [`Ok(0)`]: Ok
+    /// [`try_read`]: Transport::try_read
+    /// [`readable`]: Transport::readable
+    /// [`read_to_end`]: TransportExt::read_to_end
+    async fn read_to_string(&self, buf: &mut String) -> io::Result<usize>;
+
     /// Writes all of `buf` by continuing to call [`try_write`] until completed. Calls to
     /// [`writeable`] are made to ensure the transport is ready.
     ///
@@ -160,6 +199,41 @@ impl<T: Transport> TransportExt for T {
         }
 
         Ok(i)
+    }
+
+    async fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        let mut i = 0;
+        let mut tmp = [0u8; 1024];
+
+        loop {
+            self.readable().await?;
+
+            match self.try_read(&mut tmp) {
+                Ok(0) => return Ok(i),
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    i += n;
+                }
+                Err(x)
+                    if x.kind() == io::ErrorKind::WouldBlock
+                        || x.kind() == io::ErrorKind::Interrupted =>
+                {
+                    // NOTE: We sleep for a little bit before trying again to avoid pegging CPU
+                    tokio::time::sleep(SLEEP_DURATION).await
+                }
+
+                Err(x) => return Err(x),
+            }
+        }
+    }
+
+    async fn read_to_string(&self, buf: &mut String) -> io::Result<usize> {
+        let mut tmp = Vec::new();
+        let n = self.read_to_end(&mut tmp).await?;
+        buf.push_str(
+            &String::from_utf8(tmp).map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?,
+        );
+        Ok(n)
     }
 
     async fn write_all(&self, buf: &[u8]) -> io::Result<()> {
@@ -284,6 +358,189 @@ mod tests {
 
         let mut buf = [0; 0];
         assert_eq!(transport.read_exact(&mut buf).await.unwrap(), 0);
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_end_should_fail_if_try_read_encounters_error_other_than_would_block_and_interrupt(
+    ) {
+        let transport = TestTransport {
+            f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            transport
+                .read_to_end(&mut Vec::new())
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotConnected
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_end_should_read_until_0_bytes_returned_from_try_read() {
+        let transport = TestTransport {
+            f_try_read: Box::new(|buf| {
+                static mut CNT: u8 = 0;
+                unsafe {
+                    if CNT == 0 {
+                        buf[..5].copy_from_slice(b"hello");
+                        CNT += 1;
+                        Ok(5)
+                    } else {
+                        Ok(0)
+                    }
+                }
+            }),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        let mut buf = Vec::new();
+        assert_eq!(transport.read_to_end(&mut buf).await.unwrap(), 5);
+        assert_eq!(buf, b"hello");
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_end_should_continue_reading_when_interrupt_or_would_block_encountered() {
+        let transport = TestTransport {
+            f_try_read: Box::new(|buf| {
+                static mut CNT: u8 = 0;
+                unsafe {
+                    CNT += 1;
+                    if CNT == 1 {
+                        buf[..6].copy_from_slice(b"hello ");
+                        Ok(6)
+                    } else if CNT == 2 {
+                        Err(io::Error::from(io::ErrorKind::WouldBlock))
+                    } else if CNT == 3 {
+                        buf[..5].copy_from_slice(b"world");
+                        Ok(5)
+                    } else if CNT == 4 {
+                        Err(io::Error::from(io::ErrorKind::Interrupted))
+                    } else if CNT == 5 {
+                        buf[..6].copy_from_slice(b", test");
+                        Ok(6)
+                    } else {
+                        Ok(0)
+                    }
+                }
+            }),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        let mut buf = Vec::new();
+        assert_eq!(transport.read_to_end(&mut buf).await.unwrap(), 17);
+        assert_eq!(buf, b"hello world, test");
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_string_should_fail_if_try_read_encounters_error_other_than_would_block_and_interrupt(
+    ) {
+        let transport = TestTransport {
+            f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            transport
+                .read_to_string(&mut String::new())
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotConnected
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_string_should_fail_if_non_utf8_characters_read() {
+        let transport = TestTransport {
+            f_try_read: Box::new(|buf| {
+                static mut CNT: u8 = 0;
+                unsafe {
+                    if CNT == 0 {
+                        buf[0] = 0;
+                        buf[1] = 159;
+                        buf[2] = 146;
+                        buf[3] = 150;
+                        CNT += 1;
+                        Ok(4)
+                    } else {
+                        Ok(0)
+                    }
+                }
+            }),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        let mut buf = String::new();
+        assert_eq!(
+            transport.read_to_string(&mut buf).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_string_should_read_until_0_bytes_returned_from_try_read() {
+        let transport = TestTransport {
+            f_try_read: Box::new(|buf| {
+                static mut CNT: u8 = 0;
+                unsafe {
+                    if CNT == 0 {
+                        buf[..5].copy_from_slice(b"hello");
+                        CNT += 1;
+                        Ok(5)
+                    } else {
+                        Ok(0)
+                    }
+                }
+            }),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        let mut buf = String::new();
+        assert_eq!(transport.read_to_string(&mut buf).await.unwrap(), 5);
+        assert_eq!(buf, "hello");
+    }
+
+    #[test(tokio::test)]
+    async fn read_to_string_should_continue_reading_when_interrupt_or_would_block_encountered() {
+        let transport = TestTransport {
+            f_try_read: Box::new(|buf| {
+                static mut CNT: u8 = 0;
+                unsafe {
+                    CNT += 1;
+                    if CNT == 1 {
+                        buf[..6].copy_from_slice(b"hello ");
+                        Ok(6)
+                    } else if CNT == 2 {
+                        Err(io::Error::from(io::ErrorKind::WouldBlock))
+                    } else if CNT == 3 {
+                        buf[..5].copy_from_slice(b"world");
+                        Ok(5)
+                    } else if CNT == 4 {
+                        Err(io::Error::from(io::ErrorKind::Interrupted))
+                    } else if CNT == 5 {
+                        buf[..6].copy_from_slice(b", test");
+                        Ok(6)
+                    } else {
+                        Ok(0)
+                    }
+                }
+            }),
+            f_ready: Box::new(|_| Ok(Ready::READABLE)),
+            ..Default::default()
+        };
+
+        let mut buf = String::new();
+        assert_eq!(transport.read_to_string(&mut buf).await.unwrap(), 17);
+        assert_eq!(buf, "hello world, test");
     }
 
     #[test(tokio::test)]
