@@ -60,6 +60,40 @@ impl AuthMethodHandler for DummyAuthHandler {
     }
 }
 
+/// Implementation of [`AuthHandler`] that uses the same [`AuthMethodHandler`] for all methods.
+pub struct SingleAuthHandler(Box<dyn AuthMethodHandler>);
+
+impl SingleAuthHandler {
+    pub fn new<T: AuthMethodHandler + 'static>(method_handler: T) -> Self {
+        Self(Box::new(method_handler))
+    }
+}
+
+#[async_trait]
+impl AuthHandler for SingleAuthHandler {}
+
+#[async_trait]
+impl AuthMethodHandler for SingleAuthHandler {
+    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+        self.0.on_challenge(challenge).await
+    }
+
+    async fn on_verification(
+        &mut self,
+        verification: Verification,
+    ) -> io::Result<VerificationResponse> {
+        self.0.on_verification(verification).await
+    }
+
+    async fn on_info(&mut self, info: Info) -> io::Result<()> {
+        self.0.on_info(info).await
+    }
+
+    async fn on_error(&mut self, error: Error) -> io::Result<()> {
+        self.0.on_error(error).await
+    }
+}
+
 /// Implementation of [`AuthHandler`] that maintains a map of [`AuthMethodHandler`] implementations
 /// for specific methods, invoking [`on_challenge`], [`on_verification`], [`on_info`], and
 /// [`on_error`] for a specific handler based on an associated id.

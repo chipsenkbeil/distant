@@ -8,7 +8,6 @@ use anyhow::Context;
 use clap::{Subcommand, ValueHint};
 use distant_core::net::common::ConnectionId;
 use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
-use distant_core::net::server::ServerRef;
 use log::*;
 use once_cell::sync::Lazy;
 use service_manager::{
@@ -332,7 +331,8 @@ impl ManagerSubcommand {
 
                 // Let our server run to completion
                 manager_ref
-                    .wait()
+                    .as_ref()
+                    .polling_wait()
                     .await
                     .context("Failed to wait on manager")?;
                 info!("Manager is shutting down");
@@ -343,6 +343,7 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Getting list of capabilities");
                 let caps = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
@@ -372,6 +373,7 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Getting info about connection {}", id);
                 let info = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
@@ -409,6 +411,7 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Getting list of connections");
                 let list = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
@@ -451,6 +454,7 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Killing connection {}", id);
                 Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
@@ -463,6 +467,7 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Shutting down manager");
                 Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?

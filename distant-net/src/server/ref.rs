@@ -52,6 +52,14 @@ impl dyn ServerRef {
     ) -> Result<Box<R>, Box<dyn std::any::Any>> {
         self.into_any().downcast::<R>()
     }
+
+    /// Waits for the server to complete by continuously polling the finished state.
+    pub async fn polling_wait(&self) -> io::Result<()> {
+        while !self.is_finished() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok(())
+    }
 }
 
 /// Represents a generic reference to a server
