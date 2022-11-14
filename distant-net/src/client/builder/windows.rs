@@ -24,7 +24,7 @@ impl WindowsPipeConnector {
 
 impl<T: Into<OsString>> From<T> for WindowsPipeConnector {
     fn from(addr: T) -> Self {
-        Self::new(path)
+        Self::new(addr)
     }
 }
 
@@ -33,12 +33,12 @@ impl Connector for WindowsPipeConnector {
     type Transport = WindowsPipeTransport;
 
     async fn connect(self) -> io::Result<Self::Transport> {
-        WindowsPipeTransport::connect(if local {
+        WindowsPipeTransport::connect(if self.local {
                 let mut full_addr = OsString::from(r"\\.\pipe\");
-                full_addr.push(addr.as_ref());
+                full_addr.push(self.addr.as_ref());
                 WindowsPipeTransport::connect(full_addr)
             } else {
-                WindowsPipeTransport::connect(addr.as_ref())
+                WindowsPipeTransport::connect(self.addr.as_ref())
             }).await
     }
 }

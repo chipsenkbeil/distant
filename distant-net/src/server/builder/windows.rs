@@ -101,9 +101,9 @@ mod tests {
             .await
             .expect("Failed to start Windows pipe server");
 
-        let mut client: Client<String, String> = Client::windows_pipe()
+        let mut client: Client<String, String> = Client::windows_pipe(server.addr())
             .auth_handler(DummyAuthHandler)
-            .connect(server.addr())
+            .connect()
             .await
             .expect("Client failed to connect");
 
