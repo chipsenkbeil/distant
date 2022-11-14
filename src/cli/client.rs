@@ -36,7 +36,10 @@ impl<T> Client<T> {
     }
 
     pub fn using_prompt_auth_handler(self) -> Client<PromptAuthHandler> {
-        todo!();
+        Client {
+            network: self.network,
+            auth_handler: PromptAuthHandler::new(),
+        }
     }
 }
 
