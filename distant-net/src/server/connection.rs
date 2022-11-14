@@ -16,7 +16,7 @@ use tokio::{
 };
 
 /// Time to wait inbetween connection read/write when nothing was read or written on last pass
-const SLEEP_DURATION: Duration = Duration::from_millis(50);
+const SLEEP_DURATION: Duration = Duration::from_nanos(1);
 
 /// Represents an individual connection on the server
 pub struct ConnectionTask {

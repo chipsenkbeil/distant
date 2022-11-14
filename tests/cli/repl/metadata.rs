@@ -30,11 +30,15 @@ async fn should_support_json_metadata_for_file(mut json_repl: CtxCommand<Repl>) 
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "metadata");
-    assert_eq!(res["payload"]["canonicalized_path"], Value::Null);
-    assert_eq!(res["payload"]["file_type"], "file");
-    assert_eq!(res["payload"]["readonly"], false);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
+    assert_eq!(
+        res["payload"]["canonicalized_path"],
+        Value::Null,
+        "JSON: {res}"
+    );
+    assert_eq!(res["payload"]["file_type"], "file", "JSON: {res}");
+    assert_eq!(res["payload"]["readonly"], false, "JSON: {res}");
 }
 
 #[rstest]
@@ -58,11 +62,15 @@ async fn should_support_json_metadata_for_directory(mut json_repl: CtxCommand<Re
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "metadata");
-    assert_eq!(res["payload"]["canonicalized_path"], Value::Null);
-    assert_eq!(res["payload"]["file_type"], "dir");
-    assert_eq!(res["payload"]["readonly"], false);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
+    assert_eq!(
+        res["payload"]["canonicalized_path"],
+        Value::Null,
+        "JSON: {res}"
+    );
+    assert_eq!(res["payload"]["file_type"], "dir", "JSON: {res}");
+    assert_eq!(res["payload"]["readonly"], false, "JSON: {res}");
 }
 
 #[rstest]
@@ -91,14 +99,15 @@ async fn should_support_json_metadata_for_including_a_canonicalized_path(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "metadata");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
     assert_eq!(
         res["payload"]["canonicalized_path"],
-        json!(file.path().canonicalize().unwrap())
+        json!(file.path().canonicalize().unwrap()),
+        "JSON: {res}"
     );
-    assert_eq!(res["payload"]["file_type"], "symlink");
-    assert_eq!(res["payload"]["readonly"], false);
+    assert_eq!(res["payload"]["file_type"], "symlink", "JSON: {res}");
+    assert_eq!(res["payload"]["readonly"], false, "JSON: {res}");
 }
 
 #[rstest]
@@ -127,9 +136,9 @@ async fn should_support_json_metadata_for_resolving_file_type_of_symlink(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "metadata");
-    assert_eq!(res["payload"]["file_type"], "file");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
+    assert_eq!(res["payload"]["file_type"], "file", "JSON: {res}");
 }
 
 #[rstest]
@@ -153,7 +162,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "error");
-    assert_eq!(res["payload"]["kind"], "not_found");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
+    assert_eq!(res["payload"]["kind"], "not_found", "JSON: {res}");
 }

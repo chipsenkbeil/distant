@@ -14,7 +14,7 @@ async fn should_support_json_system_info(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
@@ -30,6 +30,7 @@ async fn should_support_json_system_info(mut json_repl: CtxCommand<Repl>) {
             } else {
                 std::env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
             }
-        })
+        }),
+        "JSON: {res}"
     );
 }

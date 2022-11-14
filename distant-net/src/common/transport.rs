@@ -31,7 +31,7 @@ pub use windows::*;
 pub use tokio::io::{Interest, Ready};
 
 /// Duration to wait after WouldBlock received during looping operations like `read_exact`.
-const SLEEP_DURATION: Duration = Duration::from_millis(50);
+const SLEEP_DURATION: Duration = Duration::from_nanos(1);
 
 /// Interface representing a connection that is reconnectable.
 #[async_trait]

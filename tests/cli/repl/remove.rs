@@ -24,12 +24,13 @@ async fn should_support_json_removing_file(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     file.assert(predicate::path::missing());
@@ -56,12 +57,13 @@ async fn should_support_json_removing_empty_directory(mut json_repl: CtxCommand<
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     dir.assert(predicate::path::missing());
@@ -90,12 +92,13 @@ async fn should_support_json_removing_nonempty_directory_if_force_specified(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     dir.assert(predicate::path::missing());
@@ -123,11 +126,11 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "error");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
     assert!(
         res["payload"]["kind"] == "other" || res["payload"]["kind"] == "unknown",
-        "error kind was neither other or unknown"
+        "error kind was neither other or unknown; JSON: {res}"
     );
 
     dir.assert(predicate::path::exists());

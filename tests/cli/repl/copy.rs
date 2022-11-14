@@ -32,12 +32,13 @@ async fn should_support_json_copying_file(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     src.assert(predicate::path::exists());
@@ -70,12 +71,13 @@ async fn should_support_json_copying_nonempty_directory(mut json_repl: CtxComman
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     src_file.assert(predicate::path::exists());
@@ -102,9 +104,9 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "error");
-    assert_eq!(res["payload"]["kind"], "not_found");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
+    assert_eq!(res["payload"]["kind"], "not_found", "JSON: {res}");
 
     src.assert(predicate::path::missing());
     dst.assert(predicate::path::missing());

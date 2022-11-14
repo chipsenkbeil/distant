@@ -41,7 +41,7 @@ use link::RemoteProcessLink;
 use lsp::Lsp;
 use shell::Shell;
 
-const SLEEP_DURATION: Duration = Duration::from_millis(50);
+const SLEEP_DURATION: Duration = Duration::from_nanos(1);
 
 #[derive(Debug, Subcommand)]
 pub enum ClientSubcommand {

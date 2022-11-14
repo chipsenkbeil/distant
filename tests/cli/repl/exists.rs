@@ -23,13 +23,14 @@ async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "exists",
             "value": true,
-        })
+        }),
+        "JSON: {res}"
     );
 }
 
@@ -52,12 +53,13 @@ async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "exists",
             "value": false,
-        })
+        }),
+        "JSON: {res}"
     );
 }

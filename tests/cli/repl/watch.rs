@@ -36,12 +36,13 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Make a change to some file
@@ -54,11 +55,12 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file.to_path_buf().canonicalize().unwrap()])
+        json!([file.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 }
 
@@ -86,12 +88,13 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Make a change to some file
@@ -106,11 +109,12 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
         // NOTE: Don't bother checking the kind as it can vary by platform
         let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-        assert_eq!(res["origin_id"], id);
-        assert_eq!(res["payload"]["type"], "changed");
+        assert_eq!(res["origin_id"], id, "JSON: {res}");
+        assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
         assert_eq!(
             res["payload"]["paths"],
-            json!([dir.to_path_buf().canonicalize().unwrap()])
+            json!([dir.to_path_buf().canonicalize().unwrap()]),
+            "JSON: {res}"
         );
     }
 
@@ -121,11 +125,12 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file.to_path_buf().canonicalize().unwrap()])
+        json!([file.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 }
 
@@ -154,12 +159,13 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_1);
+    assert_eq!(res["origin_id"], id_1, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Watch file2 for changes
@@ -174,12 +180,13 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_2);
+    assert_eq!(res["origin_id"], id_2, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Make a change to file1
@@ -192,11 +199,12 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_1);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id_1, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file1.to_path_buf().canonicalize().unwrap()])
+        json!([file1.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 
     // Process any extra messages (we might get create, content, and more)
@@ -223,11 +231,12 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_2);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id_2, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file2.to_path_buf().canonicalize().unwrap()])
+        json!([file2.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 }
 
@@ -250,7 +259,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
     // Ensure we got an acknowledgement of watching that failed
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "error");
-    assert_eq!(res["payload"]["kind"], "not_found");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
+    assert_eq!(res["payload"]["kind"], "not_found", "JSON: {res}");
 }

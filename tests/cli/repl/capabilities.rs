@@ -14,8 +14,8 @@ async fn should_support_json_capabilities(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "capabilities");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "capabilities", "JSON: {res}");
 
     let supported: Capabilities = res["payload"]["supported"]
         .as_array()
