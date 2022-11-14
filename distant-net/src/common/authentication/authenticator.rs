@@ -69,7 +69,10 @@ macro_rules! next_frame_as {
         let frame = $transport.read_frame().await?.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "Transport closed early waiting for frame",
+                concat!(
+                    "Transport closed early waiting for frame of type ",
+                    stringify!($type),
+                ),
             )
         })?;
 
