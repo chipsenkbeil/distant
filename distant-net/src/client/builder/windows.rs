@@ -1,7 +1,7 @@
 use super::Connector;
 use crate::common::WindowsPipeTransport;
 use async_trait::async_trait;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io;
 
 /// Implementation of [`Connector`] to support connecting via a Windows named pipe.
@@ -33,12 +33,12 @@ impl Connector for WindowsPipeConnector {
     type Transport = WindowsPipeTransport;
 
     async fn connect(self) -> io::Result<Self::Transport> {
-        WindowsPipeTransport::connect(if self.local {
+        if self.local {
                 let mut full_addr = OsString::from(r"\\.\pipe\");
                 full_addr.push(self.addr.as_ref());
                 WindowsPipeTransport::connect(full_addr).await
             } else {
                 WindowsPipeTransport::connect(self.addr).await
-            }).await
+            }
     }
 }
