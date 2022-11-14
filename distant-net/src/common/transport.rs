@@ -95,6 +95,9 @@ pub trait TransportExt {
     /// Waits for the transport to be writeable to follow up with `try_write`.
     async fn writeable(&self) -> io::Result<()>;
 
+    /// Waits for the transport to be either readable or writeable.
+    async fn readable_or_writeable(&self) -> io::Result<()>;
+
     /// Reads exactly `n` bytes where `n` is the length of `buf` by continuing to call [`try_read`]
     /// until completed. Calls to [`readable`] are made to ensure the transport is ready. Returns
     /// the total bytes read.
@@ -120,6 +123,11 @@ impl<T: Transport> TransportExt for T {
 
     async fn writeable(&self) -> io::Result<()> {
         self.ready(Interest::WRITABLE).await?;
+        Ok(())
+    }
+
+    async fn readable_or_writeable(&self) -> io::Result<()> {
+        self.ready(Interest::READABLE | Interest::WRITABLE).await?;
         Ok(())
     }
 

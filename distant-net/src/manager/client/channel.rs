@@ -48,6 +48,21 @@ impl RawChannel {
     pub fn into_untyped_client(self) -> UntypedClient {
         UntypedClient::spawn_inmemory(self.transport, ReconnectStrategy::Fail)
     }
+
+    /// Returns reference to the underlying framed transport.
+    pub fn as_framed_transport(&self) -> &FramedTransport<InmemoryTransport> {
+        &self.transport
+    }
+
+    /// Returns mutable reference to the underlying framed transport.
+    pub fn as_mut_framed_transport(&mut self) -> &mut FramedTransport<InmemoryTransport> {
+        &mut self.transport
+    }
+
+    /// Consumes the channel, returning the underlying framed transport.
+    pub fn into_framed_transport(self) -> FramedTransport<InmemoryTransport> {
+        self.transport
+    }
 }
 
 impl Deref for RawChannel {

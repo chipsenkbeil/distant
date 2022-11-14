@@ -164,16 +164,25 @@ impl<T: Transport> FramedTransport<T> {
             .map(|r| r | ready)
     }
 
-    /// Waits for the transport to be readable to follow up with `try_read`
+    /// Waits for the transport to be readable to follow up with [`try_read_frame`].
+    ///
+    /// [`try_read_frame`]: FramedTransport::try_read_frame
     pub async fn readable(&self) -> io::Result<()> {
         let _ = self.ready(Interest::READABLE).await?;
         Ok(())
     }
 
-    /// Waits for the transport to be writeable to follow up with `try_write`
+    /// Waits for the transport to be writeable to follow up with [`try_write_frame`].
+    ///
+    /// [`try_write_frame`]: FramedTransport::try_write_frame
     pub async fn writeable(&self) -> io::Result<()> {
         let _ = self.ready(Interest::WRITABLE).await?;
         Ok(())
+    }
+
+    /// Waits for the transport to be readable or writeable, returning the [`Ready`] status.
+    pub async fn readable_or_writeable(&self) -> io::Result<Ready> {
+        self.ready(Interest::READABLE | Interest::WRITABLE).await
     }
 
     /// Attempts to flush any remaining bytes in the outgoing queue, returning the total bytes

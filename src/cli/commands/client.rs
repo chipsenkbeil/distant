@@ -26,6 +26,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::sync::mpsc;
 
 mod buf;
 mod format;
@@ -39,6 +40,8 @@ use format::Formatter;
 use link::RemoteProcessLink;
 use lsp::Lsp;
 use shell::Shell;
+
+const SLEEP_DURATION: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Subcommand)]
 pub enum ClientSubcommand {
@@ -265,9 +268,13 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let mut channel = client.open_channel(connection_id).await.with_context(|| {
-                    format!("Failed to open channel to connection {connection_id}")
-                })?;
+                let mut channel =
+                    client
+                        .open_raw_channel(connection_id)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to open channel to connection {connection_id}")
+                        })?;
 
                 let timeout = action_config.timeout.or(config.action.timeout);
 
@@ -296,7 +303,7 @@ impl ClientSubcommand {
                             .current_dir(current_dir)
                             .persist(persist)
                             .pty(pty)
-                            .spawn(channel, cmd.as_str())
+                            .spawn(channel.into_client().into_channel(), cmd.as_str())
                             .await
                             .with_context(|| format!("Failed to spawn {cmd}"))?;
 
@@ -322,9 +329,10 @@ impl ClientSubcommand {
                     }
                     DistantRequestData::Search { query } => {
                         debug!("Special request creating searcher for {:?}", query);
-                        let mut searcher = Searcher::search(channel, query)
-                            .await
-                            .context("Failed to start search")?;
+                        let mut searcher =
+                            Searcher::search(channel.into_client().into_channel(), query)
+                                .await
+                                .context("Failed to start search")?;
 
                         // Continue to receive and process matches
                         while let Some(m) = searcher.next().await {
@@ -348,7 +356,7 @@ impl ClientSubcommand {
                     } => {
                         debug!("Special request creating watcher for {:?}", path);
                         let mut watcher = Watcher::watch(
-                            channel,
+                            channel.into_client().into_channel(),
                             path.as_path(),
                             recursive,
                             only.into_iter().collect::<ChangeKindSet>(),
@@ -370,6 +378,8 @@ impl ClientSubcommand {
                     }
                     request => {
                         let response = channel
+                            .into_client()
+                            .into_channel()
                             .send_timeout(
                                 DistantMsg::Single(request),
                                 timeout
@@ -611,24 +621,17 @@ impl ClientSubcommand {
                 }
 
                 debug!("Starting repl using format {:?}", format);
-                let (mut writer, mut reader) = channel.transport.into_split();
-                let response_task = tokio::task::spawn(async move {
-                    let tx = MsgSender::from_stdout();
-                    while let Some(response) = reader.read().await? {
-                        debug!("Received response {:?}", response);
-                        tx.send_blocking(&response)?;
-                    }
-                    io::Result::Ok(())
-                });
-
+                let (msg_tx, msg_rx) = mpsc::channel(1);
                 let request_task = tokio::spawn(async move {
                     let mut rx = MsgReceiver::from_stdin()
                         .into_rx::<Request<DistantMsg<DistantRequestData>>>();
                     loop {
                         match rx.recv().await {
                             Some(Ok(request)) => {
-                                debug!("Sending request {:?}", request);
-                                writer.write(request).await?;
+                                if let Err(x) = msg_tx.send(request).await {
+                                    error!("Failed to forward request: {x}");
+                                    break;
+                                }
                             }
                             Some(Err(x)) => error!("{}", x),
                             None => {
@@ -639,8 +642,62 @@ impl ClientSubcommand {
                     }
                     io::Result::Ok(())
                 });
+                let channel_task = tokio::task::spawn(async move {
+                    let tx = MsgSender::from_stdout();
 
-                let (r1, r2) = tokio::join!(request_task, response_task);
+                    loop {
+                        let ready = channel.readable_or_writeable().await?;
+
+                        // Keep track of whether we read or wrote anything
+                        let mut read_blocked = !ready.is_readable();
+                        let mut write_blocked = !ready.is_writable();
+
+                        if ready.is_readable() {
+                            match channel
+                                .try_read_frame_as::<Response<DistantMsg<DistantResponseData>>>()
+                            {
+                                Ok(Some(msg)) => tx.send_blocking(&msg)?,
+                                Ok(None) => break,
+                                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                    read_blocked = true;
+                                }
+                                Err(x) => return Err(x),
+                            }
+                        }
+
+                        if ready.is_writable() {
+                            if let Ok(msg) = msg_rx.try_recv() {
+                                match channel.try_write_frame_for(&msg) {
+                                    Ok(_) => (),
+                                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                        write_blocked = true
+                                    }
+                                    Err(x) => return Err(x),
+                                }
+                            } else {
+                                match channel.try_flush() {
+                                    Ok(0) => write_blocked = true,
+                                    Ok(_) => (),
+                                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                        write_blocked = true
+                                    }
+                                    Err(x) => {
+                                        error!("Failed to flush outgoing data: {x}");
+                                    }
+                                }
+                            }
+                        }
+
+                        // If we did not read or write anything, sleep a bit to offload CPU usage
+                        if read_blocked && write_blocked {
+                            tokio::time::sleep(SLEEP_DURATION).await;
+                        }
+                    }
+
+                    io::Result::Ok(())
+                });
+
+                let (r1, r2) = tokio::join!(request_task, channel_task);
                 match r1 {
                     Err(x) => error!("{}", x),
                     Ok(Err(x)) => error!("{}", x),
