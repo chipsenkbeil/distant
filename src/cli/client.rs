@@ -88,7 +88,7 @@ impl<T: AuthHandler + Clone> Client<T> {
         }
 
         #[cfg(windows)]
-        let transport = {
+        {
             let mut maybe_client = None;
             let mut error: Option<anyhow::Error> = None;
             for name in self.network.to_windows_pipe_name_candidates() {
@@ -124,7 +124,7 @@ impl<T: AuthHandler + Clone> Client<T> {
             Ok(maybe_client.ok_or_else(|| {
                 error.unwrap_or_else(|| anyhow::anyhow!("No windows pipe candidate available"))
             })?)
-        };
+        }
     }
 }
 
