@@ -354,13 +354,6 @@ where
     ) -> Self {
         UntypedClient::spawn_inmemory(transport, strategy).into_typed_client()
     }
-
-    pub(crate) fn spawn<V>(connection: Connection<V>, strategy: ReconnectStrategy) -> Self
-    where
-        V: Transport + 'static,
-    {
-        UntypedClient::spawn(connection, strategy).into_typed_client()
-    }
 }
 
 impl Client<(), ()> {
@@ -474,6 +467,16 @@ mod tests {
         use test_log::test;
         type TestClient = Client<u8, u8>;
 
+        fn spawn_test_client<T>(
+            connection: Connection<T>,
+            strategy: ReconnectStrategy,
+        ) -> TestClient
+        where
+            T: Transport + 'static,
+        {
+            UntypedClient::spawn(connection, strategy).into_typed_client()
+        }
+
         /// Creates a new test transport whose operations do not panic, but do nothing.
         #[inline]
         fn new_test_transport() -> TestTransport {
@@ -489,7 +492,7 @@ mod tests {
         async fn should_write_queued_requests_as_outgoing_frames() {
             let (client, mut server) = Connection::pair(100);
 
-            let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let mut client = spawn_test_client(client, ReconnectStrategy::Fail);
             client.fire(Request::new(1u8)).await.unwrap();
             client.fire(Request::new(2u8)).await.unwrap();
             client.fire(Request::new(3u8)).await.unwrap();
@@ -540,14 +543,14 @@ mod tests {
                     .unwrap();
             });
 
-            let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let mut client = spawn_test_client(client, ReconnectStrategy::Fail);
             assert_eq!(client.send(Request::new(1u8)).await.unwrap().payload, 2);
         }
 
         #[test(tokio::test)]
         async fn should_attempt_to_reconnect_if_connection_fails_to_determine_state() {
             let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
-            TestClient::spawn(
+            spawn_test_client(
                 Connection::test_client({
                     let mut transport = new_test_transport();
 
@@ -574,7 +577,7 @@ mod tests {
         #[test(tokio::test)]
         async fn should_attempt_to_reconnect_if_connection_closed_by_server() {
             let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
-            TestClient::spawn(
+            spawn_test_client(
                 Connection::test_client({
                     let mut transport = new_test_transport();
 
@@ -605,7 +608,7 @@ mod tests {
         #[test(tokio::test)]
         async fn should_attempt_to_reconnect_if_connection_errors_while_reading_data() {
             let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
-            TestClient::spawn(
+            spawn_test_client(
                 Connection::test_client({
                     let mut transport = new_test_transport();
 
@@ -636,7 +639,7 @@ mod tests {
         #[test(tokio::test)]
         async fn should_attempt_to_reconnect_if_connection_unable_to_send_new_request() {
             let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
-            let mut client = TestClient::spawn(
+            let mut client = spawn_test_client(
                 Connection::test_client({
                     let mut transport = new_test_transport();
 
@@ -673,7 +676,7 @@ mod tests {
         #[test(tokio::test)]
         async fn should_attempt_to_reconnect_if_connection_unable_to_flush_an_existing_request() {
             let (reconnect_tx, mut reconnect_rx) = mpsc::channel(1);
-            let mut client = TestClient::spawn(
+            let mut client = spawn_test_client(
                 Connection::test_client({
                     let mut transport = new_test_transport();
 
@@ -724,7 +727,7 @@ mod tests {
 
             // Spawn the client, verify the task is running, kill our server, and verify that the
             // client does not block trying to reconnect
-            let client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let client = spawn_test_client(client, ReconnectStrategy::Fail);
             assert!(!client.is_finished(), "Client unexpectedly died");
             drop(server);
             assert_eq!(
@@ -737,7 +740,7 @@ mod tests {
         async fn should_exit_if_shutdown_signal_detected() {
             let (client, _server) = Connection::pair(100);
 
-            let client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let client = spawn_test_client(client, ReconnectStrategy::Fail);
             client.shutdown().await.unwrap();
 
             // NOTE: We wait for the client's task to conclude by using `wait` to ensure we do not
@@ -765,7 +768,7 @@ mod tests {
 
             // NOTE: We consume the client to produce a channel without maintaining the shutdown
             //       channel in order to ensure that dropping the client does not kill the task.
-            let mut channel = TestClient::spawn(client, ReconnectStrategy::Fail).into_channel();
+            let mut channel = spawn_test_client(client, ReconnectStrategy::Fail).into_channel();
             assert_eq!(channel.send(Request::new(1u8)).await.unwrap().payload, 2);
         }
     }

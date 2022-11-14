@@ -948,6 +948,8 @@ mod tests {
         }
     }
 
+    type SimulateTryReadFn = Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync>;
+
     /// Simulate calls to try_read by feeding back `data` in `step` increments, triggering a block
     /// if `block_on` returns true where `block_on` is provided a counter value that is incremented
     /// every time the simulated `try_read` function is called
@@ -958,7 +960,7 @@ mod tests {
         frames: Vec<Frame>,
         step: usize,
         block_on: impl Fn(usize) -> bool + Send + Sync + 'static,
-    ) -> Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync> {
+    ) -> SimulateTryReadFn {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         // Stuff all of our frames into a single byte collection

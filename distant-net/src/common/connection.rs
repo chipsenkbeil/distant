@@ -1,6 +1,6 @@
 use super::{
     authentication::{AuthHandler, Authenticate, Keychain, KeychainResult, Verifier},
-    Backup, FramedTransport, HeapSecretKey, InmemoryTransport, Reconnectable, Transport,
+    Backup, FramedTransport, HeapSecretKey, Reconnectable, Transport,
 };
 use async_trait::async_trait;
 use log::*;
@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::ops::{Deref, DerefMut};
 use tokio::sync::oneshot;
+
+#[cfg(test)]
+use super::InmemoryTransport;
 
 /// Id of the connection
 pub type ConnectionId = u32;
@@ -38,50 +41,6 @@ pub enum Connection<T> {
         /// Underlying transport used to communicate
         transport: FramedTransport<T>,
     },
-}
-
-impl<T> Connection<T> {
-    /// Returns true if this is a connection on the client-side.
-    pub fn is_client(&self) -> bool {
-        matches!(self, Self::Client { .. })
-    }
-
-    /// Returns true if this is a connection on the server-side.
-    pub fn is_server(&self) -> bool {
-        matches!(self, Self::Server { .. })
-    }
-
-    /// Returns the id of the connection.
-    pub fn id(&self) -> ConnectionId {
-        match self {
-            Self::Client { id, .. } => *id,
-            Self::Server { id, .. } => *id,
-        }
-    }
-
-    /// Returns the OTP associated with the connection, or none if connection is server-side.
-    pub fn otp(&self) -> Option<&HeapSecretKey> {
-        match self {
-            Self::Client { reauth_otp, .. } => Some(reauth_otp),
-            Self::Server { .. } => None,
-        }
-    }
-
-    /// Returns a reference to the underlying transport.
-    pub fn transport(&self) -> &FramedTransport<T> {
-        match self {
-            Self::Client { transport, .. } => transport,
-            Self::Server { transport, .. } => transport,
-        }
-    }
-
-    /// Returns a mutable reference to the underlying transport.
-    pub fn mut_transport(&mut self) -> &mut FramedTransport<T> {
-        match self {
-            Self::Client { transport, .. } => transport,
-            Self::Server { transport, .. } => transport,
-        }
-    }
 }
 
 impl<T> Deref for Connection<T> {
@@ -396,6 +355,7 @@ where
     }
 }
 
+#[cfg(test)]
 impl Connection<InmemoryTransport> {
     /// Establishes a pair of [`Connection`]s using [`InmemoryTransport`] underneath, returning
     /// them in the form (client, server).
@@ -425,19 +385,46 @@ impl Connection<InmemoryTransport> {
 }
 
 #[cfg(test)]
+impl<T> Connection<T> {
+    /// Returns the id of the connection.
+    pub fn id(&self) -> ConnectionId {
+        match self {
+            Self::Client { id, .. } => *id,
+            Self::Server { id, .. } => *id,
+        }
+    }
+
+    /// Returns the OTP associated with the connection, or none if connection is server-side.
+    pub fn otp(&self) -> Option<&HeapSecretKey> {
+        match self {
+            Self::Client { reauth_otp, .. } => Some(reauth_otp),
+            Self::Server { .. } => None,
+        }
+    }
+
+    /// Returns a reference to the underlying transport.
+    pub fn transport(&self) -> &FramedTransport<T> {
+        match self {
+            Self::Client { transport, .. } => transport,
+            Self::Server { transport, .. } => transport,
+        }
+    }
+
+    /// Returns a mutable reference to the underlying transport.
+    pub fn mut_transport(&mut self) -> &mut FramedTransport<T> {
+        match self {
+            Self::Client { transport, .. } => transport,
+            Self::Server { transport, .. } => transport,
+        }
+    }
+}
+
+#[cfg(test)]
 impl<T: Transport> Connection<T> {
     pub fn test_client(transport: T) -> Self {
         Self::Client {
             id: rand::random(),
             reauth_otp: HeapSecretKey::generate(32).unwrap(),
-            transport: FramedTransport::plain(transport),
-        }
-    }
-
-    pub fn test_server(transport: T) -> Self {
-        Self::Server {
-            id: rand::random(),
-            tx: oneshot::channel().0,
             transport: FramedTransport::plain(transport),
         }
     }

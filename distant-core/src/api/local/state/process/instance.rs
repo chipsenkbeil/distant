@@ -174,12 +174,9 @@ async fn stdout_task(
     loop {
         match stdout.recv().await {
             Ok(Some(data)) => {
-                if let Err(x) = reply
+                reply
                     .send(DistantResponseData::ProcStdout { id, data })
-                    .await
-                {
-                    return Err(x);
-                }
+                    .await?;
             }
             Ok(None) => return Ok(()),
             Err(x) => return Err(x),
@@ -195,12 +192,9 @@ async fn stderr_task(
     loop {
         match stderr.recv().await {
             Ok(Some(data)) => {
-                if let Err(x) = reply
+                reply
                     .send(DistantResponseData::ProcStderr { id, data })
-                    .await
-                {
-                    return Err(x);
-                }
+                    .await?;
             }
             Ok(None) => return Ok(()),
             Err(x) => return Err(x),

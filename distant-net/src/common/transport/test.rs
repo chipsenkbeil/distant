@@ -2,11 +2,16 @@ use super::{Interest, Ready, Reconnectable, Transport};
 use async_trait::async_trait;
 use std::io;
 
+pub type TryReadFn = Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync>;
+pub type TryWriteFn = Box<dyn Fn(&[u8]) -> io::Result<usize> + Send + Sync>;
+pub type ReadyFn = Box<dyn Fn(Interest) -> io::Result<Ready> + Send + Sync>;
+pub type ReconnectFn = Box<dyn Fn() -> io::Result<()> + Send + Sync>;
+
 pub struct TestTransport {
-    pub f_try_read: Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync>,
-    pub f_try_write: Box<dyn Fn(&[u8]) -> io::Result<usize> + Send + Sync>,
-    pub f_ready: Box<dyn Fn(Interest) -> io::Result<Ready> + Send + Sync>,
-    pub f_reconnect: Box<dyn Fn() -> io::Result<()> + Send + Sync>,
+    pub f_try_read: TryReadFn,
+    pub f_try_write: TryWriteFn,
+    pub f_ready: ReadyFn,
+    pub f_reconnect: ReconnectFn,
 }
 
 impl Default for TestTransport {

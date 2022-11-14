@@ -227,7 +227,10 @@ impl UntypedChannel {
     /// matching mailbox will be dropped.
     pub async fn remove_default_mailbox(&self) -> io::Result<()> {
         match Weak::upgrade(&self.post_office) {
-            Some(post_office) => Ok(post_office.remove_default_mailbox().await),
+            Some(post_office) => {
+                post_office.remove_default_mailbox().await;
+                Ok(())
+            }
             None => Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "Channel's post office is no longer available",
