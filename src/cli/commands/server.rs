@@ -65,7 +65,7 @@ impl ServerSubcommand {
             println!("[distant server detached, pid = {}]", pid);
 
             // Wait to receive a connection from the above process
-            let mut transport = listener.accept().await.context(
+            let transport = listener.accept().await.context(
                 "Failed to receive connection from background process to send credentials",
             )?;
 
