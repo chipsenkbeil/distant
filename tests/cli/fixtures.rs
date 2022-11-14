@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
 use once_cell::sync::Lazy;
 use rstest::*;
+use serde_json::json;
 use std::{
     io,
     path::PathBuf,
@@ -273,5 +274,25 @@ pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
         .spawn()
         .expect("Failed to start distant repl with json format");
     let cmd = Repl::new(child, TIMEOUT);
+
     CtxCommand { ctx, cmd }
+}
+
+pub async fn validate_authentication(repl: &mut Repl) {
+    // NOTE: We have to handle receiving authentication messages, as we will get
+    //       an authentication initialization of with method "none", and then
+    //       a finish authentication status before we can do anything else.
+    let json = repl
+        .read_json_from_stdout()
+        .await
+        .unwrap()
+        .expect("Missing authentication initialization");
+    assert_eq!(json, json!({"type": "initialization", "methods": ["none"]}));
+
+    let json = repl
+        .write_and_read_json(json!({"type": "initialization", "methods": ["none"]}))
+        .await
+        .unwrap()
+        .expect("Missing authentication finalization");
+    assert_eq!(json, json!({"type": "finished"}));
 }

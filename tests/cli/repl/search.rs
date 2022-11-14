@@ -6,6 +6,8 @@ use serde_json::json;
 #[rstest]
 #[tokio::test]
 async fn should_support_json_search_filesystem_using_query(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file1.txt").write_str("some file text").unwrap();
     root.child("file2.txt")

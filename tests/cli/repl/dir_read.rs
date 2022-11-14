@@ -71,6 +71,8 @@ fn make_directory() -> assert_fs::TempDir {
 #[rstest]
 #[tokio::test]
 async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = make_directory();
 
     let id = rand::random::<u64>().to_string();
@@ -110,6 +112,8 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
 async fn should_support_json_returning_absolute_paths_if_specified(
     mut json_repl: CtxCommand<Repl>,
 ) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so the absolute path
@@ -153,6 +157,8 @@ async fn should_support_json_returning_absolute_paths_if_specified(
 async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
     mut json_repl: CtxCommand<Repl>,
 ) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = make_directory();
 
     let id = rand::random::<u64>().to_string();
@@ -202,6 +208,8 @@ async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
 async fn should_support_json_including_root_directory_if_specified(
     mut json_repl: CtxCommand<Repl>,
 ) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so yielded entry
@@ -244,6 +252,8 @@ async fn should_support_json_including_root_directory_if_specified(
 #[rstest]
 #[tokio::test]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = make_directory();
     let dir = temp.child("missing-dir");
 

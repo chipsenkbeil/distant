@@ -13,6 +13,8 @@ that is a file's contents
 #[rstest]
 #[tokio::test]
 async fn should_support_json_renaming_file(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("file");
@@ -48,6 +50,8 @@ async fn should_support_json_renaming_file(mut json_repl: CtxCommand<Repl>) {
 #[rstest]
 #[tokio::test]
 async fn should_support_json_renaming_nonempty_directory(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -90,6 +94,8 @@ async fn should_support_json_renaming_nonempty_directory(mut json_repl: CtxComma
 #[rstest]
 #[tokio::test]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("dir");

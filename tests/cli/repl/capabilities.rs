@@ -6,6 +6,8 @@ use serde_json::json;
 #[rstest]
 #[tokio::test]
 async fn should_support_json_capabilities(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let id = rand::random::<u64>().to_string();
     let req = json!({
         "id": id,

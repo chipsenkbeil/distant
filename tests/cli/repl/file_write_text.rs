@@ -12,6 +12,8 @@ that is a file's contents
 #[rstest]
 #[tokio::test]
 async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
 
@@ -46,6 +48,8 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
 #[rstest]
 #[tokio::test]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-dir").child("missing-file");
 

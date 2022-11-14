@@ -6,6 +6,8 @@ use serde_json::json;
 #[rstest]
 #[tokio::test]
 async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create file
@@ -37,6 +39,8 @@ async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
 #[rstest]
 #[tokio::test]
 async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file

@@ -73,6 +73,8 @@ fn check_value_as_str(value: &serde_json::Value, other: &str) {
 async fn should_support_json_to_execute_program_and_return_exit_status(
     mut json_repl: CtxCommand<Repl>,
 ) {
+    validate_authentication(&mut json_repl).await;
+
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap()]);
 
     let id = rand::random::<u64>().to_string();
@@ -95,6 +97,8 @@ async fn should_support_json_to_execute_program_and_return_exit_status(
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap(), "some output"]);
 
     // Spawn the process
@@ -132,6 +136,8 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxComma
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDERR.to_str().unwrap(), "some output"]);
 
     // Spawn the process
@@ -169,6 +175,8 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxComma
 #[rstest]
 #[tokio::test]
 async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let cmd = make_cmd(vec![ECHO_STDIN_TO_STDOUT.to_str().unwrap()]);
 
     // Spawn the process
@@ -254,6 +262,8 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
 #[rstest]
 #[tokio::test]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let id = rand::random::<u64>().to_string();
     let req = json!({
         "id": id,
