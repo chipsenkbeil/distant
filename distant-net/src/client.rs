@@ -200,6 +200,13 @@ impl UntypedClient {
                         Ok(Some(frame)) => {
                             match UntypedResponse::from_slice(frame.as_item()) {
                                 Ok(response) => {
+                                    if log_enabled!(Level::Trace) {
+                                        trace!(
+                                            "Client receiving {}",
+                                            String::from_utf8_lossy(&response.to_bytes())
+                                                .to_string()
+                                        );
+                                    }
                                     // Try to send response to appropriate mailbox
                                     // TODO: This will block if full... is that a problem?
                                     // TODO: How should we handle false response? Did logging in past
@@ -231,10 +238,12 @@ impl UntypedClient {
                     // writing any queued bytes as well. Othewise, we attempt to flush any pending
                     // outgoing bytes that weren't sent earlier.
                     if let Ok(request) = rx.try_recv() {
-                        trace!(
-                            "Client sending {}",
-                            String::from_utf8_lossy(&request.to_bytes()).to_string()
-                        );
+                        if log_enabled!(Level::Trace) {
+                            trace!(
+                                "Client sending {}",
+                                String::from_utf8_lossy(&request.to_bytes()).to_string()
+                            );
+                        }
                         match connection.try_write_frame(request.to_bytes()) {
                             Ok(()) => (),
                             Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,

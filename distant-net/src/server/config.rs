@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
-const DEFAULT_CONNECTION_SLEEP: Duration = Duration::from_millis(50);
+const DEFAULT_CONNECTION_SLEEP: Duration = Duration::from_millis(1);
 
 /// Represents a general-purpose set of properties tied with a server instance
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
