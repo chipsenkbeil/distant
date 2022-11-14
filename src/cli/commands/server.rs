@@ -49,7 +49,7 @@ impl ServerSubcommand {
     #[cfg(windows)]
     fn run_daemon(self, _config: ServerConfig) -> CliResult {
         use crate::cli::Spawner;
-        use distant_core::net::{Listener, WindowsPipeListener};
+        use distant_core::net::common::{Listener, WindowsPipeListener};
         use std::ffi::OsString;
         use tokio::io::AsyncReadExt;
         let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
@@ -213,8 +213,7 @@ impl ServerSubcommand {
 
                 #[cfg(windows)]
                 if let Some(name) = output_to_local_pipe {
-                    use distant_core::net::WindowsPipeTransport;
-                    use tokio::io::AsyncWriteExt;
+                    use distant_core::net::common::{TransportExt, WindowsPipeTransport};
                     let mut transport = WindowsPipeTransport::connect_local(&name)
                         .await
                         .with_context(|| {
