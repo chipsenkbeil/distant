@@ -8,8 +8,8 @@ use distant_core::{
     data::Environment,
     net::{
         client::{Client, ReconnectStrategy},
-        common::authentication::{AuthHandlerMap, Verifier},
-        common::{FramedTransport, OneshotListener},
+        common::authentication::{AuthHandlerMap, DummyAuthHandler, Verifier},
+        common::{InmemoryTransport, OneshotListener},
         server::{Server, ServerRef},
     },
     DistantApiServerHandler, DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
@@ -709,14 +709,19 @@ impl Ssh {
             ..
         } = self;
 
-        let (t1, t2) = FramedTransport::pair(1);
+        let (t1, t2) = InmemoryTransport::pair(1);
         let server = Server::new()
             .handler(DistantApiServerHandler::new(SshDistantApi::new(
                 wez_session,
             )))
             .verifier(Verifier::none())
-            .start(OneshotListener::from_value(t2.into_inner()))?;
-        let client = Client::spawn_inmemory(t1, ReconnectStrategy::Fail);
+            .start(OneshotListener::from_value(t2))?;
+        let client = Client::build()
+            .auth_handler(DummyAuthHandler)
+            .connector(t1)
+            .reconnect_strategy(ReconnectStrategy::Fail)
+            .connect()
+            .await?;
         Ok((client, server))
     }
 }

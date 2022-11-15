@@ -814,7 +814,7 @@ dependencies = [
  "distant-core",
  "distant-ssh2",
  "env_logger",
- "flexi_logger 0.24.1",
+ "flexi_logger",
  "fork",
  "indoc",
  "log",
@@ -921,7 +921,6 @@ dependencies = [
  "distant-core",
  "dunce",
  "env_logger",
- "flexi_logger 0.23.0",
  "futures",
  "hex",
  "indoc",
@@ -1147,23 +1146,6 @@ checksum = "f82b0f4c27ad9f8bfd1f3208d882da2b09c301bc1c828fd3a00d0216d2fbbff6"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
-]
-
-[[package]]
-name = "flexi_logger"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8790f70905b203171c21060222f18f1df5cba07317860215b7880b32aaef290"
-dependencies = [
- "ansi_term",
- "atty",
- "glob",
- "lazy_static",
- "log",
- "regex",
- "rustversion",
- "thiserror",
- "time",
 ]
 
 [[package]]
@@ -1950,15 +1932,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19e64526ebdee182341572e50e9ad03965aa510cd94427a4549448f285e957a1"
 dependencies = [
  "hermit-abi",
- "libc",
-]
-
-[[package]]
-name = "num_threads"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2819ce041d2ee131036f4fc9d6ae7ae125a3a40e97ba64d04fe799ad9dabbb44"
-dependencies = [
  "libc",
 ]
 
@@ -3266,24 +3239,6 @@ checksum = "5516c27b78311c50bf42c071425c560ac799b11c30b31f87e3081965fe5e0180"
 dependencies = [
  "once_cell",
 ]
-
-[[package]]
-name = "time"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2702e08a7a860f005826c6815dcac101b19b5eb330c27fe4a5928fec1d20ddd"
-dependencies = [
- "itoa",
- "libc",
- "num_threads",
- "time-macros",
-]
-
-[[package]]
-name = "time-macros"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42657b1a6f4d817cda8e7a0ace261fe0cc946cf3a80314390b22cc61ae080792"
 
 [[package]]
 name = "tokio"

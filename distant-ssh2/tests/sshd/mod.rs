@@ -6,7 +6,7 @@ use derive_more::Display;
 use derive_more::{Deref, DerefMut};
 use distant_core::DistantClient;
 use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
 use rstest::*;
 use std::{
     collections::HashMap,
@@ -537,19 +537,6 @@ impl Drop for Sshd {
     }
 }
 
-#[fixture]
-pub fn logger() -> &'static flexi_logger::LoggerHandle {
-    static LOGGER: OnceCell<flexi_logger::LoggerHandle> = OnceCell::new();
-
-    LOGGER.get_or_init(|| {
-        // flexi_logger::Logger::try_with_str("off, distant_core=trace, distant_ssh2=trace")
-        flexi_logger::Logger::try_with_str("off, distant_core=warn, distant_ssh2=warn")
-            .expect("Failed to load env")
-            .start()
-            .expect("Failed to start logger")
-    })
-}
-
 /// Mocked version of [`SshAuthHandler`]
 pub struct MockSshAuthHandler;
 
@@ -614,7 +601,7 @@ pub fn sshd() -> Sshd {
 
 /// Fixture to establish a client to an SSH server
 #[fixture]
-pub async fn client(sshd: Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> Ctx<DistantClient> {
+pub async fn client(sshd: Sshd) -> Ctx<DistantClient> {
     let ssh_client = load_ssh_client(&sshd).await;
     let client = ssh_client
         .into_distant_client()
@@ -629,10 +616,7 @@ pub async fn client(sshd: Sshd, _logger: &'_ flexi_logger::LoggerHandle) -> Ctx<
 
 /// Fixture to establish a client to a launched server
 #[fixture]
-pub async fn launched_client(
-    sshd: Sshd,
-    _logger: &'_ flexi_logger::LoggerHandle,
-) -> Ctx<DistantClient> {
+pub async fn launched_client(sshd: Sshd) -> Ctx<DistantClient> {
     let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
     eprintln!("Setting path to distant binary as {binary}");
 
