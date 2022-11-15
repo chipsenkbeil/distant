@@ -22,7 +22,7 @@ fn should_output_metadata_for_file(mut action_cmd: CtxCommand<Command>) {
 
     // distant action metadata {path}
     action_cmd
-        .args(&["metadata", file.to_str().unwrap()])
+        .args(["metadata", file.to_str().unwrap()])
         .assert()
         .success()
         .stdout(regex_pred(concat!(
@@ -46,7 +46,7 @@ fn should_output_metadata_for_directory(mut action_cmd: CtxCommand<Command>) {
 
     // distant action metadata {path}
     action_cmd
-        .args(&["metadata", dir.to_str().unwrap()])
+        .args(["metadata", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout(regex_pred(concat!(
@@ -75,7 +75,7 @@ fn should_support_including_a_canonicalized_path(mut action_cmd: CtxCommand<Comm
 
     // distant action metadata --canonicalize {path}
     action_cmd
-        .args(&["metadata", "--canonicalize", link.to_str().unwrap()])
+        .args(["metadata", "--canonicalize", link.to_str().unwrap()])
         .assert()
         .success()
         .stdout(regex_pred(&format!(
@@ -106,7 +106,7 @@ fn should_support_resolving_file_type_of_symlink(mut action_cmd: CtxCommand<Comm
 
     // distant action metadata --canonicalize {path}
     action_cmd
-        .args(&["metadata", "--resolve-file-type", link.to_str().unwrap()])
+        .args(["metadata", "--resolve-file-type", link.to_str().unwrap()])
         .assert()
         .success()
         .stdout(regex_pred(concat!(
@@ -130,7 +130,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action metadata {path}
     action_cmd
-        .args(&["metadata", file.to_str().unwrap()])
+        .args(["metadata", file.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

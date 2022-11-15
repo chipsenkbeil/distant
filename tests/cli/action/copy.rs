@@ -22,7 +22,7 @@ fn should_support_copying_file(mut action_cmd: CtxCommand<Command>) {
 
     // distant action copy {src} {dst}
     action_cmd
-        .args(&["copy", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["copy", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -48,7 +48,7 @@ fn should_support_copying_nonempty_directory(mut action_cmd: CtxCommand<Command>
 
     // distant action copy {src} {dst}
     action_cmd
-        .args(&["copy", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["copy", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -68,7 +68,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action copy {src} {dst}
     action_cmd
-        .args(&["copy", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["copy", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

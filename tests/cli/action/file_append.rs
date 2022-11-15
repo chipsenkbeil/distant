@@ -23,7 +23,7 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-append {path} -- {contents}
     action_cmd
-        .args(&[
+        .args([
             "file-append",
             file.to_str().unwrap(),
             "--",
@@ -49,7 +49,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-append {path} -- {contents}
     action_cmd
-        .args(&[
+        .args([
             "file-append",
             file.to_str().unwrap(),
             "--",

@@ -12,7 +12,7 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 
     // distant action dir-create {path}
     action_cmd
-        .args(&["dir-create", dir.to_str().unwrap()])
+        .args(["dir-create", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -32,7 +32,7 @@ fn should_support_creating_missing_parent_directories_if_specified(
 
     // distant action dir-create {path}
     action_cmd
-        .args(&["dir-create", "--all", dir.to_str().unwrap()])
+        .args(["dir-create", "--all", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -50,7 +50,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action dir-create {path}
     action_cmd
-        .args(&["dir-create", dir.to_str().unwrap()])
+        .args(["dir-create", dir.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

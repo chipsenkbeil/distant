@@ -14,7 +14,7 @@ fn should_output_true_if_exists(mut action_cmd: CtxCommand<Command>) {
 
     // distant action exists {path}
     action_cmd
-        .args(&["exists", file.to_str().unwrap()])
+        .args(["exists", file.to_str().unwrap()])
         .assert()
         .success()
         .stdout("true\n")
@@ -31,7 +31,7 @@ fn should_output_false_if_not_exists(mut action_cmd: CtxCommand<Command>) {
 
     // distant action exists {path}
     action_cmd
-        .args(&["exists", file.to_str().unwrap()])
+        .args(["exists", file.to_str().unwrap()])
         .assert()
         .success()
         .stdout("false\n")

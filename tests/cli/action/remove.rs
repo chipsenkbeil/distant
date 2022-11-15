@@ -13,7 +13,7 @@ fn should_support_removing_file(mut action_cmd: CtxCommand<Command>) {
 
     // distant action remove {path}
     action_cmd
-        .args(&["remove", file.to_str().unwrap()])
+        .args(["remove", file.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -33,7 +33,7 @@ fn should_support_removing_empty_directory(mut action_cmd: CtxCommand<Command>) 
 
     // distant action remove {path}
     action_cmd
-        .args(&["remove", dir.to_str().unwrap()])
+        .args(["remove", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -56,7 +56,7 @@ fn should_support_removing_nonempty_directory_if_force_specified(
 
     // distant action remove --force {path}
     action_cmd
-        .args(&["remove", "--force", dir.to_str().unwrap()])
+        .args(["remove", "--force", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -77,7 +77,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action remove {path}
     action_cmd
-        .args(&["remove", dir.to_str().unwrap()])
+        .args(["remove", dir.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

@@ -17,7 +17,7 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-write {path} -- {contents}
     action_cmd
-        .args(&["file-write", file.to_str().unwrap(), "--", FILE_CONTENTS])
+        .args(["file-write", file.to_str().unwrap(), "--", FILE_CONTENTS])
         .assert()
         .success()
         .stdout("")
@@ -38,7 +38,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-write {path} -- {contents}
     action_cmd
-        .args(&["file-write", file.to_str().unwrap(), "--", FILE_CONTENTS])
+        .args(["file-write", file.to_str().unwrap(), "--", FILE_CONTENTS])
         .assert()
         .code(1)
         .stdout("")

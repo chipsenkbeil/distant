@@ -101,7 +101,7 @@ fn should_print_immediate_files_and_directories_by_default(mut action_cmd: CtxCo
 
     // distant action dir-read {path}
     action_cmd
-        .args(&["dir-read", temp.to_str().unwrap()])
+        .args(["dir-read", temp.to_str().unwrap()])
         .assert()
         .success()
         .stdout(expected)
@@ -128,7 +128,7 @@ fn should_use_absolute_paths_if_specified(mut action_cmd: CtxCommand<Command>) {
 
     // distant action dir-read --absolute {path}
     action_cmd
-        .args(&["dir-read", "--absolute", temp.to_str().unwrap()])
+        .args(["dir-read", "--absolute", temp.to_str().unwrap()])
         .assert()
         .success()
         .stdout(expected)
@@ -175,7 +175,7 @@ fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: CtxComma
 
     // distant action dir-read --depth 0 {path}
     action_cmd
-        .args(&["dir-read", "--depth", "0", temp.to_str().unwrap()])
+        .args(["dir-read", "--depth", "0", temp.to_str().unwrap()])
         .assert()
         .success()
         .stdout(expected)
@@ -203,7 +203,7 @@ fn should_include_root_directory_if_specified(mut action_cmd: CtxCommand<Command
 
     // distant action dir-read --include-root {path}
     action_cmd
-        .args(&["dir-read", "--include-root", temp.to_str().unwrap()])
+        .args(["dir-read", "--include-root", temp.to_str().unwrap()])
         .assert()
         .success()
         .stdout(expected)
@@ -218,7 +218,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action dir-read {path}
     action_cmd
-        .args(&["dir-read", dir.to_str().unwrap()])
+        .args(["dir-read", dir.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

@@ -22,7 +22,7 @@ fn should_support_renaming_file(mut action_cmd: CtxCommand<Command>) {
 
     // distant action rename {src} {dst}
     action_cmd
-        .args(&["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -48,7 +48,7 @@ fn should_support_renaming_nonempty_directory(mut action_cmd: CtxCommand<Command
 
     // distant action rename {src} {dst}
     action_cmd
-        .args(&["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -71,7 +71,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action rename {src} {dst}
     action_cmd
-        .args(&["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

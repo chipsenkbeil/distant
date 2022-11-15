@@ -18,7 +18,7 @@ fn should_print_out_file_contents(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-read-text {path}
     action_cmd
-        .args(&["file-read-text", file.to_str().unwrap()])
+        .args(["file-read-text", file.to_str().unwrap()])
         .assert()
         .success()
         .stdout(format!("{}\n", FILE_CONTENTS))
@@ -33,7 +33,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-read-text {path}
     action_cmd
-        .args(&["file-read-text", file.to_str().unwrap()])
+        .args(["file-read-text", file.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

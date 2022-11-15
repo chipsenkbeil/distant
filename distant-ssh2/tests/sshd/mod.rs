@@ -61,8 +61,8 @@ impl SshKeygen {
         passphrase: impl AsRef<str>,
     ) -> anyhow::Result<bool> {
         let res = Command::new("ssh-keygen")
-            .args(&["-m", "PEM"])
-            .args(&["-t", "ed25519"])
+            .args(["-m", "PEM"])
+            .args(["-t", "ed25519"])
             .arg("-f")
             .arg(path.as_ref())
             .arg("-N")
