@@ -60,7 +60,7 @@ impl Manager {
 
             let boxed_ref = ManagerServer::new(self.config)
                 .verifier(Verifier::none())
-                .start(WindowsPipeListener::bind_local(&pipe_name)?)
+                .start(WindowsPipeListener::bind_local(pipe_name)?)
                 .with_context(|| format!("Failed to start manager at pipe {pipe_name:?}"))?;
 
             info!("Manager listening using windows pipe @ {:?}", pipe_name);
