@@ -1,6 +1,6 @@
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Represents messages from an authenticator that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
@@ -40,7 +40,7 @@ pub enum Authentication {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Initialization {
     /// Available methods to use for authentication
-    pub methods: HashSet<String>,
+    pub methods: Vec<String>,
 }
 
 /// Represents the start of authentication for some method
@@ -90,18 +90,21 @@ pub enum AuthenticationResponse {
 /// Represents a response to initialization to specify which authentication methods to pursue
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitializationResponse {
-    pub methods: HashSet<String>,
+    /// Methods to use (in order as provided)
+    pub methods: Vec<String>,
 }
 
 /// Represents the answers to a previously-asked challenge associated with authentication
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChallengeResponse {
+    /// Answers to challenge questions (in order relative to questions)
     pub answers: Vec<String>,
 }
 
 /// Represents the answer to a previously-asked verification associated with authentication
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationResponse {
+    /// Whether or not the verification was deemed valid
     pub valid: bool,
 }
 
