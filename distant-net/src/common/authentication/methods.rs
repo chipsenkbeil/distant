@@ -68,6 +68,14 @@ impl Verifier {
         for method in response.methods {
             match self.methods.get(method.as_str()) {
                 Some(method) => {
+                    // Report the authentication method
+                    authenticator
+                        .start_method(StartMethod {
+                            method: method.id().to_string(),
+                        })
+                        .await?;
+
+                    // Perform the actual authentication
                     if method.authenticate(authenticator).await.is_ok() {
                         authenticator.finished().await?;
                         return Ok(method.id());
@@ -288,5 +296,81 @@ mod tests {
             verifier.verify(&mut t1).await.unwrap(),
             SuccessAuthenticationMethod.id()
         );
+    }
+
+    #[test(tokio::test)]
+    async fn verifier_should_send_start_method_before_attempting_each_method() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Queue up a response to the initialization request
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![
+                    FailAuthenticationMethod.id().to_string(),
+                    SuccessAuthenticationMethod.id().to_string(),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        ))
+        .await
+        .unwrap();
+
+        let methods: Vec<Box<dyn AuthenticationMethod>> = vec![
+            Box::new(FailAuthenticationMethod),
+            Box::new(SuccessAuthenticationMethod),
+        ];
+        Verifier::from(methods).verify(&mut t1).await.unwrap();
+
+        // Check that we get a start method for each of the attempted methods
+        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
+            Authentication::Initialization(_) => (),
+            x => panic!("Unexpected response: {x:?}"),
+        }
+        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
+            Authentication::StartMethod(x) => assert_eq!(x.method, FailAuthenticationMethod.id()),
+            x => panic!("Unexpected response: {x:?}"),
+        }
+        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
+            Authentication::StartMethod(x) => {
+                assert_eq!(x.method, SuccessAuthenticationMethod.id())
+            }
+            x => panic!("Unexpected response: {x:?}"),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn verifier_should_finished_when_a_method_succeeds() {
+        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+
+        // Queue up a response to the initialization request
+        t2.write_frame_for(&AuthenticationResponse::Initialization(
+            InitializationResponse {
+                methods: vec![
+                    FailAuthenticationMethod.id().to_string(),
+                    SuccessAuthenticationMethod.id().to_string(),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        ))
+        .await
+        .unwrap();
+
+        let methods: Vec<Box<dyn AuthenticationMethod>> = vec![
+            Box::new(FailAuthenticationMethod),
+            Box::new(SuccessAuthenticationMethod),
+        ];
+        Verifier::from(methods).verify(&mut t1).await.unwrap();
+
+        // Clear out the initialization and start methods
+        t2.read_frame_as::<Authentication>().await.unwrap().unwrap();
+        t2.read_frame_as::<Authentication>().await.unwrap().unwrap();
+        t2.read_frame_as::<Authentication>().await.unwrap().unwrap();
+
+        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
+            Authentication::Finished => (),
+            x => panic!("Unexpected response: {x:?}"),
+        }
     }
 }
