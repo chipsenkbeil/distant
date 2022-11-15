@@ -3,6 +3,7 @@ use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
 use std::time::Duration;
+use test_log::test;
 
 async fn wait_a_bit() {
     wait_millis(250).await;
@@ -17,7 +18,7 @@ async fn wait_millis(millis: u64) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -67,7 +68,7 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -139,7 +140,7 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_reporting_changes_using_correct_request_id(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -247,7 +248,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

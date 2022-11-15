@@ -3,6 +3,7 @@ use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
 use std::path::PathBuf;
+use test_log::test;
 
 /// Creates a directory in the form
 ///
@@ -69,7 +70,7 @@ fn make_directory() -> assert_fs::TempDir {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -108,7 +109,7 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_returning_absolute_paths_if_specified(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -153,7 +154,7 @@ async fn should_support_json_returning_absolute_paths_if_specified(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -204,7 +205,7 @@ async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_including_root_directory_if_specified(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -250,7 +251,7 @@ async fn should_support_json_including_root_directory_if_specified(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

@@ -2,9 +2,10 @@ use crate::cli::fixtures::*;
 use rstest::*;
 use serde_json::json;
 use std::env;
+use test_log::test;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_system_info(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

@@ -1,4 +1,3 @@
-use crate::stress::utils;
 use distant_core::net::client::{Client, TcpConnector};
 use distant_core::net::common::authentication::{DummyAuthHandler, Verifier};
 use distant_core::net::common::PortRange;
@@ -8,8 +7,6 @@ use rstest::*;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
-
-const LOG_PATH: &str = "/tmp/test.distant.server.log";
 
 pub struct DistantClientCtx {
     pub client: DistantClient,
@@ -23,8 +20,6 @@ impl DistantClientCtx {
         let (started_tx, mut started_rx) = mpsc::channel::<u16>(1);
 
         tokio::spawn(async move {
-            let logger = utils::init_logging(LOG_PATH);
-
             if let Ok(api) = LocalDistantApi::initialize(Default::default()) {
                 let port: PortRange = "0".parse().unwrap();
                 let port = {
@@ -42,9 +37,6 @@ impl DistantClientCtx {
                 started_tx.send(port).await.unwrap();
                 let _ = done_rx.recv().await;
             }
-
-            logger.flush();
-            logger.shutdown();
         });
 
         // Extract our server startup data if we succeeded

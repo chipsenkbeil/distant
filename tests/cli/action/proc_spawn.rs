@@ -4,6 +4,7 @@ use rstest::*;
 use std::process::Command as StdCommand;
 
 #[rstest]
+#[test_log::test]
 fn should_execute_program_and_return_exit_status(mut action_cmd: CtxCommand<Command>) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
@@ -25,6 +26,7 @@ fn should_execute_program_and_return_exit_status(mut action_cmd: CtxCommand<Comm
 }
 
 #[rstest]
+#[test_log::test]
 fn should_capture_and_print_stdout(mut action_cmd: CtxCommand<Command>) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
@@ -44,6 +46,7 @@ fn should_capture_and_print_stdout(mut action_cmd: CtxCommand<Command>) {
 }
 
 #[rstest]
+#[test_log::test]
 fn should_capture_and_print_stderr(mut action_cmd: CtxCommand<Command>) {
     // distant action proc-spawn {cmd} [args]
     action_cmd
@@ -67,6 +70,7 @@ fn should_capture_and_print_stderr(mut action_cmd: CtxCommand<Command>) {
 //       and then the process exiting. This may be a bug we've introduced with the
 //       refactor and should be revisited some day.
 #[rstest]
+#[test_log::test]
 fn should_forward_stdin_to_remote_process(mut action_std_cmd: CtxCommand<StdCommand>) {
     use std::io::{BufRead, BufReader, Write};
 
@@ -106,6 +110,7 @@ fn should_forward_stdin_to_remote_process(mut action_std_cmd: CtxCommand<StdComm
 }
 
 #[rstest]
+#[test_log::test]
 fn reflect_the_exit_code_of_the_process(mut action_cmd: CtxCommand<Command>) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
@@ -127,6 +132,7 @@ fn reflect_the_exit_code_of_the_process(mut action_cmd: CtxCommand<Command>) {
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     // distant action proc-spawn {cmd} [args]
     action_cmd

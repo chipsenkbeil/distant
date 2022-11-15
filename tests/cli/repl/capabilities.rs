@@ -2,9 +2,10 @@ use crate::cli::fixtures::*;
 use distant_core::data::{Capabilities, Capability};
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_capabilities(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

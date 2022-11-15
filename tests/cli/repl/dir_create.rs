@@ -3,9 +3,10 @@ use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -38,7 +39,7 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_creating_missing_parent_directories_if_specified(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -73,7 +74,7 @@ async fn should_support_json_creating_missing_parent_directories_if_specified(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

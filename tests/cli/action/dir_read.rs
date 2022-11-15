@@ -88,6 +88,7 @@ fn regex_line(ty: &str, path: &str) -> String {
 }
 
 #[rstest]
+#[test_log::test]
 fn should_print_immediate_files_and_directories_by_default(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
 
@@ -109,6 +110,7 @@ fn should_print_immediate_files_and_directories_by_default(mut action_cmd: CtxCo
 
 // NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[test_log::test]
 #[cfg_attr(windows, ignore)]
 fn should_use_absolute_paths_if_specified(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
@@ -135,6 +137,7 @@ fn should_use_absolute_paths_if_specified(mut action_cmd: CtxCommand<Command>) {
 
 // NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[test_log::test]
 #[cfg_attr(windows, ignore)]
 fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
@@ -181,6 +184,7 @@ fn should_print_all_files_and_directories_if_depth_is_0(mut action_cmd: CtxComma
 
 // NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
+#[test_log::test]
 #[cfg_attr(windows, ignore)]
 fn should_include_root_directory_if_specified(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
@@ -207,6 +211,7 @@ fn should_include_root_directory_if_specified(mut action_cmd: CtxCommand<Command
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = make_directory();
     let dir = temp.child("missing-dir");

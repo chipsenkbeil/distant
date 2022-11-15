@@ -10,6 +10,7 @@ that is a file's contents
 "#;
 
 #[rstest]
+#[test_log::test]
 fn should_print_out_file_contents(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -25,6 +26,7 @@ fn should_print_out_file_contents(mut action_cmd: CtxCommand<Command>) {
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");

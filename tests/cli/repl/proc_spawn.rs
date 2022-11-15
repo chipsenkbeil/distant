@@ -1,6 +1,7 @@
 use crate::cli::{fixtures::*, scripts::*};
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 fn make_cmd(args: Vec<&str>) -> String {
     format!(
@@ -69,7 +70,7 @@ fn check_value_as_str(value: &serde_json::Value, other: &str) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_to_execute_program_and_return_exit_status(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -95,7 +96,7 @@ async fn should_support_json_to_execute_program_and_return_exit_status(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -134,7 +135,7 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxComma
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -173,7 +174,7 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxComma
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -260,7 +261,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

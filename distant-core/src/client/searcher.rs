@@ -201,6 +201,7 @@ mod tests {
         Client, ReconnectStrategy,
     };
     use std::{path::PathBuf, sync::Arc};
+    use test_log::test;
     use tokio::sync::Mutex;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
@@ -208,7 +209,7 @@ mod tests {
         (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_have_query_reflect_ongoing_query() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
@@ -244,7 +245,7 @@ mod tests {
         assert_eq!(searcher.query(), &test_query);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_support_getting_next_match() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
@@ -362,7 +363,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_distinguish_match_events_and_only_receive_matches_for_itself() {
         let (mut transport, session) = make_session();
 
@@ -483,7 +484,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_stop_receiving_events_if_cancelled() {
         let (mut transport, session) = make_session();
 

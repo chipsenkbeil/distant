@@ -396,6 +396,7 @@ impl FromStr for LspContent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     macro_rules! make_obj {
         ($($tail:tt)*) => {

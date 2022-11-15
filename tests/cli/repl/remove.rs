@@ -3,9 +3,10 @@ use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_removing_file(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -39,7 +40,7 @@ async fn should_support_json_removing_file(mut json_repl: CtxCommand<Repl>) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_removing_empty_directory(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -74,7 +75,7 @@ async fn should_support_json_removing_empty_directory(mut json_repl: CtxCommand<
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_removing_nonempty_directory_if_force_specified(
     mut json_repl: CtxCommand<Repl>,
 ) {
@@ -111,7 +112,7 @@ async fn should_support_json_removing_nonempty_directory_if_force_specified(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

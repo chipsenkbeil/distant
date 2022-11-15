@@ -3,6 +3,7 @@ use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 const FILE_CONTENTS: &str = r#"
 some text
@@ -11,7 +12,7 @@ that is a file's contents
 "#;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_copying_file(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -48,7 +49,7 @@ async fn should_support_json_copying_file(mut json_repl: CtxCommand<Repl>) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_copying_nonempty_directory(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -89,7 +90,7 @@ async fn should_support_json_copying_nonempty_directory(mut json_repl: CtxComman
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

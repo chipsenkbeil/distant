@@ -151,6 +151,7 @@ mod tests {
     use super::*;
     use once_cell::sync::Lazy;
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use test_log::test;
 
     const HOST: &str = "testhost";
     const PORT: u16 = 12345;

@@ -189,6 +189,7 @@ mod tests {
         Client, ReconnectStrategy,
     };
     use std::sync::Arc;
+    use test_log::test;
     use tokio::sync::Mutex;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
@@ -196,7 +197,7 @@ mod tests {
         (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_have_path_reflect_watched_path() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -228,7 +229,7 @@ mod tests {
         assert_eq!(watcher.path(), test_path);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_support_getting_next_change() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -296,7 +297,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_distinguish_change_events_and_only_receive_changes_for_itself() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -382,7 +383,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_stop_receiving_events_if_unwatched() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");

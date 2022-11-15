@@ -764,6 +764,7 @@ mod tests {
     use crate::data::{FileType, SearchQueryCondition, SearchQueryMatchData};
     use assert_fs::prelude::*;
     use std::path::PathBuf;
+    use test_log::test;
 
     fn make_path(path: &str) -> PathBuf {
         use std::path::MAIN_SEPARATOR;
@@ -791,7 +792,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_send_event_when_query_finished() {
         let root = setup_dir(Vec::new());
 
@@ -816,7 +817,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_send_all_matches_at_once_by_default() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", ""),
@@ -893,7 +894,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_support_targeting_paths() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", ""),
@@ -971,7 +972,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_support_targeting_contents() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
@@ -1047,7 +1048,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_support_multiple_submatches() {
         let root = setup_dir(vec![("path/to/file.txt", "aa ab ac\nba bb bc\nca cb cc")]);
 
@@ -1139,7 +1140,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_send_paginated_results_if_specified() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
@@ -1235,7 +1236,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_send_maximum_of_limit_results_if_specified() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
@@ -1272,7 +1273,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_send_maximum_of_limit_results_with_pagination_if_specified() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
@@ -1313,7 +1314,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_traverse_no_deeper_than_max_depth_if_specified() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", ""),
@@ -1409,7 +1410,7 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_filter_searched_paths_to_only_those_that_match_include_regex() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
@@ -1464,7 +1465,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_filter_searched_paths_to_only_those_that_do_not_match_exclude_regex() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),
@@ -1532,7 +1533,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_return_binary_match_data_if_match_is_not_utf8_but_path_is_explicit() {
         let root = assert_fs::TempDir::new().unwrap();
         let bin_file = root.child(make_path("file.bin"));
@@ -1587,7 +1588,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_not_return_binary_match_data_if_match_is_not_utf8_and_not_explicit_path() {
         let root = assert_fs::TempDir::new().unwrap();
         let bin_file = root.child(make_path("file.bin"));
@@ -1621,7 +1622,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_filter_searched_paths_to_only_those_are_an_allowed_file_type() {
         let root = assert_fs::TempDir::new().unwrap();
         let file = root.child(make_path("file"));
@@ -1708,7 +1709,7 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_follow_not_symbolic_links_if_specified_in_options() {
         let root = assert_fs::TempDir::new().unwrap();
 
@@ -1766,7 +1767,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_follow_symbolic_links_if_specified_in_options() {
         let root = assert_fs::TempDir::new().unwrap();
 
@@ -1825,7 +1826,7 @@ mod tests {
         assert_eq!(rx.recv().await, None);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn should_support_being_supplied_more_than_one_path() {
         let root = setup_dir(vec![
             ("path/to/file1.txt", "some\nlines of text in\na\nfile"),

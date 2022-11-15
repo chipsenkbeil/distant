@@ -415,6 +415,7 @@ mod tests {
         Client, ReconnectStrategy,
     };
     use std::{future::Future, time::Duration};
+    use test_log::test;
 
     /// Timeout used with timeout function
     const TIMEOUT: Duration = Duration::from_millis(50);
@@ -470,7 +471,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_only_send_out_complete_lsp_messages() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -500,7 +501,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_support_buffering_output_until_a_complete_lsp_message_is_composed()
     {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -543,7 +544,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_only_consume_a_complete_lsp_message_even_if_more_is_written() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -585,7 +586,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_support_sending_out_multiple_lsp_messages_if_all_received_at_once()
     {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -642,7 +643,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_convert_content_with_distant_scheme_to_file_scheme() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -675,7 +676,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_yield_lsp_messages_as_strings() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -705,7 +706,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_only_yield_complete_lsp_messages() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -756,7 +757,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_only_consume_a_complete_lsp_message_even_if_more_output_is_available(
     ) {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -797,7 +798,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_support_yielding_multiple_lsp_messages_if_all_received_at_once() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -848,7 +849,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_convert_content_with_file_scheme_to_distant_scheme() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -878,7 +879,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_yield_lsp_messages_as_strings() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -908,7 +909,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_only_yield_complete_lsp_messages() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -959,7 +960,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_only_consume_a_complete_lsp_message_even_if_more_errput_is_available(
     ) {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -1000,7 +1001,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_support_yielding_multiple_lsp_messages_if_all_received_at_once() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -1051,7 +1052,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_convert_content_with_file_scheme_to_distant_scheme() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 

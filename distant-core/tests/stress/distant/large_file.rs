@@ -2,6 +2,7 @@ use crate::stress::fixtures::*;
 use assert_fs::prelude::*;
 use distant_core::DistantChannelExt;
 use rstest::*;
+use test_log::test;
 
 // 64KB is maximum TCP packet size
 const MAX_TCP_PACKET_BYTES: usize = 65535;
@@ -10,7 +11,7 @@ const MAX_TCP_PACKET_BYTES: usize = 65535;
 const LARGE_FILE_LEN: usize = MAX_TCP_PACKET_BYTES * 10;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_handle_large_files(#[future] ctx: DistantClientCtx) {
     let ctx = ctx.await;
     let mut channel = ctx.client.clone_channel();

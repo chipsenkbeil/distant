@@ -8,6 +8,7 @@ use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use rstest::*;
 use std::{io, path::Path, time::Duration};
+use test_log::test;
 
 const SETUP_DIR_TIMEOUT: Duration = Duration::from_secs(1);
 const SETUP_DIR_POLL: Duration = Duration::from_millis(50);
@@ -71,7 +72,7 @@ static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
     Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn read_file_should_fail_if_file_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -81,7 +82,7 @@ async fn read_file_should_fail_if_file_missing(#[future] client: Ctx<DistantClie
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -94,7 +95,7 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Dis
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn read_file_text_should_send_error_if_fails_to_read_file(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -107,7 +108,7 @@ async fn read_file_text_should_send_error_if_fails_to_read_file(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn read_file_text_should_send_text_with_file_contents(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -123,7 +124,7 @@ async fn read_file_text_should_send_text_with_file_contents(#[future] client: Ct
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn write_file_should_send_error_if_fails_to_write_file(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -142,7 +143,7 @@ async fn write_file_should_send_error_if_fails_to_write_file(#[future] client: C
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn write_file_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -162,7 +163,7 @@ async fn write_file_should_send_ok_when_successful(#[future] client: Ctx<Distant
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn write_file_text_should_send_error_if_fails_to_write_file(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -183,7 +184,7 @@ async fn write_file_text_should_send_error_if_fails_to_write_file(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn write_file_text_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -203,7 +204,7 @@ async fn write_file_text_should_send_ok_when_successful(#[future] client: Ctx<Di
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn append_file_should_send_error_if_fails_to_create_file(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -224,7 +225,7 @@ async fn append_file_should_send_error_if_fails_to_create_file(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn append_file_should_create_file_if_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -246,7 +247,7 @@ async fn append_file_should_create_file_if_missing(#[future] client: Ctx<Distant
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn append_file_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -268,7 +269,7 @@ async fn append_file_should_send_ok_when_successful(#[future] client: Ctx<Distan
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn append_file_text_should_send_error_if_fails_to_create_file(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -289,7 +290,7 @@ async fn append_file_text_should_send_error_if_fails_to_create_file(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn append_file_text_should_create_file_if_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -311,7 +312,7 @@ async fn append_file_text_should_create_file_if_missing(#[future] client: Ctx<Di
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn append_file_text_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -333,7 +334,7 @@ async fn append_file_text_should_send_ok_when_successful(#[future] client: Ctx<D
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn dir_read_should_send_error_if_directory_does_not_exist(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -401,7 +402,7 @@ async fn setup_dir() -> assert_fs::TempDir {
 // NOTE: CI fails this on Windows, but it's running Windows with bash and strange paths, so ignore
 //       it only for the CI
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_depth_limits(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
@@ -438,7 +439,7 @@ async fn dir_read_should_support_depth_limits(#[future] client: Ctx<DistantClien
 // NOTE: CI fails this on Windows, but it's running Windows with bash and strange paths, so ignore
 //       it only for the CI
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
@@ -478,7 +479,7 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ct
 
 // NOTE: This is failing on windows as canonicalization of root path is not correct!
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_including_directory_in_returned_entries(
     #[future] client: Ctx<DistantClient>,
@@ -524,7 +525,7 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
 
 // NOTE: This is failing on windows as canonicalization of root path is not correct!
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
@@ -561,7 +562,7 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<
 
 // NOTE: This is failing on windows as the symlink does not get resolved!
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_returning_canonicalized_paths(
     #[future] client: Ctx<DistantClient>,
@@ -600,7 +601,7 @@ async fn dir_read_should_support_returning_canonicalized_paths(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn create_dir_should_send_error_if_fails(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -619,7 +620,7 @@ async fn create_dir_should_send_error_if_fails(#[future] client: Ctx<DistantClie
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn create_dir_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let root_dir = setup_dir().await;
@@ -635,7 +636,7 @@ async fn create_dir_should_send_ok_when_successful(#[future] client: Ctx<Distant
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn create_dir_should_support_creating_multiple_dir_components(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -653,7 +654,7 @@ async fn create_dir_should_support_creating_multiple_dir_components(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn remove_should_send_error_on_failure(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -669,7 +670,7 @@ async fn remove_should_send_error_on_failure(#[future] client: Ctx<DistantClient
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn remove_should_support_deleting_a_directory(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -686,7 +687,7 @@ async fn remove_should_support_deleting_a_directory(#[future] client: Ctx<Distan
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn remove_should_delete_nonempty_directory_if_force_is_true(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -706,7 +707,7 @@ async fn remove_should_delete_nonempty_directory_if_force_is_true(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn remove_should_support_deleting_a_single_file(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -723,7 +724,7 @@ async fn remove_should_support_deleting_a_single_file(#[future] client: Ctx<Dist
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn copy_should_send_error_on_failure(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -740,7 +741,7 @@ async fn copy_should_send_error_on_failure(#[future] client: Ctx<DistantClient>)
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn copy_should_support_copying_an_entire_directory(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -766,7 +767,7 @@ async fn copy_should_support_copying_an_entire_directory(#[future] client: Ctx<D
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn copy_should_support_copying_an_empty_directory(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -785,7 +786,7 @@ async fn copy_should_support_copying_an_empty_directory(#[future] client: Ctx<Di
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn copy_should_support_copying_a_directory_that_only_contains_directories(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -813,7 +814,7 @@ async fn copy_should_support_copying_a_directory_that_only_contains_directories(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn copy_should_support_copying_a_single_file(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -832,7 +833,7 @@ async fn copy_should_support_copying_a_single_file(#[future] client: Ctx<Distant
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn rename_should_fail_if_path_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -849,7 +850,7 @@ async fn rename_should_fail_if_path_missing(#[future] client: Ctx<DistantClient>
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn rename_should_support_renaming_an_entire_directory(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -875,7 +876,7 @@ async fn rename_should_support_renaming_an_entire_directory(#[future] client: Ct
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn rename_should_support_renaming_a_single_file(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -894,7 +895,7 @@ async fn rename_should_support_renaming_a_single_file(#[future] client: Ctx<Dist
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn watch_should_fail_as_unsupported(#[future] client: Ctx<DistantClient>) {
     // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
     let mut client = client.await;
@@ -917,7 +918,7 @@ async fn watch_should_fail_as_unsupported(#[future] client: Ctx<DistantClient>) 
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn exists_should_send_true_if_path_exists(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -929,7 +930,7 @@ async fn exists_should_send_true_if_path_exists(#[future] client: Ctx<DistantCli
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn exists_should_send_false_if_path_does_not_exist(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -940,7 +941,7 @@ async fn exists_should_send_false_if_path_does_not_exist(#[future] client: Ctx<D
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_send_error_on_failure(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -957,7 +958,7 @@ async fn metadata_should_send_error_on_failure(#[future] client: Ctx<DistantClie
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_send_back_metadata_on_file_if_exists(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -993,7 +994,7 @@ async fn metadata_should_send_back_metadata_on_file_if_exists(
 
 #[cfg(unix)]
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_include_unix_specific_metadata_on_unix_platform(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1025,7 +1026,7 @@ async fn metadata_should_include_unix_specific_metadata_on_unix_platform(
 
 #[cfg(windows)]
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_not_include_windows_as_ssh_cannot_retrieve_that_information(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1061,7 +1062,7 @@ async fn metadata_should_not_include_windows_as_ssh_cannot_retrieve_that_informa
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_send_back_metadata_on_dir_if_exists(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -1093,7 +1094,7 @@ async fn metadata_should_send_back_metadata_on_dir_if_exists(#[future] client: C
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_send_back_metadata_on_symlink_if_exists(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1130,7 +1131,7 @@ async fn metadata_should_send_back_metadata_on_symlink_if_exists(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn metadata_should_include_canonicalized_path_if_flag_specified(
     #[future] client: Ctx<DistantClient>,
@@ -1169,7 +1170,7 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1204,7 +1205,7 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn proc_spawn_should_not_fail_even_if_process_not_found(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1224,7 +1225,7 @@ async fn proc_spawn_should_not_fail_even_if_process_not_found(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn proc_spawn_should_return_id_of_spawned_process(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -1249,7 +1250,7 @@ async fn proc_spawn_should_return_id_of_spawned_process(#[future] client: Ctx<Di
 // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
 //       with / but thinks it's on windows and is providing \
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn proc_spawn_should_send_back_stdout_periodically_when_available(
     #[future] client: Ctx<DistantClient>,
@@ -1285,7 +1286,7 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
 // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
 //       with / but thinks it's on windows and is providing \
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn proc_spawn_should_send_back_stderr_periodically_when_available(
     #[future] client: Ctx<DistantClient>,
@@ -1321,7 +1322,7 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
 // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
 //       with / but thinks it's on windows and is providing \
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn proc_spawn_should_send_done_signal_when_completed(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
@@ -1342,7 +1343,7 @@ async fn proc_spawn_should_send_done_signal_when_completed(#[future] client: Ctx
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn proc_spawn_should_clear_process_from_state_when_killed(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1369,7 +1370,7 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn proc_kill_should_fail_if_process_not_running(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -1397,7 +1398,7 @@ async fn proc_kill_should_fail_if_process_not_running(#[future] client: Ctx<Dist
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn proc_stdin_should_fail_if_process_not_running(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -1427,7 +1428,7 @@ async fn proc_stdin_should_fail_if_process_not_running(#[future] client: Ctx<Dis
 // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
 //       with / but thinks it's on windows and is providing \
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[cfg_attr(windows, ignore)]
 async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
@@ -1465,7 +1466,7 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<DistantCl
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn system_info_should_return_system_info_based_on_binary(
     #[future] client: Ctx<DistantClient>,
 ) {

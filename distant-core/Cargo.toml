@@ -48,7 +48,8 @@ schemars = { version = "0.8.10", optional = true }
 
 [dev-dependencies]
 assert_fs = "1.0.7"
-flexi_logger = "0.23.0"
+env_logger = "0.9.1"
 indoc = "1.0.7"
 predicates = "2.1.1"
 rstest = "0.15.0"
+test-log = "0.2.11"

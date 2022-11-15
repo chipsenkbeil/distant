@@ -195,6 +195,7 @@ impl BindAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     #[test]
     fn to_string_should_properly_print_bind_address() {

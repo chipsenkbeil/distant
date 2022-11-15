@@ -2,9 +2,10 @@ use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 
@@ -37,7 +38,7 @@ async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>) {
     validate_authentication(&mut json_repl).await;
 

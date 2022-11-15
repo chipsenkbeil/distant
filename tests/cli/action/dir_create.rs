@@ -5,6 +5,7 @@ use predicates::prelude::*;
 use rstest::*;
 
 #[rstest]
+#[test_log::test]
 fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
@@ -22,6 +23,7 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 }
 
 #[rstest]
+#[test_log::test]
 fn should_support_creating_missing_parent_directories_if_specified(
     mut action_cmd: CtxCommand<Command>,
 ) {
@@ -41,6 +43,7 @@ fn should_support_creating_missing_parent_directories_if_specified(
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("missing-dir").child("dir");
