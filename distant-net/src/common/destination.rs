@@ -49,13 +49,13 @@ impl Destination {
 
 impl AsRef<Destination> for &Destination {
     fn as_ref(&self) -> &Destination {
-        *self
+        self
     }
 }
 
 impl AsMut<Destination> for &mut Destination {
     fn as_mut(&mut self) -> &mut Destination {
-        *self
+        self
     }
 }
 
