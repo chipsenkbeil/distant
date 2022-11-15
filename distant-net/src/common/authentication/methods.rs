@@ -340,7 +340,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn verifier_should_finished_when_a_method_succeeds() {
+    async fn verifier_should_send_finished_when_a_method_succeeds() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
 
         // Queue up a response to the initialization request
