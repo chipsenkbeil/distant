@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use rstest::*;
 use serde_json::json;
 use std::{
@@ -23,7 +23,7 @@ const LAUNCH_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
-    pub ctx: DistantManagerCtx,
+    pub ctx: &'static DistantManagerCtx,
 
     #[deref]
     #[deref_mut]
@@ -91,7 +91,7 @@ impl DistantManagerCtx {
             .arg(bin_path())
             .arg("--distant-args")
             .arg(format!(
-                "--shutdown lonely=5 --log-file {} --log-level trace",
+                "--shutdown lonely=60 --log-file {} --log-level trace",
                 random_log_file("server").to_string_lossy()
             ));
 
@@ -202,31 +202,35 @@ impl Drop for DistantManagerCtx {
     }
 }
 
+// NOTE: This will result in the manager and server never dying, but we do this
+//       to avoid having 90+ managers and servers spawned, which can overwhelm
+//       systems with smaller resources.
 #[fixture]
-pub fn ctx() -> DistantManagerCtx {
-    DistantManagerCtx::start()
+pub fn ctx() -> &'static DistantManagerCtx {
+    static INSTANCE: OnceCell<DistantManagerCtx> = OnceCell::new();
+    INSTANCE.get_or_init(DistantManagerCtx::start)
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+pub fn lsp_cmd(ctx: &'static DistantManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["client", "lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+pub fn action_cmd(ctx: &'static DistantManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["client", "action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
+pub fn action_std_cmd(ctx: &'static DistantManagerCtx) -> CtxCommand<StdCommand> {
     let cmd = ctx.new_std_cmd(vec!["client", "action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
+pub fn json_repl(ctx: &'static DistantManagerCtx) -> CtxCommand<Repl> {
     let child = ctx
         .new_std_cmd(vec!["client", "repl"])
         .arg("--format")
