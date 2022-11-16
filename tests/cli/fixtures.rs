@@ -4,7 +4,6 @@ use once_cell::sync::Lazy;
 use rstest::*;
 use serde_json::json;
 use std::{
-    io,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
     thread,
@@ -92,7 +91,7 @@ impl DistantManagerCtx {
             .arg(bin_path())
             .arg("--distant-args")
             .arg(format!(
-                "--log-file {} --log-level trace",
+                "--shutdown lonely=5 --log-file {} --log-level trace",
                 random_log_file("server").to_string_lossy()
             ));
 
@@ -128,42 +127,6 @@ impl DistantManagerCtx {
         Self {
             manager,
             socket_or_pipe,
-        }
-    }
-
-    pub fn shutdown(&self) -> io::Result<()> {
-        // Send a shutdown request to the manager
-        let mut shutdown_cmd = StdCommand::new(bin_path());
-        shutdown_cmd
-            .arg("manager")
-            .arg("shutdown")
-            .arg("--log-file")
-            .arg(random_log_file("shutdown"))
-            .arg("--log-level")
-            .arg("trace");
-
-        if cfg!(windows) {
-            shutdown_cmd
-                .arg("--windows-pipe")
-                .arg(self.socket_or_pipe.as_str());
-        } else {
-            shutdown_cmd
-                .arg("--unix-socket")
-                .arg(self.socket_or_pipe.as_str());
-        }
-
-        eprintln!("Spawning shutdown cmd: {shutdown_cmd:?}");
-        let output = shutdown_cmd.output().expect("Failed to shutdown server");
-        if !output.status.success() {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Failed to shutdown: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ))
-        } else {
-            Ok(())
         }
     }
 
@@ -234,11 +197,8 @@ fn random_log_file(prefix: &str) -> PathBuf {
 impl Drop for DistantManagerCtx {
     /// Kills manager upon drop
     fn drop(&mut self) {
-        // Attempt to shutdown gracefully, forcing a kill otherwise
-        if self.shutdown().is_err() {
-            let _ = self.manager.kill();
-            let _ = self.manager.wait();
-        }
+        let _ = self.manager.kill();
+        let _ = self.manager.wait();
     }
 }
 

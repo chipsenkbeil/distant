@@ -7,7 +7,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use distant_net::common::ConnectionId;
-use distant_net::server::{ConnectionCtx, Reply, ServerConfig, ServerCtx, ServerHandler};
+use distant_net::server::{ConnectionCtx, Reply, ServerCtx, ServerHandler};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
 
@@ -43,9 +43,9 @@ where
 
 impl DistantApiServerHandler<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
     /// Creates a new server using the [`LocalDistantApi`] implementation
-    pub fn local(config: ServerConfig) -> io::Result<Self> {
+    pub fn local() -> io::Result<Self> {
         Ok(Self {
-            api: LocalDistantApi::initialize(config)?,
+            api: LocalDistantApi::initialize()?,
         })
     }
 }
@@ -63,11 +63,6 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 #[async_trait]
 pub trait DistantApi {
     type LocalData: Send + Sync;
-
-    /// Returns config associated with API server
-    fn config(&self) -> ServerConfig {
-        ServerConfig::default()
-    }
 
     /// Invoked whenever a new connection is established, providing a mutable reference to the
     /// newly-created local data. This is a way to support modifying local data before it is used.

@@ -6,7 +6,7 @@ use crate::{
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
-use distant_net::server::{ConnectionCtx, ServerConfig};
+use distant_net::server::ConnectionCtx;
 use log::*;
 use std::{
     io,
@@ -26,15 +26,13 @@ use state::*;
 /// impementation of the API instead of a proxy to another machine as seen with
 /// implementations on top of SSH and other protocol
 pub struct LocalDistantApi {
-    config: ServerConfig,
     state: GlobalState,
 }
 
 impl LocalDistantApi {
     /// Initialize the api instance
-    pub fn initialize(config: ServerConfig) -> io::Result<Self> {
+    pub fn initialize() -> io::Result<Self> {
         Ok(Self {
-            config,
             state: GlobalState::initialize()?,
         })
     }
@@ -43,10 +41,6 @@ impl LocalDistantApi {
 #[async_trait]
 impl DistantApi for LocalDistantApi {
     type LocalData = ConnectionState;
-
-    fn config(&self) -> ServerConfig {
-        self.config.clone()
-    }
 
     /// Injects the global channels into the local connection
     async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
@@ -585,7 +579,7 @@ mod tests {
         DistantCtx<ConnectionState>,
         mpsc::Receiver<DistantResponseData>,
     ) {
-        let api = LocalDistantApi::initialize(Default::default()).unwrap();
+        let api = LocalDistantApi::initialize().unwrap();
         let (reply, rx) = make_reply(buffer);
         let connection_id = rand::random();
         let mut local_data = ConnectionState::default();

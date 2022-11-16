@@ -167,12 +167,13 @@ impl ServerSubcommand {
                         None => "using an ephemeral port".to_string(),
                     }
                 );
-                let handler = DistantApiServerHandler::local(NetServerConfig {
-                    shutdown: get!(shutdown).unwrap_or_default(),
-                    ..Default::default()
-                })
-                .context("Failed to create local distant api")?;
+                let handler = DistantApiServerHandler::local()
+                    .context("Failed to create local distant api")?;
                 let server = Server::tcp()
+                    .config(NetServerConfig {
+                        shutdown: get!(shutdown).unwrap_or_default(),
+                        ..Default::default()
+                    })
                     .handler(handler)
                     .verifier(Verifier::static_key(key.clone()))
                     .start(addr, get!(port).unwrap_or_else(|| 0.into()))

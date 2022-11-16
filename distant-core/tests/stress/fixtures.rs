@@ -20,7 +20,7 @@ impl DistantClientCtx {
         let (started_tx, mut started_rx) = mpsc::channel::<u16>(1);
 
         tokio::spawn(async move {
-            if let Ok(api) = LocalDistantApi::initialize(Default::default()) {
+            if let Ok(api) = LocalDistantApi::initialize() {
                 let port: PortRange = "0".parse().unwrap();
                 let port = {
                     let handler = DistantApiServerHandler::new(api);

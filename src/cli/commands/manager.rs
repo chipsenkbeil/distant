@@ -84,12 +84,6 @@ pub enum ManagerSubcommand {
         network: NetworkConfig,
         id: ConnectionId,
     },
-
-    /// Send a shutdown request to the manager
-    Shutdown {
-        #[clap(flatten)]
-        network: NetworkConfig,
-    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -466,19 +460,6 @@ impl ManagerSubcommand {
                     .await
                     .with_context(|| format!("Failed to kill connection to server {id}"))?;
                 debug!("Connection killed");
-                Ok(())
-            }
-            Self::Shutdown { network } => {
-                let network = network.merge(config.network);
-                debug!("Shutting down manager");
-                Client::new(network)
-                    .using_prompt_auth_handler()
-                    .connect()
-                    .await
-                    .context("Failed to connect to manager")?
-                    .shutdown()
-                    .await
-                    .context("Failed to shutdown manager")?;
                 Ok(())
             }
         }
