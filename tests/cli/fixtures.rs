@@ -6,7 +6,6 @@ use rstest::*;
 use serde_json::json;
 use std::{
     io::{BufReader, Read},
-    net::Ipv4Addr,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
     thread,
@@ -19,6 +18,9 @@ pub use repl::Repl;
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
 const TIMEOUT: Duration = Duration::from_secs(3);
+
+const MAX_RETRY_ATTEMPTS: usize = 3;
+const RETRY_PAUSE_DURATION: Duration = Duration::from_millis(250);
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
@@ -123,41 +125,49 @@ impl DistantManagerCtx {
         }
 
         let mut credentials = stdout_thread.join().unwrap();
-        credentials.host = Host::Ipv4(Ipv4Addr::LOCALHOST);
+        credentials.host = Host::Name("localhost".to_string());
 
-        // Connect manager to server
-        let mut connect_cmd = StdCommand::new(bin_path());
-        connect_cmd
-            .arg("client")
-            .arg("connect")
-            .arg("--log-file")
-            .arg(random_log_file("connect"))
-            .arg("--log-level")
-            .arg("trace")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if cfg!(windows) {
+        for i in 1..=MAX_RETRY_ATTEMPTS {
+            // Connect manager to server
+            let mut connect_cmd = StdCommand::new(bin_path());
             connect_cmd
-                .arg("--windows-pipe")
-                .arg(socket_or_pipe.as_str());
-        } else {
-            connect_cmd
-                .arg("--unix-socket")
-                .arg(socket_or_pipe.as_str());
-        }
+                .arg("client")
+                .arg("connect")
+                .arg("--log-file")
+                .arg(random_log_file("connect"))
+                .arg("--log-level")
+                .arg("trace")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
-        connect_cmd.arg(credentials.to_string());
+            if cfg!(windows) {
+                connect_cmd
+                    .arg("--windows-pipe")
+                    .arg(socket_or_pipe.as_str());
+            } else {
+                connect_cmd
+                    .arg("--unix-socket")
+                    .arg(socket_or_pipe.as_str());
+            }
 
-        eprintln!("Spawning connect cmd: {connect_cmd:?}");
-        let output = connect_cmd.output().expect("Failed to connect to server");
+            connect_cmd.arg(credentials.to_string());
 
-        if !output.status.success() {
-            panic!(
-                "Connecting to server failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            eprintln!("[{i}/{MAX_RETRY_ATTEMPTS}] Spawning connect cmd: {connect_cmd:?}");
+            let output = connect_cmd.output().expect("Failed to connect to server");
+
+            if !output.status.success() {
+                if i == MAX_RETRY_ATTEMPTS {
+                    panic!(
+                        "Connecting to server failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                } else {
+                    thread::sleep(RETRY_PAUSE_DURATION);
+                }
+            } else {
+                break;
+            }
         }
 
         eprintln!("Connected! Proceeding with test...");
