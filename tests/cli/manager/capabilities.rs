@@ -30,7 +30,7 @@ const EXPECTED_TABLE: &str = indoc! {"
 
 #[rstest]
 #[test_log::test]
-fn should_output_capabilities(ctx: &'static DistantManagerCtx) {
+fn should_output_capabilities(ctx: DistantManagerCtx) {
     // distant action capabilities
     ctx.new_assert_cmd(vec!["manager", "capabilities"])
         .assert()

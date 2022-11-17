@@ -1,13 +1,16 @@
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
-use once_cell::sync::{Lazy, OnceCell};
+use distant_core::{net::common::Host, DistantSingleKeyCredentials};
+use once_cell::sync::Lazy;
 use rstest::*;
 use serde_json::json;
 use std::{
+    io::{BufReader, Read},
+    net::Ipv4Addr,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod repl;
@@ -17,13 +20,9 @@ static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("dis
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
 const TIMEOUT: Duration = Duration::from_secs(3);
 
-// Number of times to retry launching a server before giving up
-const LAUNCH_RETRY_CNT: usize = 2;
-const LAUNCH_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
-
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
-    pub ctx: &'static DistantManagerCtx,
+    pub ctx: DistantManagerCtx,
 
     #[deref]
     #[deref_mut]
@@ -33,6 +32,7 @@ pub struct CtxCommand<T> {
 /// Context for some listening distant server
 pub struct DistantManagerCtx {
     manager: Child,
+    server: Child,
     socket_or_pipe: String,
 }
 
@@ -50,7 +50,10 @@ impl DistantManagerCtx {
             .arg("--log-file")
             .arg(random_log_file("manager"))
             .arg("--log-level")
-            .arg("trace");
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let socket_or_pipe = if cfg!(windows) {
             format!("distant_test_{}", rand::random::<usize>())
@@ -78,54 +81,89 @@ impl DistantManagerCtx {
             panic!("Manager exited ({}): {:?}", status.success(), status.code());
         }
 
-        // Spawn a server locally by launching it through the manager
-        let mut launch_cmd = StdCommand::new(bin_path());
-        launch_cmd
-            .arg("client")
-            .arg("launch")
+        // Spawn a server and capture the credentials so we can connect to it
+        let mut server_cmd = StdCommand::new(bin_path());
+        server_cmd
+            .arg("server")
+            .arg("listen")
             .arg("--log-file")
-            .arg(random_log_file("launch"))
+            .arg(random_log_file("server"))
             .arg("--log-level")
             .arg("trace")
-            .arg("--distant")
-            .arg(bin_path())
-            .arg("--distant-args")
-            .arg(format!(
-                "--shutdown lonely=60 --log-file {} --log-level trace",
-                random_log_file("server").to_string_lossy()
-            ));
+            .arg("--shutdown")
+            .arg("lonely=60")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        eprintln!("Spawning server cmd: {server_cmd:?}");
+        let mut server = server_cmd.spawn().expect("Failed to spawn server");
+
+        // Spawn a thread to read stdout to look for credentials
+        let stdout = server.stdout.take().unwrap();
+        let stdout_thread = thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut lines = String::new();
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = reader.read(&mut buf) {
+                lines.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if let Some(credentials) = DistantSingleKeyCredentials::find(&lines) {
+                    return credentials;
+                }
+            }
+            panic!("Failed to read line");
+        });
+
+        // Wait for thread to finish (up to 500ms)
+        let start = Instant::now();
+        while !stdout_thread.is_finished() {
+            if start.elapsed() > Duration::from_millis(500) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let mut credentials = stdout_thread.join().unwrap();
+        credentials.host = Host::Ipv4(Ipv4Addr::LOCALHOST);
+
+        // Connect manager to server
+        let mut connect_cmd = StdCommand::new(bin_path());
+        connect_cmd
+            .arg("client")
+            .arg("connect")
+            .arg("--log-file")
+            .arg(random_log_file("connect"))
+            .arg("--log-level")
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         if cfg!(windows) {
-            launch_cmd
+            connect_cmd
                 .arg("--windows-pipe")
                 .arg(socket_or_pipe.as_str());
         } else {
-            launch_cmd.arg("--unix-socket").arg(socket_or_pipe.as_str());
+            connect_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
         }
 
-        launch_cmd.arg("manager://localhost");
+        connect_cmd.arg(credentials.to_string());
 
-        for i in 0..=LAUNCH_RETRY_CNT {
-            eprintln!("[{i}/{LAUNCH_RETRY_CNT}] Spawning launch cmd: {launch_cmd:?}");
-            let output = launch_cmd.output().expect("Failed to launch server");
-            let success = output.status.success();
-            if success {
-                break;
-            }
+        eprintln!("Spawning connect cmd: {connect_cmd:?}");
+        let output = connect_cmd.output().expect("Failed to connect to server");
 
-            if !success && i == LAUNCH_RETRY_CNT {
-                let _ = manager.kill();
-                panic!(
-                    "Failed to launch: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-
-            thread::sleep(LAUNCH_RETRY_TIMEOUT);
+        if !output.status.success() {
+            panic!(
+                "Connecting to server failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
+        eprintln!("Connected! Proceeding with test...");
         Self {
             manager,
+            server,
             socket_or_pipe,
         }
     }
@@ -198,39 +236,37 @@ impl Drop for DistantManagerCtx {
     /// Kills manager upon drop
     fn drop(&mut self) {
         let _ = self.manager.kill();
+        let _ = self.server.kill();
         let _ = self.manager.wait();
+        let _ = self.server.wait();
     }
 }
 
-// NOTE: This will result in the manager and server never dying, but we do this
-//       to avoid having 90+ managers and servers spawned, which can overwhelm
-//       systems with smaller resources.
 #[fixture]
-pub fn ctx() -> &'static DistantManagerCtx {
-    static INSTANCE: OnceCell<DistantManagerCtx> = OnceCell::new();
-    INSTANCE.get_or_init(DistantManagerCtx::start)
+pub fn ctx() -> DistantManagerCtx {
+    DistantManagerCtx::start()
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: &'static DistantManagerCtx) -> CtxCommand<Command> {
+pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["client", "lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_cmd(ctx: &'static DistantManagerCtx) -> CtxCommand<Command> {
+pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["client", "action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: &'static DistantManagerCtx) -> CtxCommand<StdCommand> {
+pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
     let cmd = ctx.new_std_cmd(vec!["client", "action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn json_repl(ctx: &'static DistantManagerCtx) -> CtxCommand<Repl> {
+pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
     let child = ctx
         .new_std_cmd(vec!["client", "repl"])
         .arg("--format")
