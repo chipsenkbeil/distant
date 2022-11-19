@@ -6,14 +6,19 @@ use crate::common::{
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
+    future::Future,
     io,
+    pin::Pin,
     sync::{Arc, Weak},
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinHandle,
 };
+
+pub type ServerKeychain = Keychain<oneshot::Receiver<Backup>>;
 
 /// Time to wait inbetween connection read/write when nothing was read or written on last pass
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
@@ -24,7 +29,7 @@ pub struct ConnectionTask {
     id: ConnectionId,
 
     /// Task that is processing requests and responses
-    task: JoinHandle<()>,
+    task: JoinHandle<io::Result<()>>,
 }
 
 impl ConnectionTask {
@@ -56,6 +61,20 @@ impl ConnectionTask {
     /// Aborts the connection
     pub fn abort(&self) {
         self.task.abort();
+    }
+}
+
+impl Future for ConnectionTask {
+    type Output = io::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Future::poll(Pin::new(&mut self.task), cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(x) => match x {
+                Ok(x) => Poll::Ready(x),
+                Err(x) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, x))),
+            },
+        }
     }
 }
 
@@ -97,10 +116,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn keychain(
-        self,
-        keychain: Keychain<oneshot::Receiver<Backup>>,
-    ) -> ConnectionTaskBuilder<H, T> {
+    pub fn keychain(self, keychain: ServerKeychain) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
             id: self.id,
             handler: self.handler,
@@ -186,7 +202,7 @@ where
         }
     }
 
-    async fn run(self) {
+    async fn run(self) -> io::Result<()> {
         let ConnectionTaskBuilder {
             id,
             handler,
@@ -200,16 +216,18 @@ where
 
         // Will check if no more connections and restart timer if that's the case
         macro_rules! terminate_connection {
-            // Prints an error message before terminating the connection
+            // Prints an error message before terminating the connection by panicking
             (@error $($msg:tt)+) => {
                 error!($($msg)+);
                 terminate_connection!();
+                return Err(io::Error::new(io::ErrorKind::Other, format!($($msg)+)));
             };
 
-            // Prints a debug message before terminating the connection
+            // Prints a debug message before terminating the connection by cleanly returning
             (@debug $($msg:tt)+) => {
                 debug!($($msg)+);
                 terminate_connection!();
+                return Ok(());
             };
 
             // Performs the connection termination by removing it from server state and
@@ -226,11 +244,11 @@ where
                         }
                     }
                 }
-                return;
             };
         }
 
         // Properly establish the connection's transport
+        debug!("[Conn {id}] Establishing full connection");
         let mut connection = match Weak::upgrade(&verifier) {
             Some(verifier) => {
                 match Connection::server(transport, verifier.as_ref(), keychain).await {
@@ -246,6 +264,7 @@ where
         };
 
         // Attempt to upgrade our handler for use with the connection going forward
+        debug!("[Conn {id}] Preparing connection handler");
         let handler = match Weak::upgrade(&handler) {
             Some(handler) => handler,
             None => {
@@ -257,7 +276,7 @@ where
         let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
 
         // Create local data for the connection and then process it
-        debug!("[Conn {id}] Accepting connection");
+        debug!("[Conn {id}] Officially accepting connection");
         let mut local_data = H::LocalData::default();
         if let Err(x) = handler
             .on_accept(ConnectionCtx {
@@ -271,6 +290,7 @@ where
 
         let local_data = Arc::new(local_data);
 
+        debug!("[Conn {id}] Beginning read/write loop");
         loop {
             let ready = match connection
                 .ready(Interest::READABLE | Interest::WRITABLE)
@@ -388,5 +408,348 @@ where
                 tokio::time::sleep(sleep_duration).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::authentication::DummyAuthHandler;
+    use crate::common::{
+        HeapSecretKey, InmemoryTransport, Ready, Reconnectable, Request, Response,
+    };
+    use crate::server::Shutdown;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use test_log::test;
+
+    struct TestServerHandler;
+
+    #[async_trait]
+    impl ServerHandler for TestServerHandler {
+        type Request = u16;
+        type Response = String;
+        type LocalData = ();
+
+        async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
+            // Always send back "hello"
+            ctx.reply.send("hello".to_string()).await.unwrap();
+        }
+    }
+
+    macro_rules! wait_for_termination {
+        ($task:ident) => {{
+            let timeout_millis = 500;
+            let sleep_millis = 50;
+            let start = std::time::Instant::now();
+            while !$task.is_finished() {
+                if start.elapsed() > std::time::Duration::from_millis(timeout_millis) {
+                    panic!("Exceeded timeout of {timeout_millis}ms");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(sleep_millis)).await;
+            }
+        }};
+    }
+
+    #[test(tokio::test)]
+    async fn should_terminate_if_fails_access_verifier() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, _t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+
+        let task = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Weak::new())
+            .spawn();
+
+        wait_for_termination!(task);
+
+        let err = task.await.unwrap_err();
+        assert!(
+            err.to_string().contains("Verifier has been dropped"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn should_terminate_if_fails_to_setup_server_connection() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+
+        // Create a verifier that wants a key, so we will fail from client-side
+        let verifier = Arc::new(Verifier::static_key(HeapSecretKey::generate(32).unwrap()));
+
+        let task = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side
+        tokio::spawn(async move {
+            let _client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+        });
+
+        wait_for_termination!(task);
+
+        let err = task.await.unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to setup connection"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn should_terminate_if_fails_access_server_handler() {
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        let task = ConnectionTask::build()
+            .handler(Weak::<TestServerHandler>::new())
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side
+        tokio::spawn(async move {
+            let _client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+        });
+
+        wait_for_termination!(task);
+
+        let err = task.await.unwrap_err();
+        assert!(
+            err.to_string().contains("Handler has been dropped"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn should_terminate_if_accepting_connection_fails_on_server_handler() {
+        struct BadAcceptServerHandler;
+
+        #[async_trait]
+        impl ServerHandler for BadAcceptServerHandler {
+            type Request = u16;
+            type Response = String;
+            type LocalData = ();
+
+            async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::Other, "bad accept"))
+            }
+
+            async fn on_request(
+                &self,
+                _: ServerCtx<Self::Request, Self::Response, Self::LocalData>,
+            ) {
+                unreachable!();
+            }
+        }
+
+        let handler = Arc::new(BadAcceptServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        let task = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side, and then closes to
+        // trigger the server-side to close
+        tokio::spawn(async move {
+            let _client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+        });
+
+        wait_for_termination!(task);
+
+        let err = task.await.unwrap_err();
+        assert!(
+            err.to_string().contains("Accepting connection failed"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn should_terminate_if_connection_fails_to_become_ready() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        struct FakeTransport {
+            inner: InmemoryTransport,
+            fail_ready: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Transport for FakeTransport {
+            fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
+                self.inner.try_read(buf)
+            }
+
+            fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
+                self.inner.try_write(buf)
+            }
+
+            async fn ready(&self, interest: Interest) -> io::Result<Ready> {
+                if self.fail_ready.load(Ordering::Relaxed) {
+                    Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "targeted ready failure",
+                    ))
+                } else {
+                    self.inner.ready(interest).await
+                }
+            }
+        }
+
+        #[async_trait]
+        impl Reconnectable for FakeTransport {
+            async fn reconnect(&mut self) -> io::Result<()> {
+                self.inner.reconnect().await
+            }
+        }
+
+        let fail_ready = Arc::new(AtomicBool::new(false));
+        let task = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(FakeTransport {
+                inner: t1,
+                fail_ready: Arc::clone(&fail_ready),
+            })
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side, set ready to fail
+        // for the server-side after client connection completes, and wait a bit
+        tokio::spawn(async move {
+            let _client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+
+            // NOTE: Need to sleep for a little bit to hand control back to server to finish
+            //       its side of the connection before toggling ready to fail
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            // Toggle ready to fail and then wait awhile so we fail by ready and not connection
+            // being dropped
+            fail_ready.store(true, Ordering::Relaxed);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+
+        wait_for_termination!(task);
+
+        let err = task.await.unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to examine ready state"),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn should_terminate_if_connection_closes() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        let task = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side, and then closes to
+        // trigger the server-side to close
+        tokio::spawn(async move {
+            let _client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+        });
+
+        wait_for_termination!(task);
+        task.await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn should_invoke_server_handler_to_process_request_in_new_task_and_forward_responses() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side
+        let task = tokio::spawn(async move {
+            let mut client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+
+            client.write_frame_for(&Request::new(123u16)).await.unwrap();
+            client
+                .read_frame_as::<Response<String>>()
+                .await
+                .unwrap()
+                .unwrap()
+        });
+
+        let response = task.await.unwrap();
+        assert_eq!(response.payload, "hello");
     }
 }
