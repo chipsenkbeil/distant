@@ -90,19 +90,19 @@ jobs:
           path: |
             ${{ env.X86_REL_BIN }}
 
-  linux_gnu:
-    name: "Build release on Linux (gnu)"
+  linux_gnu_x86:
+    name: "Build release on Linux (GNU x86)"
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     env:
-      UPLOAD_NAME: linux64-gnu
+      UPLOAD_NAME: linux64-gnu-x86
       X86_GNU_ARCH: x86_64-unknown-linux-gnu
       X86_GNU_DIR: target/x86_64-unknown-linux-gnu/release
       BUILD_BIN: distant
-      X86_GNU_REL_BIN: distant-linux64-gnu
+      X86_GNU_REL_BIN: distant-linux64-gnu-x86
     steps:
       - uses: actions/checkout@v2
-      - name: Install Rust (GNU)
+      - name: Install Rust (GNU x86)
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -122,6 +122,80 @@ jobs:
           name: ${{ env.UPLOAD_NAME }}
           path: |
             ${{ env.X86_GNU_REL_BIN }}
+
+  linux_gnu_aarch64:
+    name: "Build release on Linux (GNU aarch64)"
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      UPLOAD_NAME: linux64-gnu-aarch64
+      AARCH64_GNU_ARCH: aarch64-unknown-linux-gnu
+      AARCH64_GNU_DIR: target/aarch64-unknown-linux-gnu/release
+      BUILD_BIN: distant
+      AARCH64_GNU_REL_BIN: distant-linux64-gnu-aarch64
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (GNU aarch64)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ env.AARCH64_GNU_ARCH }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install linker (gcc-aarch64-linux-gnu)
+        run: |
+          sudo apt update
+          sudo apt install gcc-aarch64-linux-gnu
+      - name: Build binary (GNU aarch64)
+        run: |
+          cargo build --release --all-features --target ${{ env.AARCH64_GNU_ARCH }}
+          ls -l ./${{ env.AARCH64_GNU_DIR }}
+          strip ./${{ env.AARCH64_GNU_DIR }}/${{ env.BUILD_BIN }}
+          mv ./${{ env.AARCH64_GNU_DIR }}/${{ env.BUILD_BIN }} ./${{ env.AARCH64_GNU_REL_BIN }}
+          chmod +x ./${{ env.AARCH64_GNU_REL_BIN }}
+      - name: Upload 
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.UPLOAD_NAME }}
+          path: |
+            ${{ env.AARCH64_GNU_REL_BIN }}
+
+  linux_gnu_arm_v7:
+    name: "Build release on Linux (GNU arm-v7)"
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      UPLOAD_NAME: linux64-gnu-arm-v7
+      ARMV7_GNU_ARCH: armv7-unknown-linux-gnueabihf
+      ARMV7_GNU_DIR: target/armv7-unknown-linux-gnueabihf/release
+      BUILD_BIN: distant
+      ARMV7_GNU_REL_BIN: distant-linux64-gnu-arm-v7
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (GNU arm-v7)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ env.ARMV7_GNU_ARCH }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install linker (gcc-arm-linux-gnueabihf)
+        run: |
+          sudo apt update
+          sudo apt install gcc-arm-linux-gnueabihf
+      - name: Build binary (GNU aarch64)
+        run: |
+          cargo build --release --all-features --target ${{ env.ARMV7_GNU_ARCH }}
+          ls -l ./${{ env.ARMV7_GNU_DIR }}
+          strip ./${{ env.ARMV7_GNU_DIR }}/${{ env.BUILD_BIN }}
+          mv ./${{ env.ARMV7_GNU_DIR }}/${{ env.BUILD_BIN }} ./${{ env.ARMV7_GNU_REL_BIN }}
+          chmod +x ./${{ env.ARMV7_GNU_REL_BIN }}
+      - name: Upload 
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.UPLOAD_NAME }}
+          path: |
+            ${{ env.ARMV7_GNU_REL_BIN }}
 
   # NOTE: For musl, we only support ssh2 and not libssh for the time being due to some
   #       build issue with libssh-rs-sys not finding the symbol ENGINE_cleanup in libcrypto
@@ -172,8 +246,12 @@ jobs:
       MACOS_UNIVERSAL_BIN: distant-macos
       WIN64: win64
       WIN64_BIN: distant-win64.exe
-      LINUX64_GNU: linux64-gnu
-      LINUX64_GNU_BIN: distant-linux64-gnu
+      LINUX64_GNU_X86: linux64-gnu-x86
+      LINUX64_GNU_X86_BIN: distant-linux64-gnu-x86
+      LINUX64_GNU_AARCH64: linux64-gnu-aarch64
+      LINUX64_GNU_AARCH64_BIN: distant-linux64-gnu-aarch64
+      LINUX64_GNU_ARMV7: linux64-gnu-arm-v7
+      LINUX64_GNU_ARMV7_BIN: distant-linux64-gnu-arm-v7
       LINUX64_MUSL: linux64-musl
       LINUX64_MUSL_BIN: distant-linux64-musl
     steps:
@@ -189,11 +267,21 @@ jobs:
           cd ${{ env.WIN64 }}
           sha256sum ${{ env.WIN64_BIN }} > ${{ env.WIN64_BIN }}.sha256sum
           echo "SHA_WIN64_BIN=$(cat ${{ env.WIN64_BIN }}.sha256sum)" >> $GITHUB_ENV
-      - name: Generate Linux64 (gnu) SHA256 checksums
+      - name: Generate Linux64 (gnu x86) SHA256 checksums
         run: |
-          cd ${{ env.LINUX64_GNU }}
-          sha256sum ${{ env.LINUX64_GNU_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
-          echo "SHA_LINUX64_GNU_BIN=$(cat ${{ env.LINUX64_GNU_BIN }}.sha256sum)" >> $GITHUB_ENV
+          cd ${{ env.LINUX64_GNU_X86 }}
+          sha256sum ${{ env.LINUX64_GNU_X86_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
+          echo "SHA_LINUX64_GNU_X86_BIN=$(cat ${{ env.LINUX64_GNU_X86_BIN }}.sha256sum)" >> $GITHUB_ENV
+      - name: Generate Linux64 (gnu aarch64) SHA256 checksums
+        run: |
+          cd ${{ env.LINUX64_GNU_AARCH64 }}
+          sha256sum ${{ env.LINUX64_GNU_AARCH64_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
+          echo "SHA_LINUX64_GNU_AARCH64_BIN=$(cat ${{ env.LINUX64_GNU_AARCH64_BIN }}.sha256sum)" >> $GITHUB_ENV
+      - name: Generate Linux64 (gnu arm-v7) SHA256 checksums
+        run: |
+          cd ${{ env.LINUX64_GNU_ARMV7 }}
+          sha256sum ${{ env.LINUX64_GNU_ARMV7_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
+          echo "SHA_LINUX64_GNU_ARMV7_BIN=$(cat ${{ env.LINUX64_GNU_ARMV7_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Linux64 (musl) SHA256 checksums
         run: |
           cd ${{ env.LINUX64_MUSL }}
@@ -231,22 +319,28 @@ jobs:
           files: |
             ${{ env.MACOS }}/${{ env.MACOS_UNIVERSAL_BIN }}
             ${{ env.WIN64 }}/${{ env.WIN64_BIN }}
-            ${{ env.LINUX64_GNU }}/${{ env.LINUX64_GNU_BIN }}
+            ${{ env.LINUX64_GNU_X86 }}/${{ env.LINUX64_GNU_X86_BIN }}
+            ${{ env.LINUX64_GNU_AARCH64 }}/${{ env.LINUX64_GNU_AARCH64_BIN }}
+            ${{ env.LINUX64_GNU_ARMV7 }}/${{ env.LINUX64_GNU_ARMV7_BIN }}
             ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_BIN }}
             **/*.sha256sum
           body: |
             ## Release Notes
             ${{ steps.changelog.outputs.changes }}
             ## Binaries
-            Standalone binaries are built out for Windows (x86_64), MacOS (Intel & ARM), and Linux (x86_64).
-            - **linux64-gnu** is the x86-64 release on Linux using libc
+            Standalone binaries are built out for Windows (x86_64), MacOS (Intel & ARM), and Linux (x86_64, aarch64, armv7).
+            - **linux64-gnu-x86** is the x86-64 release on Linux using libc
+            - **linux64-gnu-aarch64** is the aarch64 release on Linux using libc
+            - **linux64-gnu-arm-v7** is the arm-v7 release on Linux using libc (for Raspberry PI)
             - **linux64-musl** is the x86-64 release on Linux using musl (static binary, no libc dependency)
-            - **macos** is a universal binary for Mac OS that supports x86-64 and aarch64 (arm) platforms
+            - **macos** is a universal binary for Mac OS that supports x86-64 and aarch64 (ARM) platforms
             - **win64** is the x86-64 release on Windows using MSVC
             ## SHA256 Checksums
             ```
             ${{ env.SHA_MACOS_BIN }}
             ${{ env.SHA_WIN64_BIN }}
-            ${{ env.SHA_LINUX64_GNU_BIN }}
+            ${{ env.SHA_LINUX64_GNU_X86_BIN }}
+            ${{ env.SHA_LINUX64_GNU_AARCH64_BIN }}
+            ${{ env.SHA_LINUX64_GNU_ARMV7_BIN }}
             ${{ env.SHA_LINUX64_MUSL_BIN }}
             ```
