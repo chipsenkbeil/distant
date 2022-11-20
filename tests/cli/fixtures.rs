@@ -84,52 +84,83 @@ impl DistantManagerCtx {
             panic!("Manager exited ({}): {:?}", status.success(), status.code());
         }
 
-        // Spawn a server and capture the credentials so we can connect to it
-        let mut server_cmd = StdCommand::new(bin_path());
-        let server_log_file = random_log_file("server");
-        server_cmd
-            .arg("server")
-            .arg("listen")
-            .arg("--log-file")
-            .arg(&server_log_file)
-            .arg("--log-level")
-            .arg("trace")
-            .arg("--shutdown")
-            .arg("lonely=60")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        eprintln!("Spawning server cmd: {server_cmd:?}");
-        let mut server = server_cmd.spawn().expect("Failed to spawn server");
-
-        // Spawn a thread to read stdout to look for credentials
-        let stdout = server.stdout.take().unwrap();
-        let stdout_thread = thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            let mut lines = String::new();
-            let mut buf = [0u8; 1024];
-            while let Ok(n) = reader.read(&mut buf) {
-                lines.push_str(&String::from_utf8_lossy(&buf[..n]));
-                if let Some(credentials) = DistantSingleKeyCredentials::find(&lines) {
-                    return credentials;
-                }
-            }
-            panic!("Failed to read line");
-        });
-
-        // Wait for thread to finish (up to 500ms)
-        let start = Instant::now();
-        while !stdout_thread.is_finished() {
-            if start.elapsed() > Duration::from_millis(500) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-
-        let mut credentials = stdout_thread.join().unwrap();
-
+        let mut server = None;
         'outer: for i in 1..=MAX_RETRY_ATTEMPTS {
             let mut err = String::new();
+
+            // Spawn a server and capture the credentials so we can connect to it
+            let mut server_cmd = StdCommand::new(bin_path());
+            let server_log_file = random_log_file("server");
+            server_cmd
+                .arg("server")
+                .arg("listen")
+                .arg("--log-file")
+                .arg(&server_log_file)
+                .arg("--log-level")
+                .arg("trace")
+                .arg("--shutdown")
+                .arg("lonely=60")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            eprintln!("Spawning server cmd: {server_cmd:?}");
+            server = match server_cmd.spawn() {
+                Ok(server) => Some(server),
+                Err(x) => {
+                    eprintln!("--- SERVER LOG ---");
+                    eprintln!(
+                        "{}",
+                        std::fs::read_to_string(server_log_file.as_path())
+                            .unwrap_or_else(|_| format!("Unable to read: {server_log_file:?}"))
+                    );
+                    eprintln!("------------------");
+                    if i == MAX_RETRY_ATTEMPTS {
+                        panic!("Failed to spawn server: {x}");
+                    } else {
+                        continue;
+                    }
+                }
+            };
+
+            // Spawn a thread to read stdout to look for credentials
+            let stdout = server.as_mut().unwrap().stdout.take().unwrap();
+            let stdout_thread = thread::spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                let mut lines = String::new();
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = reader.read(&mut buf) {
+                    lines.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if let Some(credentials) = DistantSingleKeyCredentials::find(&lines) {
+                        return credentials;
+                    }
+                }
+                panic!("Failed to read line");
+            });
+
+            // Wait for thread to finish (up to 500ms)
+            let start = Instant::now();
+            while !stdout_thread.is_finished() {
+                if start.elapsed() > Duration::from_millis(500) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+
+            let mut credentials = match stdout_thread.join() {
+                Ok(credentials) => credentials,
+                Err(x) => {
+                    if let Err(x) = server.as_mut().unwrap().kill() {
+                        eprintln!("Encountered error, but failed to kill server: {x}");
+                    }
+
+                    if i == MAX_RETRY_ATTEMPTS {
+                        panic!("Failed to retrieve credentials: {x:?}");
+                    } else {
+                        eprintln!("Failed to retrieve credentials: {x:?}");
+                        continue;
+                    }
+                }
+            };
 
             for host in vec![
                 Host::Ipv4(Ipv4Addr::LOCALHOST),
@@ -172,6 +203,10 @@ impl DistantManagerCtx {
                 err = String::from_utf8_lossy(&output.stderr).to_string();
             }
 
+            if let Err(x) = server.as_mut().unwrap().kill() {
+                eprintln!("Failed to connect, and failed to kill server: {x}");
+            }
+
             if i == MAX_RETRY_ATTEMPTS {
                 eprintln!("--- SERVER LOG ---");
                 eprintln!(
@@ -190,7 +225,7 @@ impl DistantManagerCtx {
         eprintln!("Connected! Proceeding with test...");
         Self {
             manager,
-            server,
+            server: server.unwrap(),
             socket_or_pipe,
         }
     }
