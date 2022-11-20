@@ -86,11 +86,12 @@ impl DistantManagerCtx {
 
         // Spawn a server and capture the credentials so we can connect to it
         let mut server_cmd = StdCommand::new(bin_path());
+        let server_log_file = random_log_file("server");
         server_cmd
             .arg("server")
             .arg("listen")
             .arg("--log-file")
-            .arg(random_log_file("server"))
+            .arg(&server_log_file)
             .arg("--log-level")
             .arg("trace")
             .arg("--shutdown")
@@ -135,7 +136,7 @@ impl DistantManagerCtx {
                 Host::Ipv6(Ipv6Addr::LOCALHOST),
                 Host::Name("localhost".to_string()),
             ] {
-                credentials.host = host;
+                credentials.host = host.clone();
                 // Connect manager to server
                 let mut connect_cmd = StdCommand::new(bin_path());
                 connect_cmd
@@ -161,7 +162,7 @@ impl DistantManagerCtx {
 
                 connect_cmd.arg(credentials.to_string());
 
-                eprintln!("[{i}/{MAX_RETRY_ATTEMPTS}] Spawning connect cmd: {connect_cmd:?}");
+                eprintln!("[{i}/{MAX_RETRY_ATTEMPTS}] Host: {host} | Spawning connect cmd: {connect_cmd:?}");
                 let output = connect_cmd.output().expect("Failed to connect to server");
 
                 if output.status.success() {
@@ -172,6 +173,14 @@ impl DistantManagerCtx {
             }
 
             if i == MAX_RETRY_ATTEMPTS {
+                eprintln!("--- SERVER LOG ---");
+                eprintln!(
+                    "{}",
+                    std::fs::read_to_string(server_log_file.as_path())
+                        .unwrap_or_else(|_| format!("Unable to read: {server_log_file:?}"))
+                );
+                eprintln!("------------------");
+
                 panic!("Connecting to server failed: {}", err);
             } else {
                 thread::sleep(RETRY_PAUSE_DURATION);
