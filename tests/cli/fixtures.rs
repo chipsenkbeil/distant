@@ -1,13 +1,16 @@
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
+use distant_core::{net::common::Host, DistantSingleKeyCredentials};
 use once_cell::sync::Lazy;
 use rstest::*;
+use serde_json::json;
 use std::{
-    io,
+    io::{BufReader, Read},
+    net::{Ipv4Addr, Ipv6Addr},
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod repl;
@@ -17,9 +20,8 @@ static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("dis
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
 const TIMEOUT: Duration = Duration::from_secs(3);
 
-// Number of times to retry launching a server before giving up
-const LAUNCH_RETRY_CNT: usize = 2;
-const LAUNCH_RETRY_TIMEOUT: Duration = Duration::from_millis(250);
+const MAX_RETRY_ATTEMPTS: usize = 3;
+const RETRY_PAUSE_DURATION: Duration = Duration::from_millis(250);
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
@@ -33,6 +35,7 @@ pub struct CtxCommand<T> {
 /// Context for some listening distant server
 pub struct DistantManagerCtx {
     manager: Child,
+    server: Child,
     socket_or_pipe: String,
 }
 
@@ -50,7 +53,10 @@ impl DistantManagerCtx {
             .arg("--log-file")
             .arg(random_log_file("manager"))
             .arg("--log-level")
-            .arg("trace");
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let socket_or_pipe = if cfg!(windows) {
             format!("distant_test_{}", rand::random::<usize>())
@@ -78,91 +84,152 @@ impl DistantManagerCtx {
             panic!("Manager exited ({}): {:?}", status.success(), status.code());
         }
 
-        // Spawn a server locally by launching it through the manager
-        let mut launch_cmd = StdCommand::new(bin_path());
-        launch_cmd
-            .arg("client")
-            .arg("launch")
-            .arg("--log-file")
-            .arg(random_log_file("launch"))
-            .arg("--log-level")
-            .arg("trace")
-            .arg("--distant")
-            .arg(bin_path())
-            .arg("--distant-args")
-            .arg(format!(
-                "--log-file {} --log-level trace",
-                random_log_file("server").to_string_lossy()
-            ));
+        let mut server = None;
+        'outer: for i in 1..=MAX_RETRY_ATTEMPTS {
+            let mut err = String::new();
 
-        if cfg!(windows) {
-            launch_cmd
-                .arg("--windows-pipe")
-                .arg(socket_or_pipe.as_str());
-        } else {
-            launch_cmd.arg("--unix-socket").arg(socket_or_pipe.as_str());
-        }
+            // Spawn a server and capture the credentials so we can connect to it
+            let mut server_cmd = StdCommand::new(bin_path());
+            let server_log_file = random_log_file("server");
+            server_cmd
+                .arg("server")
+                .arg("listen")
+                .arg("--log-file")
+                .arg(&server_log_file)
+                .arg("--log-level")
+                .arg("trace")
+                .arg("--shutdown")
+                .arg("lonely=60")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            eprintln!("Spawning server cmd: {server_cmd:?}");
+            server = match server_cmd.spawn() {
+                Ok(server) => Some(server),
+                Err(x) => {
+                    eprintln!("--- SERVER LOG ---");
+                    eprintln!(
+                        "{}",
+                        std::fs::read_to_string(server_log_file.as_path())
+                            .unwrap_or_else(|_| format!("Unable to read: {server_log_file:?}"))
+                    );
+                    eprintln!("------------------");
+                    if i == MAX_RETRY_ATTEMPTS {
+                        panic!("Failed to spawn server: {x}");
+                    } else {
+                        continue;
+                    }
+                }
+            };
 
-        launch_cmd.arg("manager://localhost");
+            // Spawn a thread to read stdout to look for credentials
+            let stdout = server.as_mut().unwrap().stdout.take().unwrap();
+            let stdout_thread = thread::spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                let mut lines = String::new();
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = reader.read(&mut buf) {
+                    lines.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if let Some(credentials) = DistantSingleKeyCredentials::find(&lines) {
+                        return credentials;
+                    }
+                }
+                panic!("Failed to read line");
+            });
 
-        for i in 0..=LAUNCH_RETRY_CNT {
-            eprintln!("[{i}/{LAUNCH_RETRY_CNT}] Spawning launch cmd: {launch_cmd:?}");
-            let output = launch_cmd.output().expect("Failed to launch server");
-            let success = output.status.success();
-            if success {
-                break;
+            // Wait for thread to finish (up to 500ms)
+            let start = Instant::now();
+            while !stdout_thread.is_finished() {
+                if start.elapsed() > Duration::from_millis(500) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
             }
 
-            if !success && i == LAUNCH_RETRY_CNT {
-                let _ = manager.kill();
-                panic!(
-                    "Failed to launch: {}",
+            let mut credentials = match stdout_thread.join() {
+                Ok(credentials) => credentials,
+                Err(x) => {
+                    if let Err(x) = server.as_mut().unwrap().kill() {
+                        eprintln!("Encountered error, but failed to kill server: {x}");
+                    }
+
+                    if i == MAX_RETRY_ATTEMPTS {
+                        panic!("Failed to retrieve credentials: {x:?}");
+                    } else {
+                        eprintln!("Failed to retrieve credentials: {x:?}");
+                        continue;
+                    }
+                }
+            };
+
+            for host in vec![
+                Host::Ipv4(Ipv4Addr::LOCALHOST),
+                Host::Ipv6(Ipv6Addr::LOCALHOST),
+                Host::Name("localhost".to_string()),
+            ] {
+                credentials.host = host.clone();
+                // Connect manager to server
+                let mut connect_cmd = StdCommand::new(bin_path());
+                connect_cmd
+                    .arg("client")
+                    .arg("connect")
+                    .arg("--log-file")
+                    .arg(random_log_file("connect"))
+                    .arg("--log-level")
+                    .arg("trace")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+
+                if cfg!(windows) {
+                    connect_cmd
+                        .arg("--windows-pipe")
+                        .arg(socket_or_pipe.as_str());
+                } else {
+                    connect_cmd
+                        .arg("--unix-socket")
+                        .arg(socket_or_pipe.as_str());
+                }
+
+                connect_cmd.arg(credentials.to_string());
+
+                eprintln!("[{i}/{MAX_RETRY_ATTEMPTS}] Host: {host} | Spawning connect cmd: {connect_cmd:?}");
+                let output = connect_cmd.output().expect("Failed to connect to server");
+
+                if output.status.success() {
+                    break 'outer;
+                }
+
+                err = format!(
+                    "{err}\nConnecting to host {host} failed: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
 
-            thread::sleep(LAUNCH_RETRY_TIMEOUT);
+            if let Err(x) = server.as_mut().unwrap().kill() {
+                eprintln!("Failed to connect, and failed to kill server: {x}");
+            }
+
+            if i == MAX_RETRY_ATTEMPTS {
+                eprintln!("--- SERVER LOG ---");
+                eprintln!(
+                    "{}",
+                    std::fs::read_to_string(server_log_file.as_path())
+                        .unwrap_or_else(|_| format!("Unable to read: {server_log_file:?}"))
+                );
+                eprintln!("------------------");
+
+                panic!("Connecting to server failed: {err}");
+            } else {
+                thread::sleep(RETRY_PAUSE_DURATION);
+            }
         }
 
+        eprintln!("Connected! Proceeding with test...");
         Self {
             manager,
+            server: server.unwrap(),
             socket_or_pipe,
-        }
-    }
-
-    pub fn shutdown(&self) -> io::Result<()> {
-        // Send a shutdown request to the manager
-        let mut shutdown_cmd = StdCommand::new(bin_path());
-        shutdown_cmd
-            .arg("manager")
-            .arg("shutdown")
-            .arg("--log-file")
-            .arg(random_log_file("shutdown"))
-            .arg("--log-level")
-            .arg("trace");
-
-        if cfg!(windows) {
-            shutdown_cmd
-                .arg("--windows-pipe")
-                .arg(self.socket_or_pipe.as_str());
-        } else {
-            shutdown_cmd
-                .arg("--unix-socket")
-                .arg(self.socket_or_pipe.as_str());
-        }
-
-        eprintln!("Spawning shutdown cmd: {shutdown_cmd:?}");
-        let output = shutdown_cmd.output().expect("Failed to shutdown server");
-        if !output.status.success() {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Failed to shutdown: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            ))
-        } else {
-            Ok(())
         }
     }
 
@@ -233,11 +300,10 @@ fn random_log_file(prefix: &str) -> PathBuf {
 impl Drop for DistantManagerCtx {
     /// Kills manager upon drop
     fn drop(&mut self) {
-        // Attempt to shutdown gracefully, forcing a kill otherwise
-        if self.shutdown().is_err() {
-            let _ = self.manager.kill();
-            let _ = self.manager.wait();
-        }
+        let _ = self.manager.kill();
+        let _ = self.server.kill();
+        let _ = self.manager.wait();
+        let _ = self.server.wait();
     }
 }
 
@@ -273,5 +339,38 @@ pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
         .spawn()
         .expect("Failed to start distant repl with json format");
     let cmd = Repl::new(child, TIMEOUT);
+
     CtxCommand { ctx, cmd }
+}
+
+pub async fn validate_authentication(repl: &mut Repl) {
+    // NOTE: We have to handle receiving authentication messages, as we will get
+    //       an authentication initialization of with method "none", and then
+    //       a finish authentication status before we can do anything else.
+    let json = repl
+        .read_json_from_stdout()
+        .await
+        .unwrap()
+        .expect("Missing authentication initialization");
+    assert_eq!(
+        json,
+        json!({"type": "auth_initialization", "methods": ["none"]})
+    );
+
+    let json = repl
+        .write_and_read_json(json!({
+            "type": "auth_initialization_response",
+            "methods": ["none"]
+        }))
+        .await
+        .unwrap()
+        .expect("Missing authentication method");
+    assert_eq!(json, json!({"type": "auth_start_method", "method": "none"}));
+
+    let json = repl
+        .read_json_from_stdout()
+        .await
+        .unwrap()
+        .expect("Missing authentication finalization");
+    assert_eq!(json, json!({"type": "auth_finished"}));
 }

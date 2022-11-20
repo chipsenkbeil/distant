@@ -4,7 +4,7 @@ use crate::{
     data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData},
     DistantMsg,
 };
-use distant_net::Request;
+use distant_net::common::Request;
 use log::*;
 use std::{
     fmt, io,
@@ -185,22 +185,19 @@ mod tests {
     use crate::data::ChangeKind;
     use crate::DistantClient;
     use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
-        TypedAsyncRead, TypedAsyncWrite,
+        common::{FramedTransport, InmemoryTransport, Response},
+        Client, ReconnectStrategy,
     };
     use std::sync::Arc;
+    use test_log::test;
     use tokio::sync::Mutex;
 
-    fn make_session() -> (
-        FramedTransport<InmemoryTransport, PlainCodec>,
-        DistantClient,
-    ) {
+    fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);
-        let (writer, reader) = t2.into_split();
-        (t1, Client::new(writer, reader).unwrap())
+        (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_have_path_reflect_watched_path() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -219,11 +216,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id, DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id, DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -232,7 +229,7 @@ mod tests {
         assert_eq!(watcher.path(), test_path);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_support_getting_next_change() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -251,11 +248,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -264,7 +261,7 @@ mod tests {
 
         // Send some changes related to the file
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 vec![
                     DistantResponseData::Changed(Change {
@@ -300,7 +297,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_distinguish_change_events_and_only_receive_changes_for_itself() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -319,11 +316,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -332,7 +329,7 @@ mod tests {
 
         // Send a change from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Access,
@@ -344,7 +341,7 @@ mod tests {
 
         // Send a change from a different origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone() + "1",
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Content,
@@ -356,7 +353,7 @@ mod tests {
 
         // Send a change from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Remove,
@@ -386,7 +383,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watcher_should_stop_receiving_events_if_unwatched() {
         let (mut transport, session) = make_session();
         let test_path = Path::new("/some/test/path");
@@ -405,17 +402,17 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
         // Send some changes from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 vec![
                     DistantResponseData::Changed(Change {
@@ -461,10 +458,10 @@ mod tests {
         let watcher_2 = Arc::clone(&watcher);
         let unwatch_task = tokio::spawn(async move { watcher_2.lock().await.unwatch().await });
 
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -472,7 +469,7 @@ mod tests {
         unwatch_task.await.unwrap().unwrap();
 
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::Changed(Change {
                     kind: ChangeKind::Unknown,

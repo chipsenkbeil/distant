@@ -2,10 +2,13 @@ use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create file
@@ -23,19 +26,22 @@ async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "exists",
             "value": true,
-        })
+        }),
+        "JSON: {res}"
     );
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file
@@ -52,12 +58,13 @@ async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "exists",
             "value": false,
-        })
+        }),
+        "JSON: {res}"
     );
 }

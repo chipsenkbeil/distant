@@ -24,9 +24,6 @@ pub use error::*;
 mod filesystem;
 pub use filesystem::*;
 
-mod map;
-pub use map::Map;
-
 mod metadata;
 pub use metadata::*;
 
@@ -46,7 +43,7 @@ pub(crate) use utils::*;
 pub type ProcessId = u32;
 
 /// Mapping of environment variables
-pub type Environment = Map;
+pub type Environment = distant_net::common::Map;
 
 /// Type alias for a vec of bytes
 ///

@@ -2,7 +2,7 @@
 name = "distant-ssh2"
 description = "Library to enable native ssh-2 protocol for use with distant sessions"
 categories = ["network-programming"]
-version = "0.19.0"
+version = "0.20.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -20,7 +20,7 @@ async-compat = "0.2.1"
 async-once-cell = "0.4.2"
 async-trait = "0.1.57"
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
-distant-core = { version = "=0.19.0", path = "../distant-core" }
+distant-core = { version = "=0.20.0", path = "../distant-core" }
 futures = "0.3.21"
 hex = "0.4.3"
 log = "0.4.17"
@@ -40,10 +40,11 @@ serde = { version = "1.0.142", features = ["derive"], optional = true }
 anyhow = "1.0.60"
 assert_fs = "1.0.7"
 dunce = "1.0.2"
-flexi_logger = "0.23.0"
+env_logger = "0.9.1"
 indoc = "1.0.7"
 once_cell = "1.13.0"
 predicates = "2.1.1"
 rstest = "0.15.0"
+test-log = "0.2.11"
 which = "4.2.5"
 whoami = "1.2.1"

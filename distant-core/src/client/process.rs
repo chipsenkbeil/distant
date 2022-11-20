@@ -4,7 +4,10 @@ use crate::{
     data::{Cmd, DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize},
     DistantMsg,
 };
-use distant_net::{Mailbox, Request, Response};
+use distant_net::{
+    client::Mailbox,
+    common::{Request, Response},
+};
 use log::*;
 use std::{path::PathBuf, sync::Arc};
 use tokio::{
@@ -609,21 +612,18 @@ mod tests {
         data::{Error, ErrorKind},
     };
     use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
-        TypedAsyncRead, TypedAsyncWrite,
+        common::{FramedTransport, InmemoryTransport, Response},
+        Client, ReconnectStrategy,
     };
     use std::time::Duration;
+    use test_log::test;
 
-    fn make_session() -> (
-        FramedTransport<InmemoryTransport, PlainCodec>,
-        DistantClient,
-    ) {
+    fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);
-        let (writer, reader) = t2.into_split();
-        (t1, Client::new(writer, reader).unwrap())
+        (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn spawn_should_return_invalid_data_if_received_batch_response() {
         let (mut transport, session) = make_session();
 
@@ -636,11 +636,12 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Batch(vec![DistantResponseData::ProcSpawned { id: 1 }]),
             ))
@@ -654,7 +655,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn spawn_should_return_invalid_data_if_did_not_get_a_indicator_that_process_started() {
         let (mut transport, session) = make_session();
 
@@ -667,11 +668,12 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::Error(Error {
                     kind: ErrorKind::BrokenPipe,
@@ -688,7 +690,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn kill_should_return_error_if_internal_tasks_already_completed() {
         let (mut transport, session) = make_session();
 
@@ -701,12 +703,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -726,7 +729,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn kill_should_send_proc_kill_request_and_then_cause_stdin_forwarding_to_close() {
         let (mut transport, session) = make_session();
 
@@ -739,12 +742,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -756,7 +760,8 @@ mod tests {
         assert!(proc.kill().await.is_ok(), "Failed to send kill request");
 
         // Verify the kill request was sent
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantMsg::Single(DistantRequestData::ProcKill { id: proc_id }) => {
                 assert_eq!(proc_id, id)
@@ -777,7 +782,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_should_be_forwarded_from_receiver_field() {
         let (mut transport, session) = make_session();
 
@@ -790,12 +795,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -812,7 +818,8 @@ mod tests {
             .unwrap();
 
         // Verify that a request is made through the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantMsg::Single(DistantRequestData::ProcStdin { id, data }) => {
                 assert_eq!(id, 12345);
@@ -822,7 +829,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_should_be_forwarded_to_receiver_field() {
         let (mut transport, session) = make_session();
 
@@ -835,12 +842,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -851,7 +859,7 @@ mod tests {
         let mut proc = spawn_task.await.unwrap().unwrap();
 
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcStdout {
                     id,
@@ -865,7 +873,7 @@ mod tests {
         assert_eq!(out, b"some out");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_should_be_forwarded_to_receiver_field() {
         let (mut transport, session) = make_session();
 
@@ -878,12 +886,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -894,7 +903,7 @@ mod tests {
         let mut proc = spawn_task.await.unwrap().unwrap();
 
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcStderr {
                     id,
@@ -908,7 +917,7 @@ mod tests {
         assert_eq!(out, b"some err");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn status_should_return_none_if_not_done() {
         let (mut transport, session) = make_session();
 
@@ -921,12 +930,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -940,7 +950,7 @@ mod tests {
         assert_eq!(result, None, "Unexpectedly got proc status: {:?}", result);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn status_should_return_false_for_success_if_internal_tasks_fail() {
         let (mut transport, session) = make_session();
 
@@ -953,12 +963,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -986,7 +997,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn status_should_return_process_status_when_done() {
         let (mut transport, session) = make_session();
 
@@ -999,12 +1010,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -1016,7 +1028,7 @@ mod tests {
 
         // Send a process completion response to pass along exit status and conclude wait
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcDone {
                     id,
@@ -1040,7 +1052,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn wait_should_return_error_if_internal_tasks_fail() {
         let (mut transport, session) = make_session();
 
@@ -1053,12 +1065,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -1075,7 +1088,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn wait_should_return_error_if_connection_terminates_before_receiving_done_response() {
         let (mut transport, session) = make_session();
 
@@ -1088,12 +1101,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -1117,7 +1131,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn receiving_done_response_should_result_in_wait_returning_exit_information() {
         let (mut transport, session) = make_session();
 
@@ -1130,12 +1144,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -1148,7 +1163,7 @@ mod tests {
 
         // Send a process completion response to pass along exit status and conclude wait
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcDone {
                     id,
@@ -1169,7 +1184,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn receiving_done_response_should_result_in_output_returning_exit_information() {
         let (mut transport, session) = make_session();
 
@@ -1182,12 +1197,13 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantMsg<DistantRequestData>> =
+            transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         let id = 12345;
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
             ))
@@ -1200,7 +1216,7 @@ mod tests {
 
         // Send some stdout
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcStdout {
                     id,
@@ -1212,7 +1228,7 @@ mod tests {
 
         // Send some stderr
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantMsg::Single(DistantResponseData::ProcStderr {
                     id,
@@ -1224,7 +1240,7 @@ mod tests {
 
         // Send a process completion response to pass along exit status and conclude wait
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantMsg::Single(DistantResponseData::ProcDone {
                     id,

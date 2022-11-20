@@ -1,6 +1,6 @@
 use crate::{
     cli::{
-        client::{MsgReceiver, MsgSender},
+        client::{JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler},
         Cache, Client,
     },
     config::{
@@ -15,9 +15,9 @@ use clap::{Subcommand, ValueHint};
 use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
     data::{ChangeKindSet, Environment},
-    net::{IntoSplit, Request, Response, TypedAsyncRead, TypedAsyncWrite},
-    ConnectionId, Destination, DistantManagerClient, DistantMsg, DistantRequestData,
-    DistantResponseData, Host, Map, RemoteCommand, Searcher, Watcher,
+    net::common::{ConnectionId, Destination, Host, Map, Request, Response},
+    net::manager::ManagerClient,
+    DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher, Watcher,
 };
 use log::*;
 use serde_json::{json, Value};
@@ -26,6 +26,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::sync::mpsc;
 
 mod buf;
 mod format;
@@ -39,6 +40,8 @@ use format::Formatter;
 use link::RemoteProcessLink;
 use lsp::Lsp;
 use shell::Shell;
+
+const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 #[derive(Debug, Subcommand)]
 pub enum ClientSubcommand {
@@ -257,6 +260,7 @@ impl ClientSubcommand {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
                 let mut client = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?;
@@ -265,9 +269,12 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let mut channel = client.open_channel(connection_id).await.with_context(|| {
-                    format!("Failed to open channel to connection {connection_id}")
-                })?;
+                let channel = client
+                    .open_raw_channel(connection_id)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to open channel to connection {connection_id}")
+                    })?;
 
                 let timeout = action_config.timeout.or(config.action.timeout);
 
@@ -296,7 +303,7 @@ impl ClientSubcommand {
                             .current_dir(current_dir)
                             .persist(persist)
                             .pty(pty)
-                            .spawn(channel, cmd.as_str())
+                            .spawn(channel.into_client().into_channel(), cmd.as_str())
                             .await
                             .with_context(|| format!("Failed to spawn {cmd}"))?;
 
@@ -322,9 +329,10 @@ impl ClientSubcommand {
                     }
                     DistantRequestData::Search { query } => {
                         debug!("Special request creating searcher for {:?}", query);
-                        let mut searcher = Searcher::search(channel, query)
-                            .await
-                            .context("Failed to start search")?;
+                        let mut searcher =
+                            Searcher::search(channel.into_client().into_channel(), query)
+                                .await
+                                .context("Failed to start search")?;
 
                         // Continue to receive and process matches
                         while let Some(m) = searcher.next().await {
@@ -348,7 +356,7 @@ impl ClientSubcommand {
                     } => {
                         debug!("Special request creating watcher for {:?}", path);
                         let mut watcher = Watcher::watch(
-                            channel,
+                            channel.into_client().into_channel(),
                             path.as_path(),
                             recursive,
                             only.into_iter().collect::<ChangeKindSet>(),
@@ -370,6 +378,8 @@ impl ClientSubcommand {
                     }
                     request => {
                         let response = channel
+                            .into_client()
+                            .into_channel()
                             .send_timeout(
                                 DistantMsg::Single(request),
                                 timeout
@@ -409,15 +419,17 @@ impl ClientSubcommand {
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
-                let mut client = {
-                    let client = match format {
-                        Format::Shell => Client::new(network),
-                        Format::Json => Client::new(network).using_msg_stdin_stdout(),
-                    };
-                    client
+                let mut client = match format {
+                    Format::Shell => Client::new(network)
+                        .using_prompt_auth_handler()
                         .connect()
                         .await
-                        .context("Failed to connect to manager")?
+                        .context("Failed to connect to manager")?,
+                    Format::Json => Client::new(network)
+                        .using_json_auth_handler()
+                        .connect()
+                        .await
+                        .context("Failed to connect to manager")?,
                 };
 
                 // Merge our connect configs, overwriting anything in the config file with our cli
@@ -427,10 +439,16 @@ impl ClientSubcommand {
 
                 // Trigger our manager to connect to the launched server
                 debug!("Connecting to server at {} with {}", destination, options);
-                let id = client
-                    .connect(*destination, options)
-                    .await
-                    .context("Failed to connect to server")?;
+                let id = match format {
+                    Format::Shell => client
+                        .connect(*destination, options, PromptAuthHandler::new())
+                        .await
+                        .context("Failed to connect to server")?,
+                    Format::Json => client
+                        .connect(*destination, options, JsonAuthHandler::default())
+                        .await
+                        .context("Failed to connect to server")?,
+                };
 
                 // Mark the server's id as the new default
                 debug!("Updating selected connection id in cache to {}", id);
@@ -458,15 +476,17 @@ impl ClientSubcommand {
             } => {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
-                let mut client = {
-                    let client = match format {
-                        Format::Shell => Client::new(network),
-                        Format::Json => Client::new(network).using_msg_stdin_stdout(),
-                    };
-                    client
+                let mut client = match format {
+                    Format::Shell => Client::new(network)
+                        .using_prompt_auth_handler()
                         .connect()
                         .await
-                        .context("Failed to connect to manager")?
+                        .context("Failed to connect to manager")?,
+                    Format::Json => Client::new(network)
+                        .using_json_auth_handler()
+                        .connect()
+                        .await
+                        .context("Failed to connect to manager")?,
                 };
 
                 // Merge our launch configs, overwriting anything in the config file
@@ -488,10 +508,16 @@ impl ClientSubcommand {
 
                 // Start the server using our manager
                 debug!("Launching server at {} with {}", destination, options);
-                let mut new_destination = client
-                    .launch(*destination, options)
-                    .await
-                    .context("Failed to launch server")?;
+                let mut new_destination = match format {
+                    Format::Shell => client
+                        .launch(*destination, options, PromptAuthHandler::new())
+                        .await
+                        .context("Failed to launch server")?,
+                    Format::Json => client
+                        .launch(*destination, options, JsonAuthHandler::default())
+                        .await
+                        .context("Failed to launch server")?,
+                };
 
                 // Update the new destination with our previously-used host if the
                 // new host is not globally-accessible
@@ -511,10 +537,16 @@ impl ClientSubcommand {
 
                 // Trigger our manager to connect to the launched server
                 debug!("Connecting to server at {}", new_destination);
-                let id = client
-                    .connect(new_destination, Map::new())
-                    .await
-                    .context("Failed to connect to server")?;
+                let id = match format {
+                    Format::Shell => client
+                        .connect(new_destination, Map::new(), PromptAuthHandler::new())
+                        .await
+                        .context("Failed to connect to server")?,
+                    Format::Json => client
+                        .connect(new_destination, Map::new(), JsonAuthHandler::default())
+                        .await
+                        .context("Failed to connect to server")?,
+                };
 
                 // Mark the server's id as the new default
                 debug!("Updating selected connection id in cache to {}", id);
@@ -544,6 +576,7 @@ impl ClientSubcommand {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
                 let mut client = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?;
@@ -552,15 +585,20 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let channel = client.open_channel(connection_id).await.with_context(|| {
-                    format!("Failed to open channel to connection {connection_id}")
-                })?;
+                let channel = client
+                    .open_raw_channel(connection_id)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to open channel to connection {connection_id}")
+                    })?;
 
                 debug!(
                     "Spawning LSP server (persist = {}, pty = {}): {}",
                     persist, pty, cmd
                 );
-                Lsp::new(channel).spawn(cmd, persist, pty).await?;
+                Lsp::new(channel.into_client().into_channel())
+                    .spawn(cmd, persist, pty)
+                    .await?;
             }
             Self::Repl {
                 config: repl_config,
@@ -569,10 +607,17 @@ impl ClientSubcommand {
                 format,
                 ..
             } => {
+                // TODO: Support shell format?
+                if !format.is_json() {
+                    return Err(CliError::Error(anyhow::anyhow!(
+                        "Only JSON format is supported"
+                    )));
+                }
+
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
                 let mut client = Client::new(network)
-                    .using_msg_stdin_stdout()
+                    .using_json_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?;
@@ -583,12 +628,13 @@ impl ClientSubcommand {
                 let timeout = repl_config.timeout.or(config.repl.timeout);
 
                 debug!("Opening raw channel to connection {}", connection_id);
-                let channel = client
-                    .open_raw_channel(connection_id)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to open raw channel to connection {connection_id}")
-                    })?;
+                let mut channel =
+                    client
+                        .open_raw_channel(connection_id)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to open raw channel to connection {connection_id}")
+                        })?;
 
                 debug!(
                     "Timeout configured to be {}",
@@ -598,32 +644,18 @@ impl ClientSubcommand {
                     }
                 );
 
-                // TODO: Support shell format?
-                if !format.is_json() {
-                    return Err(CliError::Error(anyhow::anyhow!(
-                        "Only JSON format is supported"
-                    )));
-                }
-
                 debug!("Starting repl using format {:?}", format);
-                let (mut writer, mut reader) = channel.transport.into_split();
-                let response_task = tokio::task::spawn(async move {
-                    let tx = MsgSender::from_stdout();
-                    while let Some(response) = reader.read().await? {
-                        debug!("Received response {:?}", response);
-                        tx.send_blocking(&response)?;
-                    }
-                    io::Result::Ok(())
-                });
-
+                let (msg_tx, mut msg_rx) = mpsc::channel(1);
                 let request_task = tokio::spawn(async move {
                     let mut rx = MsgReceiver::from_stdin()
                         .into_rx::<Request<DistantMsg<DistantRequestData>>>();
                     loop {
                         match rx.recv().await {
                             Some(Ok(request)) => {
-                                debug!("Sending request {:?}", request);
-                                writer.write(request).await?;
+                                if let Err(x) = msg_tx.send(request).await {
+                                    error!("Failed to forward request: {x}");
+                                    break;
+                                }
                             }
                             Some(Err(x)) => error!("{}", x),
                             None => {
@@ -634,8 +666,62 @@ impl ClientSubcommand {
                     }
                     io::Result::Ok(())
                 });
+                let channel_task = tokio::task::spawn(async move {
+                    let tx = MsgSender::from_stdout();
 
-                let (r1, r2) = tokio::join!(request_task, response_task);
+                    loop {
+                        let ready = channel.readable_or_writeable().await?;
+
+                        // Keep track of whether we read or wrote anything
+                        let mut read_blocked = !ready.is_readable();
+                        let mut write_blocked = !ready.is_writable();
+
+                        if ready.is_readable() {
+                            match channel
+                                .try_read_frame_as::<Response<DistantMsg<DistantResponseData>>>()
+                            {
+                                Ok(Some(msg)) => tx.send_blocking(&msg)?,
+                                Ok(None) => break,
+                                Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                    read_blocked = true;
+                                }
+                                Err(x) => return Err(x),
+                            }
+                        }
+
+                        if ready.is_writable() {
+                            if let Ok(msg) = msg_rx.try_recv() {
+                                match channel.try_write_frame_for(&msg) {
+                                    Ok(_) => (),
+                                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                        write_blocked = true
+                                    }
+                                    Err(x) => return Err(x),
+                                }
+                            } else {
+                                match channel.try_flush() {
+                                    Ok(0) => write_blocked = true,
+                                    Ok(_) => (),
+                                    Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
+                                        write_blocked = true
+                                    }
+                                    Err(x) => {
+                                        error!("Failed to flush outgoing data: {x}");
+                                    }
+                                }
+                            }
+                        }
+
+                        // If we did not read or write anything, sleep a bit to offload CPU usage
+                        if read_blocked && write_blocked {
+                            tokio::time::sleep(SLEEP_DURATION).await;
+                        }
+                    }
+
+                    io::Result::Ok(())
+                });
+
+                let (r1, r2) = tokio::join!(request_task, channel_task);
                 match r1 {
                     Err(x) => error!("{}", x),
                     Ok(Err(x)) => error!("{}", x),
@@ -662,10 +748,18 @@ impl ClientSubcommand {
                 None => {
                     let network = network.merge(config.network);
                     debug!("Connecting to manager");
-                    let mut client = Client::new(network)
-                        .connect()
-                        .await
-                        .context("Failed to connect to manager")?;
+                    let mut client = match format {
+                        Format::Json => Client::new(network)
+                            .using_json_auth_handler()
+                            .connect()
+                            .await
+                            .context("Failed to connect to manager")?,
+                        Format::Shell => Client::new(network)
+                            .using_prompt_auth_handler()
+                            .connect()
+                            .await
+                            .context("Failed to connect to manager")?,
+                    };
                     let list = client
                         .list()
                         .await
@@ -782,6 +876,7 @@ impl ClientSubcommand {
                 let network = network.merge(config.network);
                 debug!("Connecting to manager");
                 let mut client = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?;
@@ -790,9 +885,12 @@ impl ClientSubcommand {
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
                 debug!("Opening channel to connection {}", connection_id);
-                let channel = client.open_channel(connection_id).await.with_context(|| {
-                    format!("Failed to open channel to connection {connection_id}")
-                })?;
+                let channel = client
+                    .open_raw_channel(connection_id)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to open channel to connection {connection_id}")
+                    })?;
 
                 debug!(
                     "Spawning shell (environment = {:?}, persist = {}): {}",
@@ -800,7 +898,9 @@ impl ClientSubcommand {
                     persist,
                     cmd.as_deref().unwrap_or(r"$SHELL")
                 );
-                Shell::new(channel).spawn(cmd, environment, persist).await?;
+                Shell::new(channel.into_client().into_channel())
+                    .spawn(cmd, environment, persist)
+                    .await?;
             }
         }
 
@@ -811,7 +911,7 @@ impl ClientSubcommand {
 async fn use_or_lookup_connection_id(
     cache: &mut Cache,
     connection: Option<ConnectionId>,
-    client: &mut DistantManagerClient,
+    client: &mut ManagerClient,
 ) -> anyhow::Result<ConnectionId> {
     match connection {
         Some(id) => {

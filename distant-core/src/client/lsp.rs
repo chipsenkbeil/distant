@@ -411,33 +411,33 @@ mod tests {
     use super::*;
     use crate::data::{DistantRequestData, DistantResponseData};
     use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Request, Response,
-        TypedAsyncRead, TypedAsyncWrite,
+        common::{FramedTransport, InmemoryTransport, Request, Response},
+        Client, ReconnectStrategy,
     };
     use std::{future::Future, time::Duration};
+    use test_log::test;
 
     /// Timeout used with timeout function
     const TIMEOUT: Duration = Duration::from_millis(50);
 
     // Configures an lsp process with a means to send & receive data from outside
-    async fn spawn_lsp_process() -> (
-        FramedTransport<InmemoryTransport, PlainCodec>,
-        RemoteLspProcess,
-    ) {
+    async fn spawn_lsp_process() -> (FramedTransport<InmemoryTransport>, RemoteLspProcess) {
         let (mut t1, t2) = FramedTransport::pair(100);
-        let (writer, reader) = t2.into_split();
-        let session = Client::new(writer, reader).unwrap();
-        let spawn_task = tokio::spawn(async move {
-            RemoteLspCommand::new()
-                .spawn(session.clone_channel(), String::from("cmd arg"))
-                .await
+        let client = Client::spawn_inmemory(t2, ReconnectStrategy::Fail);
+        let spawn_task = tokio::spawn({
+            let channel = client.clone_channel();
+            async move {
+                RemoteLspCommand::new()
+                    .spawn(channel, String::from("cmd arg"))
+                    .await
+            }
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = t1.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = t1.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
-        t1.write(Response::new(
+        t1.write_frame_for(&Response::new(
             req.id,
             DistantResponseData::ProcSpawned { id: rand::random() },
         ))
@@ -471,7 +471,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_only_send_out_complete_lsp_messages() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -486,7 +486,7 @@ mod tests {
             .unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
@@ -501,7 +501,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_support_buffering_output_until_a_complete_lsp_message_is_composed()
     {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -520,7 +520,7 @@ mod tests {
         tokio::task::yield_now().await;
         let result = timeout(
             TIMEOUT,
-            TypedAsyncRead::<Request<DistantRequestData>>::read(&mut transport),
+            transport.read_frame_as::<Request<DistantRequestData>>(),
         )
         .await;
         assert!(result.is_err(), "Unexpectedly got data: {:?}", result);
@@ -529,7 +529,7 @@ mod tests {
         proc.stdin.as_mut().unwrap().write(msg_b).await.unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
@@ -544,7 +544,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_only_consume_a_complete_lsp_message_even_if_more_is_written() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -564,7 +564,7 @@ mod tests {
             .unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
@@ -586,7 +586,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_support_sending_out_multiple_lsp_messages_if_all_received_at_once()
     {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -613,7 +613,7 @@ mod tests {
             .unwrap();
 
         // Validate that the first outgoing req is a complete LSP message matching first
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
@@ -628,7 +628,7 @@ mod tests {
         }
 
         // Validate that the second outgoing req is a complete LSP message matching second
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantRequestData::ProcStdin { data, .. } => {
                 assert_eq!(
@@ -643,7 +643,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdin_write_should_convert_content_with_distant_scheme_to_file_scheme() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -658,7 +658,7 @@ mod tests {
             .unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             DistantRequestData::ProcStdin { data, .. } => {
                 // Verify the contents AND headers are as expected; in this case,
@@ -676,13 +676,13 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_yield_lsp_messages_as_strings() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
         // Send complete LSP message as stdout to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -706,7 +706,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_only_yield_complete_lsp_messages() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -718,7 +718,7 @@ mod tests {
 
         // Send half of LSP message over stdout
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -736,7 +736,7 @@ mod tests {
 
         // Send other half of LSP message over stdout
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -757,7 +757,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_only_consume_a_complete_lsp_message_even_if_more_output_is_available(
     ) {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -770,7 +770,7 @@ mod tests {
 
         // Send complete LSP message as stdout to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -798,7 +798,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_support_yielding_multiple_lsp_messages_if_all_received_at_once() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -813,7 +813,7 @@ mod tests {
 
         // Send complete LSP message as stdout to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -849,13 +849,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stdout_read_should_convert_content_with_file_scheme_to_distant_scheme() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
         // Send complete LSP message as stdout to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStdout {
                     id: proc.id(),
@@ -879,13 +879,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_yield_lsp_messages_as_strings() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
         // Send complete LSP message as stderr to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -909,7 +909,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_only_yield_complete_lsp_messages() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -921,7 +921,7 @@ mod tests {
 
         // Send half of LSP message over stderr
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -939,7 +939,7 @@ mod tests {
 
         // Send other half of LSP message over stderr
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -960,7 +960,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_only_consume_a_complete_lsp_message_even_if_more_errput_is_available(
     ) {
         let (mut transport, mut proc) = spawn_lsp_process().await;
@@ -973,7 +973,7 @@ mod tests {
 
         // Send complete LSP message as stderr to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -1001,7 +1001,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_support_yielding_multiple_lsp_messages_if_all_received_at_once() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
@@ -1016,7 +1016,7 @@ mod tests {
 
         // Send complete LSP message as stderr to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),
@@ -1052,13 +1052,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn stderr_read_should_convert_content_with_file_scheme_to_distant_scheme() {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
         // Send complete LSP message as stderr to process
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
                 DistantResponseData::ProcStderr {
                     id: proc.id(),

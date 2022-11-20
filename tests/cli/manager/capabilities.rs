@@ -6,6 +6,8 @@ const EXPECTED_TABLE: &str = indoc! {"
 +---------------+--------------------------------------------------------------+
 | kind          | description                                                  |
 +---------------+--------------------------------------------------------------+
+| authenticate  | Supports authenticating with a remote server                 |
++---------------+--------------------------------------------------------------+
 | capabilities  | Supports retrieving capabilities                             |
 +---------------+--------------------------------------------------------------+
 | channel       | Supports sending data through a channel with a remote server |
@@ -18,17 +20,16 @@ const EXPECTED_TABLE: &str = indoc! {"
 +---------------+--------------------------------------------------------------+
 | kill          | Supports killing a remote connection                         |
 +---------------+--------------------------------------------------------------+
-| launch        | Supports launching distant on remote servers                 |
+| launch        | Supports launching a server on remote machines               |
 +---------------+--------------------------------------------------------------+
 | list          | Supports retrieving a list of managed connections            |
 +---------------+--------------------------------------------------------------+
 | open_channel  | Supports opening a channel with a remote server              |
 +---------------+--------------------------------------------------------------+
-| shutdown      | Supports being shut down on demand                           |
-+---------------+--------------------------------------------------------------+
 "};
 
 #[rstest]
+#[test_log::test]
 fn should_output_capabilities(ctx: DistantManagerCtx) {
     // distant action capabilities
     ctx.new_assert_cmd(vec!["manager", "capabilities"])

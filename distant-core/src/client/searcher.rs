@@ -4,7 +4,7 @@ use crate::{
     data::{DistantRequestData, DistantResponseData, SearchId, SearchQuery, SearchQueryMatch},
     DistantMsg,
 };
-use distant_net::Request;
+use distant_net::common::Request;
 use log::*;
 use std::{fmt, io};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -197,22 +197,19 @@ mod tests {
     };
     use crate::DistantClient;
     use distant_net::{
-        Client, FramedTransport, InmemoryTransport, IntoSplit, PlainCodec, Response,
-        TypedAsyncRead, TypedAsyncWrite,
+        common::{FramedTransport, InmemoryTransport, Response},
+        Client, ReconnectStrategy,
     };
     use std::{path::PathBuf, sync::Arc};
+    use test_log::test;
     use tokio::sync::Mutex;
 
-    fn make_session() -> (
-        FramedTransport<InmemoryTransport, PlainCodec>,
-        DistantClient,
-    ) {
+    fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);
-        let (writer, reader) = t2.into_split();
-        (t1, Client::new(writer, reader).unwrap())
+        (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_have_query_reflect_ongoing_query() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
@@ -232,11 +229,11 @@ mod tests {
         };
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a search was started
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::SearchStarted { id: rand::random() },
             ))
@@ -248,7 +245,7 @@ mod tests {
         assert_eq!(searcher.query(), &test_query);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_support_getting_next_match() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
@@ -268,12 +265,12 @@ mod tests {
             );
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a searcher was created
         let id = rand::random::<SearchId>();
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantResponseData::SearchStarted { id },
             ))
@@ -285,7 +282,7 @@ mod tests {
 
         // Send some matches related to the file
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 vec![
                     DistantResponseData::SearchResults {
@@ -366,7 +363,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_distinguish_match_events_and_only_receive_matches_for_itself() {
         let (mut transport, session) = make_session();
 
@@ -387,12 +384,12 @@ mod tests {
             );
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a searcher was created
         let id = rand::random();
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantResponseData::SearchStarted { id },
             ))
@@ -404,7 +401,7 @@ mod tests {
 
         // Send a match from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantResponseData::SearchResults {
                     id,
@@ -423,7 +420,7 @@ mod tests {
 
         // Send a chanmatchge from a different origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone() + "1",
                 DistantResponseData::SearchResults {
                     id,
@@ -442,7 +439,7 @@ mod tests {
 
         // Send a chanmatchge from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::SearchResults {
                     id,
@@ -487,7 +484,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn searcher_should_stop_receiving_events_if_cancelled() {
         let (mut transport, session) = make_session();
 
@@ -508,12 +505,12 @@ mod tests {
             );
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         let id = rand::random::<SearchId>();
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id.clone(),
                 DistantResponseData::SearchStarted { id },
             ))
@@ -522,7 +519,7 @@ mod tests {
 
         // Send some matches from the appropriate origin
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::SearchResults {
                     id,
@@ -579,10 +576,10 @@ mod tests {
         let searcher_2 = Arc::clone(&searcher);
         let cancel_task = tokio::spawn(async move { searcher_2.lock().await.cancel().await });
 
-        let req: Request<DistantRequestData> = transport.read().await.unwrap().unwrap();
+        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
 
         transport
-            .write(Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
             .await
             .unwrap();
 
@@ -591,7 +588,7 @@ mod tests {
 
         // Send a match that will get ignored
         transport
-            .write(Response::new(
+            .write_frame_for(&Response::new(
                 req.id,
                 DistantResponseData::SearchResults {
                     id,

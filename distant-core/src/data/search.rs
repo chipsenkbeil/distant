@@ -391,6 +391,7 @@ mod tests {
 
     mod search_query_condition {
         use super::*;
+        use test_log::test;
 
         #[test]
         fn to_regex_string_should_convert_to_appropriate_regex_and_escape_as_needed() {

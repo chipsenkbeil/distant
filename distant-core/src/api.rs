@@ -3,10 +3,11 @@ use crate::{
         Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize,
         SearchId, SearchQuery, SystemInfo,
     },
-    ConnectionId, DistantMsg, DistantRequestData, DistantResponseData,
+    DistantMsg, DistantRequestData, DistantResponseData,
 };
 use async_trait::async_trait;
-use distant_net::{Reply, Server, ServerConfig, ServerCtx};
+use distant_net::common::ConnectionId;
+use distant_net::server::{ConnectionCtx, Reply, ServerCtx, ServerHandler};
 use log::*;
 use std::{io, path::PathBuf, sync::Arc};
 
@@ -23,15 +24,15 @@ pub struct DistantCtx<T> {
     pub local_data: Arc<T>,
 }
 
-/// Represents a server that leverages an API compliant with `distant`
-pub struct DistantApiServer<T, D>
+/// Represents a [`ServerHandler`] that leverages an API compliant with `distant`
+pub struct DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D>,
 {
     api: T,
 }
 
-impl<T, D> DistantApiServer<T, D>
+impl<T, D> DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D>,
 {
@@ -40,11 +41,11 @@ where
     }
 }
 
-impl DistantApiServer<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
+impl DistantApiServerHandler<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
     /// Creates a new server using the [`LocalDistantApi`] implementation
-    pub fn local(config: ServerConfig) -> io::Result<Self> {
+    pub fn local() -> io::Result<Self> {
         Ok(Self {
-            api: LocalDistantApi::initialize(config)?,
+            api: LocalDistantApi::initialize()?,
         })
     }
 }
@@ -63,15 +64,12 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 pub trait DistantApi {
     type LocalData: Send + Sync;
 
-    /// Returns config associated with API server
-    fn config(&self) -> ServerConfig {
-        ServerConfig::default()
-    }
-
     /// Invoked whenever a new connection is established, providing a mutable reference to the
     /// newly-created local data. This is a way to support modifying local data before it is used.
     #[allow(unused_variables)]
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {}
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        Ok(())
+    }
 
     /// Retrieves information about the server's capabilities.
     ///
@@ -420,7 +418,7 @@ pub trait DistantApi {
 }
 
 #[async_trait]
-impl<T, D> Server for DistantApiServer<T, D>
+impl<T, D> ServerHandler for DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D> + Send + Sync,
     D: Send + Sync,
@@ -429,14 +427,9 @@ where
     type Response = DistantMsg<DistantResponseData>;
     type LocalData = D;
 
-    /// Overridden to leverage [`DistantApi`] implementation of `config`
-    fn config(&self) -> ServerConfig {
-        T::config(&self.api)
-    }
-
     /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        T::on_accept(&self.api, local_data).await
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        T::on_accept(&self.api, ctx).await
     }
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
@@ -518,7 +511,7 @@ where
 
 /// Processes an incoming request
 async fn handle_request<T, D>(
-    server: &DistantApiServer<T, D>,
+    server: &DistantApiServerHandler<T, D>,
     ctx: DistantCtx<D>,
     request: DistantRequestData,
 ) -> DistantResponseData

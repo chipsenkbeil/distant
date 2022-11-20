@@ -15,6 +15,7 @@ file contents
 "#;
 
 #[rstest]
+#[test_log::test]
 fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -22,7 +23,7 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 
     // distant action file-append-text {path} -- {contents}
     action_cmd
-        .args(&[
+        .args([
             "file-append-text",
             file.to_str().unwrap(),
             "--",
@@ -41,13 +42,14 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-dir").child("missing-file");
 
     // distant action file-append-text {path} -- {contents}
     action_cmd
-        .args(&[
+        .args([
             "file-append-text",
             file.to_str().unwrap(),
             "--",

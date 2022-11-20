@@ -4,6 +4,7 @@ use rstest::*;
 use std::env;
 
 #[rstest]
+#[test_log::test]
 fn should_output_system_info(mut action_cmd: CtxCommand<Command>) {
     // distant action system-info
     action_cmd

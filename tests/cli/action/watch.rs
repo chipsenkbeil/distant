@@ -16,6 +16,7 @@ fn wait_millis(millis: u64) {
 }
 
 #[rstest]
+#[test_log::test]
 fn should_support_watching_a_single_file(mut action_std_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
@@ -23,7 +24,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: CtxCommand<Command>
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&["watch", file.to_str().unwrap()])
+        .args(["watch", file.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -66,6 +67,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: CtxCommand<Command>
 }
 
 #[rstest]
+#[test_log::test]
 fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -77,7 +79,7 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxComman
 
     // distant action watch {path}
     let mut child = action_std_cmd
-        .args(&["watch", "--recursive", temp.to_str().unwrap()])
+        .args(["watch", "--recursive", temp.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -120,13 +122,14 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxComman
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_std_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let invalid_path = temp.to_path_buf().join("missing");
 
     // distant action watch {path}
     let child = action_std_cmd
-        .args(&["watch", invalid_path.to_str().unwrap()])
+        .args(["watch", invalid_path.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 

@@ -4,7 +4,7 @@ use distant_core::{
         ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
         SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SystemInfo,
     },
-    net::Response,
+    net::common::Response,
 };
 use log::*;
 use std::{

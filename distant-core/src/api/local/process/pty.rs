@@ -3,7 +3,7 @@ use super::{
     ProcessPty, PtySize, WaitRx,
 };
 use crate::{
-    constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS},
+    constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION},
     data::Environment,
 };
 use log::*;
@@ -150,8 +150,7 @@ impl PtyProcess {
                         break;
                     }
                     _ => {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS))
-                            .await;
+                        tokio::time::sleep(READ_PAUSE_DURATION).await;
                         continue;
                     }
                 }

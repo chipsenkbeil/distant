@@ -1,8 +1,6 @@
-use crate::{
-    data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error},
-    ConnectionId,
-};
-use distant_net::Reply;
+use crate::data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error};
+use distant_net::common::ConnectionId;
+use distant_net::server::Reply;
 use std::{
     fmt,
     hash::{Hash, Hasher},

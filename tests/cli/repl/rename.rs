@@ -3,6 +3,7 @@ use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
+use test_log::test;
 
 const FILE_CONTENTS: &str = r#"
 some text
@@ -11,8 +12,10 @@ that is a file's contents
 "#;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_renaming_file(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("file");
@@ -32,12 +35,13 @@ async fn should_support_json_renaming_file(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     src.assert(predicate::path::missing());
@@ -45,8 +49,10 @@ async fn should_support_json_renaming_file(mut json_repl: CtxCommand<Repl>) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_renaming_nonempty_directory(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -70,12 +76,13 @@ async fn should_support_json_renaming_nonempty_directory(mut json_repl: CtxComma
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     src.assert(predicate::path::missing());
@@ -86,8 +93,10 @@ async fn should_support_json_renaming_nonempty_directory(mut json_repl: CtxComma
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("dir");
@@ -105,9 +114,9 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "error");
-    assert_eq!(res["payload"]["kind"], "not_found");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
+    assert_eq!(res["payload"]["kind"], "not_found", "JSON: {res}");
 
     src.assert(predicate::path::missing());
     dst.assert(predicate::path::missing());

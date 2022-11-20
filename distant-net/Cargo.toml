@@ -3,7 +3,7 @@ name = "distant-net"
 description = "Network library for distant, providing implementations to support client/server architecture"
 categories = ["network-programming"]
 keywords = ["api", "async"]
-version = "0.19.0"
+version = "0.20.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -16,7 +16,8 @@ async-trait = "0.1.57"
 bytes = "1.2.1"
 chacha20poly1305 = "0.10.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
-futures = "0.3.21"
+dyn-clone = "1.0.9"
+flate2 = "1.0.24"
 hex = "0.4.3"
 hkdf = "0.12.3"
 log = "0.4.17"
@@ -27,11 +28,13 @@ rmp-serde = "1.1.0"
 sha2 = "0.10.2"
 serde = { version = "1.0.142", features = ["derive"] }
 serde_bytes = "0.11.7"
+strum = { version = "0.24.1", features = ["derive"] }
 tokio = { version = "1.20.1", features = ["full"] }
-tokio-util = { version = "0.7.3", features = ["codec"] }
 
 # Optional dependencies based on features
 schemars = { version = "0.8.10", optional = true }
 
 [dev-dependencies]
+env_logger = "0.9.1"
 tempfile = "3.3.0"
+test-log = "0.2.11"

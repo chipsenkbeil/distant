@@ -1,13 +1,12 @@
-use crate::stress::utils;
-use distant_core::{DistantApiServer, DistantClient, LocalDistantApi};
-use distant_net::{
-    PortRange, SecretKey, SecretKey32, TcpClientExt, TcpServerExt, XChaCha20Poly1305Codec,
-};
+use distant_core::net::client::{Client, TcpConnector};
+use distant_core::net::common::authentication::{DummyAuthHandler, Verifier};
+use distant_core::net::common::PortRange;
+use distant_core::net::server::Server;
+use distant_core::{DistantApiServerHandler, DistantClient, LocalDistantApi};
 use rstest::*;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
-
-const LOG_PATH: &str = "/tmp/test.distant.server.log";
 
 pub struct DistantClientCtx {
     pub client: DistantClient,
@@ -18,42 +17,43 @@ impl DistantClientCtx {
     pub async fn initialize() -> Self {
         let ip_addr = "127.0.0.1".parse().unwrap();
         let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
-        let (started_tx, mut started_rx) = mpsc::channel::<(u16, SecretKey32)>(1);
+        let (started_tx, mut started_rx) = mpsc::channel::<u16>(1);
 
         tokio::spawn(async move {
-            let logger = utils::init_logging(LOG_PATH);
-            let key = SecretKey::default();
-            let codec = XChaCha20Poly1305Codec::from(key.clone());
-
-            if let Ok(api) = LocalDistantApi::initialize(Default::default()) {
+            if let Ok(api) = LocalDistantApi::initialize() {
                 let port: PortRange = "0".parse().unwrap();
                 let port = {
-                    let server_ref = DistantApiServer::new(api)
-                        .start(ip_addr, port, codec)
+                    let handler = DistantApiServerHandler::new(api);
+                    let server_ref = Server::new()
+                        .handler(handler)
+                        .verifier(Verifier::none())
+                        .into_tcp_builder()
+                        .start(ip_addr, port)
                         .await
                         .unwrap();
                     server_ref.port()
                 };
 
-                started_tx.send((port, key)).await.unwrap();
+                started_tx.send(port).await.unwrap();
                 let _ = done_rx.recv().await;
             }
-
-            logger.flush();
-            logger.shutdown();
         });
 
         // Extract our server startup data if we succeeded
-        let (port, key) = started_rx.recv().await.unwrap();
+        let port = started_rx.recv().await.unwrap();
 
         // Now initialize our client
-        let client = DistantClient::connect_timeout(
-            format!("{}:{}", ip_addr, port).parse().unwrap(),
-            XChaCha20Poly1305Codec::from(key),
-            Duration::from_secs(1),
-        )
-        .await
-        .unwrap();
+        let client: DistantClient = Client::build()
+            .auth_handler(DummyAuthHandler)
+            .timeout(Duration::from_secs(1))
+            .connector(TcpConnector::new(
+                format!("{}:{}", ip_addr, port)
+                    .parse::<SocketAddr>()
+                    .unwrap(),
+            ))
+            .connect()
+            .await
+            .unwrap();
 
         DistantClientCtx {
             client,

@@ -1,8 +1,5 @@
-use crate::{
-    serde_str::{deserialize_from_str, serialize_to_str},
-    Destination, Host,
-};
-use distant_net::SecretKey32;
+use crate::serde_str::{deserialize_from_str, serialize_to_str};
+use distant_net::common::{Destination, Host, SecretKey32};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{convert::TryFrom, fmt, io, str::FromStr};
 
@@ -154,6 +151,7 @@ mod tests {
     use super::*;
     use once_cell::sync::Lazy;
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use test_log::test;
 
     const HOST: &str = "testhost";
     const PORT: u16 = 12345;

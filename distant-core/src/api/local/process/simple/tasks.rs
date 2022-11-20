@@ -1,4 +1,4 @@
-use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_MILLIS};
+use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
 use std::io;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -34,13 +34,13 @@ where
 
                 // Pause to allow buffer to fill up a little bit, avoiding
                 // spamming with a lot of smaller responses
-                tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS)).await;
+                tokio::time::sleep(READ_PAUSE_DURATION).await;
             }
             Ok(_) => return Ok(()),
             Err(x) if x.kind() == io::ErrorKind::WouldBlock => {
                 // Pause to allow buffer to fill up a little bit, avoiding
                 // spamming with a lot of smaller responses
-                tokio::time::sleep(tokio::time::Duration::from_millis(READ_PAUSE_MILLIS)).await;
+                tokio::time::sleep(READ_PAUSE_DURATION).await;
             }
             Err(x) => return Err(x),
         }

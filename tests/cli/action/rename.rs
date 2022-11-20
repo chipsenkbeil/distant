@@ -11,6 +11,7 @@ that is a file's contents
 "#;
 
 #[rstest]
+#[test_log::test]
 fn should_support_renaming_file(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -21,7 +22,7 @@ fn should_support_renaming_file(mut action_cmd: CtxCommand<Command>) {
 
     // distant action rename {src} {dst}
     action_cmd
-        .args(&["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -32,6 +33,7 @@ fn should_support_renaming_file(mut action_cmd: CtxCommand<Command>) {
 }
 
 #[rstest]
+#[test_log::test]
 fn should_support_renaming_nonempty_directory(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -46,7 +48,7 @@ fn should_support_renaming_nonempty_directory(mut action_cmd: CtxCommand<Command
 
     // distant action rename {src} {dst}
     action_cmd
-        .args(&["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -60,6 +62,7 @@ fn should_support_renaming_nonempty_directory(mut action_cmd: CtxCommand<Command
 }
 
 #[rstest]
+#[test_log::test]
 fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -68,7 +71,7 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
 
     // distant action rename {src} {dst}
     action_cmd
-        .args(&["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
+        .args(["rename", src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

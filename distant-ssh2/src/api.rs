@@ -10,6 +10,7 @@ use distant_core::{
         Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, ProcessId,
         PtySize, SystemInfo, UnixMetadata,
     },
+    net::server::ConnectionCtx,
     DistantApi, DistantCtx,
 };
 use log::*;
@@ -75,8 +76,9 @@ impl SshDistantApi {
 impl DistantApi for SshDistantApi {
     type LocalData = ConnectionState;
 
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        local_data.global_processes = Arc::downgrade(&self.processes);
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        ctx.local_data.global_processes = Arc::downgrade(&self.processes);
+        Ok(())
     }
 
     async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {

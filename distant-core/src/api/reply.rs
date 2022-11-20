@@ -1,5 +1,5 @@
 use crate::{api::DistantMsg, data::DistantResponseData};
-use distant_net::Reply;
+use distant_net::server::Reply;
 use std::{future::Future, io, pin::Pin};
 
 /// Wrapper around a reply that can be batch or single, converting

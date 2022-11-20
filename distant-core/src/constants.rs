@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 /// Capacity associated stdin, stdout, and stderr pipes receiving data from remote server
 pub const CLIENT_PIPE_CAPACITY: usize = 10000;
 
@@ -18,4 +20,4 @@ pub const MAX_PIPE_CHUNK_SIZE: usize = 16384;
 
 /// Duration in milliseconds to sleep between reading stdout/stderr chunks
 /// to avoid sending many small messages to clients
-pub const READ_PAUSE_MILLIS: u64 = 50;
+pub const READ_PAUSE_DURATION: Duration = Duration::from_millis(1);

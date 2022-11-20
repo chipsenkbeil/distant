@@ -1,7 +1,7 @@
 use async_compat::CompatExt;
 use distant_core::{
     data::{DistantResponseData, Environment, ProcessId, PtySize},
-    net::Reply,
+    net::server::Reply,
 };
 use log::*;
 use std::{
@@ -16,7 +16,7 @@ use wezterm_ssh::{
 };
 
 const MAX_PIPE_CHUNK_SIZE: usize = 8192;
-const THREAD_PAUSE_MILLIS: u64 = 50;
+const THREAD_PAUSE_MILLIS: u64 = 1;
 
 /// Result of spawning a process, containing means to send stdin, means to kill the process,
 /// and the initialization function to use to start processing stdin, stdout, and stderr

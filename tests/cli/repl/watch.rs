@@ -3,6 +3,7 @@ use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
 use std::time::Duration;
+use test_log::test;
 
 async fn wait_a_bit() {
     wait_millis(250).await;
@@ -17,8 +18,10 @@ async fn wait_millis(millis: u64) {
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -36,12 +39,13 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Make a change to some file
@@ -54,17 +58,20 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file.to_path_buf().canonicalize().unwrap()])
+        json!([file.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -86,12 +93,13 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Make a change to some file
@@ -106,11 +114,12 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
         // NOTE: Don't bother checking the kind as it can vary by platform
         let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-        assert_eq!(res["origin_id"], id);
-        assert_eq!(res["payload"]["type"], "changed");
+        assert_eq!(res["origin_id"], id, "JSON: {res}");
+        assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
         assert_eq!(
             res["payload"]["paths"],
-            json!([dir.to_path_buf().canonicalize().unwrap()])
+            json!([dir.to_path_buf().canonicalize().unwrap()]),
+            "JSON: {res}"
         );
     }
 
@@ -121,19 +130,22 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file.to_path_buf().canonicalize().unwrap()])
+        json!([file.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_reporting_changes_using_correct_request_id(
     mut json_repl: CtxCommand<Repl>,
 ) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file1 = temp.child("file1");
@@ -154,12 +166,13 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_1);
+    assert_eq!(res["origin_id"], id_1, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Watch file2 for changes
@@ -174,12 +187,13 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_2);
+    assert_eq!(res["origin_id"], id_2, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
             "type": "ok"
-        })
+        }),
+        "JSON: {res}"
     );
 
     // Make a change to file1
@@ -192,11 +206,12 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_1);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id_1, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file1.to_path_buf().canonicalize().unwrap()])
+        json!([file1.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 
     // Process any extra messages (we might get create, content, and more)
@@ -223,17 +238,20 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
     // NOTE: Don't bother checking the kind as it can vary by platform
     let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    assert_eq!(res["origin_id"], id_2);
-    assert_eq!(res["payload"]["type"], "changed");
+    assert_eq!(res["origin_id"], id_2, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
         res["payload"]["paths"],
-        json!([file2.to_path_buf().canonicalize().unwrap()])
+        json!([file2.to_path_buf().canonicalize().unwrap()]),
+        "JSON: {res}"
     );
 }
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
+    validate_authentication(&mut json_repl).await;
+
     let temp = assert_fs::TempDir::new().unwrap();
     let path = temp.to_path_buf().join("missing");
 
@@ -250,7 +268,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
 
     // Ensure we got an acknowledgement of watching that failed
-    assert_eq!(res["origin_id"], id);
-    assert_eq!(res["payload"]["type"], "error");
-    assert_eq!(res["payload"]["kind"], "not_found");
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
+    assert_eq!(res["payload"]["kind"], "not_found", "JSON: {res}");
 }

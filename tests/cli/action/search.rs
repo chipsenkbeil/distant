@@ -17,6 +17,7 @@ const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 "};
 
 #[rstest]
+#[test_log::test]
 fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file1.txt").write_str("some file text").unwrap();

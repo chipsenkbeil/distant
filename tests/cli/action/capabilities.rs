@@ -56,6 +56,7 @@ const EXPECTED_TABLE: &str = indoc! {"
 "};
 
 #[rstest]
+#[test_log::test]
 fn should_output_capabilities(mut action_cmd: CtxCommand<Command>) {
     // distant action capabilities
     action_cmd

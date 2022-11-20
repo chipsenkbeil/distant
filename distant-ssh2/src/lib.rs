@@ -7,11 +7,12 @@ use async_trait::async_trait;
 use distant_core::{
     data::Environment,
     net::{
-        FramedTransport, IntoSplit, OneshotListener, ServerExt, ServerRef, TcpClientExt,
-        XChaCha20Poly1305Codec,
+        client::{Client, ReconnectStrategy},
+        common::authentication::{AuthHandlerMap, DummyAuthHandler, Verifier},
+        common::{InmemoryTransport, OneshotListener},
+        server::{Server, ServerRef},
     },
-    BoxedDistantReader, BoxedDistantWriter, BoxedDistantWriterReader, DistantApiServer,
-    DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
+    DistantApiServerHandler, DistantChannelExt, DistantClient, DistantSingleKeyCredentials,
 };
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
@@ -565,14 +566,18 @@ impl Ssh {
 
         let credentials = self.launch(opts).await?;
         let key = credentials.key;
-        let codec = XChaCha20Poly1305Codec::from(key);
 
         // Try each IP address with the same port to see if one works
         let mut err = None;
         for ip in candidate_ips {
             let addr = SocketAddr::new(ip, credentials.port);
             debug!("Attempting to connect to distant server @ {}", addr);
-            match DistantClient::connect_timeout(addr, codec.clone(), timeout).await {
+            match Client::tcp(addr)
+                .auth_handler(AuthHandlerMap::new().with_static_key(key.clone()))
+                .timeout(timeout)
+                .connect()
+                .await
+            {
                 Ok(client) => return Ok(client),
                 Err(x) => err = Some(x),
             }
@@ -684,28 +689,13 @@ impl Ssh {
     }
 
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is powered by an ssh client
-    /// underneath
+    /// underneath.
     pub async fn into_distant_client(self) -> io::Result<DistantClient> {
         Ok(self.into_distant_pair().await?.0)
     }
 
-    /// Consume [`Ssh`] and produce a [`BoxedDistantWriterReader`] that is powered by an ssh client
-    /// underneath
-    pub async fn into_distant_writer_reader(self) -> io::Result<BoxedDistantWriterReader> {
-        Ok(self.into_writer_reader_and_server().await?.0)
-    }
-
-    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`DistantApiServer`] pair
+    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`ServerRef`] pair.
     pub async fn into_distant_pair(self) -> io::Result<(DistantClient, Box<dyn ServerRef>)> {
-        let ((writer, reader), server) = self.into_writer_reader_and_server().await?;
-        let client = DistantClient::new(writer, reader)?;
-        Ok((client, server))
-    }
-
-    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`DistantApiServer`] pair
-    async fn into_writer_reader_and_server(
-        self,
-    ) -> io::Result<(BoxedDistantWriterReader, Box<dyn ServerRef>)> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -714,24 +704,24 @@ impl Ssh {
             ));
         }
 
-        let (t1, t2) = FramedTransport::pair(1);
+        let Self {
+            session: wez_session,
+            ..
+        } = self;
 
-        // Spawn a bridge client that is directly connected to our server
-        let (writer, reader) = t1.into_split();
-        let writer: BoxedDistantWriter = Box::new(writer);
-        let reader: BoxedDistantReader = Box::new(reader);
-
-        // Spawn a bridge server that is directly connected to our client
-        let server = {
-            let Self {
-                session: wez_session,
-                ..
-            } = self;
-            let (writer, reader) = t2.into_split();
-            DistantApiServer::new(SshDistantApi::new(wez_session))
-                .start(OneshotListener::from_value((writer, reader)))?
-        };
-
-        Ok(((writer, reader), server))
+        let (t1, t2) = InmemoryTransport::pair(1);
+        let server = Server::new()
+            .handler(DistantApiServerHandler::new(SshDistantApi::new(
+                wez_session,
+            )))
+            .verifier(Verifier::none())
+            .start(OneshotListener::from_value(t2))?;
+        let client = Client::build()
+            .auth_handler(DummyAuthHandler)
+            .connector(t1)
+            .reconnect_strategy(ReconnectStrategy::Fail)
+            .connect()
+            .await?;
+        Ok((client, server))
     }
 }

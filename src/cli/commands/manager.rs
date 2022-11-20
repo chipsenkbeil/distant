@@ -6,14 +6,15 @@ use crate::{
 };
 use anyhow::Context;
 use clap::{Subcommand, ValueHint};
-use distant_core::{net::ServerRef, ConnectionId, DistantManagerConfig};
+use distant_core::net::common::ConnectionId;
+use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
 use log::*;
 use once_cell::sync::Lazy;
 use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceManagerKind,
     ServiceStartCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
-use std::{ffi::OsString, path::PathBuf};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf};
 use tabled::{Table, Tabled};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
@@ -82,12 +83,6 @@ pub enum ManagerSubcommand {
         #[clap(flatten)]
         network: NetworkConfig,
         id: ConnectionId,
-    },
-
-    /// Send a shutdown request to the manager
-    Shutdown {
-        #[clap(flatten)]
-        network: NetworkConfig,
     },
 }
 
@@ -289,8 +284,37 @@ impl ManagerSubcommand {
                 );
                 let manager_ref = Manager {
                     access,
-                    config: DistantManagerConfig {
+                    config: NetManagerConfig {
                         user,
+                        launch_handlers: {
+                            let mut handlers: HashMap<String, Box<dyn LaunchHandler>> =
+                                HashMap::new();
+                            handlers.insert(
+                                "manager".to_string(),
+                                Box::new(handlers::ManagerLaunchHandler::new()),
+                            );
+
+                            #[cfg(any(feature = "libssh", feature = "ssh2"))]
+                            handlers
+                                .insert("ssh".to_string(), Box::new(handlers::SshLaunchHandler));
+
+                            handlers
+                        },
+                        connect_handlers: {
+                            let mut handlers: HashMap<String, Box<dyn ConnectHandler>> =
+                                HashMap::new();
+
+                            handlers.insert(
+                                "distant".to_string(),
+                                Box::new(handlers::DistantConnectHandler),
+                            );
+
+                            #[cfg(any(feature = "libssh", feature = "ssh2"))]
+                            handlers
+                                .insert("ssh".to_string(), Box::new(handlers::SshConnectHandler));
+
+                            handlers
+                        },
                         ..Default::default()
                     },
                     network,
@@ -299,33 +323,10 @@ impl ManagerSubcommand {
                 .await
                 .context("Failed to start manager")?;
 
-                // Register our handlers for different schemes
-                debug!("Registering handlers with manager");
-                manager_ref
-                    .register_launch_handler("manager", handlers::ManagerLaunchHandler::new())
-                    .await
-                    .context("Failed to register launch handler for \"manager://\"")?;
-                manager_ref
-                    .register_connect_handler("distant", handlers::DistantConnectHandler)
-                    .await
-                    .context("Failed to register connect handler for \"distant://\"")?;
-
-                #[cfg(any(feature = "libssh", feature = "ssh2"))]
-                // Register ssh-specific handlers if either feature flag is enabled
-                {
-                    manager_ref
-                        .register_launch_handler("ssh", handlers::SshLaunchHandler)
-                        .await
-                        .context("Failed to register launch handler for \"ssh://\"")?;
-                    manager_ref
-                        .register_connect_handler("ssh", handlers::SshConnectHandler)
-                        .await
-                        .context("Failed to register connect handler for \"ssh://\"")?;
-                }
-
                 // Let our server run to completion
                 manager_ref
-                    .wait()
+                    .as_ref()
+                    .polling_wait()
                     .await
                     .context("Failed to wait on manager")?;
                 info!("Manager is shutting down");
@@ -336,12 +337,14 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Getting list of capabilities");
                 let caps = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
                     .capabilities()
                     .await
                     .context("Failed to get list of capabilities")?;
+                debug!("Got capabilities: {caps:?}");
 
                 #[derive(Tabled)]
                 struct CapabilityRow {
@@ -365,12 +368,14 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Getting info about connection {}", id);
                 let info = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
                     .info(id)
                     .await
                     .context("Failed to get info about connection")?;
+                debug!("Got info: {info:?}");
 
                 #[derive(Tabled)]
                 struct InfoRow {
@@ -402,12 +407,14 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Getting list of connections");
                 let list = Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
                     .list()
                     .await
                     .context("Failed to get list of connections")?;
+                debug!("Got list: {list:?}");
 
                 debug!("Looking up selected connection");
                 let selected = Cache::read_from_disk_or_default(cache)
@@ -415,6 +422,7 @@ impl ManagerSubcommand {
                     .context("Failed to look up selected connection")?
                     .data
                     .selected;
+                debug!("Using selected: {selected}");
 
                 #[derive(Tabled)]
                 struct ListRow {
@@ -444,24 +452,14 @@ impl ManagerSubcommand {
                 let network = network.merge(config.network);
                 debug!("Killing connection {}", id);
                 Client::new(network)
+                    .using_prompt_auth_handler()
                     .connect()
                     .await
                     .context("Failed to connect to manager")?
                     .kill(id)
                     .await
                     .with_context(|| format!("Failed to kill connection to server {id}"))?;
-                Ok(())
-            }
-            Self::Shutdown { network } => {
-                let network = network.merge(config.network);
-                debug!("Shutting down manager");
-                Client::new(network)
-                    .connect()
-                    .await
-                    .context("Failed to connect to manager")?
-                    .shutdown()
-                    .await
-                    .context("Failed to shutdown manager")?;
+                debug!("Connection killed");
                 Ok(())
             }
         }

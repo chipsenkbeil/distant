@@ -6,7 +6,7 @@ use crate::{
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
-use distant_net::ServerConfig;
+use distant_net::server::ConnectionCtx;
 use log::*;
 use std::{
     io,
@@ -26,15 +26,13 @@ use state::*;
 /// impementation of the API instead of a proxy to another machine as seen with
 /// implementations on top of SSH and other protocol
 pub struct LocalDistantApi {
-    config: ServerConfig,
     state: GlobalState,
 }
 
 impl LocalDistantApi {
     /// Initialize the api instance
-    pub fn initialize(config: ServerConfig) -> io::Result<Self> {
+    pub fn initialize() -> io::Result<Self> {
         Ok(Self {
-            config,
             state: GlobalState::initialize()?,
         })
     }
@@ -44,14 +42,11 @@ impl LocalDistantApi {
 impl DistantApi for LocalDistantApi {
     type LocalData = ConnectionState;
 
-    fn config(&self) -> ServerConfig {
-        self.config.clone()
-    }
-
     /// Injects the global channels into the local connection
-    async fn on_accept(&self, local_data: &mut Self::LocalData) {
-        local_data.process_channel = self.state.process.clone_channel();
-        local_data.watcher_channel = self.state.watcher.clone_channel();
+    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        ctx.local_data.process_channel = self.state.process.clone_channel();
+        ctx.local_data.watcher_channel = self.state.watcher.clone_channel();
+        Ok(())
     }
 
     async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
@@ -511,10 +506,11 @@ mod tests {
     use super::*;
     use crate::data::DistantResponseData;
     use assert_fs::prelude::*;
-    use distant_net::Reply;
+    use distant_net::server::Reply;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
     use std::{sync::Arc, time::Duration};
+    use test_log::test;
     use tokio::sync::mpsc;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
@@ -583,12 +579,21 @@ mod tests {
         DistantCtx<ConnectionState>,
         mpsc::Receiver<DistantResponseData>,
     ) {
-        let api = LocalDistantApi::initialize(Default::default()).unwrap();
+        let api = LocalDistantApi::initialize().unwrap();
         let (reply, rx) = make_reply(buffer);
+        let connection_id = rand::random();
         let mut local_data = ConnectionState::default();
-        DistantApi::on_accept(&api, &mut local_data).await;
+        DistantApi::on_accept(
+            &api,
+            ConnectionCtx {
+                connection_id,
+                local_data: &mut local_data,
+            },
+        )
+        .await
+        .unwrap();
         let ctx = DistantCtx {
-            connection_id: rand::random(),
+            connection_id,
             reply,
             local_data: Arc::new(local_data),
         };
@@ -605,7 +610,7 @@ mod tests {
         (Box::new(tx), rx)
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_file_should_fail_if_file_missing() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -614,7 +619,7 @@ mod tests {
         let _ = api.read_file(ctx, path).await.unwrap_err();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_file_should_send_blob_with_file_contents() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -626,7 +631,7 @@ mod tests {
         assert_eq!(bytes, b"some file contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_file_text_should_send_error_if_fails_to_read_file() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -636,7 +641,7 @@ mod tests {
         let _ = api.read_file_text(ctx, path).await.unwrap_err();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_file_text_should_send_text_with_file_contents() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -651,7 +656,7 @@ mod tests {
         assert_eq!(text, "some file contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_file_should_send_error_if_fails_to_write_file() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -669,7 +674,7 @@ mod tests {
         file.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_file_should_send_ok_when_successful() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -687,7 +692,7 @@ mod tests {
         file.assert("some text");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_file_text_should_send_error_if_fails_to_write_file() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -704,7 +709,7 @@ mod tests {
         file.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn write_file_text_should_send_ok_when_successful() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -722,7 +727,7 @@ mod tests {
         file.assert("some text");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn append_file_should_send_error_if_fails_to_create_file() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -743,7 +748,7 @@ mod tests {
         file.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn append_file_should_create_file_if_missing() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -767,7 +772,7 @@ mod tests {
         file.assert("some extra contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn append_file_should_send_ok_when_successful() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -791,7 +796,7 @@ mod tests {
         file.assert("some file contentssome extra contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn append_file_text_should_send_error_if_fails_to_create_file() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -813,7 +818,7 @@ mod tests {
         file.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn append_file_text_should_create_file_if_missing() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -837,7 +842,7 @@ mod tests {
         file.assert("some extra contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn append_file_text_should_send_ok_when_successful() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -861,7 +866,7 @@ mod tests {
         file.assert("some file contentssome extra contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn dir_read_should_send_error_if_directory_does_not_exist() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -902,7 +907,7 @@ mod tests {
         root_dir
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn dir_read_should_support_depth_limits() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -936,7 +941,7 @@ mod tests {
         assert_eq!(entries[2].depth, 1);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn dir_read_should_support_unlimited_depth_using_zero() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -974,7 +979,7 @@ mod tests {
         assert_eq!(entries[3].depth, 2);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn dir_read_should_support_including_directory_in_returned_entries() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -1013,7 +1018,7 @@ mod tests {
         assert_eq!(entries[3].depth, 1);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn dir_read_should_support_returning_absolute_paths() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -1048,7 +1053,7 @@ mod tests {
         assert_eq!(entries[2].depth, 1);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn dir_read_should_support_returning_canonicalized_paths() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -1083,7 +1088,7 @@ mod tests {
         assert_eq!(entries[2].depth, 1);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_dir_should_send_error_if_fails() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -1101,7 +1106,7 @@ mod tests {
         assert!(!path.exists(), "Path unexpectedly exists");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_dir_should_send_ok_when_successful() {
         let (api, ctx, _rx) = setup(1).await;
         let root_dir = setup_dir().await;
@@ -1115,7 +1120,7 @@ mod tests {
         assert!(path.exists(), "Directory not created");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_dir_should_support_creating_multiple_dir_components() {
         let (api, ctx, _rx) = setup(1).await;
         let root_dir = setup_dir().await;
@@ -1129,7 +1134,7 @@ mod tests {
         assert!(path.exists(), "Directory not created");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn remove_should_send_error_on_failure() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1144,7 +1149,7 @@ mod tests {
         file.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn remove_should_support_deleting_a_directory() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1159,7 +1164,7 @@ mod tests {
         dir.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn remove_should_delete_nonempty_directory_if_force_is_true() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1175,7 +1180,7 @@ mod tests {
         dir.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn remove_should_support_deleting_a_single_file() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1190,7 +1195,7 @@ mod tests {
         file.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn copy_should_send_error_on_failure() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1206,7 +1211,7 @@ mod tests {
         dst.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn copy_should_support_copying_an_entire_directory() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1230,7 +1235,7 @@ mod tests {
         dst_file.assert(predicate::path::eq_file(src_file.path()));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn copy_should_support_copying_an_empty_directory() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1247,7 +1252,7 @@ mod tests {
         dst.assert(predicate::path::is_dir());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn copy_should_support_copying_a_directory_that_only_contains_directories() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1271,7 +1276,7 @@ mod tests {
         dst_dir.assert(predicate::path::is_dir().name("dst/dir"));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn copy_should_support_copying_a_single_file() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1288,7 +1293,7 @@ mod tests {
         dst.assert(predicate::path::eq_file(src.path()));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn rename_should_fail_if_path_missing() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1304,7 +1309,7 @@ mod tests {
         dst.assert(predicate::path::missing());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn rename_should_support_renaming_an_entire_directory() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1328,7 +1333,7 @@ mod tests {
         dst_file.assert("some contents");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn rename_should_support_renaming_a_single_file() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1375,7 +1380,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watch_should_support_watching_a_single_file() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
         let (api, ctx, mut rx) = setup(100).await;
@@ -1408,7 +1413,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watch_should_support_watching_a_directory_recursively() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
         let (api, ctx, mut rx) = setup(100).await;
@@ -1485,7 +1490,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn watch_should_report_changes_using_the_ctx_replies() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
         let (api, ctx_1, mut rx_1) = setup(100).await;
@@ -1558,7 +1563,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn exists_should_send_true_if_path_exists() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1569,7 +1574,7 @@ mod tests {
         assert!(exists, "Expected exists to be true, but was false");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn exists_should_send_false_if_path_does_not_exist() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1579,7 +1584,7 @@ mod tests {
         assert!(!exists, "Expected exists to be false, but was true");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_send_error_on_failure() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1596,7 +1601,7 @@ mod tests {
             .unwrap_err();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_send_back_metadata_on_file_if_exists() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1630,7 +1635,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_include_unix_specific_metadata_on_unix_platform() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1660,7 +1665,7 @@ mod tests {
     }
 
     #[cfg(windows)]
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_include_windows_specific_metadata_on_windows_platform() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1689,7 +1694,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_send_back_metadata_on_dir_if_exists() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1721,7 +1726,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_send_back_metadata_on_symlink_if_exists() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1756,7 +1761,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_include_canonicalized_path_if_flag_specified() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1791,7 +1796,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified() {
         let (api, ctx, _rx) = setup(1).await;
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1826,7 +1831,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_error_on_failure() {
         let (api, ctx, _rx) = setup(1).await;
@@ -1846,7 +1851,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_return_id_of_spawned_process() {
         let (api, ctx, _rx) = setup(1).await;
@@ -1872,7 +1877,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stdout_periodically_when_available() {
         let (api, ctx, mut rx) = setup(1).await;
@@ -1937,7 +1942,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stderr_periodically_when_available() {
         let (api, ctx, mut rx) = setup(1).await;
@@ -2002,7 +2007,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_done_signal_when_completed() {
         let (api, ctx, mut rx) = setup(1).await;
@@ -2033,7 +2038,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_clear_process_from_state_when_killed() {
         let (api, ctx_1, mut rx) = setup(1).await;
@@ -2074,7 +2079,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn proc_kill_should_fail_if_given_non_existent_process() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -2082,7 +2087,7 @@ mod tests {
         let _ = api.proc_kill(ctx, 0xDEADBEEF).await.unwrap_err();
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn proc_stdin_should_fail_if_given_non_existent_process() {
         let (api, ctx, _rx) = setup(1).await;
 
@@ -2095,7 +2100,7 @@ mod tests {
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
     //       with / but thinks it's on windows and is providing \
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_stdin_should_send_stdin_to_process() {
         let (api, ctx_1, mut rx) = setup(1).await;
@@ -2141,7 +2146,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn system_info_should_return_system_info_based_on_binary() {
         let (api, ctx, _rx) = setup(1).await;
 

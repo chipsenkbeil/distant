@@ -1,6 +1,6 @@
 use crate::paths::user::CACHE_FILE_PATH;
 use anyhow::Context;
-use distant_core::ConnectionId;
+use distant_core::net::common::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::{
     io,

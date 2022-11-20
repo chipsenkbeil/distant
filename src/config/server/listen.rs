@@ -1,9 +1,7 @@
 use anyhow::Context;
 use clap::Args;
-use distant_core::{
-    net::{PortRange, Shutdown},
-    Host, HostParseError, Map,
-};
+use distant_core::net::common::{Host, HostParseError, Map, PortRange};
+use distant_core::net::server::Shutdown;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fmt,
@@ -197,6 +195,7 @@ impl BindAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     #[test]
     fn to_string_should_properly_print_bind_address() {

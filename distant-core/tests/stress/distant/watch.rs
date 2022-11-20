@@ -2,11 +2,12 @@ use crate::stress::fixtures::*;
 use assert_fs::prelude::*;
 use distant_core::{data::ChangeKindSet, DistantChannelExt};
 use rstest::*;
+use test_log::test;
 
 const MAX_FILES: usize = 500;
 
 #[rstest]
-#[tokio::test]
+#[test(tokio::test)]
 #[ignore]
 async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantClientCtx) {
     let ctx = ctx.await;
