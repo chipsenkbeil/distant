@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.20.0-alpha.1] - 2022-11-19
+
+**NOTE: This is incomplete as v0.20.0 is a near-complete rewrite internally.**
+
 ### Added
 
 - New `contains` and `or` types for `SearchQueryCondition`
