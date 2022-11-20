@@ -142,15 +142,15 @@ jobs:
           toolchain: stable
           target: ${{ env.AARCH64_GNU_ARCH }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install linker (gcc-aarch64-linux-gnu)
+      - name: Install linker & binutils (gcc-aarch64-linux-gnu)
         run: |
           sudo apt update
-          sudo apt install gcc-aarch64-linux-gnu
+          sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
       - name: Build binary (GNU aarch64)
         run: |
           cargo build --release --all-features --target ${{ env.AARCH64_GNU_ARCH }}
           ls -l ./${{ env.AARCH64_GNU_DIR }}
-          strip ./${{ env.AARCH64_GNU_DIR }}/${{ env.BUILD_BIN }}
+          /usr/aarch64-linux-gnu/bin/strip ./${{ env.AARCH64_GNU_DIR }}/${{ env.BUILD_BIN }}
           mv ./${{ env.AARCH64_GNU_DIR }}/${{ env.BUILD_BIN }} ./${{ env.AARCH64_GNU_REL_BIN }}
           chmod +x ./${{ env.AARCH64_GNU_REL_BIN }}
       - name: Upload 
@@ -179,15 +179,15 @@ jobs:
           toolchain: stable
           target: ${{ env.ARMV7_GNU_ARCH }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install linker (gcc-arm-linux-gnueabihf)
+      - name: Install linker & binutils (gcc-arm-linux-gnueabihf)
         run: |
           sudo apt update
-          sudo apt install gcc-arm-linux-gnueabihf
+          sudo apt install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
       - name: Build binary (GNU aarch64)
         run: |
           cargo build --release --all-features --target ${{ env.ARMV7_GNU_ARCH }}
           ls -l ./${{ env.ARMV7_GNU_DIR }}
-          strip ./${{ env.ARMV7_GNU_DIR }}/${{ env.BUILD_BIN }}
+          /usr/arm-linux-gnueabihf/bin/strip ./${{ env.ARMV7_GNU_DIR }}/${{ env.BUILD_BIN }}
           mv ./${{ env.ARMV7_GNU_DIR }}/${{ env.BUILD_BIN }} ./${{ env.ARMV7_GNU_REL_BIN }}
           chmod +x ./${{ env.ARMV7_GNU_REL_BIN }}
       - name: Upload 
