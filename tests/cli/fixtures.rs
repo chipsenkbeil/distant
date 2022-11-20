@@ -200,7 +200,10 @@ impl DistantManagerCtx {
                     break 'outer;
                 }
 
-                err = String::from_utf8_lossy(&output.stderr).to_string();
+                err = format!(
+                    "{err}\nConnecting to host {host} failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
 
             if let Err(x) = server.as_mut().unwrap().kill() {
@@ -216,7 +219,7 @@ impl DistantManagerCtx {
                 );
                 eprintln!("------------------");
 
-                panic!("Connecting to server failed: {}", err);
+                panic!("Connecting to server failed: {err}");
             } else {
                 thread::sleep(RETRY_PAUSE_DURATION);
             }
