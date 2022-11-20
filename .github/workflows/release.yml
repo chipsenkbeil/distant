@@ -236,7 +236,7 @@ jobs:
             ${{ env.X86_MUSL_REL_BIN }}
 
   publish:
-    needs: [macos, windows, linux_gnu, linux_musl]
+    needs: [macos, windows, linux_gnu_x86, linux_gnu_aarch64, linux_gnu_arm_v7, linux_musl]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
