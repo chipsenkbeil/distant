@@ -183,7 +183,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
-      - name: Build binary (GNU aarch64)
+      - name: Build binary (GNU arm-v7)
         run: |
           cargo build --release --all-features --target ${{ env.ARMV7_GNU_ARCH }}
           ls -l ./${{ env.ARMV7_GNU_DIR }}
@@ -199,30 +199,31 @@ jobs:
 
   # NOTE: For musl, we only support ssh2 and not libssh for the time being due to some
   #       build issue with libssh-rs-sys not finding the symbol ENGINE_cleanup in libcrypto
-  linux_musl:
-    name: "Build release on Linux (musl)"
+  linux_musl_x86:
+    name: "Build release on Linux (musl x86)"
     runs-on: ubuntu-latest
-    container:
-      image: alpine:3.14
     if: startsWith(github.ref, 'refs/tags/')
     env:
-      UPLOAD_NAME: linux64-musl
+      UPLOAD_NAME: linux64-musl-x86
       X86_MUSL_ARCH: x86_64-unknown-linux-musl
       X86_MUSL_DIR: target/x86_64-unknown-linux-musl/release
       BUILD_BIN: distant
-      X86_MUSL_REL_BIN: distant-linux64-musl
+      X86_MUSL_REL_BIN: distant-linux64-musl-x86
     steps:
       - uses: actions/checkout@v2
-      - name: Install base dependencies
+      - name: Install Rust (MUSL x86)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ env.X86_MUSL_ARCH }}
+          override: true
+      - name: Install musl tools
         run: |
-          apk add --update --no-cache build-base libc6-compat curl perl
-      - name: Install Rust (MUSL)
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+          sudo apt install -y musl-tools
       - uses: Swatinem/rust-cache@v2
       - name: Build binary (MUSL x86_64)
         run: |
-          source $HOME/.cargo/env
           cargo build --release --no-default-features --features ssh2 --target ${{ env.X86_MUSL_ARCH }}
           ls -l ./${{ env.X86_MUSL_DIR }}
           strip ./${{ env.X86_MUSL_DIR }}/${{ env.BUILD_BIN }}
@@ -235,8 +236,55 @@ jobs:
           path: |
             ${{ env.X86_MUSL_REL_BIN }}
 
+  # NOTE: For musl, we only support ssh2 and not libssh for the time being due to some
+  #       build issue with libssh-rs-sys not finding the symbol ENGINE_cleanup in libcrypto
+  linux_musl_aarch64:
+    name: "Build release on Linux (musl aarch64)"
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      UPLOAD_NAME: linux64-musl-aarch64
+      AARCH64_MUSL_ARCH: aarch64-unknown-linux-musl
+      AARCH64_MUSL_DIR: target/aarch64-unknown-linux-musl/release
+      BUILD_BIN: distant
+      AARCH64_MUSL_REL_BIN: distant-linux64-musl-aarch64
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust (MUSL aarch64)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ env.AARCH64_MUSL_ARCH }}
+          override: true
+      - name: Install musl tools
+        run: |
+          sudo apt install -y musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+      - name: Install cross
+        env:
+          LINK: https://github.com/cross-rs/cross/releases/download
+          CROSS_VERSION: 0.2.4
+          CROSS_FILE: cross-x86_64-unknown-linux-musl
+        run: |
+          curl -L "$LINK/v$CROSS_VERSION/$CROSS_FILE.tar.gz" |
+          tar xz -C $HOME/.cargo/bin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build binary (MUSL aarch64)
+        run: |
+          cross build --release --no-default-features --features ssh2 --target ${{ env.AARCH64_MUSL_ARCH }}
+          ls -l ./${{ env.AARCH64_MUSL_DIR }}
+          aarch64-linux-gnu-strip ./${{ env.AARCH64_MUSL_DIR }}/${{ env.BUILD_BIN }}
+          mv ./${{ env.AARCH64_MUSL_DIR }}/${{ env.BUILD_BIN }} ./${{ env.AARCH64_MUSL_REL_BIN }}
+          chmod +x ./${{ env.AARCH64_MUSL_REL_BIN }}
+      - name: Upload 
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.UPLOAD_NAME }}
+          path: |
+            ${{ env.AARCH64_MUSL_REL_BIN }}
+
   publish:
-    needs: [macos, windows, linux_gnu_x86, linux_gnu_aarch64, linux_gnu_arm_v7, linux_musl]
+    needs: [macos, windows, linux_gnu_x86, linux_gnu_aarch64, linux_gnu_arm_v7, linux_musl_x86, linux_musl_aarch64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -252,8 +300,10 @@ jobs:
       LINUX64_GNU_AARCH64_BIN: distant-linux64-gnu-aarch64
       LINUX64_GNU_ARMV7: linux64-gnu-arm-v7
       LINUX64_GNU_ARMV7_BIN: distant-linux64-gnu-arm-v7
-      LINUX64_MUSL: linux64-musl
-      LINUX64_MUSL_BIN: distant-linux64-musl
+      LINUX64_MUSL_X86: linux64-musl-x86
+      LINUX64_MUSL_X86_BIN: distant-linux64-musl-x86
+      LINUX64_MUSL_AARCH64: linux64-musl-aarch64
+      LINUX64_MUSL_AARCH64_BIN: distant-linux64-musl-aarch64
     steps:
       - uses: actions/checkout@v2
       - uses: actions/download-artifact@v2
@@ -270,23 +320,28 @@ jobs:
       - name: Generate Linux64 (gnu x86) SHA256 checksums
         run: |
           cd ${{ env.LINUX64_GNU_X86 }}
-          sha256sum ${{ env.LINUX64_GNU_X86_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
+          sha256sum ${{ env.LINUX64_GNU_X86_BIN }} > ${{ env.LINUX64_GNU_X86_BIN }}.sha256sum
           echo "SHA_LINUX64_GNU_X86_BIN=$(cat ${{ env.LINUX64_GNU_X86_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Linux64 (gnu aarch64) SHA256 checksums
         run: |
           cd ${{ env.LINUX64_GNU_AARCH64 }}
-          sha256sum ${{ env.LINUX64_GNU_AARCH64_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
+          sha256sum ${{ env.LINUX64_GNU_AARCH64_BIN }} > ${{ env.LINUX64_GNU_AARCH64_BIN }}.sha256sum
           echo "SHA_LINUX64_GNU_AARCH64_BIN=$(cat ${{ env.LINUX64_GNU_AARCH64_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Generate Linux64 (gnu arm-v7) SHA256 checksums
         run: |
           cd ${{ env.LINUX64_GNU_ARMV7 }}
-          sha256sum ${{ env.LINUX64_GNU_ARMV7_BIN }} > ${{ env.LINUX64_GNU_BIN }}.sha256sum
+          sha256sum ${{ env.LINUX64_GNU_ARMV7_BIN }} > ${{ env.LINUX64_GNU_ARMV7_BIN }}.sha256sum
           echo "SHA_LINUX64_GNU_ARMV7_BIN=$(cat ${{ env.LINUX64_GNU_ARMV7_BIN }}.sha256sum)" >> $GITHUB_ENV
-      - name: Generate Linux64 (musl) SHA256 checksums
+      - name: Generate Linux64 (musl x86) SHA256 checksums
         run: |
-          cd ${{ env.LINUX64_MUSL }}
-          sha256sum ${{ env.LINUX64_MUSL_BIN }} > ${{ env.LINUX64_MUSL_BIN }}.sha256sum
-          echo "SHA_LINUX64_MUSL_BIN=$(cat ${{ env.LINUX64_MUSL_BIN }}.sha256sum)" >> $GITHUB_ENV
+          cd ${{ env.LINUX64_MUSL_X86 }}
+          sha256sum ${{ env.LINUX64_MUSL_X86_BIN }} > ${{ env.LINUX64_MUSL_X86_BIN }}.sha256sum
+          echo "SHA_LINUX64_MUSL_X86_BIN=$(cat ${{ env.LINUX64_MUSL_X86_BIN }}.sha256sum)" >> $GITHUB_ENV
+      - name: Generate Linux64 (musl aarch64) SHA256 checksums
+        run: |
+          cd ${{ env.LINUX64_MUSL_AARCH64 }}
+          sha256sum ${{ env.LINUX64_MUSL_AARCH64_BIN }} > ${{ env.LINUX64_MUSL_AARCH64_BIN }}.sha256sum
+          echo "SHA_LINUX64_MUSL_AARCH64_BIN=$(cat ${{ env.LINUX64_MUSL_AARCH64_BIN }}.sha256sum)" >> $GITHUB_ENV
       - name: Determine git tag
         if: github.event_name == 'push'
         run: |
@@ -322,7 +377,8 @@ jobs:
             ${{ env.LINUX64_GNU_X86 }}/${{ env.LINUX64_GNU_X86_BIN }}
             ${{ env.LINUX64_GNU_AARCH64 }}/${{ env.LINUX64_GNU_AARCH64_BIN }}
             ${{ env.LINUX64_GNU_ARMV7 }}/${{ env.LINUX64_GNU_ARMV7_BIN }}
-            ${{ env.LINUX64_MUSL }}/${{ env.LINUX64_MUSL_BIN }}
+            ${{ env.LINUX64_MUSL_X86 }}/${{ env.LINUX64_MUSL_X86_BIN }}
+            ${{ env.LINUX64_MUSL_AARCH64 }}/${{ env.LINUX64_MUSL_AARCH64_BIN }}
             **/*.sha256sum
           body: |
             ## Release Notes
@@ -332,7 +388,8 @@ jobs:
             - **linux64-gnu-x86** is the x86-64 release on Linux using libc
             - **linux64-gnu-aarch64** is the aarch64 release on Linux using libc
             - **linux64-gnu-arm-v7** is the arm-v7 release on Linux using libc (for Raspberry PI)
-            - **linux64-musl** is the x86-64 release on Linux using musl (static binary, no libc dependency)
+            - **linux64-musl-x86** is the x86-64 release on Linux using musl (static binary, no libc dependency)
+            - **linux64-musl-aarch64** is the aarch64 release on Linux using musl (static binary, no libc dependency)
             - **macos** is a universal binary for Mac OS that supports x86-64 and aarch64 (ARM) platforms
             - **win64** is the x86-64 release on Windows using MSVC
             ## SHA256 Checksums
@@ -342,5 +399,6 @@ jobs:
             ${{ env.SHA_LINUX64_GNU_X86_BIN }}
             ${{ env.SHA_LINUX64_GNU_AARCH64_BIN }}
             ${{ env.SHA_LINUX64_GNU_ARMV7_BIN }}
-            ${{ env.SHA_LINUX64_MUSL_BIN }}
+            ${{ env.SHA_LINUX64_MUSL_X86_BIN }}
+            ${{ env.SHA_LINUX64_MUSL_AARCH64_BIN }}
             ```
