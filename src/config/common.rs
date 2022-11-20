@@ -37,7 +37,7 @@ impl Default for LogLevel {
 #[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CommonConfig {
     /// Log level to use throughout the application
-    #[clap(long, global = true, case_insensitive = true, value_enum)]
+    #[clap(long, global = true, value_enum)]
     pub log_level: Option<LogLevel>,
 
     /// Path to file to use for logging

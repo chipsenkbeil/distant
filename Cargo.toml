@@ -3,7 +3,7 @@ name = "distant"
 description = "Operate on a remote computer through file and process manipulation"
 categories = ["command-line-utilities"]
 keywords = ["cli"]
-version = "0.20.0-alpha.1"
+version = "0.20.0-alpha.2"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -25,49 +25,49 @@ libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
 
 [dependencies]
-anyhow = "1.0.60"
-async-trait = "0.1.57"
-clap = { version = "3.2.16", features = ["derive"] }
-clap_complete = "3.2.3"
+anyhow = "1.0.66"
+async-trait = "0.1.58"
+clap = { version = "4.0.26", features = ["derive"] }
+clap_complete = "4.0.5"
 config = { version = "0.13.2", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.2", default-features = false }
-distant-core = { version = "=0.20.0-alpha.1", path = "distant-core", features = ["clap", "schemars"] }
+distant-core = { version = "=0.20.0-alpha.2", path = "distant-core", features = ["clap", "schemars"] }
 directories = "4.0.1"
 flexi_logger = "0.24.1"
 indoc = "1.0.7"
 log = "0.4.17"
-once_cell = "1.13.0"
+once_cell = "1.16.0"
 rand = { version = "0.8.5", features = ["getrandom"] }
-rpassword = "7.0.0"
-serde = { version = "1.0.142", features = ["derive"] }
-serde_json = "1.0.83"
+rpassword = "7.1.0"
+serde = { version = "1.0.147", features = ["derive"] }
+serde_json = "1.0.88"
 shell-words = "1.1.0"
-service-manager = { version = "0.1.3", features = ["clap", "serde"] }
-tabled = "0.8.0"
-tokio = { version = "1.20.1", features = ["full"] }
-toml_edit = { version = "0.14.4", features = ["serde"] }
-terminal_size = "0.2.1"
-termwiz = "0.17.1"
-which = "4.2.5"
+service-manager = { version = "0.2.0", features = ["clap", "serde"] }
+tabled = "0.10.0"
+tokio = { version = "1.22.0", features = ["full"] }
+toml_edit = { version = "0.15.0", features = ["serde"] }
+terminal_size = "0.2.2"
+termwiz = "0.19.0"
+which = "4.3.0"
 winsplit = "0.1.0"
-whoami = "1.2.1"
+whoami = "1.2.3"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.20.0-alpha.1", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
+distant-ssh2 = { version = "=0.20.0-alpha.2", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-fork = "0.1.19"
+fork = "0.1.20"
 
 [target.'cfg(windows)'.dependencies]
-sysinfo = "0.25.1"
+sysinfo = "0.26.7"
 windows-service = "0.5.0"
 
 [dev-dependencies]
-assert_cmd = "2.0.4"
-assert_fs = "1.0.7"
-env_logger = "0.9.1"
+assert_cmd = "2.0.6"
+assert_fs = "1.0.9"
+env_logger = "0.9.3"
 indoc = "1.0.7"
-predicates = "2.1.1"
+predicates = "2.1.3"
 rstest = "0.15.0"
 test-log = "0.2.11"

@@ -33,7 +33,7 @@ impl FromArgMatches for Cmd {
 }
 
 impl Args for Cmd {
-    fn augment_args(cmd: Command<'_>) -> Command<'_> {
+    fn augment_args(cmd: Command) -> Command {
         cmd.arg(
             Arg::new("cmd")
                 .required(true)
@@ -44,11 +44,11 @@ impl Args for Cmd {
         .arg(
             Arg::new("arg")
                 .value_name("ARGS")
-                .multiple_values(true)
+                .num_args(1..)
                 .action(ArgAction::Append),
         )
     }
-    fn augment_args_for_update(cmd: Command<'_>) -> Command<'_> {
+    fn augment_args_for_update(cmd: Command) -> Command {
         cmd
     }
 }
@@ -58,7 +58,7 @@ impl FromArgMatches for DistantMsg<DistantRequestData> {
         match matches.subcommand() {
             Some(("single", args)) => Ok(Self::Single(DistantRequestData::from_arg_matches(args)?)),
             Some((_, _)) => Err(Error::raw(
-                ErrorKind::UnrecognizedSubcommand,
+                ErrorKind::InvalidSubcommand,
                 "Valid subcommand is `single`",
             )),
             None => Err(Error::raw(
@@ -75,7 +75,7 @@ impl FromArgMatches for DistantMsg<DistantRequestData> {
             }
             Some((_, _)) => {
                 return Err(Error::raw(
-                    ErrorKind::UnrecognizedSubcommand,
+                    ErrorKind::InvalidSubcommand,
                     "Valid subcommand is `single`",
                 ))
             }
@@ -86,14 +86,14 @@ impl FromArgMatches for DistantMsg<DistantRequestData> {
 }
 
 impl Subcommand for DistantMsg<DistantRequestData> {
-    fn augment_subcommands(cmd: Command<'_>) -> Command<'_> {
+    fn augment_subcommands(cmd: Command) -> Command {
         cmd.subcommand(DistantRequestData::augment_subcommands(Command::new(
             "single",
         )))
         .subcommand_required(true)
     }
 
-    fn augment_subcommands_for_update(cmd: Command<'_>) -> Command<'_> {
+    fn augment_subcommands_for_update(cmd: Command) -> Command {
         cmd.subcommand(DistantRequestData::augment_subcommands(Command::new(
             "single",
         )))

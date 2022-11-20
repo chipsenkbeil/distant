@@ -3,7 +3,7 @@ name = "distant-net"
 description = "Network library for distant, providing implementations to support client/server architecture"
 categories = ["network-programming"]
 keywords = ["api", "async"]
-version = "0.20.0-alpha.1"
+version = "0.20.0-alpha.2"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -12,29 +12,29 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-async-trait = "0.1.57"
+async-trait = "0.1.58"
 bytes = "1.2.1"
-chacha20poly1305 = "0.10.0"
+chacha20poly1305 = "0.10.1"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
 dyn-clone = "1.0.9"
 flate2 = "1.0.24"
 hex = "0.4.3"
 hkdf = "0.12.3"
 log = "0.4.17"
-paste = "1.0.8"
+paste = "1.0.9"
 p256 = { version = "0.11.1", features = ["ecdh", "pem"] }
 rand = { version = "0.8.5", features = ["getrandom"] }
-rmp-serde = "1.1.0"
-sha2 = "0.10.2"
-serde = { version = "1.0.142", features = ["derive"] }
+rmp-serde = "1.1.1"
+sha2 = "0.10.6"
+serde = { version = "1.0.147", features = ["derive"] }
 serde_bytes = "0.11.7"
 strum = { version = "0.24.1", features = ["derive"] }
-tokio = { version = "1.20.1", features = ["full"] }
+tokio = { version = "1.22.0", features = ["full"] }
 
 # Optional dependencies based on features
-schemars = { version = "0.8.10", optional = true }
+schemars = { version = "0.8.11", optional = true }
 
 [dev-dependencies]
-env_logger = "0.9.1"
+env_logger = "0.9.3"
 tempfile = "3.3.0"
 test-log = "0.2.11"

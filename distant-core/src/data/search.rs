@@ -46,7 +46,7 @@ impl FromStr for SearchQuery {
 
 /// Kind of data to examine using conditions
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::ArgEnum))]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "clap", clap(rename_all = "snake_case"))]
 #[serde(rename_all = "snake_case")]

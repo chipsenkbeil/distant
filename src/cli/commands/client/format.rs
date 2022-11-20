@@ -168,10 +168,12 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
                 path: entry.path.to_string_lossy().to_string(),
             }))
             .with(Style::blank())
-            .with(Disable::Row(..1))
-            .with(Modify::new(Rows::new(..)).with(Alignment::left()));
+            .with(Disable::row(Rows::new(..1)))
+            .with(Modify::new(Rows::new(..)).with(Alignment::left()))
+            .to_string()
+            .into_bytes();
 
-            Output::Stdout(table.to_string().into_bytes())
+            Output::Stdout(table)
         }
         DistantResponseData::Changed(change) => Output::StdoutLine(
             format!(
@@ -409,9 +411,11 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
                 description: cap.description,
             }))
             .with(Style::ascii())
-            .with(Modify::new(Rows::new(..)).with(Alignment::left()));
+            .with(Modify::new(Rows::new(..)).with(Alignment::left()))
+            .to_string()
+            .into_bytes();
 
-            Output::Stdout(table.to_string().into_bytes())
+            Output::Stdout(table)
         }
     }
 }

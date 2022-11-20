@@ -24,7 +24,7 @@ pub enum GenerateSubcommand {
         file: Option<PathBuf>,
 
         /// Specific shell to target for the generated output
-        #[clap(arg_enum, value_parser)]
+        #[clap(value_enum, value_parser)]
         shell: Shell,
     },
 }

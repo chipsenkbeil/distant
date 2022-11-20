@@ -84,6 +84,7 @@ impl Shell {
                                 encoding: KeyboardEncoding::Xterm,
                                 application_cursor_keys: false,
                                 newline_mode: false,
+                                modify_other_keys: None,
                             },
                             /* is_down */ true,
                         ) {

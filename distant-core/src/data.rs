@@ -52,8 +52,8 @@ pub type Environment = distant_net::common::Map;
 pub type ByteVec = Vec<u8>;
 
 #[cfg(feature = "clap")]
-fn parse_byte_vec(src: &str) -> ByteVec {
-    src.as_bytes().to_vec()
+fn parse_byte_vec(src: &str) -> Result<ByteVec, std::convert::Infallible> {
+    Ok(src.as_bytes().to_vec())
 }
 
 /// Represents a wrapper around a distant message, supporting single and batch requests
@@ -194,7 +194,7 @@ pub enum DistantRequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        #[cfg_attr(feature = "clap", clap(parse(from_str = parse_byte_vec)))]
+        #[cfg_attr(feature = "clap", clap(value_parser = parse_byte_vec))]
         data: ByteVec,
     },
 
@@ -216,7 +216,7 @@ pub enum DistantRequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        #[cfg_attr(feature = "clap", clap(parse(from_str = parse_byte_vec)))]
+        #[cfg_attr(feature = "clap", clap(value_parser = parse_byte_vec))]
         data: ByteVec,
     },
 
@@ -334,7 +334,7 @@ pub enum DistantRequestData {
         #[serde(default)]
         #[cfg_attr(
             feature = "clap",
-            clap(long, possible_values = ChangeKind::VARIANTS)
+            clap(long, value_parser = clap::builder::PossibleValuesParser::new(ChangeKind::VARIANTS))
         )]
         only: Vec<ChangeKind>,
 
@@ -342,7 +342,7 @@ pub enum DistantRequestData {
         #[serde(default)]
         #[cfg_attr(
             feature = "clap", 
-            clap(long, possible_values = ChangeKind::VARIANTS)
+            clap(long, value_parser = clap::builder::PossibleValuesParser::new(ChangeKind::VARIANTS))
         )]
         except: Vec<ChangeKind>,
     },
