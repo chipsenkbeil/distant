@@ -254,12 +254,11 @@ impl<T: Transport> FramedTransport<T> {
         macro_rules! read_next_frame {
             () => {{
                 match Frame::read(&mut self.incoming) {
-                    Ok(None) => (),
-                    Ok(Some(frame)) => {
+                    None => (),
+                    Some(frame) => {
                         self.backup.increment_received_cnt();
                         return Ok(Some(self.codec.decode(frame)?.into_owned()));
                     }
-                    Err(x) => return Err(x),
                 }
             }};
         }
@@ -363,7 +362,7 @@ impl<T: Transport> FramedTransport<T> {
         // Encode the frame and store it in our outgoing queue
         self.codec
             .encode(frame.as_borrowed())?
-            .write(&mut self.outgoing)?;
+            .write(&mut self.outgoing);
 
         // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
         self.backup.increment_sent_cnt();
@@ -535,7 +534,7 @@ impl<T: Transport> FramedTransport<T> {
 
                 // Encode our frame and write it to be queued in our incoming data
                 // NOTE: We have to do encoding here as incoming bytes are expected to be encoded
-                this.codec.encode(frame)?.write(&mut this.incoming)?;
+                this.codec.encode(frame)?.write(&mut this.incoming);
             }
 
             // Catch up our read count as we can have the case where the other side has a higher
@@ -968,7 +967,7 @@ mod tests {
             let mut buf = BytesMut::new();
 
             for frame in frames {
-                frame.write(&mut buf).unwrap();
+                frame.write(&mut buf);
             }
 
             buf.to_vec()
@@ -1059,7 +1058,7 @@ mod tests {
     fn try_read_frame_should_return_next_available_frame() {
         let data = {
             let mut data = BytesMut::new();
-            Frame::new(b"hello world").write(&mut data).unwrap();
+            Frame::new(b"hello world").write(&mut data);
             data.freeze()
         };
 
@@ -1082,8 +1081,8 @@ mod tests {
         // Store two frames in our data to transmit
         let data = {
             let mut data = BytesMut::new();
-            Frame::new(b"hello world").write(&mut data).unwrap();
-            Frame::new(b"hello again").write(&mut data).unwrap();
+            Frame::new(b"hello world").write(&mut data);
+            Frame::new(b"hello again").write(&mut data);
             data.freeze()
         };
 
@@ -1746,8 +1745,8 @@ mod tests {
         let (mut t1, mut t2) = FramedTransport::pair(100);
 
         // Put some frames into the incoming and outgoing of our transport
-        Frame::new(b"bad incoming").write(&mut t2.incoming).unwrap();
-        Frame::new(b"bad outgoing").write(&mut t2.outgoing).unwrap();
+        Frame::new(b"bad incoming").write(&mut t2.incoming);
+        Frame::new(b"bad outgoing").write(&mut t2.outgoing);
 
         // Configure the backup such that we have sent two frames
         t2.backup.push_frame(Frame::new(b"hello"));

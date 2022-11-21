@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Frame::empty` method as convenience for `Frame::new(&[])`
+
+### Changed
+
+- `Frame` methods `read` and `write` no longer return an `io::Result<...>`
+  and instead return `Option<Frame<...>>` and nothing respectively
+- `Frame::read` method now supports zero-size items
+
 ## [0.20.0-alpha.2] - 2022-11-20
 
 ### Added
