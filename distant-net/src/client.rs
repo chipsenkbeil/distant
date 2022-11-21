@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
 
@@ -39,6 +39,9 @@ pub struct UntypedClient {
     /// Used to send requests to a server.
     channel: UntypedChannel,
 
+    /// Used to watch for changes in the connection state.
+    watcher: ConnectionWatcher,
+
     /// Used to send shutdown request to inner task.
     shutdown: Box<dyn Shutdown>,
 
@@ -61,6 +64,7 @@ impl UntypedClient {
     pub fn into_typed_client<T, U>(self) -> Client<T, U> {
         Client {
             channel: self.channel.into_typed_channel(),
+            watcher: self.watcher,
             shutdown: self.shutdown,
             task: self.task,
         }
@@ -100,6 +104,20 @@ impl UntypedClient {
     /// Signal for the client to shutdown its connection cleanly.
     pub async fn shutdown(&self) -> io::Result<()> {
         self.shutdown.shutdown().await
+    }
+
+    /// Clones the underlying [`ConnectionStateWatcher`] for the client.
+    pub fn clone_connection_watcher(&self) -> ConnectionWatcher {
+        self.watcher.clone()
+    }
+
+    /// Spawns a new task that continually monitors for connection changes and invokes the function
+    /// `f` whenever a new change is detected.
+    pub fn on_connection_change<F>(&self, f: F) -> JoinHandle<()>
+    where
+        F: FnMut(ConnectionState) + Send + 'static,
+    {
+        self.watcher.on_change(f)
     }
 
     /// Returns true if client's underlying event processing has finished/terminated.
@@ -143,6 +161,7 @@ impl UntypedClient {
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let shutdown_tx_2 = shutdown_tx.clone();
+        let (watcher_tx, watcher_rx) = watch::channel(ConnectionState::Connected);
         let task = tokio::spawn(async move {
             let mut needs_reconnect = false;
 
@@ -163,10 +182,12 @@ impl UntypedClient {
                     match strategy.reconnect(&mut connection).await {
                         Ok(x) => {
                             needs_reconnect = false;
+                            watcher_tx.send_replace(ConnectionState::Connected);
                             x
                         }
                         Err(x) => {
                             error!("Unable to re-establish connection: {x}");
+                            watcher_tx.send_replace(ConnectionState::Disconnected);
                             break Err(x);
                         }
                     }
@@ -178,6 +199,7 @@ impl UntypedClient {
                         debug!("Client got shutdown signal, so exiting event loop");
                         let cb = cb.expect("Impossible: shutdown channel closed!");
                         let _ = cb.send(Ok(()));
+                        watcher_tx.send_replace(ConnectionState::Disconnected);
                         break Ok(());
                     }
                     result = connection.ready(Interest::READABLE | Interest::WRITABLE) => {
@@ -186,6 +208,7 @@ impl UntypedClient {
                             Err(x) => {
                                 error!("Failed to examine ready state: {x}");
                                 needs_reconnect = true;
+                                watcher_tx.send_replace(ConnectionState::Reconnecting);
                                 continue;
                             }
                         }
@@ -222,12 +245,14 @@ impl UntypedClient {
                         Ok(None) => {
                             debug!("Connection closed");
                             needs_reconnect = true;
+                            watcher_tx.send_replace(ConnectionState::Reconnecting);
                             continue;
                         }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                         Err(x) => {
                             error!("Failed to read next frame: {x}");
                             needs_reconnect = true;
+                            watcher_tx.send_replace(ConnectionState::Reconnecting);
                             continue;
                         }
                     }
@@ -250,6 +275,7 @@ impl UntypedClient {
                             Err(x) => {
                                 error!("Failed to write frame: {x}");
                                 needs_reconnect = true;
+                                watcher_tx.send_replace(ConnectionState::Reconnecting);
                                 continue;
                             }
                         }
@@ -267,6 +293,7 @@ impl UntypedClient {
                             Err(x) => {
                                 error!("Failed to flush outgoing data: {x}");
                                 needs_reconnect = true;
+                                watcher_tx.send_replace(ConnectionState::Reconnecting);
                                 continue;
                             }
                         }
@@ -287,6 +314,7 @@ impl UntypedClient {
 
         Self {
             channel,
+            watcher: ConnectionWatcher(watcher_rx),
             shutdown: Box::new(shutdown_tx),
             task,
         }
@@ -318,6 +346,9 @@ pub struct Client<T, U> {
     /// Used to send requests to a server.
     channel: Channel<T, U>,
 
+    /// Used to watch for changes in the connection state.
+    watcher: ConnectionWatcher,
+
     /// Used to send shutdown request to inner task.
     shutdown: Box<dyn Shutdown>,
 
@@ -344,6 +375,7 @@ where
     pub fn into_untyped_client(self) -> UntypedClient {
         UntypedClient {
             channel: self.channel.into_untyped_channel(),
+            watcher: self.watcher,
             shutdown: self.shutdown,
             task: self.task,
         }
@@ -438,6 +470,20 @@ impl<T, U> Client<T, U> {
     /// Signal for the client to shutdown its connection cleanly.
     pub async fn shutdown(&self) -> io::Result<()> {
         self.shutdown.shutdown().await
+    }
+
+    /// Clones the underlying [`ConnectionStateWatcher`] for the client.
+    pub fn clone_connection_watcher(&self) -> ConnectionWatcher {
+        self.watcher.clone()
+    }
+
+    /// Spawns a new task that continually monitors for connection changes and invokes the function
+    /// `f` whenever a new change is detected.
+    pub fn on_connection_change<F>(&self, f: F) -> JoinHandle<()>
+    where
+        F: FnMut(ConnectionState) + Send + 'static,
+    {
+        self.watcher.on_change(f)
     }
 
     /// Returns true if client's underlying event processing has finished/terminated.

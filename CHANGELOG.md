@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `ConnectionState` and `ConnectionWatcher` to support watching changes to
+  the client connection, supporting `clone_connection_watcher` and
+  `on_connection_change` methods for the client
+
+### Changed
+
+- Server will now drop the connection if it receives an error (other than
+  WouldBlock) while trying to read from the transport, rather than just logging
+  the error, regardless of whether the error is resumable 
+
 ## [0.20.0-alpha.1] - 2022-11-19
 
 **NOTE: This is incomplete as v0.20.0 is a near-complete rewrite internally.**

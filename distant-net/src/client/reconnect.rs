@@ -1,6 +1,78 @@
 use super::Reconnectable;
 use std::io;
 use std::time::Duration;
+use strum::Display;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+
+/// Represents a watcher over a [`ConnectionState`].
+#[derive(Clone)]
+pub struct ConnectionWatcher(pub(super) watch::Receiver<ConnectionState>);
+
+impl ConnectionWatcher {
+    /// Returns next [`ConnectionState`] after a change is detected, or `None` if no more changes
+    /// will be detected.
+    pub async fn next(&mut self) -> Option<ConnectionState> {
+        self.0.changed().await.ok()?;
+        Some(self.last())
+    }
+
+    /// Returns true if the connection state has changed.
+    pub fn has_changed(&self) -> bool {
+        self.0.has_changed().ok().unwrap_or(false)
+    }
+
+    /// Returns the last [`ConnectionState`] observed.
+    pub fn last(&self) -> ConnectionState {
+        *self.0.borrow()
+    }
+
+    /// Spawns a new task that continually monitors for connection state changes and invokes the
+    /// function `f` whenever a new change is detected.
+    pub fn on_change<F>(&self, mut f: F) -> JoinHandle<()>
+    where
+        F: FnMut(ConnectionState) + Send + 'static,
+    {
+        let rx = self.0.clone();
+        tokio::spawn(async move {
+            let mut watcher = Self(rx);
+            while let Some(state) = watcher.next().await {
+                f(state);
+            }
+        })
+    }
+}
+
+/// Represents the state of a connection.
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+#[strum(serialize_all = "snake_case")]
+pub enum ConnectionState {
+    /// Connection is not active, but currently going through reconnection process.
+    Reconnecting,
+
+    /// Connection is active.
+    Connected,
+
+    /// Connection is not active.
+    Disconnected,
+}
+
+impl ConnectionState {
+    /// Returns true if reconnecting.
+    pub fn is_reconnecting(&self) -> bool {
+        matches!(self, Self::Reconnecting)
+    }
+
+    /// Returns true if connected.
+    pub fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected)
+    }
+
+    /// Returns true if disconnected.
+    pub fn is_disconnected(&self) -> bool {
+        matches!(self, Self::Disconnected)
+    }
+}
 
 /// Represents the strategy to apply when attempting to reconnect the client to the server.
 #[derive(Clone, Debug)]

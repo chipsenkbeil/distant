@@ -48,6 +48,12 @@ impl<T: AuthHandler + Clone> Client<T> {
     /// the [`NetworkConfig`] provided to the client earlier. Will return a new instance
     /// of the [`ManagerClient`] upon successful connection
     pub async fn connect(self) -> anyhow::Result<ManagerClient> {
+        let client = self.connect_impl().await?;
+        client.on_connection_change(|state| debug!("Client is now {state}"));
+        Ok(client)
+    }
+
+    async fn connect_impl(self) -> anyhow::Result<ManagerClient> {
         #[cfg(unix)]
         {
             let mut maybe_client = None;

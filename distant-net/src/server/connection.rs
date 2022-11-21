@@ -348,11 +348,7 @@ where
                     }
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                     Err(x) => {
-                        // NOTE: We do NOT break out of the loop, as this could happen
-                        //       if someone sends bad data at any point, but does not
-                        //       mean that the reader itself has failed. This can
-                        //       happen from getting non-compliant typed data
-                        error!("[Conn {id}] {x}");
+                        terminate_connection!(@error "[Conn {id}] {x}");
                     }
                 }
             }
