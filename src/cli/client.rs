@@ -65,7 +65,7 @@ impl<T: AuthHandler + Clone> Client<T> {
                         reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
                             base: Duration::from_secs(1),
                             factor: 2.0,
-                            max_duration: None,
+                            max_duration: Some(Duration::from_secs(10)),
                             max_retries: None,
                             timeout: None,
                         },
@@ -103,12 +103,15 @@ impl<T: AuthHandler + Clone> Client<T> {
             for name in self.network.to_windows_pipe_name_candidates() {
                 match NetClient::local_windows_pipe(name)
                     .auth_handler(self.auth_handler.clone())
-                    .reconnect_strategy(ReconnectStrategy::ExponentialBackoff {
-                        base: Duration::from_secs(1),
-                        factor: 2.0,
-                        max_duration: None,
-                        max_retries: None,
-                        timeout: None,
+                    .config(ClientConfig {
+                        reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
+                            base: Duration::from_secs(1),
+                            factor: 2.0,
+                            max_duration: Some(Duration::from_secs(10)),
+                            max_retries: None,
+                            timeout: None,
+                        },
+                        ..Default::default()
                     })
                     .connect()
                     .await

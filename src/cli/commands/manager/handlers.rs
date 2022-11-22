@@ -214,7 +214,7 @@ impl DistantConnectHandler {
                     reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
                         base: Duration::from_secs(1),
                         factor: 2.0,
-                        max_duration: None,
+                        max_duration: Some(Duration::from_secs(10)),
                         max_retries: None,
                         timeout: None,
                     },
