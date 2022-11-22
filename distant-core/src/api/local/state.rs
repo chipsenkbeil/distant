@@ -1,5 +1,6 @@
 use crate::data::{ProcessId, SearchId};
 use distant_net::common::ConnectionId;
+use log::*;
 use std::{io, path::PathBuf};
 
 mod process;
@@ -72,17 +73,32 @@ impl Drop for ConnectionState {
         // NOTE: We cannot (and should not) block during drop to perform cleanup,
         //       instead spawning a task that will do the cleanup async
         tokio::spawn(async move {
+            let conn_id = id;
+            info!("[Conn {conn_id}] Dropped, so cleaning up resources");
+
             for id in processes {
+                trace!("[Conn {conn_id}] Killing proc {id}");
+
                 // NOTE: Only kill a process if it is not marked as persistent, so force = false
-                let _ = process_channel.kill(id, /* force */ false).await;
+                if let Err(x) = process_channel.kill(id, /* force */ false).await {
+                    error!("[Conn {conn_id}] Failed to kill proc {id}: {x}");
+                }
             }
 
             for id in searches {
-                let _ = search_channel.cancel(id).await;
+                trace!("[Conn {conn_id}] Canceling search {id}");
+
+                if let Err(x) = search_channel.cancel(id).await {
+                    error!("[Conn {conn_id}] Failed to cancel search {id}: {x}");
+                }
             }
 
             for path in paths {
-                let _ = watcher_channel.unwatch(id, path).await;
+                trace!("[Conn {conn_id}] Unwatching path {path:?}");
+
+                if let Err(x) = watcher_channel.unwatch(id, path.as_path()).await {
+                    error!("[Conn {conn_id}] Failed to unwatch {path:?}: {x}");
+                }
             }
         });
     }
