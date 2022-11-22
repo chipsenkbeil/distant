@@ -190,6 +190,7 @@ impl UntypedClient {
                     match reconnect_strategy.reconnect(&mut connection).await {
                         Ok(x) => {
                             needs_reconnect = false;
+                            last_read_frame_time = Instant::now();
                             watcher_tx.send_replace(ConnectionState::Connected);
                             x
                         }
