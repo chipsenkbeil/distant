@@ -215,10 +215,10 @@ pub enum ClientSubcommand {
         #[clap(long, default_value_t)]
         environment: Environment,
 
-        /// If provided, will run in persist mode, meaning that the process will not be killed if the
+        /// If provided, will NOT run persist mode, meaning that the process will be killed if the
         /// client disconnects from the server
         #[clap(long)]
-        persist: bool,
+        non_persist: bool,
 
         /// Optional command to run instead of $SHELL
         cmd: Option<String>,
@@ -869,7 +869,7 @@ impl ClientSubcommand {
                 connection,
                 network,
                 environment,
-                persist,
+                non_persist,
                 cmd,
                 ..
             } => {
@@ -895,11 +895,11 @@ impl ClientSubcommand {
                 debug!(
                     "Spawning shell (environment = {:?}, persist = {}): {}",
                     environment,
-                    persist,
+                    !non_persist,
                     cmd.as_deref().unwrap_or(r"$SHELL")
                 );
                 Shell::new(channel.into_client().into_channel())
-                    .spawn(cmd, environment, persist)
+                    .spawn(cmd, environment, !non_persist)
                     .await?;
             }
         }

@@ -9,14 +9,14 @@ use tokio::{
 mod instance;
 pub use instance::*;
 
-/// Holds information related to spawned processes on the server
+/// Holds information related to spawned processes on the server.
 pub struct ProcessState {
     channel: ProcessChannel,
     task: JoinHandle<()>,
 }
 
 impl Drop for ProcessState {
-    /// Aborts the task that handles process operations and management
+    /// Aborts the task that handles process operations and management.
     fn drop(&mut self) {
         self.abort();
     }
@@ -57,7 +57,7 @@ pub struct ProcessChannel {
 }
 
 impl Default for ProcessChannel {
-    /// Creates a new channel that is closed by default
+    /// Creates a new channel that is closed by default.
     fn default() -> Self {
         let (tx, _) = mpsc::channel(1);
         Self { tx }
@@ -65,7 +65,7 @@ impl Default for ProcessChannel {
 }
 
 impl ProcessChannel {
-    /// Spawns a new process, returning the id associated with it
+    /// Spawns a new process, returning the id associated with it.
     pub async fn spawn(
         &self,
         cmd: String,
@@ -92,7 +92,7 @@ impl ProcessChannel {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to spawn dropped"))?
     }
 
-    /// Resizes the pty of a running process
+    /// Resizes the pty of a running process.
     pub async fn resize_pty(&self, id: ProcessId, size: PtySize) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -103,7 +103,7 @@ impl ProcessChannel {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to resize dropped"))?
     }
 
-    /// Send stdin to a running process
+    /// Send stdin to a running process.
     pub async fn send_stdin(&self, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -114,11 +114,12 @@ impl ProcessChannel {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to stdin dropped"))?
     }
 
-    /// Kills a running process
-    pub async fn kill(&self, id: ProcessId) -> io::Result<()> {
+    /// Kills a running process, including persistent processes if `force` is true. Will fail if
+    /// unable to kill the process or `force` is false when the process is persistent.
+    pub async fn kill(&self, id: ProcessId, force: bool) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
-            .send(InnerProcessMsg::Kill { id, cb })
+            .send(InnerProcessMsg::Kill { id, cb, force })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
         rx.await
@@ -126,7 +127,7 @@ impl ProcessChannel {
     }
 }
 
-/// Internal message to pass to our task below to perform some action
+/// Internal message to pass to our task below to perform some action.
 enum InnerProcessMsg {
     Spawn {
         cmd: String,
@@ -150,6 +151,7 @@ enum InnerProcessMsg {
     Kill {
         id: ProcessId,
         cb: oneshot::Sender<io::Result<()>>,
+        force: bool,
     },
     InternalRemove {
         id: ProcessId,
@@ -195,7 +197,7 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                     Some(process) => process.pty.resize_pty(size),
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No process found with id {}", id),
+                        format!("No process found with id {id}"),
                     )),
                 });
             }
@@ -205,21 +207,27 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                         Some(stdin) => stdin.send(&data).await,
                         None => Err(io::Error::new(
                             io::ErrorKind::Other,
-                            format!("Process {} stdin is closed", id),
+                            format!("Process {id} stdin is closed"),
                         )),
                     },
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No process found with id {}", id),
+                        format!("No process found with id {id}"),
                     )),
                 });
             }
-            InnerProcessMsg::Kill { id, cb } => {
+            InnerProcessMsg::Kill { id, cb, force } => {
                 let _ = cb.send(match processes.get_mut(&id) {
+                    Some(process) if process.persist && !force => Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!(
+                            "Process id {id} is marked as persistent, but include_persist = false"
+                        ),
+                    )),
                     Some(process) => process.killer.kill().await,
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No process found with id {}", id),
+                        format!("No process found with id {id}"),
                     )),
                 });
             }

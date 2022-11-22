@@ -466,7 +466,7 @@ impl DistantApi for LocalDistantApi {
 
     async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
-        self.state.process.kill(id).await
+        self.state.process.kill(id, /* force */ true).await
     }
 
     async fn proc_stdin(

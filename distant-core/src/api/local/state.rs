@@ -73,7 +73,8 @@ impl Drop for ConnectionState {
         //       instead spawning a task that will do the cleanup async
         tokio::spawn(async move {
             for id in processes {
-                let _ = process_channel.kill(id).await;
+                // NOTE: Only kill a process if it is not marked as persistent, so force = false
+                let _ = process_channel.kill(id, /* force */ false).await;
             }
 
             for id in searches {
