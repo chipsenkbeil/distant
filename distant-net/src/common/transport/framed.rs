@@ -705,7 +705,7 @@ impl<T: Transport> FramedTransport<T> {
                 })?;
 
                 // Choose a compression and encryption option from the options
-                debug!("[{log_label}] Selecting from options: {options:#?}");
+                debug!("[{log_label}] Selecting from options: {options:?}");
                 let choice = Choice {
                     // Use preferred compression if available, otherwise default to no compression
                     // to avoid choosing something poor
@@ -729,7 +729,7 @@ impl<T: Transport> FramedTransport<T> {
                 };
 
                 // Report back to the server the choice
-                debug!("[{log_label}] Reporting choice: {choice:#?}");
+                debug!("[{log_label}] Reporting choice: {choice:?}");
                 self.write_frame_for(&choice).await?;
 
                 choice
@@ -744,7 +744,7 @@ impl<T: Transport> FramedTransport<T> {
                 };
 
                 // Send options to the client
-                debug!("[{log_label}] Sending options: {options:#?}");
+                debug!("[{log_label}] Sending options: {options:?}");
                 self.write_frame_for(&options).await?;
 
                 // Get client's response with selected compression and encryption
@@ -758,7 +758,7 @@ impl<T: Transport> FramedTransport<T> {
             }
         };
 
-        debug!("[{log_label}] Building compression & encryption codecs based on {choice:#?}");
+        debug!("[{log_label}] Building compression & encryption codecs based on {choice:?}");
         let compression_level = choice.compression_level.unwrap_or_default();
 
         // Acquire a codec for the compression type
