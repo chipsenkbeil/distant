@@ -188,11 +188,11 @@ impl UntypedClient {
                         debug!("Using strategy {reconnect_strategy:?}");
                     }
                     match reconnect_strategy.reconnect(&mut connection).await {
-                        Ok(x) => {
+                        Ok(()) => {
+                            info!("Client successfully reconnected!");
                             needs_reconnect = false;
                             last_read_frame_time = Instant::now();
                             watcher_tx.send_replace(ConnectionState::Connected);
-                            x
                         }
                         Err(x) => {
                             error!("Unable to re-establish connection: {x}");
