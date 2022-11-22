@@ -165,6 +165,7 @@ where
                 *id = new_id;
                 *reauth_otp = new_reauth_otp;
 
+                info!("[Conn {id}] Reconnect completed successfully!");
                 Ok(())
             }
 
@@ -238,6 +239,7 @@ where
         debug!("[Conn {id}] Deriving future OTP for reauthentication");
         let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
 
+        info!("[Conn {id}] Connect completed successfully!");
         Ok(Self::Client {
             id,
             reauth_otp,
@@ -302,6 +304,7 @@ where
                 let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
 
                 // Store the id, OTP, and backup retrieval in our database
+                info!("[Conn {id}] Connect completed successfully!");
                 keychain.insert(id.to_string(), reauth_otp, rx).await;
             }
             ConnectType::Reconnect { id: other_id, otp } => {
@@ -358,6 +361,7 @@ where
                         unwrap_or_fail!(transport.backup, transport.synchronize().await);
 
                         // Store the id, OTP, and backup retrieval in our database
+                        info!("[Conn {id}] Reconnect restoration completed successfully!");
                         keychain.insert(id.to_string(), new_reauth_otp, rx).await;
                     }
                     KeychainResult::InvalidPassword => {
