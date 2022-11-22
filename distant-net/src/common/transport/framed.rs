@@ -256,7 +256,9 @@ impl<T: Transport> FramedTransport<T> {
                 match Frame::read(&mut self.incoming) {
                     None => (),
                     Some(frame) => {
-                        self.backup.increment_received_cnt();
+                        if frame.is_nonempty() {
+                            self.backup.increment_received_cnt();
+                        }
                         return Ok(Some(self.codec.decode(frame)?.into_owned()));
                     }
                 }
@@ -364,12 +366,15 @@ impl<T: Transport> FramedTransport<T> {
             .encode(frame.as_borrowed())?
             .write(&mut self.outgoing);
 
-        // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
-        self.backup.increment_sent_cnt();
+        // Update tracking stats and more of backup if frame is nonempty
+        if frame.is_nonempty() {
+            // Once the frame enters our queue, we count it as written, even if it isn't fully flushed
+            self.backup.increment_sent_cnt();
 
-        // Then we store the raw frame (non-encoded) for the future in case we need to retry
-        // sending it later (possibly with a different codec)
-        self.backup.push_frame(frame);
+            // Then we store the raw frame (non-encoded) for the future in case we need to retry
+            // sending it later (possibly with a different codec)
+            self.backup.push_frame(frame);
+        }
 
         // Attempt to write everything in our queue
         self.try_flush()?;

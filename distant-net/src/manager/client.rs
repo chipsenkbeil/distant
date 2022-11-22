@@ -303,13 +303,13 @@ impl ManagerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ReconnectStrategy, UntypedClient};
+    use crate::client::UntypedClient;
     use crate::common::authentication::DummyAuthHandler;
     use crate::common::{Connection, InmemoryTransport, Request, Response};
 
     fn setup() -> (ManagerClient, Connection<InmemoryTransport>) {
         let (client, server) = Connection::pair(100);
-        let client = UntypedClient::spawn(client, ReconnectStrategy::Fail).into_typed_client();
+        let client = UntypedClient::spawn(client, Default::default()).into_typed_client();
         (client, server)
     }
 

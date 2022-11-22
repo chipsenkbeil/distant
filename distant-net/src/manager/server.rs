@@ -316,7 +316,7 @@ impl ServerHandler for ManagerServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ReconnectStrategy, UntypedClient};
+    use crate::client::UntypedClient;
     use crate::common::FramedTransport;
     use crate::server::ServerReply;
     use crate::{boxed_connect_handler, boxed_launch_handler};
@@ -335,7 +335,7 @@ mod tests {
 
     /// Create an untyped client that is detached such that reads and writes will fail
     fn detached_untyped_client() -> UntypedClient {
-        UntypedClient::spawn_inmemory(FramedTransport::pair(1).0, ReconnectStrategy::Fail)
+        UntypedClient::spawn_inmemory(FramedTransport::pair(1).0, Default::default())
     }
 
     /// Create a new server and authenticator

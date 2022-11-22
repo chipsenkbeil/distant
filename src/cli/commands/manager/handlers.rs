@@ -1,6 +1,6 @@
 use crate::config::ClientLaunchConfig;
 use async_trait::async_trait;
-use distant_core::net::client::{Client, ReconnectStrategy, UntypedClient};
+use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::authentication::msg::*;
 use distant_core::net::common::authentication::{
     AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
@@ -210,14 +210,17 @@ impl DistantConnectHandler {
 
             match Client::tcp(addr)
                 .auth_handler(DynAuthHandler::from(&mut auth_handler))
-                .reconnect_strategy(ReconnectStrategy::ExponentialBackoff {
-                    base: Duration::from_secs(1),
-                    factor: 2.0,
-                    max_duration: None,
-                    max_retries: None,
-                    timeout: None,
+                .config(ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
+                        base: Duration::from_secs(1),
+                        factor: 2.0,
+                        max_duration: None,
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
                 })
-                .timeout(Duration::from_secs(180))
+                .connect_timeout(Duration::from_secs(180))
                 .connect_untyped()
                 .await
             {

@@ -1,7 +1,7 @@
 use super::{ConnectionCtx, ServerCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
 use crate::common::{
     authentication::{Keychain, Verifier},
-    Backup, Connection, ConnectionId, Interest, Response, Transport, UntypedRequest,
+    Backup, Connection, ConnectionId, Frame, Interest, Response, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Weak},
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     sync::{mpsc, oneshot, RwLock},
@@ -22,6 +22,9 @@ pub type ServerKeychain = Keychain<oneshot::Receiver<Backup>>;
 
 /// Time to wait inbetween connection read/write when nothing was read or written on last pass
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
+
+/// Minimum time between heartbeats to communicate to the client connection
+const MINIMUM_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
 
 /// Represents an individual connection on the server
 pub struct ConnectionTask {
@@ -44,6 +47,7 @@ impl ConnectionTask {
             transport: (),
             shutdown_timer: Weak::new(),
             sleep_duration: SLEEP_DURATION,
+            heartbeat_duration: MINIMUM_HEARTBEAT_DURATION,
             verifier: Weak::new(),
         }
     }
@@ -86,6 +90,7 @@ pub struct ConnectionTaskBuilder<H, T> {
     transport: T,
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
     sleep_duration: Duration,
+    heartbeat_duration: Duration,
     verifier: Weak<Verifier>,
 }
 
@@ -99,6 +104,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
         }
     }
@@ -112,6 +118,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
         }
     }
@@ -125,6 +132,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
         }
     }
@@ -138,6 +146,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
         }
     }
@@ -154,6 +163,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport: self.transport,
             shutdown_timer,
             sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
         }
     }
@@ -167,6 +177,21 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn heartbeat_duration(self, heartbeat_duration: Duration) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
+            id: self.id,
+            handler: self.handler,
+            state: self.state,
+            keychain: self.keychain,
+            transport: self.transport,
+            shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
+            heartbeat_duration,
             verifier: self.verifier,
         }
     }
@@ -180,6 +205,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
             transport: self.transport,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
             verifier,
         }
     }
@@ -211,6 +237,7 @@ where
             transport,
             shutdown_timer,
             sleep_duration,
+            heartbeat_duration,
             verifier,
         } = self;
 
@@ -289,6 +316,7 @@ where
         }
 
         let local_data = Arc::new(local_data);
+        let mut last_heartbeat = Instant::now();
 
         debug!("[Conn {id}] Beginning read/write loop");
         loop {
@@ -356,10 +384,20 @@ where
             // If our socket is ready to be written to, we try to get the next item from
             // the queue and process it
             if ready.is_writable() {
+                // Send a heartbeat if we have exceeded our last time
+                if last_heartbeat.elapsed() >= heartbeat_duration {
+                    trace!("[Conn {id}] Sending heartbeat via empty frame");
+                    match connection.try_write_frame(Frame::empty()) {
+                        Ok(()) => (),
+                        Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
+                        Err(x) => error!("[Conn {id}] Send failed: {x}"),
+                    }
+                    last_heartbeat = Instant::now();
+                }
                 // If we get more data to write, attempt to write it, which will result in writing
                 // any queued bytes as well. Othewise, we attempt to flush any pending outgoing
                 // bytes that weren't sent earlier.
-                if let Ok(response) = rx.try_recv() {
+                else if let Ok(response) = rx.try_recv() {
                     // Log our message as a string, which can be expensive
                     if log_enabled!(Level::Trace) {
                         trace!(
@@ -747,5 +785,64 @@ mod tests {
 
         let response = task.await.unwrap();
         assert_eq!(response.payload, "hello");
+    }
+
+    #[test(tokio::test)]
+    async fn should_send_heartbeat_via_empty_frame_every_minimum_duration() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .heartbeat_duration(Duration::from_millis(200))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle establishing connection from client-side
+        let task = tokio::spawn(async move {
+            let mut client = Connection::client(t2, DummyAuthHandler)
+                .await
+                .expect("Fail to establish client-side connection");
+
+            // Verify we don't get a frame immediately
+            assert_eq!(
+                client.try_read_frame().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock,
+                "got a frame early"
+            );
+
+            // Sleep more than our minimum heartbeat duration to ensure we get one
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            assert_eq!(
+                client.read_frame().await.unwrap().unwrap(),
+                Frame::empty(),
+                "non-empty frame"
+            );
+
+            // Verify we don't get a frame immediately
+            assert_eq!(
+                client.try_read_frame().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock,
+                "got a frame early"
+            );
+
+            // Sleep more than our minimum heartbeat duration to ensure we get one
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            assert_eq!(
+                client.read_frame().await.unwrap().unwrap(),
+                Frame::empty(),
+                "non-empty frame"
+            );
+        });
+
+        task.await.unwrap();
     }
 }

@@ -13,7 +13,8 @@ mod windows;
 #[cfg(windows)]
 pub use windows::*;
 
-use crate::client::{Client, ReconnectStrategy, UntypedClient};
+use super::ClientConfig;
+use crate::client::{Client, UntypedClient};
 use crate::common::{authentication::AuthHandler, Connection, Transport};
 use async_trait::async_trait;
 use std::{convert, io, time::Duration};
@@ -40,44 +41,48 @@ impl<T: Transport + 'static> Connector for T {
 pub struct ClientBuilder<H, C> {
     auth_handler: H,
     connector: C,
-    reconnect_strategy: ReconnectStrategy,
-    timeout: Option<Duration>,
+    config: ClientConfig,
+    connect_timeout: Option<Duration>,
 }
 
 impl<H, C> ClientBuilder<H, C> {
+    /// Configure the authentication handler to use when connecting to a server.
     pub fn auth_handler<U>(self, auth_handler: U) -> ClientBuilder<U, C> {
         ClientBuilder {
             auth_handler,
+            config: self.config,
             connector: self.connector,
-            reconnect_strategy: self.reconnect_strategy,
-            timeout: self.timeout,
+            connect_timeout: self.connect_timeout,
         }
     }
 
+    /// Configure the client-local configuration details.
+    pub fn config(self, config: ClientConfig) -> Self {
+        Self {
+            auth_handler: self.auth_handler,
+            config,
+            connector: self.connector,
+            connect_timeout: self.connect_timeout,
+        }
+    }
+
+    /// Configure the connector to use to facilitate connecting to a server.
     pub fn connector<U>(self, connector: U) -> ClientBuilder<H, U> {
         ClientBuilder {
             auth_handler: self.auth_handler,
+            config: self.config,
             connector,
-            reconnect_strategy: self.reconnect_strategy,
-            timeout: self.timeout,
+            connect_timeout: self.connect_timeout,
         }
     }
 
-    pub fn reconnect_strategy(self, reconnect_strategy: ReconnectStrategy) -> ClientBuilder<H, C> {
-        ClientBuilder {
-            auth_handler: self.auth_handler,
-            connector: self.connector,
-            reconnect_strategy,
-            timeout: self.timeout,
-        }
-    }
-
-    pub fn timeout(self, timeout: impl Into<Option<Duration>>) -> Self {
+    /// Configure a maximum duration to wait for a connection to a server to complete.
+    pub fn connect_timeout(self, connect_timeout: impl Into<Option<Duration>>) -> Self {
         Self {
             auth_handler: self.auth_handler,
+            config: self.config,
             connector: self.connector,
-            reconnect_strategy: self.reconnect_strategy,
-            timeout: timeout.into(),
+            connect_timeout: connect_timeout.into(),
         }
     }
 }
@@ -86,9 +91,9 @@ impl ClientBuilder<(), ()> {
     pub fn new() -> Self {
         Self {
             auth_handler: (),
-            reconnect_strategy: ReconnectStrategy::default(),
+            config: Default::default(),
             connector: (),
-            timeout: None,
+            connect_timeout: None,
         }
     }
 }
@@ -109,11 +114,11 @@ where
     /// is fully established and authenticated.
     pub async fn connect_untyped(self) -> io::Result<UntypedClient> {
         let auth_handler = self.auth_handler;
-        let retry_strategy = self.reconnect_strategy;
-        let timeout = self.timeout;
+        let config = self.config;
+        let connect_timeout = self.connect_timeout;
 
         let f = async move {
-            let transport = match timeout {
+            let transport = match connect_timeout {
                 Some(duration) => tokio::time::timeout(duration, self.connector.connect())
                     .await
                     .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))
@@ -121,10 +126,10 @@ where
                 None => self.connector.connect().await?,
             };
             let connection = Connection::client(transport, auth_handler).await?;
-            Ok(UntypedClient::spawn(connection, retry_strategy))
+            Ok(UntypedClient::spawn(connection, config))
         };
 
-        match timeout {
+        match connect_timeout {
             Some(duration) => tokio::time::timeout(duration, f)
                 .await
                 .map_err(|x| io::Error::new(io::ErrorKind::TimedOut, x))

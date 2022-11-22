@@ -412,7 +412,7 @@ mod tests {
     use crate::data::{DistantRequestData, DistantResponseData};
     use distant_net::{
         common::{FramedTransport, InmemoryTransport, Request, Response},
-        Client, ReconnectStrategy,
+        Client,
     };
     use std::{future::Future, time::Duration};
     use test_log::test;
@@ -423,7 +423,7 @@ mod tests {
     // Configures an lsp process with a means to send & receive data from outside
     async fn spawn_lsp_process() -> (FramedTransport<InmemoryTransport>, RemoteLspProcess) {
         let (mut t1, t2) = FramedTransport::pair(100);
-        let client = Client::spawn_inmemory(t2, ReconnectStrategy::Fail);
+        let client = Client::spawn_inmemory(t2, Default::default());
         let spawn_task = tokio::spawn({
             let channel = client.clone_channel();
             async move {

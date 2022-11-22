@@ -210,6 +210,7 @@ where
                 .transport(transport)
                 .shutdown_timer(Arc::downgrade(&timer))
                 .sleep_duration(config.connection_sleep)
+                .heartbeat_duration(config.connection_heartbeat)
                 .verifier(Arc::downgrade(&verifier))
                 .spawn();
 

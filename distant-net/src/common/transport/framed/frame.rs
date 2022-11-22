@@ -45,6 +45,12 @@ impl Frame<'_> {
         self.item.is_empty()
     }
 
+    /// Returns true if the frame is comprised of some bytes.
+    #[inline]
+    pub fn is_nonempty(&self) -> bool {
+        !self.is_empty()
+    }
+
     /// Returns a reference to the bytes of the frame's item.
     pub fn as_item(&self) -> &[u8] {
         &self.item

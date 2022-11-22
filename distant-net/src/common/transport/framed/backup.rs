@@ -5,6 +5,11 @@ use std::collections::VecDeque;
 const MAX_BACKUP_SIZE: usize = 256 * 1024 * 1024;
 
 /// Stores [`Frame`]s for reuse later.
+///
+/// ### Note
+///
+/// Empty [`Frame`]s are an exception and are not stored within the backup nor
+/// are they tracked in terms of sent/received counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Backup {
     /// Maximum size (in bytes) to save frames in case we need to backup them

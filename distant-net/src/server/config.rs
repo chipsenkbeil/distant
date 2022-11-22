@@ -3,12 +3,16 @@ use serde::{Deserialize, Serialize};
 use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
 const DEFAULT_CONNECTION_SLEEP: Duration = Duration::from_millis(1);
+const DEFAULT_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
 
 /// Represents a general-purpose set of properties tied with a server instance
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// Time to wait inbetween connection read/write when nothing was read or written on last pass
     pub connection_sleep: Duration,
+
+    /// Minimum time to wait inbetween sending heartbeat messages
+    pub connection_heartbeat: Duration,
 
     /// Rules for how a server will shutdown automatically
     pub shutdown: Shutdown,
@@ -18,6 +22,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             connection_sleep: DEFAULT_CONNECTION_SLEEP,
+            connection_heartbeat: DEFAULT_HEARTBEAT_DURATION,
             shutdown: Default::default(),
         }
     }
