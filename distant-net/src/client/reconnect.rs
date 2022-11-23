@@ -1,4 +1,5 @@
 use super::Reconnectable;
+use log::*;
 use std::io;
 use std::time::Duration;
 use strum::Display;
@@ -170,8 +171,11 @@ impl ReconnectStrategy {
             };
 
             // If reconnect was successful, we're done and we can exit
-            if result.is_ok() {
-                return Ok(());
+            match &result {
+                Ok(()) => return Ok(()),
+                Err(x) => {
+                    error!("Failed to reconnect: {x}");
+                }
             }
 
             // Decrement remaining retries if we have a limit

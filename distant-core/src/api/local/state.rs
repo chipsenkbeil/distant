@@ -38,7 +38,7 @@ impl GlobalState {
 #[derive(Default)]
 pub struct ConnectionState {
     /// Unique id associated with connection
-    id: ConnectionId,
+    pub(crate) id: ConnectionId,
 
     /// Channel connected to global process state
     pub(crate) process_channel: ProcessChannel,

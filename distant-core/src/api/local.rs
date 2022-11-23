@@ -44,6 +44,7 @@ impl DistantApi for LocalDistantApi {
 
     /// Injects the global channels into the local connection
     async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+        ctx.local_data.id = ctx.connection_id;
         ctx.local_data.process_channel = self.state.process.clone_channel();
         ctx.local_data.watcher_channel = self.state.watcher.clone_channel();
         Ok(())
@@ -582,7 +583,10 @@ mod tests {
         let api = LocalDistantApi::initialize().unwrap();
         let (reply, rx) = make_reply(buffer);
         let connection_id = rand::random();
+
         let mut local_data = ConnectionState::default();
+        local_data.id = connection_id;
+
         DistantApi::on_accept(
             &api,
             ConnectionCtx {

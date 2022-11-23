@@ -148,24 +148,24 @@ where
                 transport,
                 reauth_otp,
             } => {
-                // Freeze our backup as we don't want the connection logic to alter it
-                transport.backup.freeze();
-
-                // Attempt to perform the reconnection and unfreeze our backup regardless of the
-                // result
-                let result = reconnect_client(*id, reauth_otp.clone(), transport).await;
-                transport.backup.unfreeze();
-                let (new_id, new_reauth_otp) = result?;
+                // Freeze our backup as we don't want the connection logic to alter it, attempt to
+                // perform the reconnection, and unfreeze our backup regardless of the result
+                let (new_id, new_reauth_otp) = {
+                    transport.backup.freeze();
+                    let result = reconnect_client(*id, reauth_otp.clone(), transport).await;
+                    transport.backup.unfreeze();
+                    result?
+                };
 
                 // Perform synchronization
                 debug!("[Conn {id}] Synchronizing frame state");
                 transport.synchronize().await?;
 
                 // Everything has succeeded, so we now will update our id and reauth otp
+                info!("[Conn {id}] Reconnect completed successfully! Assigning new id {new_id}");
                 *id = new_id;
                 *reauth_otp = new_reauth_otp;
 
-                info!("[Conn {id}] Reconnect completed successfully!");
                 Ok(())
             }
 
@@ -344,7 +344,7 @@ where
                         }
 
                         // Communicate the connection id
-                        debug!("[Conn {id}] Telling other side to change connection id");
+                        debug!("[Conn {id}] Telling other side to change connection id from {other_id}");
                         unwrap_or_fail!(transport.write_frame_for(&id).await);
 
                         // Derive an OTP for reauthentication
