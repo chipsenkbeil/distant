@@ -122,19 +122,6 @@ where
                 })
                 .await?;
 
-            // Receive the new id for the connection
-            // NOTE: If we fail re-authentication above,
-            //       this will fail as the connection is dropped
-            debug!("[Conn {id}] Receiving new connection id");
-            let new_id = transport
-                .read_frame_as::<ConnectionId>()
-                .await?
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::Other, "Missing connection id frame")
-                })?;
-            debug!("[Conn {id}] Resetting id to {new_id}");
-            let id = new_id;
-
             // Derive an OTP for reauthentication
             debug!("[Conn {id}] Deriving future OTP for reauthentication");
             let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
@@ -289,7 +276,7 @@ where
 
         // Based on the connection type, we either try to find and validate an existing connection
         // or we perform normal verification
-        match connection_type {
+        let id = match connection_type {
             ConnectType::Connect => {
                 // Communicate the connection id
                 debug!("[Conn {id}] Telling other side to change connection id");
@@ -306,6 +293,8 @@ where
                 // Store the id, OTP, and backup retrieval in our database
                 info!("[Conn {id}] Connect completed successfully!");
                 keychain.insert(id.to_string(), reauth_otp, rx).await;
+
+                id
             }
             ConnectType::Reconnect { id: other_id, otp } => {
                 let reauth_otp = HeapSecretKey::from(otp);
@@ -316,6 +305,10 @@ where
                     .await
                 {
                     KeychainResult::Ok(x) => {
+                        // Match found, so we want ot update our id to be the pre-existing id
+                        debug!("[Conn {id}] Reassigning to {other_id}");
+                        let id = other_id;
+
                         // Grab the old backup
                         debug!("[Conn {id}] Acquiring backup for existing connection");
                         let backup = match x.await {
@@ -334,18 +327,14 @@ where
                                 match $action {
                                     Ok(x) => x,
                                     Err(x) => {
-                                        error!("[Conn {id}] Encountered error, restoring to {other_id} with old backup");
+                                        error!("[Conn {id}] Encountered error, restoring with old backup");
                                         let _ = tx.send($backup);
-                                        keychain.insert(other_id.to_string(), reauth_otp, rx).await;
+                                        keychain.insert(id.to_string(), reauth_otp, rx).await;
                                         return Err(x);
                                     }
                                 }
                             }};
                         }
-
-                        // Communicate the connection id
-                        debug!("[Conn {id}] Telling other side to change connection id from {other_id}");
-                        unwrap_or_fail!(transport.write_frame_for(&id).await);
 
                         // Derive an OTP for reauthentication
                         debug!("[Conn {id}] Deriving future OTP for reauthentication");
@@ -363,6 +352,8 @@ where
                         // Store the id, OTP, and backup retrieval in our database
                         info!("[Conn {id}] Reconnect restoration completed successfully!");
                         keychain.insert(id.to_string(), new_reauth_otp, rx).await;
+
+                        id
                     }
                     KeychainResult::InvalidPassword => {
                         return Err(io::Error::new(
@@ -378,7 +369,7 @@ where
                     }
                 }
             }
-        }
+        };
 
         Ok(Self::Server { id, tx, transport })
     }
@@ -850,9 +841,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Receive a new client id
-        let _id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
-
         // Send garbage to fail the otp exchange
         t1.write_frame(Frame::new(b"hello")).await.unwrap();
 
@@ -890,9 +878,6 @@ mod tests {
         })
         .await
         .unwrap();
-
-        // Receive a new client id
-        let _id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
 
         // Perform otp exchange
         let _otp = t1.exchange_keys().await.unwrap();
@@ -957,9 +942,10 @@ mod tests {
         let verifier = Verifier::none();
         let keychain = Keychain::new();
         let key = HeapSecretKey::generate(32).unwrap();
+        let id = 1234;
 
         keychain
-            .insert(1234.to_string(), key.clone(), {
+            .insert(id.to_string(), key.clone(), {
                 // Create a custom backup we'll use to replay frames from the server-side
                 let mut backup = Backup::new();
 
@@ -997,9 +983,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Receive a new client id
-        let id = t1.read_frame_as::<ConnectionId>().await.unwrap().unwrap();
-
         // Perform otp exchange
         let otp = t1.exchange_keys().await.unwrap();
 
@@ -1024,9 +1007,6 @@ mod tests {
 
         // Validate the connection ids match
         assert_eq!(server.id(), id);
-
-        // Check that our old connection id is no longer contained in the keychain
-        assert!(!keychain.has_id("1234").await, "Old OTP still exists");
 
         // Validate the OTP was stored in our keychain
         assert!(
@@ -1238,12 +1218,6 @@ mod tests {
             .expect("Invalid id or OTP")
             .await
             .expect("Failed to retrieve backup");
-
-        // Send a new id back to the client connection
-        transport
-            .write_frame_for(&rand::random::<ConnectionId>())
-            .await
-            .unwrap();
 
         // Perform key exchange
         let otp = transport.exchange_keys().await.unwrap();
