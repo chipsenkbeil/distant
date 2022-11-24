@@ -1217,7 +1217,6 @@ async fn proc_spawn_should_not_fail_even_if_process_not_found(
             /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1239,7 +1238,6 @@ async fn proc_spawn_should_return_id_of_spawned_process(#[future] client: Ctx<Di
             ),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1267,7 +1265,6 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
             ),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1303,7 +1300,6 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
             ),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1333,7 +1329,6 @@ async fn proc_spawn_should_send_done_signal_when_completed(#[future] client: Ctx
             format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1355,7 +1350,6 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(
             format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1380,7 +1374,6 @@ async fn proc_kill_should_fail_if_process_not_running(#[future] client: Ctx<Dist
             format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1408,7 +1401,6 @@ async fn proc_stdin_should_fail_if_process_not_running(#[future] client: Ctx<Dis
             format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await
@@ -1444,7 +1436,6 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<DistantCl
             ),
             /* environment */ Environment::new(),
             /* current_dir */ None,
-            /* persist */ false,
             /* pty */ None,
         )
         .await

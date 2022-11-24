@@ -101,7 +101,6 @@ pub trait DistantChannelExt {
         cmd: impl Into<String>,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess>;
 
@@ -111,7 +110,6 @@ pub trait DistantChannelExt {
         cmd: impl Into<String>,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess>;
 
@@ -369,7 +367,6 @@ impl DistantChannelExt
         cmd: impl Into<String>,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess> {
         let cmd = cmd.into();
@@ -377,7 +374,6 @@ impl DistantChannelExt
             RemoteCommand::new()
                 .environment(environment)
                 .current_dir(current_dir)
-                .persist(persist)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
                 .await
@@ -389,7 +385,6 @@ impl DistantChannelExt
         cmd: impl Into<String>,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess> {
         let cmd = cmd.into();
@@ -397,7 +392,6 @@ impl DistantChannelExt
             RemoteLspCommand::new()
                 .environment(environment)
                 .current_dir(current_dir)
-                .persist(persist)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
                 .await
@@ -416,7 +410,6 @@ impl DistantChannelExt
             RemoteCommand::new()
                 .environment(environment)
                 .current_dir(current_dir)
-                .persist(false)
                 .pty(pty)
                 .spawn(self.clone(), cmd)
                 .await?

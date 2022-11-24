@@ -694,12 +694,11 @@ impl DistantApi for SshDistantApi {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         debug!(
-            "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, persist: {}, pty: {:?}}}",
-            ctx.connection_id, cmd, environment, current_dir, persist, pty
+            "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, pty: {:?}}}",
+            ctx.connection_id, cmd, environment, current_dir, pty
         );
 
         let global_processes = Arc::downgrade(&self.processes);
@@ -743,12 +742,6 @@ impl DistantApi for SshDistantApi {
                 .await?
             }
         };
-
-        // If the process will be killed when the connection ends, we want to add it
-        // to our local data
-        if !persist {
-            ctx.local_data.processes.write().await.insert(id);
-        }
 
         self.processes.write().await.insert(
             id,

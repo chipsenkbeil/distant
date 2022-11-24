@@ -71,7 +71,6 @@ impl ProcessChannel {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<ProcessId> {
@@ -81,7 +80,6 @@ impl ProcessChannel {
                 cmd,
                 environment,
                 current_dir,
-                persist,
                 pty,
                 reply,
                 cb,
@@ -116,10 +114,10 @@ impl ProcessChannel {
 
     /// Kills a running process, including persistent processes if `force` is true. Will fail if
     /// unable to kill the process or `force` is false when the process is persistent.
-    pub async fn kill(&self, id: ProcessId, force: bool) -> io::Result<()> {
+    pub async fn kill(&self, id: ProcessId) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
-            .send(InnerProcessMsg::Kill { id, cb, force })
+            .send(InnerProcessMsg::Kill { id, cb })
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
         rx.await
@@ -133,7 +131,6 @@ enum InnerProcessMsg {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
         cb: oneshot::Sender<io::Result<ProcessId>>,
@@ -151,7 +148,6 @@ enum InnerProcessMsg {
     Kill {
         id: ProcessId,
         cb: oneshot::Sender<io::Result<()>>,
-        force: bool,
     },
     InternalRemove {
         id: ProcessId,
@@ -167,14 +163,12 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                 cmd,
                 environment,
                 current_dir,
-                persist,
                 pty,
                 reply,
                 cb,
             } => {
                 let _ = cb.send(
-                    match ProcessInstance::spawn(cmd, environment, current_dir, persist, pty, reply)
-                    {
+                    match ProcessInstance::spawn(cmd, environment, current_dir, pty, reply) {
                         Ok(mut process) => {
                             let id = process.id;
 
@@ -216,14 +210,8 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                     )),
                 });
             }
-            InnerProcessMsg::Kill { id, cb, force } => {
+            InnerProcessMsg::Kill { id, cb } => {
                 let _ = cb.send(match processes.get_mut(&id) {
-                    Some(process) if process.persist && !force => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "Process id {id} is marked as persistent, but include_persist = false"
-                        ),
-                    )),
                     Some(process) => process.killer.kill().await,
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,

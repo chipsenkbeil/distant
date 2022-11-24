@@ -22,7 +22,6 @@ pub use msg::*;
 /// A [`RemoteLspProcess`] builder providing support to configure
 /// before spawning the process on a remote machine
 pub struct RemoteLspCommand {
-    persist: bool,
     pty: Option<PtySize>,
     environment: Environment,
     current_dir: Option<PathBuf>,
@@ -38,19 +37,10 @@ impl RemoteLspCommand {
     /// Creates a new set of options for a remote LSP process
     pub fn new() -> Self {
         Self {
-            persist: false,
             pty: None,
             environment: Environment::new(),
             current_dir: None,
         }
-    }
-
-    /// Sets whether or not the process will be persistent,
-    /// meaning that it will not be terminated when the
-    /// connection to the remote machine is terminated
-    pub fn persist(&mut self, persist: bool) -> &mut Self {
-        self.persist = persist;
-        self
     }
 
     /// Configures the process to leverage a PTY with the specified size
@@ -81,7 +71,6 @@ impl RemoteLspCommand {
         let mut command = RemoteCommand::new();
         command.environment(self.environment.clone());
         command.current_dir(self.current_dir.clone());
-        command.persist(self.persist);
         command.pty(self.pty);
 
         let mut inner = command.spawn(channel, cmd).await?;

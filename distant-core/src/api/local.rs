@@ -6,7 +6,6 @@ use crate::{
     DistantApi, DistantCtx,
 };
 use async_trait::async_trait;
-use distant_net::server::ConnectionCtx;
 use log::*;
 use std::{
     io,
@@ -18,7 +17,6 @@ use walkdir::WalkDir;
 mod process;
 
 mod state;
-pub use state::ConnectionState;
 use state::*;
 
 /// Represents an implementation of [`DistantApi`] that works with the local machine
@@ -40,15 +38,7 @@ impl LocalDistantApi {
 
 #[async_trait]
 impl DistantApi for LocalDistantApi {
-    type LocalData = ConnectionState;
-
-    /// Injects the global channels into the local connection
-    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
-        ctx.local_data.id = ctx.connection_id;
-        ctx.local_data.process_channel = self.state.process.clone_channel();
-        ctx.local_data.watcher_channel = self.state.watcher.clone_channel();
-        Ok(())
-    }
+    type LocalData = ();
 
     async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
         debug!("[Conn {}] Querying capabilities", ctx.connection_id);
@@ -452,22 +442,21 @@ impl DistantApi for LocalDistantApi {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         debug!(
-            "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, persist: {}, pty: {:?}}}",
-            ctx.connection_id, cmd, environment, current_dir, persist, pty
+            "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, pty: {:?}}}",
+            ctx.connection_id, cmd, environment, current_dir, pty
         );
         self.state
             .process
-            .spawn(cmd, environment, current_dir, persist, pty, ctx.reply)
+            .spawn(cmd, environment, current_dir, pty, ctx.reply)
             .await
     }
 
     async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
-        self.state.process.kill(id, /* force */ true).await
+        self.state.process.kill(id).await
     }
 
     async fn proc_stdin(
@@ -505,6 +494,7 @@ impl DistantApi for LocalDistantApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::ConnectionCtx;
     use crate::data::DistantResponseData;
     use assert_fs::prelude::*;
     use distant_net::server::Reply;
@@ -577,21 +567,18 @@ mod tests {
         buffer: usize,
     ) -> (
         LocalDistantApi,
-        DistantCtx<ConnectionState>,
+        DistantCtx<()>,
         mpsc::Receiver<DistantResponseData>,
     ) {
         let api = LocalDistantApi::initialize().unwrap();
         let (reply, rx) = make_reply(buffer);
         let connection_id = rand::random();
 
-        let mut local_data = ConnectionState::default();
-        local_data.id = connection_id;
-
         DistantApi::on_accept(
             &api,
             ConnectionCtx {
                 connection_id,
-                local_data: &mut local_data,
+                local_data: &mut (),
             },
         )
         .await
@@ -599,7 +586,7 @@ mod tests {
         let ctx = DistantCtx {
             connection_id,
             reply,
-            local_data: Arc::new(local_data),
+            local_data: Arc::new(()),
         };
         (api, ctx, rx)
     }
@@ -1846,7 +1833,6 @@ mod tests {
                 /* cmd */ DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await
@@ -1871,7 +1857,6 @@ mod tests {
                 ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await
@@ -1897,7 +1882,6 @@ mod tests {
                 ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await
@@ -1962,7 +1946,6 @@ mod tests {
                 ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await
@@ -2023,7 +2006,6 @@ mod tests {
                 format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await
@@ -2063,7 +2045,6 @@ mod tests {
                 format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await
@@ -2130,7 +2111,6 @@ mod tests {
                 ),
                 Environment::new(),
                 /* current_dir */ None,
-                /* persist */ false,
                 /* pty */ None,
             )
             .await

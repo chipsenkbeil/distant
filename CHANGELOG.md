@@ -25,8 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Frame::read` method now supports zero-size items
 - `Client::inmemory_spawn` and `UntypedClient::inmemory_spawn` now take a
   `ClientConfig` as the second argument instead of `ReconnectStrategy`
-- CLI `--persist` flag for `client shell` is now `non-persist` with the default
-  being that the shell will persist even if the connection is cut
+- Persist option now removed from `ProcSpawn` message and CLI
 
 ## [0.20.0-alpha.2] - 2022-11-20
 

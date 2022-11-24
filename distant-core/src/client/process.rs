@@ -47,7 +47,6 @@ type StatusResult = io::Result<RemoteStatus>;
 /// A [`RemoteProcess`] builder providing support to configure
 /// before spawning the process on a remote machine
 pub struct RemoteCommand {
-    persist: bool,
     pty: Option<PtySize>,
     environment: Environment,
     current_dir: Option<PathBuf>,
@@ -63,19 +62,10 @@ impl RemoteCommand {
     /// Creates a new set of options for a remote process
     pub fn new() -> Self {
         Self {
-            persist: false,
             pty: None,
             environment: Environment::new(),
             current_dir: None,
         }
-    }
-
-    /// Sets whether or not the process will be persistent,
-    /// meaning that it will not be terminated when the
-    /// connection to the remote machine is terminated
-    pub fn persist(&mut self, persist: bool) -> &mut Self {
-        self.persist = persist;
-        self
     }
 
     /// Configures the process to leverage a PTY with the specified size
@@ -109,7 +99,6 @@ impl RemoteCommand {
             .mail(Request::new(DistantMsg::Single(
                 DistantRequestData::ProcSpawn {
                     cmd: Cmd::from(cmd),
-                    persist: self.persist,
                     pty: self.pty,
                     environment: self.environment.clone(),
                     current_dir: self.current_dir.clone(),
