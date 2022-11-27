@@ -68,6 +68,7 @@ the available features and which backend supports each feature:
 | Filesystem I/O        | ✅      | ✅  |
 | Filesystem Watching   | ✅      | ✅  |
 | Process Execution     | ✅      | ✅  |
+| Reconnect             | ✅      | ❌  |
 | Search                | ✅      | ❌  |
 | System Information    | ✅      | ⚠  |
 
@@ -82,6 +83,7 @@ the available features and which backend supports each feature:
 * `Filesystem Watching` - able to receive notifications when changes to the
   filesystem occur
 * `Process Execution` - able to execute processes
+* `Reconnect` - able to reconnect after network outages
 * `Search` - able to search the filesystem
 * `System Information` - able to retrieve information about the system
 
