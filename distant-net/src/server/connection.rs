@@ -213,44 +213,66 @@ where
         } = self;
 
         // NOTE: This exists purely to make the compiler happy for macro_rules declaration order.
-        let id = 0;
+        let (mut local_shutdown, channel_tx, connection_state) = ConnectionState::channel();
 
         // Will check if no more connections and restart timer if that's the case
         macro_rules! terminate_connection {
-            // Prints an error message and stores state before terminating
-            (@error $($msg:tt)+) => {
+            // Prints an error message and does not store state
+            (@fatal $($msg:tt)+) => {
                 error!($($msg)+);
                 terminate_connection!();
                 return Err(io::Error::new(io::ErrorKind::Other, $($msg)+));
             };
 
+            // Prints an error message and stores state before terminating
+            (@error($tx:ident, $rx:ident) $($msg:tt)+) => {
+                error!($($msg)+);
+                terminate_connection!($tx, $rx);
+                return Err(io::Error::new(io::ErrorKind::Other, $($msg)+));
+            };
+
             // Prints a debug message and stores state before terminating
-            (@debug $($msg:tt)+) => {
+            (@debug($tx:ident, $rx:ident) $($msg:tt)+) => {
                 debug!($($msg)+);
+                terminate_connection!($tx, $rx);
+                return Ok(());
+            };
+
+            // Prints a shutdown message with no connection id and exit without sending state
+            (@shutdown) => {
+                debug!("Shutdown triggered before a connection could be fully established");
                 terminate_connection!();
                 return Ok(());
             };
 
             // Prints a shutdown message with no connection id and stores state before terminating
-            (@shutdown @no-id) => {
+            (@shutdown) => {
                 debug!("Shutdown triggered before a connection could be fully established");
                 terminate_connection!();
                 return Ok(());
             };
 
             // Prints a shutdown message and stores state before terminating
-            (@shutdown) => {{
-                debug!("[Conn {id}] Shutdown triggered");
-                terminate_connection!();
+            (@shutdown($id:ident, $tx:ident, $rx:ident)) => {{
+                debug!("[Conn {}] Shutdown triggered", $id);
+                terminate_connection!($tx, $rx);
                 return Ok(());
             }};
 
             // Performs the connection termination by removing it from server state and
             // restarting the shutdown timer if it was the last connection
+            ($tx:ident, $rx:ident) => {
+                // Send the channels back
+                let _ = channel_tx.send(($tx, $rx));
+
+                terminate_connection!();
+            };
+
+            // Performs the connection termination by removing it from server state and
+            // restarting the shutdown timer if it was the last connection
             () => {
-                // Remove the connection from our state if it has closed
+                // Restart our shutdown timer if this is the last connection
                 if let Some(state) = Weak::upgrade(&state) {
-                    // If we have no more connections (this is the last one), start the timer
                     if let Some(timer) = Weak::upgrade(&shutdown_timer) {
                         if state.connections.read().await.values().filter(|conn| !conn.is_finished()).count() <= 1 {
                             debug!("Last connection terminating, so restarting shutdown timer");
@@ -261,21 +283,74 @@ where
             };
         }
 
+        /// Awaits a future to complete, or detects if a signal was received by either the global
+        /// or local shutdown channel. Shutdown only occurs if a signal was received, and any
+        /// errors received by either shutdown channel are ignored.
         macro_rules! await_or_shutdown {
-            (@no-id $future:expr) => {{
-                tokio::select! {
-                    _ = shutdown.recv() => {
-                        terminate_connection!(@shutdown @no-id);
+            ($(@save($id:ident, $tx:ident, $rx:ident))? $future:expr) => {{
+                let mut f = $future;
+
+                loop {
+                    let use_shutdown = match shutdown.try_recv() {
+                        Ok(_) => {
+                            terminate_connection!(@shutdown $(($id, $tx, $rx))?);
+                        }
+                        Err(broadcast::error::TryRecvError::Empty) => true,
+                        Err(broadcast::error::TryRecvError::Lagged(_)) => true,
+                        Err(broadcast::error::TryRecvError::Closed) => false,
+                    };
+
+                    let use_local_shutdown = match local_shutdown.try_recv() {
+                        Ok(_) => {
+                            terminate_connection!(@shutdown $(($id, $tx, $rx))?);
+                        }
+                        Err(oneshot::error::TryRecvError::Empty) => true,
+                        Err(oneshot::error::TryRecvError::Closed) => false,
+                    };
+
+                    if use_shutdown && use_local_shutdown {
+                        tokio::select! {
+                            x = shutdown.recv() => {
+                                if x.is_err() {
+                                    continue;
+                                }
+
+                                terminate_connection!(@shutdown $(($id, $tx, $rx))?);
+                            }
+                            x = &mut local_shutdown => {
+                                if x.is_err() {
+                                    continue;
+                                }
+
+                                terminate_connection!(@shutdown $(($id, $tx, $rx))?);
+                            }
+                            x = &mut f => { break x; }
+                        }
+                    } else if use_shutdown {
+                        tokio::select! {
+                            x = shutdown.recv() => {
+                                if x.is_err() {
+                                    continue;
+                                }
+
+                                terminate_connection!(@shutdown $(($id, $tx, $rx))?);
+                            }
+                            x = &mut f => { break x; }
+                        }
+                    } else if use_local_shutdown {
+                        tokio::select! {
+                            x = &mut local_shutdown => {
+                                if x.is_err() {
+                                    continue;
+                                }
+
+                                terminate_connection!(@shutdown $(($id, $tx, $rx))?);
+                            }
+                            x = &mut f => { break x; }
+                        }
+                    } else {
+                        break f.await;
                     }
-                    x = $future => { x }
-                }
-            }};
-            ($future:expr) => {{
-                tokio::select! {
-                    _ = shutdown.recv() => {
-                        terminate_connection!(@shutdown);
-                    }
-                    x = $future => { x }
                 }
             }};
         }
@@ -284,7 +359,7 @@ where
         let handler = match Weak::upgrade(&handler) {
             Some(handler) => handler,
             None => {
-                terminate_connection!(@error "Failed to setup connection because handler dropped");
+                terminate_connection!(@fatal "Failed to setup connection because handler dropped");
             }
         };
 
@@ -292,7 +367,7 @@ where
         let state = match Weak::upgrade(&state) {
             Some(state) => state,
             None => {
-                terminate_connection!(@error "Failed to setup connection because state dropped");
+                terminate_connection!(@fatal "Failed to setup connection because state dropped");
             }
         };
 
@@ -300,16 +375,19 @@ where
         debug!("Establishing full connection using {transport:?}");
         let mut connection = match Weak::upgrade(&verifier) {
             Some(verifier) => {
-                match await_or_shutdown!(@no-id Connection::server(transport, verifier.as_ref(), keychain))
-                {
+                match await_or_shutdown!(Box::pin(Connection::server(
+                    transport,
+                    verifier.as_ref(),
+                    keychain
+                ))) {
                     Ok(connection) => connection,
                     Err(x) => {
-                        terminate_connection!(@error "Failed to setup connection: {x}");
+                        terminate_connection!(@fatal "Failed to setup connection: {x}");
                     }
                 }
             }
             None => {
-                terminate_connection!(@error "Verifier has been dropped");
+                terminate_connection!(@fatal "Verifier has been dropped");
             }
         };
 
@@ -323,7 +401,7 @@ where
             connection_id: id,
             local_data: &mut local_data
         })) {
-            terminate_connection!(@error "[Conn {id}] Accepting connection failed: {x}");
+            terminate_connection!(@fatal "[Conn {id}] Accepting connection failed: {x}");
         }
 
         let local_data = Arc::new(local_data);
@@ -348,17 +426,17 @@ where
         };
 
         // Store our connection details
-        let (local_shutdown, channel_tx, connection_state) = ConnectionState::channel();
         state.connections.write().await.insert(id, connection_state);
 
         debug!("[Conn {id}] Beginning read/write loop");
         loop {
             let ready = match await_or_shutdown!(
-                connection.ready(Interest::READABLE | Interest::WRITABLE)
+                @save(id, tx, rx)
+                Box::pin(connection.ready(Interest::READABLE | Interest::WRITABLE))
             ) {
                 Ok(ready) => ready,
                 Err(x) => {
-                    terminate_connection!(@error "[Conn {id}] Failed to examine ready state: {x}");
+                    terminate_connection!(@error(tx, rx) "[Conn {id}] Failed to examine ready state: {x}");
                 }
             };
 
@@ -403,11 +481,11 @@ where
                         }
                     },
                     Ok(None) => {
-                        terminate_connection!(@debug "[Conn {id}] Connection closed");
+                        terminate_connection!(@debug(tx, rx) "[Conn {id}] Connection closed");
                     }
                     Err(x) if x.kind() == io::ErrorKind::WouldBlock => read_blocked = true,
                     Err(x) => {
-                        terminate_connection!(@error "[Conn {id}] {x}");
+                        terminate_connection!(@error(tx, rx) "[Conn {id}] {x}");
                     }
                 }
             }
@@ -748,7 +826,7 @@ mod tests {
 
         // NOTE: Termination is still an Ok(...) because we want to return some stateful info.
         //       This just verifies that we don't hang!
-        task.await.unwrap();
+        task.await.unwrap().unwrap();
     }
 
     #[test(tokio::test)]
@@ -778,7 +856,7 @@ mod tests {
         });
 
         wait_for_termination!(task);
-        task.await.unwrap();
+        task.await.unwrap().unwrap();
     }
 
     #[test(tokio::test)]
@@ -885,11 +963,13 @@ mod tests {
         let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
         let verifier = Arc::new(Verifier::none());
 
-        let mut conn = ConnectionTask::build()
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let conn = ConnectionTask::build()
             .handler(Arc::downgrade(&handler))
             .state(Arc::downgrade(&state))
             .keychain(keychain)
             .transport(t1)
+            .shutdown(shutdown_rx)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .heartbeat_duration(Duration::from_millis(200))
             .verifier(Arc::downgrade(&verifier))
@@ -898,7 +978,9 @@ mod tests {
         // Shutdown server connection task while it is establishing a full connection with the
         // client and verify that we get an error because we have not yet reached the point where
         // we would return an appropriate channel
-        conn.shutdown();
+        shutdown_tx
+            .send(())
+            .expect("Failed to send shutdown signal");
         conn.await.unwrap_err();
     }
 
@@ -933,11 +1015,13 @@ mod tests {
         let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
         let verifier = Arc::new(Verifier::none());
 
-        let mut conn = ConnectionTask::build()
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let conn = ConnectionTask::build()
             .handler(Arc::downgrade(&handler))
             .state(Arc::downgrade(&state))
             .keychain(keychain)
             .transport(t1)
+            .shutdown(shutdown_rx)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .heartbeat_duration(Duration::from_millis(200))
             .verifier(Arc::downgrade(&verifier))
@@ -949,7 +1033,9 @@ mod tests {
         // Shutdown server connection task while it is accepting the connection  and verify that we
         // get an error because we have not yet reached the point where we would return an
         // appropriate channel
-        conn.shutdown();
+        shutdown_tx
+            .send(())
+            .expect("Failed to send shutdown signal");
         conn.await.unwrap_err();
     }
 
@@ -986,11 +1072,13 @@ mod tests {
         let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
         let verifier = Arc::new(Verifier::none());
 
-        let mut conn = ConnectionTask::build()
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let conn = ConnectionTask::build()
             .handler(Arc::downgrade(&handler))
             .state(Arc::downgrade(&state))
             .keychain(keychain)
             .transport(t1)
+            .shutdown(shutdown_rx)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .heartbeat_duration(Duration::from_millis(200))
             .verifier(Arc::downgrade(&verifier))
@@ -1005,7 +1093,9 @@ mod tests {
         // Shutdown server connection task while it is accepting the connection  and verify that we
         // get an error because we have not yet reached the point where we would return an
         // appropriate channel
-        conn.shutdown();
+        shutdown_tx
+            .send(())
+            .expect("Failed to send shutdown signal");
         conn.await.unwrap_err();
     }
 }
