@@ -1,4 +1,7 @@
-use super::{ConnectionCtx, ServerCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
+use super::{
+    ConnectionCtx, ConnectionState, ServerCtx, ServerHandler, ServerReply, ServerState,
+    ShutdownTimer,
+};
 use crate::common::{
     authentication::{Keychain, Verifier},
     Backup, Connection, ConnectionId, Frame, Interest, Response, Transport, UntypedRequest,
@@ -26,90 +29,44 @@ const SLEEP_DURATION: Duration = Duration::from_millis(1);
 /// Minimum time between heartbeats to communicate to the client connection.
 const MINIMUM_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
 
-/// Represents an individual connection on the server. If dropped, will terminate the connection.
-pub struct ConnectionTask {
-    /// Unique identifier tied to the connection.
-    id: ConnectionId,
-
-    /// Used to shutdown the connection as part of a global shutdown effort.
-    global_shutdown: broadcast::Receiver<()>,
-
-    /// Used to shutdown the connection.
-    local_shutdown: Option<oneshot::Sender<()>>,
-
-    /// Task that is processing requests and responses.
-    task: JoinHandle<io::Result<()>>,
-}
-
-impl ConnectionTask {
-    /// Starts building a new connection.
-    pub fn build() -> ConnectionTaskBuilder<(), ()> {
-        ConnectionTaskBuilder {
-            handler: Weak::new(),
-            state: Weak::new(),
-            keychain: Keychain::new(),
-            transport: (),
-            global_shutdown: broadcast::channel(1).1,
-            shutdown_timer: Weak::new(),
-            sleep_duration: SLEEP_DURATION,
-            heartbeat_duration: MINIMUM_HEARTBEAT_DURATION,
-            verifier: Weak::new(),
-        }
-    }
-
-    /// Returns the id associated with the connection.
-    pub fn id(&self) -> ConnectionId {
-        self.id
-    }
-
-    /// Returns true if the task has finished.
-    pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
-    }
-
-    /// Sends a shutdown request to close the connection. Users should await on the connection to
-    /// ensure that it has finished shutting down.
-    pub fn shutdown(&mut self) {
-        if let Some(tx) = self.local_shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
-
-impl Future for ConnectionTask {
-    type Output = io::Result<()>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match Future::poll(Pin::new(&mut self.task), cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(x) => match x {
-                Ok(x) => Poll::Ready(x),
-                Err(x) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, x))),
-            },
-        }
-    }
-}
-
-pub struct ConnectionTaskBuilder<H, T> {
+/// Represents an individual connection on the server.
+pub struct ConnectionTask<H, S, T> {
     handler: Weak<H>,
-    state: Weak<ServerState>,
+    state: Weak<ServerState<S>>,
     keychain: Keychain<oneshot::Receiver<Backup>>,
     transport: T,
-    global_shutdown: broadcast::Receiver<()>,
+    shutdown: broadcast::Receiver<()>,
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
     sleep_duration: Duration,
     heartbeat_duration: Duration,
     verifier: Weak<Verifier>,
 }
 
-impl<H, T> ConnectionTaskBuilder<H, T> {
-    pub fn handler<U>(self, handler: Weak<U>) -> ConnectionTaskBuilder<U, T> {
-        ConnectionTaskBuilder {
+impl ConnectionTask<(), (), ()> {
+    /// Starts building a new connection.
+    pub fn build() -> Self {
+        Self {
+            handler: Weak::new(),
+            state: Weak::new(),
+            keychain: Keychain::new(),
+            transport: (),
+            shutdown: broadcast::channel(1).1,
+            shutdown_timer: Weak::new(),
+            sleep_duration: SLEEP_DURATION,
+            heartbeat_duration: MINIMUM_HEARTBEAT_DURATION,
+            verifier: Weak::new(),
+        }
+    }
+}
+
+impl<H, S, T> ConnectionTask<H, S, T> {
+    pub fn handler<U>(self, handler: Weak<U>) -> ConnectionTask<U, S, T> {
+        ConnectionTask {
             handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -117,13 +74,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn state(self, state: Weak<ServerState>) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    pub fn state<U>(self, state: Weak<ServerState<U>>) -> ConnectionTask<H, U, T> {
+        ConnectionTask {
             handler: self.handler,
             state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -131,13 +88,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn keychain(self, keychain: ServerKeychain) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    pub fn keychain(self, keychain: ServerKeychain) -> ConnectionTask<H, S, T> {
+        ConnectionTask {
             handler: self.handler,
             state: self.state,
             keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -145,13 +102,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn transport<U>(self, transport: U) -> ConnectionTaskBuilder<H, U> {
-        ConnectionTaskBuilder {
+    pub fn transport<U>(self, transport: U) -> ConnectionTask<H, S, U> {
+        ConnectionTask {
             handler: self.handler,
             keychain: self.keychain,
             state: self.state,
             transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -159,16 +116,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn global_shutdown(
-        self,
-        global_shutdown: broadcast::Receiver<()>,
-    ) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    pub fn shutdown(self, shutdown: broadcast::Receiver<()>) -> ConnectionTask<H, S, T> {
+        ConnectionTask {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown,
+            shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -179,13 +133,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
     pub fn shutdown_timer(
         self,
         shutdown_timer: Weak<RwLock<ShutdownTimer>>,
-    ) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    ) -> ConnectionTask<H, S, T> {
+        ConnectionTask {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -193,13 +147,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionTask<H, S, T> {
+        ConnectionTask {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -207,13 +161,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn heartbeat_duration(self, heartbeat_duration: Duration) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    pub fn heartbeat_duration(self, heartbeat_duration: Duration) -> ConnectionTask<H, S, T> {
+        ConnectionTask {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration,
@@ -221,13 +175,13 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionTaskBuilder<H, T> {
-        ConnectionTaskBuilder {
+    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionTask<H, S, T> {
+        ConnectionTask {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
-            global_shutdown: self.global_shutdown,
+            shutdown: self.shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -236,7 +190,7 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
     }
 }
 
-impl<H, T> ConnectionTaskBuilder<H, T>
+impl<H, T> ConnectionTask<H, Response<H::Response>, T>
 where
     H: ServerHandler + Sync + 'static,
     H::Request: DeserializeOwned + Send + Sync + 'static,
@@ -244,32 +198,25 @@ where
     H::LocalData: Default + Send + Sync + 'static,
     T: Transport + 'static,
 {
-    pub fn spawn(self) -> ConnectionTask {
-        let (tx, rx) = oneshot::channel();
-
-        ConnectionTask {
-            id,
-            global_shutdown: self.global_shutdown,
-            local_shutdown: Some(tx),
-            task: tokio::spawn(self.run(rx)),
-        }
+    pub fn spawn(self) -> JoinHandle<io::Result<()>> {
+        tokio::spawn(self.run())
     }
 
-    async fn run(self, mut shutdown: oneshot::Receiver<()>) -> io::Result<()> {
-        let ConnectionTaskBuilder {
+    async fn run(self) -> io::Result<()> {
+        let ConnectionTask {
             handler,
             state,
             keychain,
             transport,
-            global_shutdown,
+            shutdown,
             shutdown_timer,
             sleep_duration,
             heartbeat_duration,
             verifier,
         } = self;
 
-        // Construct a queue of outgoing responses
-        let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
+        // NOTE: This exists purely to make the compiler happy for macro_rules declaration order.
+        let id = 0;
 
         // Will check if no more connections and restart timer if that's the case
         macro_rules! terminate_connection {
@@ -287,28 +234,29 @@ where
                 return Ok(());
             };
 
-            // Prints a shutdown message and stores state before terminating
-            (@shutdown) => {
-                debug!("[Conn {id}] Shutdown triggered");
+            // Prints a shutdown message with no connection id and stores state before terminating
+            (@shutdown @no-id) => {
+                debug!("Shutdown triggered before a connection could be fully established");
                 terminate_connection!();
                 return Ok(());
             };
+
+            // Prints a shutdown message and stores state before terminating
+            (@shutdown) => {{
+                debug!("[Conn {id}] Shutdown triggered");
+                terminate_connection!();
+                return Ok(());
+            }};
 
             // Performs the connection termination by removing it from server state and
             // restarting the shutdown timer if it was the last connection
             () => {
                 // Remove the connection from our state if it has closed
                 if let Some(state) = Weak::upgrade(&state) {
-                    trace!("[Conn {id}] Placing self in closed connection list");
-                    state.closed_connections.write().await.insert(self.id, );
-
-                    trace!("[Conn {id}] Cleaning up self from active connection list");
-                    state.connections.write().await.remove(&self.id);
-
-                    // If we have no more connections, start the timer
+                    // If we have no more connections (this is the last one), start the timer
                     if let Some(timer) = Weak::upgrade(&shutdown_timer) {
-                        if state.connections.read().await.is_empty() {
-                            trace!("[Conn {id}] Last connection terminating, so restarting shutdown timer");
+                        if state.active_connection_cnt().await <= 1 {
+                            debug!("Last connection terminating, so restarting shutdown timer");
                             timer.write().await.restart();
                         }
                     }
@@ -317,12 +265,17 @@ where
         }
 
         macro_rules! await_or_shutdown {
+            (@no-id $future:expr) => {{
+                tokio::select! {
+                    _ = shutdown.recv() => {
+                        terminate_connection!(@shutdown @no-id);
+                    }
+                    x = $future => { x }
+                }
+            }};
             ($future:expr) => {{
                 tokio::select! {
-                    _ = global_shutdown.recv() => {
-                        terminate_connection!(@shutdown);
-                    }
-                    _ = &mut shutdown => {
+                    _ = shutdown.recv() => {
                         terminate_connection!(@shutdown);
                     }
                     x = $future => { x }
@@ -330,34 +283,41 @@ where
             }};
         }
 
+        // Attempt to upgrade our handler for use with the connection going forward
+        let handler = match Weak::upgrade(&handler) {
+            Some(handler) => handler,
+            None => {
+                terminate_connection!(@error "Failed to setup connection because handler dropped");
+            }
+        };
+
+        // Attempt to upgrade our state for use with the connection going forward
+        let state = match Weak::upgrade(&state) {
+            Some(state) => state,
+            None => {
+                terminate_connection!(@error "Failed to setup connection because state dropped");
+            }
+        };
+
         // Properly establish the connection's transport
         debug!("Establishing full connection using {transport:?}");
         let mut connection = match Weak::upgrade(&verifier) {
             Some(verifier) => {
-                match await_or_shutdown!(Connection::server(transport, verifier.as_ref(), keychain))
+                match await_or_shutdown!(@no-id Connection::server(transport, verifier.as_ref(), keychain))
                 {
                     Ok(connection) => connection,
                     Err(x) => {
-                        terminate_connection!(@error "[Conn {id}] Failed to setup connection: {x}");
+                        terminate_connection!(@error "Failed to setup connection: {x}");
                     }
                 }
             }
             None => {
-                terminate_connection!(@error "[Conn {id}] Verifier has been dropped");
+                terminate_connection!(@error "Verifier has been dropped");
             }
         };
 
         // Update our id to be the connection id
         let id = connection.id();
-
-        // Attempt to upgrade our handler for use with the connection going forward
-        debug!("[Conn {id}] Preparing connection handler");
-        let handler = match Weak::upgrade(&handler) {
-            Some(handler) => handler,
-            None => {
-                terminate_connection!(@error "[Conn {id}] Handler has been dropped");
-            }
-        };
 
         // Create local data for the connection and then process it
         debug!("[Conn {id}] Officially accepting connection");
@@ -372,8 +332,26 @@ where
         let local_data = Arc::new(local_data);
         let mut last_heartbeat = Instant::now();
 
+        // Restore our connection's channels if we have them, otherwise make new ones
+        let (tx, mut rx) = match state.connections.write().await.remove(&id) {
+            Some(mut task) => match task.shutdown_and_wait().await {
+                Ok(x) => {
+                    debug!("[Conn {id}] Marked as existing connection");
+                    x
+                }
+                Err(x) => {
+                    warn!("[Conn {id}] Existing connection with id, but failed to shutdown: {x}");
+                    mpsc::channel::<Response<H::Response>>(1)
+                }
+            },
+            None => {
+                debug!("[Conn {id}] Marked as new connection");
+                mpsc::channel::<Response<H::Response>>(1)
+            }
+        };
+
         // Store our connection details
-        todo!();
+        state.connections.write().await.insert(id, 0);
 
         debug!("[Conn {id}] Beginning read/write loop");
         loop {

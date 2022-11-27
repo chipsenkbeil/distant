@@ -1,14 +1,12 @@
-use super::ServerState;
 use crate::common::AsAny;
-use log::*;
 use std::{
     future::Future,
     io,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
+use tokio::sync::broadcast;
 use tokio::task::{JoinError, JoinHandle};
 
 /// Interface to engage with a server instance.
@@ -64,7 +62,7 @@ impl dyn ServerRef {
 
 /// Represents a generic reference to a server
 pub struct GenericServerRef {
-    pub(crate) state: Arc<ServerState>,
+    pub(crate) shutdown: broadcast::Sender<()>,
     pub(crate) task: JoinHandle<()>,
 }
 
@@ -75,17 +73,7 @@ impl ServerRef for GenericServerRef {
     }
 
     fn shutdown(&self) {
-        self.task.abort();
-
-        let state = Arc::clone(&self.state);
-        tokio::spawn(async move {
-            for (id, mut connection) in state.connections.write().await.drain() {
-                debug!("Shutting down connection {id}");
-                connection.shutdown();
-                let _ = connection.await;
-                debug!("Connection {id} shut down");
-            }
-        });
+        let _ = self.shutdown.send(());
     }
 
     fn wait(self) -> Pin<Box<dyn Future<Output = io::Result<()>>>>

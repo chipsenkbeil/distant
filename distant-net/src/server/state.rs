@@ -1,37 +1,42 @@
-use super::ConnectionTask;
 use crate::common::{authentication::Keychain, Backup, ConnectionId};
 use std::collections::HashMap;
-use tokio::sync::{oneshot, RwLock};
+use std::io;
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 /// Contains all top-level state for the server
-pub struct ServerState {
-    /// Mapping of active connection ids to their tasks.
-    pub connections: RwLock<HashMap<ConnectionId, ConnectionTask>>,
+pub struct ServerState<T> {
+    /// Mapping of connection ids to their tasks.
+    pub connections: RwLock<HashMap<ConnectionId, ConnectionState<T>>>,
 
     /// Mapping of connection ids to (OTP, backup)
     pub keychain: Keychain<oneshot::Receiver<Backup>>,
 }
 
-impl ServerState {
+impl<T> ServerState<T> {
     pub fn new() -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
             keychain: Keychain::new(),
         }
     }
+}
 
-    /// Returns true if there is at least one active connection.
-    pub async fn has_active_connections(&self) -> bool {
-        self.connections
-            .read()
-            .await
-            .values()
-            .any(|task| !task.is_finished())
+impl<T> Default for ServerState<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl Default for ServerState {
-    fn default() -> Self {
-        Self::new()
+pub struct ConnectionState<T> {
+    pub(crate) shutdown: oneshot::Sender<()>,
+    pub(crate) channel_rx: oneshot::Receiver<(mpsc::Sender<T>, mpsc::Receiver<T>)>,
+}
+
+impl<T> ConnectionState<T> {
+    pub async fn shutdown_and_wait(self) -> io::Result<(mpsc::Sender<T>, mpsc::Receiver<T>)> {
+        let _ = self.shutdown(());
+        self.channel_rx
+            .await
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
     }
 }
