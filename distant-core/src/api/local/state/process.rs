@@ -33,10 +33,6 @@ impl ProcessState {
         }
     }
 
-    pub fn clone_channel(&self) -> ProcessChannel {
-        self.channel.clone()
-    }
-
     /// Aborts the process task
     pub fn abort(&self) {
         self.task.abort();
