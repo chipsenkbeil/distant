@@ -1,6 +1,5 @@
 use crate::common::{authentication::Keychain, Backup, ConnectionId};
 use std::collections::HashMap;
-use std::io;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
 
@@ -30,7 +29,7 @@ impl<T> Default for ServerState<T> {
 
 pub struct ConnectionState<T> {
     shutdown_tx: oneshot::Sender<()>,
-    task: JoinHandle<(mpsc::Sender<T>, mpsc::Receiver<T>)>,
+    task: JoinHandle<Option<(mpsc::Sender<T>, mpsc::Receiver<T>)>>,
 }
 
 impl<T: Send + 'static> ConnectionState<T> {
@@ -50,7 +49,12 @@ impl<T: Send + 'static> ConnectionState<T> {
             channel_tx,
             Self {
                 shutdown_tx,
-                task: tokio::spawn(async move { channel_rx.await.unwrap() }),
+                task: tokio::spawn(async move {
+                    match channel_rx.await {
+                        Ok(x) => Some(x),
+                        Err(_) => None,
+                    }
+                }),
             },
         )
     }
@@ -59,10 +63,8 @@ impl<T: Send + 'static> ConnectionState<T> {
         self.task.is_finished()
     }
 
-    pub async fn shutdown_and_wait(self) -> io::Result<(mpsc::Sender<T>, mpsc::Receiver<T>)> {
+    pub async fn shutdown_and_wait(self) -> Option<(mpsc::Sender<T>, mpsc::Receiver<T>)> {
         let _ = self.shutdown_tx.send(());
-        self.task
-            .await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        self.task.await.unwrap()
     }
 }

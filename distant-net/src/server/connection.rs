@@ -9,8 +9,11 @@ use crate::common::{
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
+    future::Future,
     io,
+    pin::Pin,
     sync::{Arc, Weak},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -27,7 +30,36 @@ const SLEEP_DURATION: Duration = Duration::from_millis(1);
 const MINIMUM_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
 
 /// Represents an individual connection on the server.
-pub(super) struct ConnectionTask<H, S, T> {
+pub(super) struct ConnectionTask(JoinHandle<io::Result<()>>);
+
+impl ConnectionTask {
+    /// Starts building a new connection
+    pub fn build() -> ConnectionTaskBuilder<(), (), ()> {
+        ConnectionTaskBuilder::new()
+    }
+
+    /// Returns true if the task has finished
+    pub fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+impl Future for ConnectionTask {
+    type Output = io::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Future::poll(Pin::new(&mut self.0), cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(x) => match x {
+                Ok(x) => Poll::Ready(x),
+                Err(x) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, x))),
+            },
+        }
+    }
+}
+
+/// Represents a builder for a new connection task.
+pub(super) struct ConnectionTaskBuilder<H, S, T> {
     handler: Weak<H>,
     state: Weak<ServerState<S>>,
     keychain: Keychain<oneshot::Receiver<Backup>>,
@@ -39,9 +71,9 @@ pub(super) struct ConnectionTask<H, S, T> {
     verifier: Weak<Verifier>,
 }
 
-impl ConnectionTask<(), (), ()> {
+impl ConnectionTaskBuilder<(), (), ()> {
     /// Starts building a new connection.
-    pub fn build() -> Self {
+    pub fn new() -> Self {
         Self {
             handler: Weak::new(),
             state: Weak::new(),
@@ -56,9 +88,9 @@ impl ConnectionTask<(), (), ()> {
     }
 }
 
-impl<H, S, T> ConnectionTask<H, S, T> {
-    pub fn handler<U>(self, handler: Weak<U>) -> ConnectionTask<U, S, T> {
-        ConnectionTask {
+impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
+    pub fn handler<U>(self, handler: Weak<U>) -> ConnectionTaskBuilder<U, S, T> {
+        ConnectionTaskBuilder {
             handler,
             state: self.state,
             keychain: self.keychain,
@@ -71,8 +103,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn state<U>(self, state: Weak<ServerState<U>>) -> ConnectionTask<H, U, T> {
-        ConnectionTask {
+    pub fn state<U>(self, state: Weak<ServerState<U>>) -> ConnectionTaskBuilder<H, U, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state,
             keychain: self.keychain,
@@ -85,8 +117,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn keychain(self, keychain: ServerKeychain) -> ConnectionTask<H, S, T> {
-        ConnectionTask {
+    pub fn keychain(self, keychain: ServerKeychain) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state: self.state,
             keychain,
@@ -99,8 +131,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn transport<U>(self, transport: U) -> ConnectionTask<H, S, U> {
-        ConnectionTask {
+    pub fn transport<U>(self, transport: U) -> ConnectionTaskBuilder<H, S, U> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             keychain: self.keychain,
             state: self.state,
@@ -113,8 +145,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn shutdown(self, shutdown: broadcast::Receiver<()>) -> ConnectionTask<H, S, T> {
-        ConnectionTask {
+    pub fn shutdown(self, shutdown: broadcast::Receiver<()>) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
@@ -130,8 +162,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
     pub fn shutdown_timer(
         self,
         shutdown_timer: Weak<RwLock<ShutdownTimer>>,
-    ) -> ConnectionTask<H, S, T> {
-        ConnectionTask {
+    ) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
@@ -144,8 +176,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionTask<H, S, T> {
-        ConnectionTask {
+    pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
@@ -158,8 +190,11 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn heartbeat_duration(self, heartbeat_duration: Duration) -> ConnectionTask<H, S, T> {
-        ConnectionTask {
+    pub fn heartbeat_duration(
+        self,
+        heartbeat_duration: Duration,
+    ) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
@@ -172,8 +207,8 @@ impl<H, S, T> ConnectionTask<H, S, T> {
         }
     }
 
-    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionTask<H, S, T> {
-        ConnectionTask {
+    pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
@@ -187,7 +222,7 @@ impl<H, S, T> ConnectionTask<H, S, T> {
     }
 }
 
-impl<H, T> ConnectionTask<H, Response<H::Response>, T>
+impl<H, T> ConnectionTaskBuilder<H, Response<H::Response>, T>
 where
     H: ServerHandler + Sync + 'static,
     H::Request: DeserializeOwned + Send + Sync + 'static,
@@ -195,12 +230,12 @@ where
     H::LocalData: Default + Send + Sync + 'static,
     T: Transport + 'static,
 {
-    pub fn spawn(self) -> JoinHandle<io::Result<()>> {
-        tokio::spawn(self.run())
+    pub fn spawn(self) -> ConnectionTask {
+        ConnectionTask(tokio::spawn(self.run()))
     }
 
     async fn run(self) -> io::Result<()> {
-        let ConnectionTask {
+        let ConnectionTaskBuilder {
             handler,
             state,
             keychain,
@@ -221,14 +256,14 @@ where
             (@fatal $($msg:tt)+) => {
                 error!($($msg)+);
                 terminate_connection!();
-                return Err(io::Error::new(io::ErrorKind::Other, $($msg)+));
+                return Err(io::Error::new(io::ErrorKind::Other, format!($($msg)+)));
             };
 
             // Prints an error message and stores state before terminating
             (@error($tx:ident, $rx:ident) $($msg:tt)+) => {
                 error!($($msg)+);
                 terminate_connection!($tx, $rx);
-                return Err(io::Error::new(io::ErrorKind::Other, $($msg)+));
+                return Err(io::Error::new(io::ErrorKind::Other, format!($($msg)+)));
             };
 
             // Prints a debug message and stores state before terminating
@@ -410,12 +445,12 @@ where
         // Restore our connection's channels if we have them, otherwise make new ones
         let (tx, mut rx) = match state.connections.write().await.remove(&id) {
             Some(conn) => match conn.shutdown_and_wait().await {
-                Ok(x) => {
+                Some(x) => {
                     debug!("[Conn {id}] Marked as existing connection");
                     x
                 }
-                Err(x) => {
-                    warn!("[Conn {id}] Existing connection with id, but failed to shutdown: {x}");
+                None => {
+                    warn!("[Conn {id}] Existing connection with id, but channels not saved");
                     mpsc::channel::<Response<H::Response>>(1)
                 }
             },
@@ -688,7 +723,7 @@ mod tests {
 
         let err = task.await.unwrap_err();
         assert!(
-            err.to_string().contains("Handler has been dropped"),
+            err.to_string().contains("handler dropped"),
             "Unexpected error: {err}"
         );
     }
@@ -824,9 +859,11 @@ mod tests {
 
         wait_for_termination!(task);
 
-        // NOTE: Termination is still an Ok(...) because we want to return some stateful info.
-        //       This just verifies that we don't hang!
-        task.await.unwrap().unwrap();
+        let err = task.await.unwrap_err();
+        assert!(
+            err.to_string().contains("targeted ready failure"),
+            "Unexpected error: {err}"
+        );
     }
 
     #[test(tokio::test)]
@@ -856,7 +893,7 @@ mod tests {
         });
 
         wait_for_termination!(task);
-        task.await.unwrap().unwrap();
+        task.await.unwrap();
     }
 
     #[test(tokio::test)]
@@ -976,12 +1013,11 @@ mod tests {
             .spawn();
 
         // Shutdown server connection task while it is establishing a full connection with the
-        // client and verify that we get an error because we have not yet reached the point where
-        // we would return an appropriate channel
+        // client, verifying that we do not get an error in return
         shutdown_tx
             .send(())
             .expect("Failed to send shutdown signal");
-        conn.await.unwrap_err();
+        conn.await.unwrap();
     }
 
     #[test(tokio::test)]
@@ -1030,13 +1066,12 @@ mod tests {
         // Spawn a task to handle the client-side establishment of a full connection
         let _client_task = tokio::spawn(Connection::client(t2, DummyAuthHandler));
 
-        // Shutdown server connection task while it is accepting the connection  and verify that we
-        // get an error because we have not yet reached the point where we would return an
-        // appropriate channel
+        // Shutdown server connection task while it is accepting the connection, verifying that we
+        // do not get an error in return
         shutdown_tx
             .send(())
             .expect("Failed to send shutdown signal");
-        conn.await.unwrap_err();
+        conn.await.unwrap();
     }
 
     #[test(tokio::test)]
@@ -1090,12 +1125,11 @@ mod tests {
         // Wait to ensure we complete the accept call first
         let _ = rx.recv().await;
 
-        // Shutdown server connection task while it is accepting the connection  and verify that we
-        // get an error because we have not yet reached the point where we would return an
-        // appropriate channel
+        // Shutdown server connection task while it is accepting the connection, verifying that we
+        // do not get an error in return
         shutdown_tx
             .send(())
             .expect("Failed to send shutdown signal");
-        conn.await.unwrap_err();
+        conn.await.unwrap();
     }
 }

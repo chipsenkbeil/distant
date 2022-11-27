@@ -84,7 +84,6 @@ async fn should_support_json_to_execute_program_and_return_exit_status(
         "payload": {
             "type": "proc_spawn",
             "cmd": cmd,
-            "persist": false,
             "pty": null,
         },
     });
@@ -109,7 +108,6 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxComma
         "payload": {
             "type": "proc_spawn",
             "cmd": cmd,
-            "persist": false,
             "pty": null,
         },
     });
@@ -148,7 +146,6 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxComma
         "payload": {
             "type": "proc_spawn",
             "cmd": cmd,
-            "persist": false,
             "pty": null,
         },
     });
@@ -187,7 +184,6 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
         "payload": {
             "type": "proc_spawn",
             "cmd": cmd,
-            "persist": false,
             "pty": null,
         },
     });
@@ -271,7 +267,6 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
         "payload": {
             "type": "proc_spawn",
             "cmd": DOES_NOT_EXIST_BIN.to_str().unwrap().to_string(),
-            "persist": false,
             "pty": null,
         },
     });
