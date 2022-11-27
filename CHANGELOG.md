@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Client::inmemory_spawn` and `UntypedClient::inmemory_spawn` now take a
   `ClientConfig` as the second argument instead of `ReconnectStrategy`
 - Persist option now removed from `ProcSpawn` message and CLI
+- Bump minimum Rust version to 1.64.0
 
 ## [0.20.0-alpha.2] - 2022-11-20
 
