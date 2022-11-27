@@ -5,7 +5,7 @@ use tokio::sync::{oneshot, RwLock};
 
 /// Contains all top-level state for the server
 pub struct ServerState {
-    /// Mapping of connection ids to their transports
+    /// Mapping of active connection ids to their tasks.
     pub connections: RwLock<HashMap<ConnectionId, ConnectionTask>>,
 
     /// Mapping of connection ids to (OTP, backup)
@@ -20,7 +20,7 @@ impl ServerState {
         }
     }
 
-    /// Returns true if there is at least one active connection
+    /// Returns true if there is at least one active connection.
     pub async fn has_active_connections(&self) -> bool {
         self.connections
             .read()

@@ -11,13 +11,13 @@ use std::{
 };
 use tokio::task::{JoinError, JoinHandle};
 
-/// Interface to engage with a server instance
+/// Interface to engage with a server instance.
 pub trait ServerRef: AsAny + Send {
-    /// Returns true if the server is no longer running
+    /// Returns true if the server is no longer running.
     fn is_finished(&self) -> bool;
 
-    /// Kills the internal task processing new inbound requests
-    fn abort(&self);
+    /// Sends a shutdown signal to the server.
+    fn shutdown(&self);
 
     fn wait(self) -> Pin<Box<dyn Future<Output = io::Result<()>>>>
     where
@@ -74,14 +74,16 @@ impl ServerRef for GenericServerRef {
         self.task.is_finished()
     }
 
-    fn abort(&self) {
+    fn shutdown(&self) {
         self.task.abort();
 
         let state = Arc::clone(&self.state);
         tokio::spawn(async move {
-            for (id, connection) in state.connections.read().await.iter() {
-                debug!("Aborting connection {}", id);
-                connection.abort();
+            for (id, mut connection) in state.connections.write().await.drain() {
+                debug!("Shutting down connection {id}");
+                connection.shutdown();
+                let _ = connection.await;
+                debug!("Connection {id} shut down");
             }
         });
     }

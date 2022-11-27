@@ -14,37 +14,42 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    sync::{mpsc, oneshot, RwLock},
+    sync::{broadcast, mpsc, oneshot, RwLock},
     task::JoinHandle,
 };
 
 pub type ServerKeychain = Keychain<oneshot::Receiver<Backup>>;
 
-/// Time to wait inbetween connection read/write when nothing was read or written on last pass
+/// Time to wait inbetween connection read/write when nothing was read or written on last pass.
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
-/// Minimum time between heartbeats to communicate to the client connection
+/// Minimum time between heartbeats to communicate to the client connection.
 const MINIMUM_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
 
-/// Represents an individual connection on the server
+/// Represents an individual connection on the server. If dropped, will terminate the connection.
 pub struct ConnectionTask {
-    /// Unique identifier tied to the connection
+    /// Unique identifier tied to the connection.
     id: ConnectionId,
 
-    /// Task that is processing requests and responses
+    /// Used to shutdown the connection as part of a global shutdown effort.
+    global_shutdown: broadcast::Receiver<()>,
+
+    /// Used to shutdown the connection.
+    local_shutdown: Option<oneshot::Sender<()>>,
+
+    /// Task that is processing requests and responses.
     task: JoinHandle<io::Result<()>>,
 }
 
 impl ConnectionTask {
-    /// Starts building a new connection
+    /// Starts building a new connection.
     pub fn build() -> ConnectionTaskBuilder<(), ()> {
-        let id: ConnectionId = rand::random();
         ConnectionTaskBuilder {
-            id,
             handler: Weak::new(),
             state: Weak::new(),
             keychain: Keychain::new(),
             transport: (),
+            global_shutdown: broadcast::channel(1).1,
             shutdown_timer: Weak::new(),
             sleep_duration: SLEEP_DURATION,
             heartbeat_duration: MINIMUM_HEARTBEAT_DURATION,
@@ -52,19 +57,22 @@ impl ConnectionTask {
         }
     }
 
-    /// Returns the id associated with the connection
+    /// Returns the id associated with the connection.
     pub fn id(&self) -> ConnectionId {
         self.id
     }
 
-    /// Returns true if the task has finished
+    /// Returns true if the task has finished.
     pub fn is_finished(&self) -> bool {
         self.task.is_finished()
     }
 
-    /// Aborts the connection
-    pub fn abort(&self) {
-        self.task.abort();
+    /// Sends a shutdown request to close the connection. Users should await on the connection to
+    /// ensure that it has finished shutting down.
+    pub fn shutdown(&mut self) {
+        if let Some(tx) = self.local_shutdown.take() {
+            let _ = tx.send(());
+        }
     }
 }
 
@@ -83,11 +91,11 @@ impl Future for ConnectionTask {
 }
 
 pub struct ConnectionTaskBuilder<H, T> {
-    id: ConnectionId,
     handler: Weak<H>,
     state: Weak<ServerState>,
     keychain: Keychain<oneshot::Receiver<Backup>>,
     transport: T,
+    global_shutdown: broadcast::Receiver<()>,
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
     sleep_duration: Duration,
     heartbeat_duration: Duration,
@@ -97,11 +105,11 @@ pub struct ConnectionTaskBuilder<H, T> {
 impl<H, T> ConnectionTaskBuilder<H, T> {
     pub fn handler<U>(self, handler: Weak<U>) -> ConnectionTaskBuilder<U, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -111,11 +119,11 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
 
     pub fn state(self, state: Weak<ServerState>) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             state,
             keychain: self.keychain,
             transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -125,11 +133,11 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
 
     pub fn keychain(self, keychain: ServerKeychain) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             state: self.state,
             keychain,
             transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -139,11 +147,11 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
 
     pub fn transport<U>(self, transport: U) -> ConnectionTaskBuilder<H, U> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             keychain: self.keychain,
             state: self.state,
             transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -151,16 +159,33 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
         }
     }
 
-    pub(crate) fn shutdown_timer(
+    pub fn global_shutdown(
         self,
-        shutdown_timer: Weak<RwLock<ShutdownTimer>>,
+        global_shutdown: broadcast::Receiver<()>,
     ) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
+            global_shutdown,
+            shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
+            verifier: self.verifier,
+        }
+    }
+
+    pub fn shutdown_timer(
+        self,
+        shutdown_timer: Weak<RwLock<ShutdownTimer>>,
+    ) -> ConnectionTaskBuilder<H, T> {
+        ConnectionTaskBuilder {
+            handler: self.handler,
+            state: self.state,
+            keychain: self.keychain,
+            transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -170,11 +195,11 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
 
     pub fn sleep_duration(self, sleep_duration: Duration) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -184,11 +209,11 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
 
     pub fn heartbeat_duration(self, heartbeat_duration: Duration) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration,
@@ -198,11 +223,11 @@ impl<H, T> ConnectionTaskBuilder<H, T> {
 
     pub fn verifier(self, verifier: Weak<Verifier>) -> ConnectionTaskBuilder<H, T> {
         ConnectionTaskBuilder {
-            id: self.id,
             handler: self.handler,
             state: self.state,
             keychain: self.keychain,
             transport: self.transport,
+            global_shutdown: self.global_shutdown,
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
@@ -220,39 +245,51 @@ where
     T: Transport + 'static,
 {
     pub fn spawn(self) -> ConnectionTask {
-        let id = self.id;
+        let (tx, rx) = oneshot::channel();
 
         ConnectionTask {
             id,
-            task: tokio::spawn(self.run()),
+            global_shutdown: self.global_shutdown,
+            local_shutdown: Some(tx),
+            task: tokio::spawn(self.run(rx)),
         }
     }
 
-    async fn run(self) -> io::Result<()> {
+    async fn run(self, mut shutdown: oneshot::Receiver<()>) -> io::Result<()> {
         let ConnectionTaskBuilder {
-            id,
             handler,
             state,
             keychain,
             transport,
+            global_shutdown,
             shutdown_timer,
             sleep_duration,
             heartbeat_duration,
             verifier,
         } = self;
 
+        // Construct a queue of outgoing responses
+        let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
+
         // Will check if no more connections and restart timer if that's the case
         macro_rules! terminate_connection {
-            // Prints an error message before terminating the connection by panicking
+            // Prints an error message and stores state before terminating
             (@error $($msg:tt)+) => {
                 error!($($msg)+);
                 terminate_connection!();
-                return Err(io::Error::new(io::ErrorKind::Other, format!($($msg)+)));
+                return Err(io::Error::new(io::ErrorKind::Other, $($msg)+));
             };
 
-            // Prints a debug message before terminating the connection by cleanly returning
+            // Prints a debug message and stores state before terminating
             (@debug $($msg:tt)+) => {
                 debug!($($msg)+);
+                terminate_connection!();
+                return Ok(());
+            };
+
+            // Prints a shutdown message and stores state before terminating
+            (@shutdown) => {
+                debug!("[Conn {id}] Shutdown triggered");
                 terminate_connection!();
                 return Ok(());
             };
@@ -262,11 +299,16 @@ where
             () => {
                 // Remove the connection from our state if it has closed
                 if let Some(state) = Weak::upgrade(&state) {
+                    trace!("[Conn {id}] Placing self in closed connection list");
+                    state.closed_connections.write().await.insert(self.id, );
+
+                    trace!("[Conn {id}] Cleaning up self from active connection list");
                     state.connections.write().await.remove(&self.id);
 
                     // If we have no more connections, start the timer
                     if let Some(timer) = Weak::upgrade(&shutdown_timer) {
                         if state.connections.read().await.is_empty() {
+                            trace!("[Conn {id}] Last connection terminating, so restarting shutdown timer");
                             timer.write().await.restart();
                         }
                     }
@@ -274,11 +316,26 @@ where
             };
         }
 
+        macro_rules! await_or_shutdown {
+            ($future:expr) => {{
+                tokio::select! {
+                    _ = global_shutdown.recv() => {
+                        terminate_connection!(@shutdown);
+                    }
+                    _ = &mut shutdown => {
+                        terminate_connection!(@shutdown);
+                    }
+                    x = $future => { x }
+                }
+            }};
+        }
+
         // Properly establish the connection's transport
-        debug!("[Conn {id}] Establishing full connection");
+        debug!("Establishing full connection using {transport:?}");
         let mut connection = match Weak::upgrade(&verifier) {
             Some(verifier) => {
-                match Connection::server(transport, verifier.as_ref(), keychain).await {
+                match await_or_shutdown!(Connection::server(transport, verifier.as_ref(), keychain))
+                {
                     Ok(connection) => connection,
                     Err(x) => {
                         terminate_connection!(@error "[Conn {id}] Failed to setup connection: {x}");
@@ -290,6 +347,9 @@ where
             }
         };
 
+        // Update our id to be the connection id
+        let id = connection.id();
+
         // Attempt to upgrade our handler for use with the connection going forward
         debug!("[Conn {id}] Preparing connection handler");
         let handler = match Weak::upgrade(&handler) {
@@ -299,31 +359,27 @@ where
             }
         };
 
-        // Construct a queue of outgoing responses
-        let (tx, mut rx) = mpsc::channel::<Response<H::Response>>(1);
-
         // Create local data for the connection and then process it
         debug!("[Conn {id}] Officially accepting connection");
         let mut local_data = H::LocalData::default();
-        if let Err(x) = handler
-            .on_accept(ConnectionCtx {
-                connection_id: id,
-                local_data: &mut local_data,
-            })
-            .await
-        {
+        if let Err(x) = await_or_shutdown!(handler.on_accept(ConnectionCtx {
+            connection_id: id,
+            local_data: &mut local_data
+        })) {
             terminate_connection!(@error "[Conn {id}] Accepting connection failed: {x}");
         }
 
         let local_data = Arc::new(local_data);
         let mut last_heartbeat = Instant::now();
 
+        // Store our connection details
+        todo!();
+
         debug!("[Conn {id}] Beginning read/write loop");
         loop {
-            let ready = match connection
-                .ready(Interest::READABLE | Interest::WRITABLE)
-                .await
-            {
+            let ready = match await_or_shutdown!(
+                connection.ready(Interest::READABLE | Interest::WRITABLE)
+            ) {
                 Ok(ready) => ready,
                 Err(x) => {
                     terminate_connection!(@error "[Conn {id}] Failed to examine ready state: {x}");
@@ -339,15 +395,13 @@ where
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
                         Ok(request) => match request.to_typed_request() {
                             Ok(request) => {
-                                let reply = ServerReply {
-                                    origin_id: request.id.clone(),
-                                    tx: tx.clone(),
-                                };
-
                                 let ctx = ServerCtx {
                                     connection_id: id,
                                     request,
-                                    reply: reply.clone(),
+                                    reply: ServerReply {
+                                        origin_id: request.id.clone(),
+                                        tx: tx.clone(),
+                                    },
                                     local_data: Arc::clone(&local_data),
                                 };
 
@@ -648,6 +702,7 @@ mod tests {
         let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
         let verifier = Arc::new(Verifier::none());
 
+        #[derive(Debug)]
         struct FakeTransport {
             inner: InmemoryTransport,
             fail_ready: Arc<AtomicBool>,
@@ -714,11 +769,9 @@ mod tests {
 
         wait_for_termination!(task);
 
-        let err = task.await.unwrap_err();
-        assert!(
-            err.to_string().contains("Failed to examine ready state"),
-            "Unexpected error: {err}"
-        );
+        // NOTE: Termination is still an Ok(...) because we want to return some stateful info.
+        //       This just verifies that we don't hang!
+        task.await.unwrap();
     }
 
     #[test(tokio::test)]
@@ -760,7 +813,7 @@ mod tests {
         let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
         let verifier = Arc::new(Verifier::none());
 
-        ConnectionTask::build()
+        let _conn = ConnectionTask::build()
             .handler(Arc::downgrade(&handler))
             .state(Arc::downgrade(&state))
             .keychain(keychain)
@@ -796,7 +849,7 @@ mod tests {
         let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
         let verifier = Arc::new(Verifier::none());
 
-        ConnectionTask::build()
+        let _conn = ConnectionTask::build()
             .handler(Arc::downgrade(&handler))
             .state(Arc::downgrade(&state))
             .keychain(keychain)
@@ -844,5 +897,138 @@ mod tests {
         });
 
         task.await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn should_be_able_to_shutdown_while_establishing_connection() {
+        let handler = Arc::new(TestServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, _t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        let mut conn = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .heartbeat_duration(Duration::from_millis(200))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Shutdown server connection task while it is establishing a full connection with the
+        // client and verify that we get an error because we have not yet reached the point where
+        // we would return an appropriate channel
+        conn.shutdown();
+        conn.await.unwrap_err();
+    }
+
+    #[test(tokio::test)]
+    async fn should_be_able_to_shutdown_while_accepting_connection() {
+        struct HangingAcceptServerHandler;
+
+        #[async_trait]
+        impl ServerHandler for HangingAcceptServerHandler {
+            type Request = ();
+            type Response = ();
+            type LocalData = ();
+
+            async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+                // Wait "forever" so we can ensure that we fail at this step
+                tokio::time::sleep(Duration::MAX).await;
+                Err(io::Error::new(io::ErrorKind::Other, "bad accept"))
+            }
+
+            async fn on_request(
+                &self,
+                _: ServerCtx<Self::Request, Self::Response, Self::LocalData>,
+            ) {
+                unreachable!();
+            }
+        }
+
+        let handler = Arc::new(HangingAcceptServerHandler);
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        let mut conn = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .heartbeat_duration(Duration::from_millis(200))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle the client-side establishment of a full connection
+        let _client_task = tokio::spawn(Connection::client(t2, DummyAuthHandler));
+
+        // Shutdown server connection task while it is accepting the connection  and verify that we
+        // get an error because we have not yet reached the point where we would return an
+        // appropriate channel
+        conn.shutdown();
+        conn.await.unwrap_err();
+    }
+
+    #[test(tokio::test)]
+    async fn should_be_able_to_shutdown_while_waiting_for_connection_to_be_ready() {
+        struct AcceptServerHandler {
+            tx: mpsc::Sender<()>,
+        }
+
+        #[async_trait]
+        impl ServerHandler for AcceptServerHandler {
+            type Request = ();
+            type Response = ();
+            type LocalData = ();
+
+            async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+                self.tx.send(()).await.unwrap();
+                Ok(())
+            }
+
+            async fn on_request(
+                &self,
+                _: ServerCtx<Self::Request, Self::Response, Self::LocalData>,
+            ) {
+                unreachable!();
+            }
+        }
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let handler = Arc::new(AcceptServerHandler { tx });
+        let state = Arc::new(ServerState::default());
+        let keychain = ServerKeychain::new();
+        let (t1, t2) = InmemoryTransport::pair(100);
+        let shutdown_timer = Arc::new(RwLock::new(ShutdownTimer::start(Shutdown::Never)));
+        let verifier = Arc::new(Verifier::none());
+
+        let mut conn = ConnectionTask::build()
+            .handler(Arc::downgrade(&handler))
+            .state(Arc::downgrade(&state))
+            .keychain(keychain)
+            .transport(t1)
+            .shutdown_timer(Arc::downgrade(&shutdown_timer))
+            .heartbeat_duration(Duration::from_millis(200))
+            .verifier(Arc::downgrade(&verifier))
+            .spawn();
+
+        // Spawn a task to handle the client-side establishment of a full connection
+        let _client_task = tokio::spawn(Connection::client(t2, DummyAuthHandler));
+
+        // Wait to ensure we complete the accept call first
+        let _ = rx.recv().await;
+
+        // Shutdown server connection task while it is accepting the connection  and verify that we
+        // get an error because we have not yet reached the point where we would return an
+        // appropriate channel
+        conn.shutdown();
+        conn.await.unwrap_err();
     }
 }

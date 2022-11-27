@@ -191,9 +191,11 @@ where
                         config.shutdown.duration().unwrap_or_default().as_secs_f32(),
                     );
 
-                    for (id, task) in state.connections.write().await.drain() {
-                        info!("Terminating task {id}");
-                        task.abort();
+                    for (id, mut task) in state.connections.write().await.drain() {
+                        info!("Shutting down connection {id}");
+                        task.shutdown();
+                        let _ = task.await;
+                        debug!("Connection {id} shut down");
                     }
 
                     break;

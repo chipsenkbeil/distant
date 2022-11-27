@@ -91,8 +91,8 @@ where
     ///
     /// For a client, this means performing an actual [`reconnect`] on the underlying
     /// [`Transport`], re-establishing an encrypted codec, submitting a request to the server to
-    /// reauthenticate using a previously-derived OTP, and refreshing the connection id and OTP for
-    /// use in a future reauthentication.
+    /// reauthenticate using a previously-derived OTP, and refreshing the  OTP for use in a future
+    /// reauthentication.
     ///
     /// ### Server
     ///
@@ -404,7 +404,6 @@ impl Connection<InmemoryTransport> {
     }
 }
 
-#[cfg(test)]
 impl<T> Connection<T> {
     /// Returns the id of the connection.
     pub fn id(&self) -> ConnectionId {
@@ -413,7 +412,10 @@ impl<T> Connection<T> {
             Self::Server { id, .. } => *id,
         }
     }
+}
 
+#[cfg(test)]
+impl<T> Connection<T> {
     /// Returns the OTP associated with the connection, or none if connection is server-side.
     pub fn otp(&self) -> Option<&HeapSecretKey> {
         match self {

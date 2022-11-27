@@ -646,7 +646,7 @@ impl Ssh {
         );
 
         // Close out ssh client by killing the internal server and client
-        server.abort();
+        server.shutdown();
         client.abort();
         let _ = client.wait().await;
 
