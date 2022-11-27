@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use distant_net::boxed_connect_handler;
-use distant_net::client::{Client, ReconnectStrategy};
+use distant_net::client::Client;
 use distant_net::common::authentication::{DummyAuthHandler, Verifier};
 use distant_net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_net::manager::{Config, ManagerClient, ManagerServer};
@@ -43,7 +43,6 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_
 
             let client = Client::build()
                 .auth_handler(DummyAuthHandler)
-                .reconnect_strategy(ReconnectStrategy::Fail)
                 .connector(t1)
                 .connect_untyped()
                 .await?;
@@ -61,7 +60,6 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_
     info!("Connecting to manager");
     let mut client: ManagerClient = Client::build()
         .auth_handler(DummyAuthHandler)
-        .reconnect_strategy(ReconnectStrategy::Fail)
         .connector(t1)
         .connect()
         .await

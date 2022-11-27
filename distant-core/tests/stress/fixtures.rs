@@ -45,7 +45,7 @@ impl DistantClientCtx {
         // Now initialize our client
         let client: DistantClient = Client::build()
             .auth_handler(DummyAuthHandler)
-            .timeout(Duration::from_secs(1))
+            .connect_timeout(Duration::from_secs(1))
             .connector(TcpConnector::new(
                 format!("{}:{}", ip_addr, port)
                     .parse::<SocketAddr>()

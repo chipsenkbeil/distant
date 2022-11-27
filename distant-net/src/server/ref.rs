@@ -1,23 +1,21 @@
-use super::ServerState;
 use crate::common::AsAny;
-use log::*;
 use std::{
     future::Future,
     io,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
+use tokio::sync::broadcast;
 use tokio::task::{JoinError, JoinHandle};
 
-/// Interface to engage with a server instance
+/// Interface to engage with a server instance.
 pub trait ServerRef: AsAny + Send {
-    /// Returns true if the server is no longer running
+    /// Returns true if the server is no longer running.
     fn is_finished(&self) -> bool;
 
-    /// Kills the internal task processing new inbound requests
-    fn abort(&self);
+    /// Sends a shutdown signal to the server.
+    fn shutdown(&self);
 
     fn wait(self) -> Pin<Box<dyn Future<Output = io::Result<()>>>>
     where
@@ -64,7 +62,7 @@ impl dyn ServerRef {
 
 /// Represents a generic reference to a server
 pub struct GenericServerRef {
-    pub(crate) state: Arc<ServerState>,
+    pub(crate) shutdown: broadcast::Sender<()>,
     pub(crate) task: JoinHandle<()>,
 }
 
@@ -74,16 +72,8 @@ impl ServerRef for GenericServerRef {
         self.task.is_finished()
     }
 
-    fn abort(&self) {
-        self.task.abort();
-
-        let state = Arc::clone(&self.state);
-        tokio::spawn(async move {
-            for (id, connection) in state.connections.read().await.iter() {
-                debug!("Aborting connection {}", id);
-                connection.abort();
-            }
-        });
+    fn shutdown(&self) {
+        let _ = self.shutdown.send(());
     }
 
     fn wait(self) -> Pin<Box<dyn Future<Output = io::Result<()>>>>

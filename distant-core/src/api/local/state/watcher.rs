@@ -95,10 +95,6 @@ impl WatcherState {
         }
     }
 
-    pub fn clone_channel(&self) -> WatcherChannel {
-        self.channel.clone()
-    }
-
     /// Aborts the watcher task
     pub fn abort(&self) {
         self.task.abort();

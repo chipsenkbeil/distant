@@ -186,7 +186,7 @@ mod tests {
     use crate::DistantClient;
     use distant_net::{
         common::{FramedTransport, InmemoryTransport, Response},
-        Client, ReconnectStrategy,
+        Client,
     };
     use std::sync::Arc;
     use test_log::test;
@@ -194,7 +194,7 @@ mod tests {
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);
-        (t1, Client::spawn_inmemory(t2, ReconnectStrategy::Fail))
+        (t1, Client::spawn_inmemory(t2, Default::default()))
     }
 
     #[test(tokio::test)]

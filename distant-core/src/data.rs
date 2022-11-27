@@ -417,12 +417,6 @@ pub enum DistantRequestData {
         #[cfg_attr(feature = "clap", clap(long))]
         current_dir: Option<PathBuf>,
 
-        /// Whether or not the process should be persistent, meaning that the process will not be
-        /// killed when the associated client disconnects
-        #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
-        persist: bool,
-
         /// If provided, will spawn process in a pty, otherwise spawns directly
         #[serde(default)]
         #[cfg_attr(feature = "clap", clap(long))]

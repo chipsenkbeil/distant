@@ -9,14 +9,14 @@ use tokio::{
 mod instance;
 pub use instance::*;
 
-/// Holds information related to spawned processes on the server
+/// Holds information related to spawned processes on the server.
 pub struct ProcessState {
     channel: ProcessChannel,
     task: JoinHandle<()>,
 }
 
 impl Drop for ProcessState {
-    /// Aborts the task that handles process operations and management
+    /// Aborts the task that handles process operations and management.
     fn drop(&mut self) {
         self.abort();
     }
@@ -31,10 +31,6 @@ impl ProcessState {
             channel: ProcessChannel { tx },
             task,
         }
-    }
-
-    pub fn clone_channel(&self) -> ProcessChannel {
-        self.channel.clone()
     }
 
     /// Aborts the process task
@@ -57,7 +53,7 @@ pub struct ProcessChannel {
 }
 
 impl Default for ProcessChannel {
-    /// Creates a new channel that is closed by default
+    /// Creates a new channel that is closed by default.
     fn default() -> Self {
         let (tx, _) = mpsc::channel(1);
         Self { tx }
@@ -65,13 +61,12 @@ impl Default for ProcessChannel {
 }
 
 impl ProcessChannel {
-    /// Spawns a new process, returning the id associated with it
+    /// Spawns a new process, returning the id associated with it.
     pub async fn spawn(
         &self,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<ProcessId> {
@@ -81,7 +76,6 @@ impl ProcessChannel {
                 cmd,
                 environment,
                 current_dir,
-                persist,
                 pty,
                 reply,
                 cb,
@@ -92,7 +86,7 @@ impl ProcessChannel {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to spawn dropped"))?
     }
 
-    /// Resizes the pty of a running process
+    /// Resizes the pty of a running process.
     pub async fn resize_pty(&self, id: ProcessId, size: PtySize) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -103,7 +97,7 @@ impl ProcessChannel {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to resize dropped"))?
     }
 
-    /// Send stdin to a running process
+    /// Send stdin to a running process.
     pub async fn send_stdin(&self, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -114,7 +108,8 @@ impl ProcessChannel {
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to stdin dropped"))?
     }
 
-    /// Kills a running process
+    /// Kills a running process, including persistent processes if `force` is true. Will fail if
+    /// unable to kill the process or `force` is false when the process is persistent.
     pub async fn kill(&self, id: ProcessId) -> io::Result<()> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -126,13 +121,12 @@ impl ProcessChannel {
     }
 }
 
-/// Internal message to pass to our task below to perform some action
+/// Internal message to pass to our task below to perform some action.
 enum InnerProcessMsg {
     Spawn {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
         cb: oneshot::Sender<io::Result<ProcessId>>,
@@ -165,14 +159,12 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                 cmd,
                 environment,
                 current_dir,
-                persist,
                 pty,
                 reply,
                 cb,
             } => {
                 let _ = cb.send(
-                    match ProcessInstance::spawn(cmd, environment, current_dir, persist, pty, reply)
-                    {
+                    match ProcessInstance::spawn(cmd, environment, current_dir, pty, reply) {
                         Ok(mut process) => {
                             let id = process.id;
 
@@ -195,7 +187,7 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                     Some(process) => process.pty.resize_pty(size),
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No process found with id {}", id),
+                        format!("No process found with id {id}"),
                     )),
                 });
             }
@@ -205,12 +197,12 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                         Some(stdin) => stdin.send(&data).await,
                         None => Err(io::Error::new(
                             io::ErrorKind::Other,
-                            format!("Process {} stdin is closed", id),
+                            format!("Process {id} stdin is closed"),
                         )),
                     },
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No process found with id {}", id),
+                        format!("No process found with id {id}"),
                     )),
                 });
             }
@@ -219,7 +211,7 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
                     Some(process) => process.killer.kill().await,
                     None => Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("No process found with id {}", id),
+                        format!("No process found with id {id}"),
                     )),
                 });
             }

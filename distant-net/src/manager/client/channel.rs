@@ -1,5 +1,5 @@
 use crate::{
-    client::{Client, ReconnectStrategy, UntypedClient},
+    client::{Client, ClientConfig, UntypedClient},
     common::{ConnectionId, FramedTransport, InmemoryTransport, UntypedRequest},
     manager::data::{ManagerRequest, ManagerResponse},
 };
@@ -35,7 +35,10 @@ impl RawChannel {
         T: Send + Sync + Serialize + 'static,
         U: Send + Sync + DeserializeOwned + 'static,
     {
-        Client::spawn_inmemory(self.transport, ReconnectStrategy::Fail)
+        Client::spawn_inmemory(
+            self.transport,
+            ClientConfig::default().with_maximum_silence_duration(),
+        )
     }
 
     /// Consumes this channel, returning an untyped client wrapping the transport.
@@ -46,7 +49,10 @@ impl RawChannel {
     /// performed during separate connection and this merely wraps an inmemory transport that maps
     /// to the primary connection.
     pub fn into_untyped_client(self) -> UntypedClient {
-        UntypedClient::spawn_inmemory(self.transport, ReconnectStrategy::Fail)
+        UntypedClient::spawn_inmemory(
+            self.transport,
+            ClientConfig::default().with_maximum_silence_duration(),
+        )
     }
 
     /// Returns reference to the underlying framed transport.

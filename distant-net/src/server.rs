@@ -1,9 +1,9 @@
-use crate::common::{authentication::Verifier, Listener, Transport};
+use crate::common::{authentication::Verifier, Listener, Response, Transport};
 use async_trait::async_trait;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{io, sync::Arc, time::Duration};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 mod builder;
 pub use builder::*;
@@ -148,14 +148,20 @@ where
         L::Output: Transport + 'static,
     {
         let state = Arc::new(ServerState::new());
-        let task = tokio::spawn(self.task(Arc::clone(&state), listener));
+        let (tx, rx) = broadcast::channel(1);
+        let task = tokio::spawn(self.task(Arc::clone(&state), listener, tx.clone(), rx));
 
-        Ok(Box::new(GenericServerRef { state, task }))
+        Ok(Box::new(GenericServerRef { shutdown: tx, task }))
     }
 
     /// Internal task that is run to receive connections and spawn connection tasks
-    async fn task<L>(self, state: Arc<ServerState>, mut listener: L)
-    where
+    async fn task<L>(
+        self,
+        state: Arc<ServerState<Response<T::Response>>>,
+        mut listener: L,
+        shutdown_tx: broadcast::Sender<()>,
+        shutdown_rx: broadcast::Receiver<()>,
+    ) where
         L: Listener + 'static,
         L::Output: Transport + 'static,
     {
@@ -171,6 +177,7 @@ where
         let timer = Arc::new(RwLock::new(timer));
         let verifier = Arc::new(verifier);
 
+        let mut connection_tasks = Vec::new();
         loop {
             // Receive a new connection, exiting if no longer accepting connections or if the shutdown
             // signal has been received
@@ -191,10 +198,7 @@ where
                         config.shutdown.duration().unwrap_or_default().as_secs_f32(),
                     );
 
-                    for (id, task) in state.connections.write().await.drain() {
-                        info!("Terminating task {id}");
-                        task.abort();
-                    }
+                    let _ = shutdown_tx.send(());
 
                     break;
                 }
@@ -203,26 +207,28 @@ where
             // Ensure that the shutdown timer is cancelled now that we have a connection
             timer.read().await.stop();
 
-            let connection = ConnectionTask::build()
-                .handler(Arc::downgrade(&handler))
-                .state(Arc::downgrade(&state))
-                .keychain(state.keychain.clone())
-                .transport(transport)
-                .shutdown_timer(Arc::downgrade(&timer))
-                .sleep_duration(config.connection_sleep)
-                .verifier(Arc::downgrade(&verifier))
-                .spawn();
-
-            state
-                .connections
-                .write()
-                .await
-                .insert(connection.id(), connection);
+            connection_tasks.push(
+                ConnectionTask::build()
+                    .handler(Arc::downgrade(&handler))
+                    .state(Arc::downgrade(&state))
+                    .keychain(state.keychain.clone())
+                    .transport(transport)
+                    .shutdown(shutdown_rx.resubscribe())
+                    .shutdown_timer(Arc::downgrade(&timer))
+                    .sleep_duration(config.connection_sleep)
+                    .heartbeat_duration(config.connection_heartbeat)
+                    .verifier(Arc::downgrade(&verifier))
+                    .spawn(),
+            );
         }
 
         // Once we stop listening, we still want to wait until all connections have terminated
         info!("Server waiting for active connections to terminate");
-        while state.has_active_connections().await {
+        loop {
+            connection_tasks.retain(|task| !task.is_finished());
+            if connection_tasks.is_empty() {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         info!("Server task terminated");

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{io, time::Duration};
+use std::{fmt, io, time::Duration};
 
 mod framed;
 pub use framed::*;
@@ -42,7 +42,7 @@ pub trait Reconnectable {
 
 /// Interface representing a transport of raw bytes into and out of the system.
 #[async_trait]
-pub trait Transport: Reconnectable + Send + Sync {
+pub trait Transport: Reconnectable + fmt::Debug + Send + Sync {
     /// Tries to read data from the transport into the provided buffer, returning how many bytes
     /// were read.
     ///

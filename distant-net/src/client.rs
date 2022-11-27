@@ -8,7 +8,7 @@ use std::{
     fmt, io,
     ops::{Deref, DerefMut},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -20,6 +20,9 @@ pub use builder::*;
 
 mod channel;
 pub use channel::*;
+
+mod config;
+pub use config::*;
 
 mod reconnect;
 pub use reconnect::*;
@@ -135,18 +138,18 @@ impl UntypedClient {
     /// within a program.
     pub fn spawn_inmemory(
         transport: FramedTransport<InmemoryTransport>,
-        strategy: ReconnectStrategy,
+        config: ClientConfig,
     ) -> Self {
         let connection = Connection::Client {
             id: rand::random(),
             reauth_otp: HeapSecretKey::generate(32).unwrap(),
             transport,
         };
-        Self::spawn(connection, strategy)
+        Self::spawn(connection, config)
     }
 
     /// Spawns a client using the provided [`Connection`].
-    pub(crate) fn spawn<V>(mut connection: Connection<V>, mut strategy: ReconnectStrategy) -> Self
+    pub(crate) fn spawn<V>(mut connection: Connection<V>, config: ClientConfig) -> Self
     where
         V: Transport + 'static,
     {
@@ -164,6 +167,7 @@ impl UntypedClient {
         let (watcher_tx, watcher_rx) = watch::channel(ConnectionState::Connected);
         let task = tokio::spawn(async move {
             let mut needs_reconnect = false;
+            let mut last_read_frame_time = Instant::now();
 
             // NOTE: We hold onto a copy of the shutdown sender, even though we will never use it,
             //       to prevent the channel from being closed. This is because we do a check to
@@ -171,19 +175,24 @@ impl UntypedClient {
             //       would cause recv() to resolve immediately and result in the task shutting
             //       down.
             let _shutdown_tx = shutdown_tx_2;
+            let ClientConfig {
+                mut reconnect_strategy,
+                silence_duration,
+            } = config;
 
             loop {
                 // If we have flagged that a reconnect is needed, attempt to do so
                 if needs_reconnect {
                     info!("Client encountered issue, attempting to reconnect");
                     if log::log_enabled!(log::Level::Debug) {
-                        debug!("Using strategy {strategy:?}");
+                        debug!("Using strategy {reconnect_strategy:?}");
                     }
-                    match strategy.reconnect(&mut connection).await {
-                        Ok(x) => {
+                    match reconnect_strategy.reconnect(&mut connection).await {
+                        Ok(()) => {
+                            info!("Client successfully reconnected!");
                             needs_reconnect = false;
+                            last_read_frame_time = Instant::now();
                             watcher_tx.send_replace(ConnectionState::Connected);
-                            x
                         }
                         Err(x) => {
                             error!("Unable to re-establish connection: {x}");
@@ -191,6 +200,29 @@ impl UntypedClient {
                             break Err(x);
                         }
                     }
+                }
+
+                macro_rules! silence_needs_reconnect {
+                    () => {{
+                        debug!(
+                            "Client exceeded {}s without server activity, so attempting to reconnect",
+                            silence_duration.as_secs_f32(),
+                        );
+                        needs_reconnect = true;
+                        watcher_tx.send_replace(ConnectionState::Reconnecting);
+                        continue;
+                    }};
+                }
+
+                let silence_time_remaining = silence_duration
+                    .checked_sub(last_read_frame_time.elapsed())
+                    .unwrap_or_default();
+
+                // NOTE: sleep will not trigger if duration is zero/nanosecond scale, so we
+                //       instead will do an early check here in the case that we need to reconnect
+                //       prior to a sleep while polling the ready status
+                if silence_time_remaining.as_millis() == 0 {
+                    silence_needs_reconnect!();
                 }
 
                 let ready = tokio::select! {
@@ -201,6 +233,9 @@ impl UntypedClient {
                         let _ = cb.send(Ok(()));
                         watcher_tx.send_replace(ConnectionState::Disconnected);
                         break Ok(());
+                    }
+                    _ = tokio::time::sleep(silence_time_remaining) => {
+                        silence_needs_reconnect!();
                     }
                     result = connection.ready(Interest::READABLE | Interest::WRITABLE) => {
                         match result {
@@ -220,7 +255,16 @@ impl UntypedClient {
 
                 if ready.is_readable() {
                     match connection.try_read_frame() {
+                        // If we get an empty frame, we consider this a heartbeat and want
+                        // to adjust our frame read time and discard it from our backup
+                        Ok(Some(frame)) if frame.is_empty() => {
+                            trace!("Client received heartbeat");
+                            last_read_frame_time = Instant::now();
+                        }
+
+                        // Otherwise, we attempt to parse a frame as a response
                         Ok(Some(frame)) => {
+                            last_read_frame_time = Instant::now();
                             match UntypedResponse::from_slice(frame.as_item()) {
                                 Ok(response) => {
                                     if log_enabled!(Level::Trace) {
@@ -242,6 +286,7 @@ impl UntypedClient {
                                 }
                             }
                         }
+
                         Ok(None) => {
                             debug!("Connection closed");
                             needs_reconnect = true;
@@ -391,9 +436,9 @@ where
     /// within a program.
     pub fn spawn_inmemory(
         transport: FramedTransport<InmemoryTransport>,
-        strategy: ReconnectStrategy,
+        config: ClientConfig,
     ) -> Self {
-        UntypedClient::spawn_inmemory(transport, strategy).into_typed_client()
+        UntypedClient::spawn_inmemory(transport, config).into_typed_client()
     }
 }
 
@@ -515,6 +560,7 @@ impl<T, U> From<Client<T, U>> for Channel<T, U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ClientConfig;
     use crate::common::{Ready, Request, Response, TestTransport};
 
     mod typed {
@@ -524,12 +570,19 @@ mod tests {
 
         fn spawn_test_client<T>(
             connection: Connection<T>,
-            strategy: ReconnectStrategy,
+            reconnect_strategy: ReconnectStrategy,
         ) -> TestClient
         where
             T: Transport + 'static,
         {
-            UntypedClient::spawn(connection, strategy).into_typed_client()
+            UntypedClient::spawn(
+                connection,
+                ClientConfig {
+                    reconnect_strategy,
+                    ..Default::default()
+                },
+            )
+            .into_typed_client()
         }
 
         /// Creates a new test transport whose operations do not panic, but do nothing.
@@ -848,7 +901,7 @@ mod tests {
         async fn should_write_queued_requests_as_outgoing_frames() {
             let (client, mut server) = Connection::pair(100);
 
-            let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let mut client = TestClient::spawn(client, Default::default());
             client
                 .fire(Request::new(1u8).to_untyped_request().unwrap())
                 .await
@@ -908,7 +961,7 @@ mod tests {
                     .unwrap();
             });
 
-            let mut client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let mut client = TestClient::spawn(client, Default::default());
             assert_eq!(
                 client
                     .send(Request::new(1u8).to_untyped_request().unwrap())
@@ -938,10 +991,13 @@ mod tests {
 
                     transport
                 }),
-                ReconnectStrategy::FixedInterval {
-                    interval: Duration::from_millis(50),
-                    max_retries: None,
-                    timeout: None,
+                ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::FixedInterval {
+                        interval: Duration::from_millis(50),
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
                 },
             );
 
@@ -969,10 +1025,13 @@ mod tests {
 
                     transport
                 }),
-                ReconnectStrategy::FixedInterval {
-                    interval: Duration::from_millis(50),
-                    max_retries: None,
-                    timeout: None,
+                ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::FixedInterval {
+                        interval: Duration::from_millis(50),
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
                 },
             );
 
@@ -1000,10 +1059,13 @@ mod tests {
 
                     transport
                 }),
-                ReconnectStrategy::FixedInterval {
-                    interval: Duration::from_millis(50),
-                    max_retries: None,
-                    timeout: None,
+                ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::FixedInterval {
+                        interval: Duration::from_millis(50),
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
                 },
             );
 
@@ -1031,10 +1093,13 @@ mod tests {
 
                     transport
                 }),
-                ReconnectStrategy::FixedInterval {
-                    interval: Duration::from_millis(50),
-                    max_retries: None,
-                    timeout: None,
+                ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::FixedInterval {
+                        interval: Duration::from_millis(50),
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
                 },
             );
 
@@ -1079,10 +1144,13 @@ mod tests {
 
                     transport
                 }),
-                ReconnectStrategy::FixedInterval {
-                    interval: Duration::from_millis(50),
-                    max_retries: None,
-                    timeout: None,
+                ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::FixedInterval {
+                        interval: Duration::from_millis(50),
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
                 },
             );
 
@@ -1101,7 +1169,7 @@ mod tests {
 
             // Spawn the client, verify the task is running, kill our server, and verify that the
             // client does not block trying to reconnect
-            let client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let client = TestClient::spawn(client, Default::default());
             assert!(!client.is_finished(), "Client unexpectedly died");
             drop(server);
             assert_eq!(
@@ -1114,7 +1182,7 @@ mod tests {
         async fn should_exit_if_shutdown_signal_detected() {
             let (client, _server) = Connection::pair(100);
 
-            let client = TestClient::spawn(client, ReconnectStrategy::Fail);
+            let client = TestClient::spawn(client, Default::default());
             client.shutdown().await.unwrap();
 
             // NOTE: We wait for the client's task to conclude by using `wait` to ensure we do not
@@ -1142,7 +1210,7 @@ mod tests {
 
             // NOTE: We consume the client to produce a channel without maintaining the shutdown
             //       channel in order to ensure that dropping the client does not kill the task.
-            let mut channel = TestClient::spawn(client, ReconnectStrategy::Fail).into_channel();
+            let mut channel = TestClient::spawn(client, Default::default()).into_channel();
             assert_eq!(
                 channel
                     .send(Request::new(1u8).to_untyped_request().unwrap())
@@ -1153,6 +1221,31 @@ mod tests {
                     .payload,
                 2
             );
+        }
+
+        #[test(tokio::test)]
+        async fn should_attempt_to_reconnect_if_no_activity_from_server_within_silence_duration() {
+            let (client, _) = Connection::pair(100);
+
+            // NOTE: We consume the client to produce a channel without maintaining the shutdown
+            //       channel in order to ensure that dropping the client does not kill the task.
+            let client = TestClient::spawn(
+                client,
+                ClientConfig {
+                    silence_duration: Duration::from_millis(100),
+                    reconnect_strategy: ReconnectStrategy::FixedInterval {
+                        interval: Duration::from_millis(50),
+                        max_retries: Some(3),
+                        timeout: None,
+                    },
+                },
+            );
+
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            client.on_connection_change(move |state| tx.send(state).unwrap());
+            assert_eq!(rx.recv().await, Some(ConnectionState::Reconnecting));
+            assert_eq!(rx.recv().await, Some(ConnectionState::Disconnected));
+            assert_eq!(rx.recv().await, None);
         }
     }
 }

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use distant_net::client::{Client, ReconnectStrategy};
+use distant_net::client::Client;
 use distant_net::common::authentication::{DummyAuthHandler, Verifier};
 use distant_net::common::{InmemoryTransport, OneshotListener};
 use distant_net::server::{Server, ServerCtx, ServerHandler};
@@ -38,7 +38,6 @@ async fn should_be_able_to_send_and_receive_typed_payloads_between_client_and_se
 
     let mut client: Client<(u8, String), String> = Client::build()
         .auth_handler(DummyAuthHandler)
-        .reconnect_strategy(ReconnectStrategy::Fail)
         .connector(t1)
         .connect()
         .await

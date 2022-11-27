@@ -348,8 +348,6 @@ pub trait DistantApi {
     /// * `cmd` - the full command to run as a new process (including arguments)
     /// * `environment` - the environment variables to associate with the process
     /// * `current_dir` - the alternative current directory to use with the process
-    /// * `persist` - if true, the process will continue running even after the connection that
-    ///               spawned the process has terminated
     /// * `pty` - if provided, will run the process within a PTY of the given size
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
@@ -360,7 +358,6 @@ pub trait DistantApi {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
         unsupported("proc_spawn")
@@ -650,11 +647,10 @@ where
             cmd,
             environment,
             current_dir,
-            persist,
             pty,
         } => server
             .api
-            .proc_spawn(ctx, cmd.into(), environment, current_dir, persist, pty)
+            .proc_spawn(ctx, cmd.into(), environment, current_dir, pty)
             .await
             .map(|id| DistantResponseData::ProcSpawned { id })
             .unwrap_or_else(DistantResponseData::from),

@@ -13,7 +13,6 @@ use tokio::task::JoinHandle;
 pub struct ProcessInstance {
     pub cmd: String,
     pub args: Vec<String>,
-    pub persist: bool,
 
     pub id: ProcessId,
     pub stdin: Option<Box<dyn InputChannel>>,
@@ -63,7 +62,6 @@ impl ProcessInstance {
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
-        persist: bool,
         pty: Option<PtySize>,
         reply: Box<dyn Reply<Data = DistantResponseData>>,
     ) -> io::Result<Self> {
@@ -135,7 +133,6 @@ impl ProcessInstance {
         Ok(ProcessInstance {
             cmd,
             args,
-            persist,
             id,
             stdin,
             killer,

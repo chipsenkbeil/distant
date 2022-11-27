@@ -11,10 +11,9 @@ impl Lsp {
         Self(channel)
     }
 
-    pub async fn spawn(self, cmd: impl Into<String>, persist: bool, pty: bool) -> CliResult {
+    pub async fn spawn(self, cmd: impl Into<String>, pty: bool) -> CliResult {
         let cmd = cmd.into();
         let mut proc = RemoteLspCommand::new()
-            .persist(persist)
             .pty(if pty {
                 terminal_size().map(|(Width(width), Height(height))| {
                     PtySize::from_rows_and_cols(height, width)

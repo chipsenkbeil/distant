@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0-alpha.3]
+
+### Added
+
+- `Frame::empty` method as convenience for `Frame::new(&[])`
+- `ClientConfig` to support `ReconnectStrategy` and a duration serving as the
+  maximum time to wait between server activity before attempting to reconnect
+  from the client
+- Server sends empty frames periodically to act as heartbeats to let the client
+  know if the connection is still established
+- Client now tracks length of time since last server activity and will attempt
+  a reconnect if no activity beyond that point
+
+### Changed
+
+- `Frame` methods `read` and `write` no longer return an `io::Result<...>`
+  and instead return `Option<Frame<...>>` and nothing respectively
+- `Frame::read` method now supports zero-size items
+- `Client::inmemory_spawn` and `UntypedClient::inmemory_spawn` now take a
+  `ClientConfig` as the second argument instead of `ReconnectStrategy`
+- Persist option now removed from `ProcSpawn` message and CLI
+- Bump minimum Rust version to 1.64.0
+
 ## [0.20.0-alpha.2] - 2022-11-20
 
 ### Added

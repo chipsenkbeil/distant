@@ -25,7 +25,6 @@ impl Shell {
         mut self,
         cmd: impl Into<Option<String>>,
         mut environment: Environment,
-        persist: bool,
     ) -> CliResult {
         // Automatically add TERM=xterm-256color if not specified
         if !environment.contains_key("TERM") {
@@ -55,7 +54,6 @@ impl Shell {
         };
 
         let mut proc = RemoteCommand::new()
-            .persist(persist)
             .environment(environment)
             .pty(
                 terminal_size()

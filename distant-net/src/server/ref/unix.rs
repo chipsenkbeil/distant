@@ -28,7 +28,7 @@ impl ServerRef for UnixSocketServerRef {
         self.inner.is_finished()
     }
 
-    fn abort(&self) {
-        self.inner.abort();
+    fn shutdown(&self) {
+        self.inner.shutdown();
     }
 }

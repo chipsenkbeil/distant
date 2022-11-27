@@ -134,11 +134,6 @@ pub enum ClientSubcommand {
         #[clap(flatten)]
         network: NetworkConfig,
 
-        /// If provided, will run in persist mode, meaning that the process will not be killed if the
-        /// client disconnects from the server
-        #[clap(long)]
-        persist: bool,
-
         /// If provided, will run LSP in a pty
         #[clap(long)]
         pty: bool,
@@ -215,11 +210,6 @@ pub enum ClientSubcommand {
         #[clap(long, default_value_t)]
         environment: Environment,
 
-        /// If provided, will run in persist mode, meaning that the process will not be killed if the
-        /// client disconnects from the server
-        #[clap(long)]
-        persist: bool,
-
         /// Optional command to run instead of $SHELL
         cmd: Option<String>,
     },
@@ -294,14 +284,12 @@ impl ClientSubcommand {
                         cmd,
                         environment,
                         current_dir,
-                        persist,
                         pty,
                     } => {
                         debug!("Special request spawning {:?}", cmd);
                         let mut proc = RemoteCommand::new()
                             .environment(environment)
                             .current_dir(current_dir)
-                            .persist(persist)
                             .pty(pty)
                             .spawn(channel.into_client().into_channel(), cmd.as_str())
                             .await
@@ -568,7 +556,6 @@ impl ClientSubcommand {
             Self::Lsp {
                 connection,
                 network,
-                persist,
                 pty,
                 cmd,
                 ..
@@ -592,12 +579,9 @@ impl ClientSubcommand {
                         format!("Failed to open channel to connection {connection_id}")
                     })?;
 
-                debug!(
-                    "Spawning LSP server (persist = {}, pty = {}): {}",
-                    persist, pty, cmd
-                );
+                debug!("Spawning LSP server (pty = {}): {}", pty, cmd);
                 Lsp::new(channel.into_client().into_channel())
-                    .spawn(cmd, persist, pty)
+                    .spawn(cmd, pty)
                     .await?;
             }
             Self::Repl {
@@ -869,7 +853,6 @@ impl ClientSubcommand {
                 connection,
                 network,
                 environment,
-                persist,
                 cmd,
                 ..
             } => {
@@ -893,13 +876,12 @@ impl ClientSubcommand {
                     })?;
 
                 debug!(
-                    "Spawning shell (environment = {:?}, persist = {}): {}",
+                    "Spawning shell (environment = {:?}): {}",
                     environment,
-                    persist,
                     cmd.as_deref().unwrap_or(r"$SHELL")
                 );
                 Shell::new(channel.into_client().into_channel())
-                    .spawn(cmd, environment, persist)
+                    .spawn(cmd, environment)
                     .await?;
             }
         }

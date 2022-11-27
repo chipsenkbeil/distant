@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use distant_core::{
     data::Environment,
     net::{
-        client::{Client, ReconnectStrategy},
+        client::{Client, ClientConfig},
         common::authentication::{AuthHandlerMap, DummyAuthHandler, Verifier},
         common::{InmemoryTransport, OneshotListener},
         server::{Server, ServerRef},
@@ -574,7 +574,7 @@ impl Ssh {
             debug!("Attempting to connect to distant server @ {}", addr);
             match Client::tcp(addr)
                 .auth_handler(AuthHandlerMap::new().with_static_key(key.clone()))
-                .timeout(timeout)
+                .connect_timeout(timeout)
                 .connect()
                 .await
             {
@@ -646,7 +646,7 @@ impl Ssh {
         );
 
         // Close out ssh client by killing the internal server and client
-        server.abort();
+        server.shutdown();
         client.abort();
         let _ = client.wait().await;
 
@@ -718,8 +718,8 @@ impl Ssh {
             .start(OneshotListener::from_value(t2))?;
         let client = Client::build()
             .auth_handler(DummyAuthHandler)
+            .config(ClientConfig::default().with_maximum_silence_duration())
             .connector(t1)
-            .reconnect_strategy(ReconnectStrategy::Fail)
             .connect()
             .await?;
         Ok((client, server))
