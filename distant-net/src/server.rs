@@ -149,7 +149,7 @@ where
     {
         let state = Arc::new(ServerState::new());
         let (tx, rx) = broadcast::channel(1);
-        let task = tokio::spawn(self.task(Arc::clone(&state), listener, tx, rx));
+        let task = tokio::spawn(self.task(Arc::clone(&state), listener, tx.clone(), rx));
 
         Ok(Box::new(GenericServerRef { shutdown: tx, task }))
     }

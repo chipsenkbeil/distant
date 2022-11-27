@@ -4,16 +4,13 @@ use super::{
 };
 use crate::common::{
     authentication::{Keychain, Verifier},
-    Backup, Connection, ConnectionId, Frame, Interest, Response, Transport, UntypedRequest,
+    Backup, Connection, Frame, Interest, Response, Transport, UntypedRequest,
 };
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    future::Future,
     io,
-    pin::Pin,
     sync::{Arc, Weak},
-    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -30,7 +27,7 @@ const SLEEP_DURATION: Duration = Duration::from_millis(1);
 const MINIMUM_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
 
 /// Represents an individual connection on the server.
-pub struct ConnectionTask<H, S, T> {
+pub(super) struct ConnectionTask<H, S, T> {
     handler: Weak<H>,
     state: Weak<ServerState<S>>,
     keychain: Keychain<oneshot::Receiver<Backup>>,
@@ -208,7 +205,7 @@ where
             state,
             keychain,
             transport,
-            shutdown,
+            mut shutdown,
             shutdown_timer,
             sleep_duration,
             heartbeat_duration,
@@ -255,7 +252,7 @@ where
                 if let Some(state) = Weak::upgrade(&state) {
                     // If we have no more connections (this is the last one), start the timer
                     if let Some(timer) = Weak::upgrade(&shutdown_timer) {
-                        if state.active_connection_cnt().await <= 1 {
+                        if state.connections.read().await.values().filter(|conn| !conn.is_finished()).count() <= 1 {
                             debug!("Last connection terminating, so restarting shutdown timer");
                             timer.write().await.restart();
                         }
@@ -334,7 +331,7 @@ where
 
         // Restore our connection's channels if we have them, otherwise make new ones
         let (tx, mut rx) = match state.connections.write().await.remove(&id) {
-            Some(mut task) => match task.shutdown_and_wait().await {
+            Some(conn) => match conn.shutdown_and_wait().await {
                 Ok(x) => {
                     debug!("[Conn {id}] Marked as existing connection");
                     x
@@ -351,7 +348,8 @@ where
         };
 
         // Store our connection details
-        state.connections.write().await.insert(id, 0);
+        let (local_shutdown, channel_tx, connection_state) = ConnectionState::channel();
+        state.connections.write().await.insert(id, connection_state);
 
         debug!("[Conn {id}] Beginning read/write loop");
         loop {
@@ -373,11 +371,12 @@ where
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
                         Ok(request) => match request.to_typed_request() {
                             Ok(request) => {
+                                let origin_id = request.id.clone();
                                 let ctx = ServerCtx {
                                     connection_id: id,
                                     request,
                                     reply: ServerReply {
-                                        origin_id: request.id.clone(),
+                                        origin_id,
                                         tx: tx.clone(),
                                     },
                                     local_data: Arc::clone(&local_data),
