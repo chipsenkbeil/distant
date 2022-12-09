@@ -172,7 +172,6 @@ jobs:
         run: cargo build --release
       - name: Run CLI tests (all features)
         run: cargo nextest run --profile ci --release --all-features
-        if: matrix.os != 'windows-latest'
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
