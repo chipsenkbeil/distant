@@ -97,7 +97,7 @@ jobs:
           target: ${{ matrix.target }}
       - uses: taiki-e/install-action@v1
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.45
       - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
@@ -190,7 +190,7 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - uses: taiki-e/install-action@v1
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.45
       - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
