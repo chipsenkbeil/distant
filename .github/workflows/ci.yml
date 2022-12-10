@@ -156,6 +156,7 @@ jobs:
       - name: Extend Windows retry count to be more resilient
         if: matrix.os == 'windows-latest'
         run: echo "NEXTEST_RETRIES=9" >> $GITHUB_ENV
+        shell: bash
       - name: Run net tests (default features)
         run: cargo nextest run --profile ci --release -p distant-net
       - name: Build core (default features)
