@@ -122,6 +122,7 @@ async fn read_file_text_should_send_text_with_file_contents(
         .await
         .unwrap();
     assert_eq!(text, "some file contents");
+    eprintln!("FINISHED");
 }
 
 #[rstest]

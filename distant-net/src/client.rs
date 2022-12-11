@@ -48,8 +48,11 @@ pub struct UntypedClient {
     /// Used to send shutdown request to inner task.
     shutdown: Box<dyn Shutdown>,
 
+    /// Indicates whether the client task will be shutdown when the client is dropped.
+    shutdown_on_drop: bool,
+
     /// Contains the task that is running to send requests and receive responses from a server.
-    task: JoinHandle<io::Result<()>>,
+    task: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl fmt::Debug for UntypedClient {
@@ -58,24 +61,38 @@ impl fmt::Debug for UntypedClient {
             .field("channel", &self.channel)
             .field("shutdown", &"...")
             .field("task", &self.task)
+            .field("shutdown_on_drop", &self.shutdown_on_drop)
             .finish()
+    }
+}
+
+impl Drop for UntypedClient {
+    fn drop(&mut self) {
+        if self.shutdown_on_drop {
+            // TODO: Shutdown is an async operation, can we use it here?
+            if let Some(task) = self.task.take() {
+                debug!("Shutdown on drop = true, so aborting client task");
+                task.abort();
+            }
+        }
     }
 }
 
 impl UntypedClient {
     /// Consumes the client, returning a typed variant.
-    pub fn into_typed_client<T, U>(self) -> Client<T, U> {
+    pub fn into_typed_client<T, U>(mut self) -> Client<T, U> {
         Client {
-            channel: self.channel.into_typed_channel(),
-            watcher: self.watcher,
-            shutdown: self.shutdown,
-            task: self.task,
+            channel: self.clone_channel().into_typed_channel(),
+            watcher: self.watcher.clone(),
+            shutdown: self.shutdown.clone(),
+            shutdown_on_drop: self.shutdown_on_drop,
+            task: self.task.take(),
         }
     }
 
     /// Convert into underlying channel.
     pub fn into_channel(self) -> UntypedChannel {
-        self.channel
+        self.clone_channel()
     }
 
     /// Clones the underlying channel for requests and returns the cloned instance.
@@ -86,8 +103,8 @@ impl UntypedClient {
     /// Waits for the client to terminate, which resolves when the receiving end of the network
     /// connection is closed (or the client is shutdown). Returns whether or not the client exited
     /// successfully or due to an error.
-    pub async fn wait(self) -> io::Result<()> {
-        match self.task.await {
+    pub async fn wait(mut self) -> io::Result<()> {
+        match self.task.take().unwrap().await {
             Ok(x) => x,
             Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
         }
@@ -95,7 +112,9 @@ impl UntypedClient {
 
     /// Abort the client's current connection by forcing its tasks to abort.
     pub fn abort(&self) {
-        self.task.abort();
+        if let Some(task) = self.task.as_ref() {
+            task.abort();
+        }
     }
 
     /// Clones the underlying shutdown signaler for the client. This enables you to wait on the
@@ -107,6 +126,18 @@ impl UntypedClient {
     /// Signal for the client to shutdown its connection cleanly.
     pub async fn shutdown(&self) -> io::Result<()> {
         self.shutdown.shutdown().await
+    }
+
+    /// Returns whether the client should fully shutdown once it is dropped. If true, this will
+    /// result in all channels tied to the client no longer functioning once the client is dropped.
+    pub fn will_shutdown_on_drop(&mut self) -> bool {
+        self.shutdown_on_drop
+    }
+
+    /// Sets whether the client should fully shutdown once it is dropped. If true, this will result
+    /// in all channels tied to the client no longer functioning once the client is dropped.
+    pub fn shutdown_on_drop(&mut self, shutdown_on_drop: bool) {
+        self.shutdown_on_drop = shutdown_on_drop;
     }
 
     /// Clones the underlying [`ConnectionStateWatcher`] for the client.
@@ -125,7 +156,7 @@ impl UntypedClient {
 
     /// Returns true if client's underlying event processing has finished/terminated.
     pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
+        self.task.is_none() || self.task.as_ref().unwrap().is_finished()
     }
 
     /// Spawns a client using the provided [`FramedTransport`] of [`InmemoryTransport`] and a
@@ -161,6 +192,12 @@ impl UntypedClient {
         // Ensure that our transport starts off clean (nothing in buffers or backup)
         connection.clear();
 
+        let ClientConfig {
+            mut reconnect_strategy,
+            shutdown_on_drop,
+            silence_duration,
+        } = config;
+
         // Start a task that continually checks for responses and delivers them using the
         // post office
         let shutdown_tx_2 = shutdown_tx.clone();
@@ -175,10 +212,6 @@ impl UntypedClient {
             //       would cause recv() to resolve immediately and result in the task shutting
             //       down.
             let _shutdown_tx = shutdown_tx_2;
-            let ClientConfig {
-                mut reconnect_strategy,
-                silence_duration,
-            } = config;
 
             loop {
                 // If we have flagged that a reconnect is needed, attempt to do so
@@ -361,7 +394,8 @@ impl UntypedClient {
             channel,
             watcher: ConnectionWatcher(watcher_rx),
             shutdown: Box::new(shutdown_tx),
-            task,
+            shutdown_on_drop,
+            task: Some(task),
         }
     }
 }
@@ -382,7 +416,7 @@ impl DerefMut for UntypedClient {
 
 impl From<UntypedClient> for UntypedChannel {
     fn from(client: UntypedClient) -> Self {
-        client.channel
+        client.into_channel()
     }
 }
 
@@ -397,8 +431,11 @@ pub struct Client<T, U> {
     /// Used to send shutdown request to inner task.
     shutdown: Box<dyn Shutdown>,
 
+    /// Indicates whether the client task will be shutdown when the client is dropped.
+    shutdown_on_drop: bool,
+
     /// Contains the task that is running to send requests and receive responses from a server.
-    task: JoinHandle<io::Result<()>>,
+    task: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl<T, U> fmt::Debug for Client<T, U> {
@@ -407,7 +444,20 @@ impl<T, U> fmt::Debug for Client<T, U> {
             .field("channel", &self.channel)
             .field("shutdown", &"...")
             .field("task", &self.task)
+            .field("shutdown_on_drop", &self.shutdown_on_drop)
             .finish()
+    }
+}
+
+impl<T, U> Drop for Client<T, U> {
+    fn drop(&mut self) {
+        if self.shutdown_on_drop {
+            // TODO: Shutdown is an async operation, can we use it here?
+            if let Some(task) = self.task.take() {
+                debug!("Shutdown on drop = true, so aborting client task");
+                task.abort();
+            }
+        }
     }
 }
 
@@ -417,12 +467,13 @@ where
     U: Send + Sync + DeserializeOwned + 'static,
 {
     /// Consumes the client, returning an untyped variant.
-    pub fn into_untyped_client(self) -> UntypedClient {
+    pub fn into_untyped_client(mut self) -> UntypedClient {
         UntypedClient {
-            channel: self.channel.into_untyped_channel(),
-            watcher: self.watcher,
-            shutdown: self.shutdown,
-            task: self.task,
+            channel: self.clone_channel().into_untyped_channel(),
+            watcher: self.watcher.clone(),
+            shutdown: self.shutdown.clone(),
+            shutdown_on_drop: self.shutdown_on_drop,
+            task: self.task.take(),
         }
     }
 
@@ -483,7 +534,7 @@ impl Client<(), ()> {
 impl<T, U> Client<T, U> {
     /// Convert into underlying channel.
     pub fn into_channel(self) -> Channel<T, U> {
-        self.channel
+        self.clone_channel()
     }
 
     /// Clones the underlying channel for requests and returns the cloned instance.
@@ -494,8 +545,8 @@ impl<T, U> Client<T, U> {
     /// Waits for the client to terminate, which resolves when the receiving end of the network
     /// connection is closed (or the client is shutdown). Returns whether or not the client exited
     /// successfully or due to an error.
-    pub async fn wait(self) -> io::Result<()> {
-        match self.task.await {
+    pub async fn wait(mut self) -> io::Result<()> {
+        match self.task.take().unwrap().await {
             Ok(x) => x,
             Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
         }
@@ -503,7 +554,9 @@ impl<T, U> Client<T, U> {
 
     /// Abort the client's current connection by forcing its tasks to abort.
     pub fn abort(&self) {
-        self.task.abort();
+        if let Some(task) = self.task.as_ref() {
+            task.abort();
+        }
     }
 
     /// Clones the underlying shutdown signaler for the client. This enables you to wait on the
@@ -515,6 +568,18 @@ impl<T, U> Client<T, U> {
     /// Signal for the client to shutdown its connection cleanly.
     pub async fn shutdown(&self) -> io::Result<()> {
         self.shutdown.shutdown().await
+    }
+
+    /// Returns whether the client should fully shutdown once it is dropped. If true, this will
+    /// result in all channels tied to the client no longer functioning once the client is dropped.
+    pub fn will_shutdown_on_drop(&mut self) -> bool {
+        self.shutdown_on_drop
+    }
+
+    /// Sets whether the client should fully shutdown once it is dropped. If true, this will result
+    /// in all channels tied to the client no longer functioning once the client is dropped.
+    pub fn shutdown_on_drop(&mut self, shutdown_on_drop: bool) {
+        self.shutdown_on_drop = shutdown_on_drop;
     }
 
     /// Clones the underlying [`ConnectionStateWatcher`] for the client.
@@ -533,7 +598,7 @@ impl<T, U> Client<T, U> {
 
     /// Returns true if client's underlying event processing has finished/terminated.
     pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
+        self.task.is_none() || self.task.as_ref().unwrap().is_finished()
     }
 }
 
@@ -553,7 +618,7 @@ impl<T, U> DerefMut for Client<T, U> {
 
 impl<T, U> From<Client<T, U>> for Channel<T, U> {
     fn from(client: Client<T, U>) -> Self {
-        client.channel
+        client.clone_channel()
     }
 }
 
@@ -1238,6 +1303,7 @@ mod tests {
                         max_retries: Some(3),
                         timeout: None,
                     },
+                    ..Default::default()
                 },
             );
 

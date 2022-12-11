@@ -445,11 +445,13 @@ impl Ssh {
         while let Ok(event) = self.events.recv().await {
             match event {
                 WezSessionEvent::Banner(banner) => {
+                    trace!("ssh banner: {banner:?}");
                     if let Some(banner) = banner {
                         handler.on_banner(banner.as_ref()).await;
                     }
                 }
                 WezSessionEvent::HostVerify(verify) => {
+                    trace!("ssh host verify: {verify:?}");
                     let verified = handler.on_verify_host(verify.message.as_str()).await?;
                     verify
                         .answer(verified)
@@ -458,6 +460,7 @@ impl Ssh {
                         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
                 }
                 WezSessionEvent::Authenticate(mut auth) => {
+                    trace!("ssh authenticate: {auth:?}");
                     let ev = SshAuthEvent {
                         username: auth.username.clone(),
                         instructions: auth.instructions.clone(),
@@ -478,10 +481,14 @@ impl Ssh {
                         .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
                 }
                 WezSessionEvent::Error(err) => {
+                    trace!("ssh error: {err:?}");
                     handler.on_error(&err).await;
                     return Err(io::Error::new(io::ErrorKind::PermissionDenied, err));
                 }
-                WezSessionEvent::Authenticated => break,
+                WezSessionEvent::Authenticated => {
+                    trace!("ssh authenticated");
+                    break;
+                }
             }
         }
 

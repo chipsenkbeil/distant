@@ -19,7 +19,7 @@ use std::{
         Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(unix)]
@@ -51,6 +51,8 @@ const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
 
 /// Maximum times to retry spawning sshd when it fails
 const SPAWN_RETRY_CNT: usize = 3;
+
+const MAX_DROP_WAIT_TIME: Duration = Duration::from_millis(500);
 
 pub struct SshKeygen;
 
@@ -532,7 +534,21 @@ impl Drop for Sshd {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.lock().unwrap().take() {
             let _ = child.kill();
-            let _ = child.wait();
+
+            // Wait for a maximum period of time
+            let start = Instant::now();
+            while start.elapsed() < MAX_DROP_WAIT_TIME {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Err(x) => {
+                        eprintln!("Failed to wait for sshd to quit: {x}");
+                        return;
+                    }
+                    _ => thread::sleep(MAX_DROP_WAIT_TIME / 10),
+                }
+            }
+
+            eprintln!("Timed out waiting for sshd to quit");
         }
     }
 }
@@ -603,11 +619,12 @@ pub fn sshd() -> Sshd {
 #[fixture]
 pub async fn client(sshd: Sshd) -> Ctx<DistantClient> {
     let ssh_client = load_ssh_client(&sshd).await;
-    let client = ssh_client
+    let mut client = ssh_client
         .into_distant_client()
         .await
         .context("Failed to convert into distant client")
         .unwrap();
+    client.shutdown_on_drop(true);
     Ctx {
         sshd,
         value: client,
@@ -622,23 +639,24 @@ pub async fn launched_client(sshd: Sshd) -> Ctx<DistantClient> {
 
     // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
     // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
-    let ssh_client = load_ssh_client(&sshd).await;
-    let client = ssh_client
-        .launch_and_connect(DistantLaunchOpts {
-            binary,
-            args: "--shutdown after=10".to_string(),
-            ..Default::default()
-        })
-        .await
-        .context("Failed to launch and connect to distant server")
-        .unwrap();
-
-    // TODO: Wrapping in ctx does not fully clean up the test as the launched distant server
+    //
+    // NOTE: Wrapping in ctx does not fully clean up the test as the launched distant server
     //       is not cleaned up during drop. We don't know what the server's pid is, so our
     //       only option would be to look up all running distant servers and kill them on drop,
     //       but that would cause other tests to fail.
     //
     //       Setting an expiration of 1s would clean up running servers and possibly be good enough
+    let ssh_client = load_ssh_client(&sshd).await;
+    let mut client = ssh_client
+        .launch_and_connect(DistantLaunchOpts {
+            binary,
+            args: "--shutdown lonely=10".to_string(),
+            ..Default::default()
+        })
+        .await
+        .context("Failed to launch and connect to distant server")
+        .unwrap();
+    client.shutdown_on_drop(true);
     Ctx {
         sshd,
         value: client,
