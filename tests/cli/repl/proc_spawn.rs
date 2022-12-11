@@ -220,40 +220,31 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
 
     // Now kill the process and wait for it to complete
     let id = rand::random::<u64>().to_string();
-    let res_1 = json_repl
+    let res = json_repl
         .write_and_read_json(json!({
             "id": id,
             "payload": {
                 "type": "proc_kill",
                 "id": proc_id,
             },
-
         }))
         .await
         .unwrap()
         .unwrap();
-    let res_2 = json_repl.read_json_from_stdout().await.unwrap().unwrap();
 
-    // The order of responses may be different (kill could come before ok), so we need
-    // to check that we get one of each type
-    let got_ok = res_1["payload"]["type"] == "ok" || res_2["payload"]["type"] == "ok";
-    let got_done =
-        res_1["payload"]["type"] == "proc_done" || res_2["payload"]["type"] == "proc_done";
-
-    if res_1["payload"]["type"] == "ok" {
-        assert_eq!(res_1["origin_id"], id, "JSON: {res_1}");
-    } else if res_1["payload"]["type"] == "proc_done" {
-        assert_eq!(res_1["origin_id"], origin_id, "JSON: {res_1}");
+    // If the first response we get is proc_done, then we don't care bout the kill result
+    // as it can be an error if the process ended before the kill happened
+    //
+    // NOTE: The above is a situation in Windows, but I've not seen it happen with Mac/Linux.
+    if res["payload"]["type"] == "ok" {
+        let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+        assert_eq!(
+            res["payload"]["type"], "proc_done",
+            "Did not receive proc_done from killed process: {res}"
+        );
+    } else {
+        assert_eq!(res["payload"]["type"], "proc_done", "JSON: {res}");
     }
-
-    if res_2["payload"]["type"] == "ok" {
-        assert_eq!(res_2["origin_id"], id, "JSON: {res_2}");
-    } else if res_2["payload"]["type"] == "proc_done" {
-        assert_eq!(res_2["origin_id"], origin_id, "JSON: {res_2}");
-    }
-
-    assert!(got_ok, "Did not receive ok from proc_kill");
-    assert!(got_done, "Did not receive proc_done from killed process");
 }
 
 #[rstest]

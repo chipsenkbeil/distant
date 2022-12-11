@@ -97,7 +97,7 @@ jobs:
           target: ${{ matrix.target }}
       - uses: taiki-e/install-action@v1
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.45
       - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
@@ -153,6 +153,10 @@ jobs:
             } ELSE {
                 New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType String -Force
             }
+      - name: Extend Windows retry count to be more resilient
+        if: matrix.os == 'windows-latest'
+        run: echo "NEXTEST_RETRIES=9" >> $GITHUB_ENV
+        shell: bash
       - name: Run net tests (default features)
         run: cargo nextest run --profile ci --release -p distant-net
       - name: Build core (default features)
@@ -172,7 +176,6 @@ jobs:
         run: cargo build --release
       - name: Run CLI tests (all features)
         run: cargo nextest run --profile ci --release --all-features
-        if: matrix.os != 'windows-latest'
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
@@ -191,7 +194,7 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - uses: taiki-e/install-action@v1
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.45
       - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
