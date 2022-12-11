@@ -6,6 +6,7 @@ use derive_more::Display;
 use derive_more::{Deref, DerefMut};
 use distant_core::DistantClient;
 use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use log::*;
 use once_cell::sync::Lazy;
 use rstest::*;
 use std::{
@@ -27,11 +28,11 @@ use std::os::unix::fs::PermissionsExt;
 
 #[derive(Deref, DerefMut)]
 pub struct Ctx<T> {
-    pub sshd: Sshd,
-
     #[deref]
     #[deref_mut]
     pub value: T,
+
+    pub sshd: Sshd,
 }
 
 // NOTE: Should find path
@@ -423,7 +424,7 @@ impl Sshd {
 
                 // Otherwise, try next port
                 Err(_) | Ok(Err(_)) => {
-                    eprintln!("sshd could not spawn on port {port}, so trying next port");
+                    error!("sshd could not spawn on port {port}, so trying next port");
                     continue;
                 }
             }
@@ -479,7 +480,7 @@ impl Sshd {
                     true
                 }
                 Ok(Err((code, msg))) => {
-                    eprintln!(
+                    error!(
                         "sshd died w/ exit code {}: {msg}",
                         if let Some(code) = code {
                             code.to_string()
@@ -490,41 +491,47 @@ impl Sshd {
                     false
                 }
                 Err(x) => {
-                    eprintln!("Failed to check status of sshd: {x}");
+                    error!("Failed to check status of sshd: {x}");
                     false
                 }
             }
         } else {
-            eprintln!("sshd is dead!");
+            error!("sshd is dead!");
             false
         }
     }
 
     fn print_log_file(&self) {
         if let Ok(log) = std::fs::read_to_string(&self.log_file) {
-            eprintln!();
-            eprintln!("====================");
-            eprintln!("= SSHD LOG FILE     ");
-            eprintln!("====================");
-            eprintln!();
-            eprintln!("{log}");
-            eprintln!();
-            eprintln!("====================");
-            eprintln!();
+            let mut out = String::new();
+            out.push('\n');
+            out.push_str("====================\n");
+            out.push_str("= SSHD LOG FILE     \n");
+            out.push_str("====================\n");
+            out.push('\n');
+            out.push_str(&log);
+            out.push('\n');
+            out.push('\n');
+            out.push_str("====================\n");
+            out.push('\n');
+            error!("{out}");
         }
     }
 
     fn print_config_file(&self) {
         if let Ok(contents) = std::fs::read_to_string(&self.config_file) {
-            eprintln!();
-            eprintln!("====================");
-            eprintln!("= SSHD CONFIG FILE     ");
-            eprintln!("====================");
-            eprintln!();
-            eprintln!("{contents}");
-            eprintln!();
-            eprintln!("====================");
-            eprintln!();
+            let mut out = String::new();
+            out.push('\n');
+            out.push_str("====================\n");
+            out.push_str("= SSHD CONFIG FILE     \n");
+            out.push_str("====================\n");
+            out.push('\n');
+            out.push_str(&contents);
+            out.push('\n');
+            out.push('\n');
+            out.push_str("====================\n");
+            out.push('\n');
+            error!("{out}");
         }
     }
 }
@@ -532,6 +539,7 @@ impl Sshd {
 impl Drop for Sshd {
     /// Kills server upon drop
     fn drop(&mut self) {
+        debug!("Dropping sshd");
         if let Some(mut child) = self.child.lock().unwrap().take() {
             let _ = child.kill();
 
@@ -539,16 +547,19 @@ impl Drop for Sshd {
             let start = Instant::now();
             while start.elapsed() < MAX_DROP_WAIT_TIME {
                 match child.try_wait() {
-                    Ok(Some(_)) => return,
+                    Ok(Some(_)) => {
+                        debug!("Sshd finished");
+                        return;
+                    }
                     Err(x) => {
-                        eprintln!("Failed to wait for sshd to quit: {x}");
+                        error!("Failed to wait for sshd to quit: {x}");
                         return;
                     }
                     _ => thread::sleep(MAX_DROP_WAIT_TIME / 10),
                 }
             }
 
-            eprintln!("Timed out waiting for sshd to quit");
+            error!("Timed out waiting for sshd to quit");
         }
     }
 }
@@ -559,21 +570,21 @@ pub struct MockSshAuthHandler;
 #[async_trait]
 impl SshAuthHandler for MockSshAuthHandler {
     async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
-        eprintln!("on_authenticate: {:?}", event);
+        debug!("on_authenticate: {:?}", event);
         Ok(vec![String::new(); event.prompts.len()])
     }
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
-        eprintln!("on_host_verify: {}", host);
+        debug!("on_host_verify: {}", host);
         Ok(true)
     }
 
     async fn on_banner(&self, text: &str) {
-        eprintln!("on_banner: {:?}", text);
+        debug!("on_banner: {:?}", text);
     }
 
     async fn on_error(&self, text: &str) {
-        eprintln!("on_error: {:?}", text);
+        debug!("on_error: {:?}", text);
     }
 }
 
@@ -635,7 +646,7 @@ pub async fn client(sshd: Sshd) -> Ctx<DistantClient> {
 #[fixture]
 pub async fn launched_client(sshd: Sshd) -> Ctx<DistantClient> {
     let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
-    eprintln!("Setting path to distant binary as {binary}");
+    debug!("Setting path to distant binary as {binary}");
 
     // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
     // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
@@ -721,7 +732,7 @@ async fn load_ssh_client(sshd: &Sshd) -> Ssh {
 
     // Check if still alive, which will print out messages
     if sshd.check_is_alive() {
-        eprintln!("sshd is still alive, so something else is going on");
+        warn!("sshd is still alive, so something else is going on");
     }
 
     // We want to print out the log file from sshd in case it sheds clues on problem
