@@ -107,21 +107,30 @@ async fn read_file_text_should_send_error_if_fails_to_read_file(
 }
 
 #[rstest]
-#[test(tokio::test)]
-async fn read_file_text_should_send_text_with_file_contents(
+fn read_file_text_should_send_text_with_file_contents(
     #[future] launched_client: Ctx<DistantClient>,
 ) {
-    let mut client = launched_client.await;
-
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-    file.write_str("some file contents").unwrap();
-
-    let text = client
-        .read_file_text(file.path().to_path_buf())
-        .await
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .unwrap();
-    assert_eq!(text, "some file contents");
+    rt.block_on(async move {
+        let mut client = launched_client.await;
+
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test-file");
+        file.write_str("some file contents").unwrap();
+
+        let text = client
+            .read_file_text(file.path().to_path_buf())
+            .await
+            .unwrap();
+        assert_eq!(text, "some file contents");
+        println!("TEST DONE");
+    });
+    println!("RT DONE");
+    rt.shutdown_timeout(Duration::from_secs(1));
+    println!("RT SHUTDOWN");
 }
 
 #[rstest]
