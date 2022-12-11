@@ -95,8 +95,11 @@ impl<'de> Deserialize<'de> for DistantSingleKeyCredentials {
 
 impl DistantSingleKeyCredentials {
     /// Searches a str for `distant://[username]:{key}@{host}:{port}`, returning the first matching
-    /// credentials set if found
-    pub fn find(s: &str) -> Option<DistantSingleKeyCredentials> {
+    /// credentials set if found, failing if anything is found immediately before or after the
+    /// credentials that is not whitespace or control characters
+    ///
+    /// If `strict` is false, then the scheme can be preceded by any character
+    pub fn find(s: &str, strict: bool) -> Option<DistantSingleKeyCredentials> {
         let is_boundary = |c| char::is_whitespace(c) || char::is_control(c);
 
         for (i, _) in s.match_indices(SCHEME_WITH_SEP) {
@@ -105,11 +108,11 @@ impl DistantSingleKeyCredentials {
 
             // Check character preceding the scheme to make sure it isn't a different scheme
             // Only whitespace or control characters preceding are okay, anything else is skipped
-            if !before.is_empty() && !before.ends_with(is_boundary) {
+            if strict && !before.is_empty() && !before.ends_with(is_boundary) {
                 continue;
             }
 
-            // Consume until we reach whitespace, which indicates the potential end
+            // Consume until we reach whitespace or control, which indicates the potential end
             let s = match s.find(is_boundary) {
                 Some(i) => &s[..i],
                 None => s,
@@ -122,6 +125,22 @@ impl DistantSingleKeyCredentials {
         }
 
         None
+    }
+
+    /// Equivalent to [`find(s, true)`].
+    ///
+    /// [`find(s, true)`]: DistantSingleKeyCredentials::find
+    #[inline]
+    pub fn find_strict(s: &str) -> Option<DistantSingleKeyCredentials> {
+        Self::find(s, true)
+    }
+
+    /// Equivalent to [`find(s, false)`].
+    ///
+    /// [`find(s, false)`]: DistantSingleKeyCredentials::find
+    #[inline]
+    pub fn find_lax(s: &str) -> Option<DistantSingleKeyCredentials> {
+        Self::find(s, false)
     }
 
     /// Converts credentials into a [`Destination`] of the form
@@ -175,29 +194,29 @@ mod tests {
 
     #[test]
     fn find_should_return_some_key_if_string_is_exact_match() {
-        let credentials = DistantSingleKeyCredentials::find(CREDENTIALS_STR_NO_USER.as_str());
+        let credentials = DistantSingleKeyCredentials::find(CREDENTIALS_STR_NO_USER.as_str(), true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
-        let credentials = DistantSingleKeyCredentials::find(CREDENTIALS_STR_USER.as_str());
+        let credentials = DistantSingleKeyCredentials::find(CREDENTIALS_STR_USER.as_str(), true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_USER);
     }
 
     #[test]
     fn find_should_return_some_key_if_there_is_a_match_with_only_whitespace_on_either_side() {
         let s = format!(" {} ", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!("\r{}\r", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!("\t{}\t", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!("\n{}\n", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
@@ -205,7 +224,7 @@ mod tests {
     fn find_should_return_some_key_if_there_is_a_match_with_only_control_characters_on_either_side()
     {
         let s = format!("\x1b{} \x1b", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
@@ -216,7 +235,7 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
@@ -228,14 +247,29 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_NO_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
     #[test]
-    fn find_should_return_none_if_no_match_found() {
+    fn find_with_strict_false_should_ignore_any_character_preceding_scheme() {
         let s = format!("a{}", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, false);
+        assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
+
+        let s = format!(
+            "a{} b{}",
+            CREDENTIALS_STR_NO_USER.as_str(),
+            CREDENTIALS_STR_NO_USER.as_str()
+        );
+        let credentials = DistantSingleKeyCredentials::find(&s, false);
+        assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
+    }
+
+    #[test]
+    fn find_with_strict_true_should_not_find_if_non_whitespace_and_control_preceding_scheme() {
+        let s = format!("a{}", CREDENTIALS_STR_NO_USER.as_str());
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
         assert_eq!(credentials, None);
 
         let s = format!(
@@ -243,7 +277,18 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_NO_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s);
+        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        assert_eq!(credentials, None);
+    }
+
+    #[test]
+    fn find_should_return_none_if_no_match_found() {
+        let s = "abc";
+        let credentials = DistantSingleKeyCredentials::find(s, true);
+        assert_eq!(credentials, None);
+
+        let s = "abc";
+        let credentials = DistantSingleKeyCredentials::find(s, false);
         assert_eq!(credentials, None);
     }
 

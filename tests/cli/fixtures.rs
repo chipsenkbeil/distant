@@ -130,7 +130,9 @@ impl DistantManagerCtx {
                 let mut buf = [0u8; 1024];
                 while let Ok(n) = reader.read(&mut buf) {
                     lines.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if let Some(credentials) = DistantSingleKeyCredentials::find(&lines) {
+                    if let Some(credentials) =
+                        DistantSingleKeyCredentials::find(&lines, /* strict */ false)
+                    {
                         return credentials;
                     }
                 }

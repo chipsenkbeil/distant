@@ -79,6 +79,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: --cfg ci
+      RUST_LOG: trace
     strategy:
       fail-fast: false
       matrix:
@@ -179,6 +180,9 @@ jobs:
   ssh-launch-tests:
     name: "Test ssh launch using Rust ${{ matrix.rust }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: --cfg ci
+      RUST_LOG: trace
     strategy:
       fail-fast: false
       matrix:
