@@ -643,9 +643,12 @@ impl Ssh {
             // Spawn a blocking thread to continually read stdout from the pty
             let mut reader = pty.try_clone_reader().map_err(utils::to_other_error)?;
             let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
-            tokio::task::spawn_blocking(move || {
+            let read_task = tokio::task::spawn_blocking(move || {
                 let mut buf = [0u8; 1024];
                 while let Ok(n) = reader.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
                     let _ = tx.blocking_send(buf[..n].to_vec());
                 }
             });
@@ -671,6 +674,7 @@ impl Ssh {
                             DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
                         {
                             credentials.host = host;
+                            read_task.abort();
                             return Ok(credentials);
                         }
                     }
@@ -683,6 +687,7 @@ impl Ssh {
                             b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
                         });
 
+                        read_task.abort();
                         return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
                             format!(
