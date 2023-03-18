@@ -5,7 +5,7 @@ mod listen;
 pub use listen::*;
 
 /// Represents configuration settings for the distant server
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     #[serde(flatten)]
     pub common: CommonConfig,

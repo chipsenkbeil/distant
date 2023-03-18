@@ -12,7 +12,7 @@ pub use launch::*;
 pub use repl::*;
 
 /// Represents configuration settings for the distant client
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClientConfig {
     #[serde(flatten)]
     pub common: CommonConfig,

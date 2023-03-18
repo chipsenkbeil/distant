@@ -34,7 +34,7 @@ impl Default for LogLevel {
 }
 
 /// Contains options that are common across subcommands
-#[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommonConfig {
     /// Log level to use throughout the application
     #[clap(long, global = true, value_enum)]

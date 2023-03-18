@@ -3,7 +3,7 @@ use clap::Args;
 use distant_core::net::common::Map;
 use serde::{Deserialize, Serialize};
 
-#[derive(Args, Debug, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLaunchConfig {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -15,7 +15,6 @@ pub struct ClientLaunchConfig {
     ///
     /// E.g. `key="value",key2="value2"`
     #[clap(long, default_value_t)]
-    #[serde(flatten)]
     pub options: Map,
 }
 
@@ -56,7 +55,7 @@ impl From<ClientLaunchConfig> for Map {
     }
 }
 
-#[derive(Args, Debug, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLaunchDistantConfig {
     /// Path to distant program on remote machine to execute via ssh;
     /// by default, this program needs to be available within PATH as

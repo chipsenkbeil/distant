@@ -29,7 +29,7 @@ impl Default for ServerConfig {
 }
 
 /// Rules for how a server will shut itself down automatically
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
 pub enum Shutdown {
     /// Server should shutdown immediately after duration exceeded
     #[display(fmt = "after={}", "_0.as_secs_f32()")]
@@ -103,5 +103,24 @@ impl FromStr for Shutdown {
                 Err(ShutdownParseError::UnknownKey)
             }
         }
+    }
+}
+
+impl Serialize for Shutdown {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        String::serialize(&self.to_string(), serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Shutdown {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(serde::de::Error::custom)
     }
 }

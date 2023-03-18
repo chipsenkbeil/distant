@@ -1,13 +1,14 @@
 use derive_more::Display;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use std::{
+    fmt,
     net::{IpAddr, SocketAddr},
     ops::RangeInclusive,
     str::FromStr,
 };
 
 /// Represents some range of ports
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
 #[display(
     fmt = "{}{}",
     start,
@@ -84,6 +85,140 @@ impl FromStr for PortRange {
                 end: None,
             }),
         }
+    }
+}
+
+impl Serialize for PortRange {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        String::serialize(&self.to_string(), serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PortRange {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        struct PortRangeVisitor;
+        impl<'de> de::Visitor<'de> for PortRangeVisitor {
+            type Value = PortRange;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                write!(formatter, "a port in the form NUMBER or START:END")
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                FromStr::from_str(s).map_err(de::Error::custom)
+            }
+
+            fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v as u16,
+                    end: None,
+                })
+            }
+
+            fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v,
+                    end: None,
+                })
+            }
+
+            fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+
+            fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PortRange {
+                    start: v.try_into().map_err(de::Error::custom)?,
+                    end: None,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(PortRangeVisitor)
     }
 }
 
@@ -184,6 +319,60 @@ mod tests {
             PortRange {
                 start: 100,
                 end: Some(200)
+            }
+        );
+    }
+
+    #[test]
+    fn serialize_should_leverage_tostring() {
+        assert_eq!(
+            serde_json::to_value(PortRange {
+                start: 123,
+                end: None,
+            })
+            .unwrap(),
+            serde_json::Value::String("123".to_string())
+        );
+
+        assert_eq!(
+            serde_json::to_value(PortRange {
+                start: 123,
+                end: Some(456),
+            })
+            .unwrap(),
+            serde_json::Value::String("123:456".to_string())
+        );
+    }
+
+    #[test]
+    fn deserialize_should_use_single_number_as_start() {
+        // Supports parsing numbers
+        assert_eq!(
+            serde_json::from_str::<PortRange>("123").unwrap(),
+            PortRange {
+                start: 123,
+                end: None
+            }
+        );
+    }
+
+    #[test]
+    fn deserialize_should_leverage_fromstr_for_strings() {
+        // Supports string number
+        assert_eq!(
+            serde_json::from_str::<PortRange>("\"123\"").unwrap(),
+            PortRange {
+                start: 123,
+                end: None
+            }
+        );
+
+        // Supports string start:end
+        assert_eq!(
+            serde_json::from_str::<PortRange>("\"123:456\"").unwrap(),
+            PortRange {
+                start: 123,
+                end: Some(456)
             }
         );
     }

@@ -1,4 +1,8 @@
-use crate::{cli::Opt, config::GenerateConfig, CliResult};
+use crate::{
+    cli::Opt,
+    config::{Config, GenerateConfig},
+    CliResult,
+};
 use anyhow::Context;
 use clap::{CommandFactory, Subcommand};
 use clap_complete::{generate as clap_generate, Shell};
@@ -10,6 +14,12 @@ use std::{fs, io, path::PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum GenerateSubcommand {
+    /// Generate configuration file with base settings
+    Config {
+        /// Path to where the configuration file should be created
+        file: PathBuf,
+    },
+
     /// Generate JSON schema for server request/response
     Schema {
         /// If specified, will output to the file at the given path instead of stdout
@@ -37,6 +47,10 @@ impl GenerateSubcommand {
 
     async fn async_run(self) -> CliResult {
         match self {
+            Self::Config { file } => tokio::fs::write(file, Config::default_raw_str())
+                .await
+                .context("Failed to write default config to {file:?}")?,
+
             Self::Schema { file } => {
                 let request_schema =
                     serde_json::to_value(&Request::<DistantMsg<DistantRequestData>>::root_schema())

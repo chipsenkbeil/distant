@@ -35,7 +35,7 @@ impl Default for AccessControl {
 }
 
 /// Represents common networking configuration
-#[derive(Args, Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkConfig {
     /// Override the path to the Unix socket used by the manager (unix-only)
     #[clap(long)]

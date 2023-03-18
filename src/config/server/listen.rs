@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
 };
 
-#[derive(Args, Debug, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerListenConfig {
     /// Control the IP address that the distant binds to
     ///
@@ -104,7 +104,7 @@ impl From<ServerListenConfig> for Map {
 }
 
 /// Represents options for binding a server to an IP address
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BindAddress {
     /// Should read address from `SSH_CONNECTION` environment variable, which contains four
     /// space-separated values:
@@ -145,6 +145,25 @@ impl FromStr for BindAddress {
         } else {
             Self::Host(s.parse::<Host>()?)
         })
+    }
+}
+
+impl Serialize for BindAddress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        String::serialize(&self.to_string(), serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BindAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
