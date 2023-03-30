@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Default configuration for `config.toml`
+- Ability to generate default configuration using
+  `distant generate config /path/to/config.toml`
+- `--current-dir` option for `distant client shell` and `distant client lsp`
+
 ## [0.20.0-alpha.3]
 
 ### Added
