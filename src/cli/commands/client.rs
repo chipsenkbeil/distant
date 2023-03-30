@@ -134,6 +134,10 @@ pub enum ClientSubcommand {
         #[clap(flatten)]
         network: NetworkConfig,
 
+        /// Alternative current directory for the remote process
+        #[clap(long)]
+        current_dir: Option<PathBuf>,
+
         /// If provided, will run LSP in a pty
         #[clap(long)]
         pty: bool,
@@ -205,6 +209,10 @@ pub enum ClientSubcommand {
 
         #[clap(flatten)]
         network: NetworkConfig,
+
+        /// Alternative current directory for the remote process
+        #[clap(long)]
+        current_dir: Option<PathBuf>,
 
         /// Environment variables to provide to the shell
         #[clap(long, default_value_t)]
@@ -556,6 +564,7 @@ impl ClientSubcommand {
             Self::Lsp {
                 connection,
                 network,
+                current_dir,
                 pty,
                 cmd,
                 ..
@@ -581,7 +590,7 @@ impl ClientSubcommand {
 
                 debug!("Spawning LSP server (pty = {}): {}", pty, cmd);
                 Lsp::new(channel.into_client().into_channel())
-                    .spawn(cmd, pty)
+                    .spawn(cmd, current_dir, pty)
                     .await?;
             }
             Self::Repl {
@@ -852,6 +861,7 @@ impl ClientSubcommand {
             Self::Shell {
                 connection,
                 network,
+                current_dir,
                 environment,
                 cmd,
                 ..
@@ -881,7 +891,7 @@ impl ClientSubcommand {
                     cmd.as_deref().unwrap_or(r"$SHELL")
                 );
                 Shell::new(channel.into_client().into_channel())
-                    .spawn(cmd, environment)
+                    .spawn(cmd, environment, current_dir)
                     .await?;
             }
         }

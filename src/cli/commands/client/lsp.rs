@@ -1,6 +1,7 @@
 use super::{link::RemoteProcessLink, CliError, CliResult};
 use anyhow::Context;
 use distant_core::{data::PtySize, DistantChannel, RemoteLspCommand};
+use std::path::PathBuf;
 use terminal_size::{terminal_size, Height, Width};
 
 #[derive(Clone)]
@@ -11,7 +12,12 @@ impl Lsp {
         Self(channel)
     }
 
-    pub async fn spawn(self, cmd: impl Into<String>, pty: bool) -> CliResult {
+    pub async fn spawn(
+        self,
+        cmd: impl Into<String>,
+        current_dir: Option<PathBuf>,
+        pty: bool,
+    ) -> CliResult {
         let cmd = cmd.into();
         let mut proc = RemoteLspCommand::new()
             .pty(if pty {
@@ -21,6 +27,7 @@ impl Lsp {
             } else {
                 None
             })
+            .current_dir(current_dir)
             .spawn(self.0, &cmd)
             .await
             .with_context(|| format!("Failed to spawn {cmd}"))?;

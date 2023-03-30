@@ -5,6 +5,7 @@ use distant_core::{
     DistantChannel, DistantChannelExt, RemoteCommand,
 };
 use log::*;
+use std::path::PathBuf;
 use std::time::Duration;
 use terminal_size::{terminal_size, Height, Width};
 use termwiz::{
@@ -25,6 +26,7 @@ impl Shell {
         mut self,
         cmd: impl Into<Option<String>>,
         mut environment: Environment,
+        current_dir: Option<PathBuf>,
     ) -> CliResult {
         // Automatically add TERM=xterm-256color if not specified
         if !environment.contains_key("TERM") {
@@ -59,6 +61,7 @@ impl Shell {
                 terminal_size()
                     .map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
             )
+            .current_dir(current_dir)
             .spawn(self.0, &cmd)
             .await
             .with_context(|| format!("Failed to spawn {cmd}"))?;
