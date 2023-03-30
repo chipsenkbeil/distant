@@ -6,7 +6,7 @@ use std::io;
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[display(fmt = "{}: {}", kind, description)]
+#[display(fmt = "{kind}: {description}")]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
     /// Label describing the kind of error
@@ -103,7 +103,7 @@ impl From<walkdir::Error> for Error {
         } else {
             Self {
                 kind: ErrorKind::Loop,
-                description: format!("{}", x),
+                description: format!("{x}"),
             }
         }
     }
@@ -117,7 +117,7 @@ impl From<tokio::task::JoinError> for Error {
             } else {
                 ErrorKind::TaskPanicked
             },
-            description: format!("{}", x),
+            description: format!("{x}"),
         }
     }
 }

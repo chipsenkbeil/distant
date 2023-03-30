@@ -81,7 +81,7 @@ impl<T: AuthHandler + Clone> Client<T> {
                     }
                     Err(x) => {
                         let err = anyhow::Error::new(x)
-                            .context(format!("Failed to connect to unix socket {:?}", path));
+                            .context(format!("Failed to connect to unix socket {path:?}"));
                         if let Some(x) = error {
                             error = Some(x.context(err));
                         } else {

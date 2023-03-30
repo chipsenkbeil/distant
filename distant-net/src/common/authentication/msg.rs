@@ -158,7 +158,7 @@ impl Question {
 
 /// Represents some error that occurred during authentication
 #[derive(Clone, Debug, Display, Error, PartialEq, Eq, Serialize, Deserialize)]
-#[display(fmt = "{}: {}", kind, text)]
+#[display(fmt = "{kind}: {text}")]
 pub struct Error {
     /// Represents the kind of error
     pub kind: ErrorKind,

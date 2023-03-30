@@ -8,8 +8,7 @@ where
         Some(s) => match s.parse::<u128>() {
             Ok(value) => Ok(Some(value)),
             Err(error) => Err(serde::de::Error::custom(format!(
-                "Cannot convert to u128 with error: {:?}",
-                error
+                "Cannot convert to u128 with error: {error:?}"
             ))),
         },
         None => Ok(None),

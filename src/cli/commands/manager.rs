@@ -168,7 +168,7 @@ impl ManagerSubcommand {
                 Ok(())
             }
             Ok(Fork::Parent(pid)) => {
-                println!("[distant manager detached, pid = {}]", pid);
+                println!("[distant manager detached, pid = {pid}]");
                 if fork::close_fd().is_err() {
                     Err(CliError::Error(anyhow::anyhow!("Fork failed to close fd")))
                 } else {

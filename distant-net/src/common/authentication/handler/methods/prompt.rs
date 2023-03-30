@@ -40,7 +40,7 @@ where
 
             // Go ahead and display all other lines
             for line in lines.into_iter() {
-                eprintln!("{}", line);
+                eprintln!("{line}");
             }
 
             // Get an answer from user input, or use a blank string as an answer

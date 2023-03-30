@@ -227,7 +227,7 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
                     "{}",
                 ),
                 canonicalized_path
-                    .map(|p| format!("Canonicalized Path: {:?}\n", p))
+                    .map(|p| format!("Canonicalized Path: {p:?}\n"))
                     .unwrap_or_default(),
                 file_type.as_ref(),
                 len,
@@ -371,9 +371,9 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
             if success {
                 Output::None
             } else if let Some(code) = code {
-                Output::StderrLine(format!("Proc {} failed with code {}", id, code).into_bytes())
+                Output::StderrLine(format!("Proc {id} failed with code {code}").into_bytes())
             } else {
-                Output::StderrLine(format!("Proc {} failed", id).into_bytes())
+                Output::StderrLine(format!("Proc {id} failed").into_bytes())
             }
         }
         DistantResponseData::SystemInfo(SystemInfo {

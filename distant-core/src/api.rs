@@ -54,7 +54,7 @@ impl DistantApiServerHandler<LocalDistantApi, <LocalDistantApi as DistantApi>::L
 fn unsupported<T>(label: &str) -> io::Result<T> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        format!("{} is unsupported", label),
+        format!("{label} is unsupported"),
     ))
 }
 

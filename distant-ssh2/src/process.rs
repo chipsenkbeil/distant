@@ -76,7 +76,7 @@ where
     if let Ok(Some(exit_status)) = child.try_wait() {
         return Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("Process exited early: {:?}", exit_status),
+            format!("Process exited early: {exit_status:?}"),
         ));
     }
 
@@ -88,7 +88,7 @@ where
     let stdout_task = spawn_nonblocking_stdout_task(id, stdout, reply.clone_reply());
     let stderr_task = spawn_nonblocking_stderr_task(id, stderr, reply.clone_reply());
     let stdin_task = spawn_nonblocking_stdin_task(id, stdin, stdin_rx);
-    let _ = spawn_cleanup_task(
+    drop(spawn_cleanup_task(
         session,
         id,
         child,
@@ -98,7 +98,7 @@ where
         Some(stderr_task),
         reply,
         cleanup,
-    );
+    ));
 
     // Create a resizer that is already closed since a simple process does not resize
     let resizer = mpsc::channel(1).0;
@@ -157,7 +157,7 @@ where
     if let Ok(Some(exit_status)) = child.try_wait() {
         return Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
-            format!("Process exited early: {:?}", exit_status),
+            format!("Process exited early: {exit_status:?}"),
         ));
     }
 
@@ -175,7 +175,7 @@ where
     let session = session.clone();
     let stdout_task = spawn_blocking_stdout_task(id, reader, reply.clone_reply());
     let stdin_task = spawn_blocking_stdin_task(id, writer, stdin_rx);
-    let _ = spawn_cleanup_task(
+    drop(spawn_cleanup_task(
         session,
         id,
         child,
@@ -185,7 +185,7 @@ where
         None,
         reply,
         cleanup,
-    );
+    ));
 
     let (resize_tx, mut resize_rx) = mpsc::channel::<PtySize>(1);
     tokio::spawn(async move {
@@ -391,12 +391,9 @@ where
             //       so, we need to manually run kill/taskkill to make sure that the
             //       process is sent a kill signal
             if let Some(pid) = child.process_id() {
+                let _ = session.exec(&format!("kill -9 {pid}"), None).compat().await;
                 let _ = session
-                    .exec(&format!("kill -9 {}", pid), None)
-                    .compat()
-                    .await;
-                let _ = session
-                    .exec(&format!("taskkill /F /PID {}", pid), None)
+                    .exec(&format!("taskkill /F /PID {pid}"), None)
                     .compat()
                     .await;
             }

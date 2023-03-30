@@ -271,11 +271,11 @@ impl SshAuthHandler for LocalSshAuthHandler {
 
                 // Go ahead and display all other lines
                 for line in prompt_lines.into_iter() {
-                    eprintln!("{}", line);
+                    eprintln!("{line}");
                 }
 
                 let answer = if prompt.echo {
-                    eprint!("{}", prompt_line);
+                    eprint!("{prompt_line}");
                     std::io::stderr().lock().flush()?;
 
                     let mut answer = String::new();
@@ -296,7 +296,7 @@ impl SshAuthHandler for LocalSshAuthHandler {
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
         trace!("[local] on_verify_host({host})");
-        eprintln!("{}", host);
+        eprintln!("{host}");
         let task = tokio::task::spawn_blocking(|| {
             eprint!("Enter [y/N]> ");
             std::io::stderr().lock().flush()?;
@@ -556,7 +556,6 @@ impl Ssh {
                     format!("{} needs to be resolvable outside of ssh: {}", self.host, x),
                 )
             })?
-            .into_iter()
             .map(|addr| addr.ip())
             .collect::<Vec<IpAddr>>();
         candidate_ips.sort_unstable();

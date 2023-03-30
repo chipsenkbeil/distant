@@ -243,7 +243,7 @@ async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWat
                         // Send a failure as there was nothing to unwatch for this connection
                         let _ = cb.send(Err(io::Error::new(
                             io::ErrorKind::Other,
-                            format!("{:?} is not being watched", path),
+                            format!("{path:?} is not being watched"),
                         )));
                     } else {
                         // Send a success as we removed some paths
@@ -253,7 +253,7 @@ async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWat
                     // Send a failure as there was nothing to unwatch
                     let _ = cb.send(Err(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("{:?} is not being watched", path),
+                        format!("{path:?} is not being watched"),
                     )));
                 }
             }

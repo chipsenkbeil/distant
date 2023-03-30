@@ -67,7 +67,7 @@ impl Searcher {
                     x => {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
-                            format!("Unexpected response: {:?}", x),
+                            format!("Unexpected response: {x:?}"),
                         ))
                     }
                 }

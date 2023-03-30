@@ -279,7 +279,7 @@ impl ClientSubcommand {
                 debug!(
                     "Timeout configured to be {}",
                     match timeout {
-                        Some(secs) => format!("{}s", secs),
+                        Some(secs) => format!("{secs}s"),
                         None => "none".to_string(),
                     }
                 );
@@ -452,7 +452,7 @@ impl ClientSubcommand {
                 cache.write_to_disk().await?;
 
                 match format {
-                    Format::Shell => println!("{}", id),
+                    Format::Shell => println!("{id}"),
                     Format::Json => println!(
                         "{}",
                         serde_json::to_string(&json!({
@@ -550,7 +550,7 @@ impl ClientSubcommand {
                 cache.write_to_disk().await?;
 
                 match format {
-                    Format::Shell => println!("{}", id),
+                    Format::Shell => println!("{id}"),
                     Format::Json => println!(
                         "{}",
                         serde_json::to_string(&json!({
@@ -632,7 +632,7 @@ impl ClientSubcommand {
                 debug!(
                     "Timeout configured to be {}",
                     match timeout {
-                        Some(secs) => format!("{}s", secs),
+                        Some(secs) => format!("{secs}s"),
                         None => "none".to_string(),
                     }
                 );

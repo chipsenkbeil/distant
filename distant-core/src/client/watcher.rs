@@ -46,12 +46,12 @@ impl Watcher {
             if only.is_empty() {
                 String::new()
             } else {
-                format!(" (only = {})", only)
+                format!(" (only = {only})")
             },
             if except.is_empty() {
                 String::new()
             } else {
-                format!(" (except = {})", except)
+                format!(" (except = {except})")
             },
         );
 
@@ -83,7 +83,7 @@ impl Watcher {
                     x => {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
-                            format!("Unexpected response: {:?}", x),
+                            format!("Unexpected response: {x:?}"),
                         ))
                     }
                 }

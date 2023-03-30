@@ -64,10 +64,10 @@ impl Default for Shutdown {
 /// Parsing errors that can occur for [`Shutdown`]
 #[derive(Clone, Debug, Display, Error, PartialEq, Eq)]
 pub enum ShutdownParseError {
-    #[display(fmt = "Bad value for after: {}", _0)]
+    #[display(fmt = "Bad value for after: {_0}")]
     BadValueForAfter(ParseFloatError),
 
-    #[display(fmt = "Bad value for lonely: {}", _0)]
+    #[display(fmt = "Bad value for lonely: {_0}")]
     BadValueForLonely(ParseFloatError),
 
     #[display(fmt = "Missing key")]

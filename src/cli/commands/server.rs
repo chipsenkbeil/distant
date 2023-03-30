@@ -107,7 +107,7 @@ impl ServerSubcommand {
                 Ok(())
             }
             Ok(Fork::Parent(pid)) => {
-                println!("[distant server detached, pid = {}]", pid);
+                println!("[distant server detached, pid = {pid}]");
                 if fork::close_fd().is_err() {
                     Err(CliError::Error(anyhow::anyhow!("Fork failed to close fd")))
                 } else {
@@ -163,7 +163,7 @@ impl ServerSubcommand {
                     "Starting local API server, binding to {} {}",
                     addr,
                     match get!(port) {
-                        Some(range) => format!("with port in range {}", range),
+                        Some(range) => format!("with port in range {range}"),
                         None => "using an ephemeral port".to_string(),
                     }
                 );
@@ -204,7 +204,7 @@ impl ServerSubcommand {
                 #[cfg(not(windows))]
                 {
                     println!("\r");
-                    println!("{}", credentials);
+                    println!("{credentials}");
                     println!("\r");
                     io::stdout()
                         .flush()

@@ -22,7 +22,7 @@ impl fmt::Display for DistantSingleKeyCredentials {
         write!(f, "{SCHEME}://")?;
 
         if let Some(username) = self.username.as_ref() {
-            write!(f, "{}", username)?;
+            write!(f, "{username}")?;
         }
 
         write!(f, ":{}@", self.key)?;

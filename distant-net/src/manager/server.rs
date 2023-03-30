@@ -77,7 +77,7 @@ impl ManagerServer {
             let handler = self.config.launch_handlers.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("No launch handler registered for {}", scheme),
+                    format!("No launch handler registered for {scheme}"),
                 )
             })?;
             handler
@@ -116,7 +116,7 @@ impl ManagerServer {
             let handler = self.config.connect_handlers.get(&scheme).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("No connect handler registered for {}", scheme),
+                    format!("No connect handler registered for {scheme}"),
                 )
             })?;
             handler

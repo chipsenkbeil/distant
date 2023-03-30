@@ -208,7 +208,7 @@ impl fmt::Display for LspHeader {
         write!(f, "Content-Length: {}\r\n", self.content_length)?;
 
         if let Some(ty) = self.content_type.as_ref() {
-            write!(f, "Content-Type: {}\r\n", ty)?;
+            write!(f, "Content-Type: {ty}\r\n")?;
         }
 
         write!(f, "\r\n")

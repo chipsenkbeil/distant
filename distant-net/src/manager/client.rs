@@ -109,7 +109,7 @@ impl ManagerClient {
                 x => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("Got unexpected response: {:?}", x),
+                        format!("Got unexpected response: {x:?}"),
                     ))
                 }
             }
@@ -208,7 +208,7 @@ impl ManagerClient {
                 x => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("Got unexpected response: {:?}", x),
+                        format!("Got unexpected response: {x:?}"),
                     ))
                 }
             }
@@ -246,7 +246,7 @@ impl ManagerClient {
             }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
+                format!("Got unexpected response: {x:?}"),
             )),
         }
     }
@@ -262,7 +262,7 @@ impl ManagerClient {
             }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
+                format!("Got unexpected response: {x:?}"),
             )),
         }
     }
@@ -278,7 +278,7 @@ impl ManagerClient {
             }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
+                format!("Got unexpected response: {x:?}"),
             )),
         }
     }
@@ -294,7 +294,7 @@ impl ManagerClient {
             }
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Got unexpected response: {:?}", x),
+                format!("Got unexpected response: {x:?}"),
             )),
         }
     }

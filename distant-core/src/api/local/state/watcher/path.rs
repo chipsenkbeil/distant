@@ -174,7 +174,7 @@ impl RegisteredPath {
                 .send(if paths.is_empty() {
                     DistantResponseData::Error(Error::from(msg))
                 } else {
-                    DistantResponseData::Error(Error::from(format!("{} about {:?}", msg, paths)))
+                    DistantResponseData::Error(Error::from(format!("{msg} about {paths:?}")))
                 })
                 .await
                 .map(|_| true)

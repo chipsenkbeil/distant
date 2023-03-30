@@ -254,7 +254,6 @@ impl ConnectHandler for DistantConnectHandler {
                     format!("{host} needs to be resolvable outside of ssh: {x}"),
                 )
             })?
-            .into_iter()
             .map(|addr| addr.ip())
             .collect::<Vec<IpAddr>>();
         candidate_ips.sort_unstable();

@@ -79,8 +79,8 @@ impl fmt::Display for Destination {
 
         // For host, if we have a port and are IPv6, we need to wrap in [{}]
         match &self.host {
-            Host::Ipv6(x) if self.port.is_some() => write!(f, "[{}]", x)?,
-            x => write!(f, "{}", x)?,
+            Host::Ipv6(x) if self.port.is_some() => write!(f, "[{x}]")?,
+            x => write!(f, "{x}")?,
         }
 
         if let Some(port) = self.port {
