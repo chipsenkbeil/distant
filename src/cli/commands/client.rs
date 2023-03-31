@@ -274,7 +274,10 @@ impl ClientSubcommand {
                         format!("Failed to open channel to connection {connection_id}")
                     })?;
 
-                let timeout = action_config.timeout.or(config.action.timeout);
+                let timeout = match action_config.timeout.or(config.action.timeout) {
+                    Some(timeout) if timeout >= f32::EPSILON => Some(timeout),
+                    _ => None,
+                };
 
                 debug!(
                     "Timeout configured to be {}",
@@ -378,9 +381,7 @@ impl ClientSubcommand {
                             .into_channel()
                             .send_timeout(
                                 DistantMsg::Single(request),
-                                timeout
-                                    .or(config.action.timeout)
-                                    .map(Duration::from_secs_f32),
+                                timeout.map(Duration::from_secs_f32),
                             )
                             .await
                             .context("Failed to send request")?;
@@ -618,7 +619,10 @@ impl ClientSubcommand {
                 let connection_id =
                     use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
-                let timeout = repl_config.timeout.or(config.repl.timeout);
+                let timeout = match repl_config.timeout.or(config.repl.timeout) {
+                    Some(timeout) if timeout >= f32::EPSILON => Some(timeout),
+                    _ => None,
+                };
 
                 debug!("Opening raw channel to connection {}", connection_id);
                 let mut channel =
