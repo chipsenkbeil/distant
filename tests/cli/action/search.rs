@@ -37,7 +37,7 @@ fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
         lines.sort_unstable();
 
         // Put together sorted text lines
-        let full_text = lines.join("\n\n");
+        let full_text = format!("{}\n", lines.join("\n\n"));
 
         // Verify that it matches our search results regex
         let regex_fn = predicates::str::is_match(SEARCH_RESULTS_REGEX).unwrap();
@@ -45,7 +45,7 @@ fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
         regex_fn.eval(&full_text)
     });
 
-    // distant action system-info
+    // distant action search
     action_cmd
         .arg("search")
         .arg("te[a-z]*\\b")

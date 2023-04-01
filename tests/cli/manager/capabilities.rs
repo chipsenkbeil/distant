@@ -35,6 +35,6 @@ fn should_output_capabilities(ctx: DistantManagerCtx) {
     ctx.new_assert_cmd(vec!["manager", "capabilities"])
         .assert()
         .success()
-        .stdout(format!("{EXPECTED_TABLE}\n"))
+        .stdout(EXPECTED_TABLE)
         .stderr("");
 }

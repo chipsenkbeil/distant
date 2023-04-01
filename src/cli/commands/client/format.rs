@@ -415,7 +415,7 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
             .to_string()
             .into_bytes();
 
-            Output::Stdout(table)
+            Output::StdoutLine(table)
         }
     }
 }

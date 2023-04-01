@@ -217,7 +217,7 @@ impl From<UnixMetadata> for u32 {
             flags.insert(UnixFilePermissionFlags::OTHER_EXEC);
         }
 
-        flags.bits
+        flags.bits()
     }
 }
 
@@ -378,7 +378,7 @@ impl From<WindowsMetadata> for u32 {
             flags.insert(WindowsFileAttributeFlags::TEMPORARY);
         }
 
-        flags.bits
+        flags.bits()
     }
 }
 

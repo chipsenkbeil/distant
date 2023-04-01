@@ -77,7 +77,7 @@ impl PtyProcess {
         // Spawn a blocking task to process submitting stdin async
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(1);
         let mut stdin_writer = pty_master
-            .try_clone_writer()
+            .take_writer()
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
         let stdin_task = tokio::task::spawn_blocking(move || {
             while let Some(input) = stdin_rx.blocking_recv() {

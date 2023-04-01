@@ -17,34 +17,34 @@ ssh2 = ["wezterm-ssh/ssh2", "wezterm-ssh/vendored-openssl-ssh2"]
 
 [dependencies]
 async-compat = "0.2.1"
-async-once-cell = "0.4.2"
-async-trait = "0.1.58"
+async-once-cell = "0.4.4"
+async-trait = "0.1.68"
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
 distant-core = { version = "=0.20.0-alpha.4", path = "../distant-core" }
-futures = "0.3.25"
+futures = "0.3.28"
 hex = "0.4.3"
 log = "0.4.17"
 rand = { version = "0.8.5", features = ["getrandom"] }
-rpassword = "7.1.0"
+rpassword = "7.2.0"
 shell-words = "1.1.0"
-smol = "1.2.5"
-tokio = { version = "1.22.0", features = ["full"] }
-typed-path = "0.1.0"
+smol = "1.3.0"
+tokio = { version = "1.27.0", features = ["full"] }
+typed-path = "0.3.2"
 wezterm-ssh = { version = "0.4.0", default-features = false }
 winsplit = "0.1.0"
 
 # Optional serde support for data structures
-serde = { version = "1.0.147", features = ["derive"], optional = true }
+serde = { version = "1.0.159", features = ["derive"], optional = true }
 
 [dev-dependencies]
-anyhow = "1.0.66"
-assert_fs = "1.0.9"
+anyhow = "1.0.70"
+assert_fs = "1.0.12"
 dunce = "1.0.3"
-env_logger = "0.9.3"
-indoc = "1.0.7"
-once_cell = "1.16.0"
-predicates = "2.1.3"
-rstest = "0.15.0"
+env_logger = "0.10.0"
+indoc = "2.0.1"
+once_cell = "1.17.1"
+predicates = "3.0.2"
+rstest = "0.17.0"
 test-log = "0.2.11"
-which = "4.3.0"
-whoami = "1.2.3"
+which = "4.4.0"
+whoami = "1.4.0"
