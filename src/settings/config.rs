@@ -9,14 +9,12 @@ use std::{
 use toml_edit::Document;
 
 mod client;
-mod common;
 mod generate;
 mod manager;
 mod network;
 mod server;
 
 pub use client::*;
-pub use common::*;
 pub use generate::*;
 pub use manager::*;
 pub use network::*;

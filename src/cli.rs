@@ -26,21 +26,6 @@ pub struct Cli {
     config: Config,
 }
 
-#[derive(Debug, Parser)]
-#[clap(author, version, about)]
-#[clap(name = "distant")]
-struct Opt {
-    #[clap(flatten)]
-    common: CommonConfig,
-
-    /// Configuration file to load instead of the default paths
-    #[clap(short = 'c', long = "config", global = true, value_parser)]
-    config_path: Option<PathBuf>,
-
-    #[clap(subcommand)]
-    command: DistantSubcommand,
-}
-
 impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
     pub fn initialize() -> anyhow::Result<Self> {
