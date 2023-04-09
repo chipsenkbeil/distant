@@ -27,6 +27,7 @@ impl Shell {
         cmd: impl Into<Option<String>>,
         mut environment: Environment,
         current_dir: Option<PathBuf>,
+        max_chunk_size: usize,
     ) -> CliResult {
         // Automatically add TERM=xterm-256color if not specified
         if !environment.contains_key("TERM") {
@@ -116,6 +117,7 @@ impl Shell {
             None,
             proc.stdout.take().unwrap(),
             proc.stderr.take().unwrap(),
+            max_chunk_size,
         );
 
         // Continually loop to check for terminal resize changes while the process is still running

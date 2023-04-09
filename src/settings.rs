@@ -9,6 +9,7 @@ use self::options::Options;
 ///
 /// This is a mixture of [`Config`] and [`Options`] with the order of precedence being to use
 /// explicit options > config > implicit options.
+#[derive(Clone, Debug, Default)]
 pub struct Settings {
     config: Config,
     options: Options,

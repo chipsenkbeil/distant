@@ -1,4 +1,4 @@
-use crate::config::BindAddress;
+use super::common::BindAddress;
 use clap::Args;
 use distant_core::net::common::Map;
 use serde::{Deserialize, Serialize};

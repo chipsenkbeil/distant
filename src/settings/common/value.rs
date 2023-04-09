@@ -2,8 +2,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
-/// Represents a value for some CLI option. This exists to support optional values that have a
-/// default value so we can distinguish if a CLI value was a default or explicitly defined.
+/// Represents a value for some CLI option or config. This exists to support optional values that
+/// have a default value so we can distinguish if a CLI value was a default or explicitly defined.
 #[derive(Copy, Clone, Debug)]
 pub enum Value<T> {
     /// Value is a default representation.
@@ -88,7 +88,8 @@ impl<T> Serialize for Value<T>
 where
     T: Serialize,
 {
-    /// Serializes the underlying data within [Value].
+    /// Serializes the underlying data within [Value]. The origin of the value (default vs
+    /// explicit) is not stored as config files using serialization are all explicitly set.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -101,7 +102,9 @@ impl<'de, T> Deserialize<'de> for Value<T>
 where
     T: Deserialize<'de>,
 {
-    /// Deserializes into an explicit variant of [Value].
+    /// Deserializes into an explicit variant of [Value]. It is assumed that any value coming from
+    /// a format like a config.toml is explicitly defined and not a default, even though we have a
+    /// default config.toml available.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

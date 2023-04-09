@@ -1,5 +1,4 @@
 use super::stdin;
-use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use distant_core::{
     RemoteLspStderr, RemoteLspStdin, RemoteLspStdout, RemoteStderr, RemoteStdin, RemoteStdout,
 };
@@ -20,11 +19,11 @@ pub struct RemoteProcessLink {
 }
 
 macro_rules! from_pipes {
-    ($stdin:expr, $stdout:expr, $stderr:expr) => {{
+    ($stdin:expr, $stdout:expr, $stderr:expr, $buffer:expr) => {{
         let mut stdin_thread = None;
         let mut stdin_task = None;
         if let Some(mut stdin_handle) = $stdin {
-            let (thread, mut rx) = stdin::spawn_channel(MAX_PIPE_CHUNK_SIZE);
+            let (thread, mut rx) = stdin::spawn_channel($buffer);
             let task = tokio::spawn(async move {
                 loop {
                     if let Some(input) = rx.recv().await {
@@ -77,22 +76,30 @@ macro_rules! from_pipes {
 }
 
 impl RemoteProcessLink {
-    /// Creates a new process link from the pipes of a remote process
+    /// Creates a new process link from the pipes of a remote process.
+    ///
+    /// `max_pipe_chunk_size` represents the maximum size (in bytes) of data that will be read from
+    /// stdin at one time to forward to the remote process.
     pub fn from_remote_pipes(
         stdin: Option<RemoteStdin>,
         mut stdout: RemoteStdout,
         mut stderr: RemoteStderr,
+        max_pipe_chunk_size: usize,
     ) -> Self {
-        from_pipes!(stdin, stdout, stderr)
+        from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size)
     }
 
-    /// Creates a new process link from the pipes of a remote LSP server process
+    /// Creates a new process link from the pipes of a remote LSP server process.
+    ///
+    /// `max_pipe_chunk_size` represents the maximum size (in bytes) of data that will be read from
+    /// stdin at one time to forward to the remote process.
     pub fn from_remote_lsp_pipes(
         stdin: Option<RemoteLspStdin>,
         mut stdout: RemoteLspStdout,
         mut stderr: RemoteLspStderr,
+        max_pipe_chunk_size: usize,
     ) -> Self {
-        from_pipes!(stdin, stdout, stderr)
+        from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size)
     }
 
     /// Shuts down the link, aborting any running tasks, and swallowing join errors

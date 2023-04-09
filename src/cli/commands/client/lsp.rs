@@ -17,6 +17,7 @@ impl Lsp {
         cmd: impl Into<String>,
         current_dir: Option<PathBuf>,
         pty: bool,
+        max_chunk_size: usize,
     ) -> CliResult {
         let cmd = cmd.into();
         let mut proc = RemoteLspCommand::new()
@@ -37,6 +38,7 @@ impl Lsp {
             proc.stdin.take(),
             proc.stdout.take().unwrap(),
             proc.stderr.take().unwrap(),
+            max_chunk_size,
         );
 
         let status = proc.wait().await.context("Failed to wait for process")?;

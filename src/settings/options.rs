@@ -1,8 +1,9 @@
 use super::common::{AccessControl, LoggingSettings, NetworkSettings, Value};
+use crate::constants::user::CACHE_FILE_PATH_STR;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
-use clap_complete::{generate as clap_complete_generate, Shell as ClapCompleteShell};
+use clap_complete::Shell as ClapCompleteShell;
 use distant_core::data::{DistantRequestData, Environment};
-use distant_core::net::common::{ConnectionId, Destination};
+use distant_core::net::common::{ConnectionId, Destination, Map};
 use service_manager::ServiceManagerKind;
 use std::path::PathBuf;
 
@@ -12,7 +13,7 @@ use std::path::PathBuf;
 #[clap(name = "distant")]
 pub struct Options {
     #[clap(flatten)]
-    pub common: LoggingSettings,
+    pub logging: LoggingSettings,
 
     /// Configuration file to load instead of the default paths
     #[clap(short = 'c', long = "config", global = true, value_parser)]
@@ -57,8 +58,9 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
-        #[clap(flatten)]
-        config: ClientActionConfig,
+        /// Represents the maximum time (in seconds) to wait for a network request before timing out.
+        #[clap(long)]
+        timeout: Option<f32>,
 
         /// Specify a connection being managed
         #[clap(long)]
@@ -82,8 +84,12 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
-        #[clap(flatten)]
-        config: ClientConnectConfig,
+        /// Additional options to provide, typically forwarded to the handler within the manager
+        /// facilitating the connection. Options are key-value pairs separated by comma.
+        ///
+        /// E.g. `key="value",key2="value2"`
+        #[clap(long)]
+        options: Option<Map>,
 
         #[clap(flatten)]
         network: NetworkSettings,
@@ -105,8 +111,13 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
-        #[clap(flatten)]
-        config: ClientLaunchConfig,
+        /// Additional options to provide, typically forwarded to the handler within the manager
+        /// facilitating the launch of a distant server. Options are key-value pairs separated by
+        /// comma.
+        ///
+        /// E.g. `key="value",key2="value2"`
+        #[clap(long)]
+        options: Option<Map>,
 
         #[clap(flatten)]
         network: NetworkSettings,
