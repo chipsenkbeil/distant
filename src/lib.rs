@@ -3,14 +3,13 @@ use std::process::{ExitCode, Termination};
 
 mod cli;
 mod constants;
-mod paths;
-mod settings;
+mod options;
 
 #[cfg(windows)]
 pub mod win_service;
 
 pub use cli::Cli;
-pub use settings::Settings;
+pub use options::Options;
 
 /// Wrapper around a [`CliResult`] that provides [`Termination`] support
 pub struct MainResult(CliResult);

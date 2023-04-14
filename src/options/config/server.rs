@@ -1,4 +1,4 @@
-use super::CommonConfig;
+use super::common::LoggingSettings;
 use serde::{Deserialize, Serialize};
 
 mod listen;
@@ -8,7 +8,7 @@ pub use listen::*;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     #[serde(flatten)]
-    pub common: CommonConfig,
+    pub logging: LoggingSettings,
 
     pub listen: ServerListenConfig,
 }

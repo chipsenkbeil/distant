@@ -1,3 +1,4 @@
+use crate::constants;
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
@@ -72,8 +73,8 @@ impl NetworkSettings {
         match self.unix_socket.as_deref() {
             Some(path) => vec![path],
             None => vec![
-                crate::paths::user::UNIX_SOCKET_PATH.as_path(),
-                crate::paths::global::UNIX_SOCKET_PATH.as_path(),
+                constants::user::UNIX_SOCKET_PATH.as_path(),
+                constants::global::UNIX_SOCKET_PATH.as_path(),
             ],
         }
     }
@@ -84,8 +85,8 @@ impl NetworkSettings {
         match self.windows_pipe.as_deref() {
             Some(name) => vec![name],
             None => vec![
-                crate::paths::user::WINDOWS_PIPE_NAME.as_str(),
-                crate::paths::global::WINDOWS_PIPE_NAME.as_str(),
+                constants::user::WINDOWS_PIPE_NAME.as_str(),
+                constants::global::WINDOWS_PIPE_NAME.as_str(),
             ],
         }
     }

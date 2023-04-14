@@ -20,6 +20,12 @@ pub struct PortRange {
 }
 
 impl PortRange {
+    /// Represents an ephemeral port as defined using the port range of 0.
+    pub const EPHEMERAL: Self = Self {
+        start: 0,
+        end: None,
+    };
+
     /// Builds a collection of `SocketAddr` instances from the port range and given ip address
     pub fn make_socket_addrs(&self, addr: impl Into<IpAddr>) -> Vec<SocketAddr> {
         let mut socket_addrs = Vec::new();
@@ -30,6 +36,11 @@ impl PortRange {
         }
 
         socket_addrs
+    }
+
+    /// Returns true if port range represents the ephemeral port.
+    pub fn is_ephemeral(&self) -> bool {
+        self == &Self::EPHEMERAL
     }
 }
 

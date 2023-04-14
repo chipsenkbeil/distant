@@ -115,7 +115,7 @@ log_level = "info"
 #
 # * "owner": equates to `0o600` on Unix (read & write for owner).
 # * "group": equates to `0o660` on Unix (read & write for owner and group).
-# # "anyone": equates to `0o666` on Unix (read & write for owner, group, and other).
+# * "anyone": equates to `0o666` on Unix (read & write for owner, group, and other).
 access = "owner"
 
 # Alternative unix domain socket to listen on (Unix only)

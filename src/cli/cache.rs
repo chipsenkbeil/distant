@@ -1,4 +1,4 @@
-use crate::paths::user::CACHE_FILE_PATH;
+use crate::constants::user::CACHE_FILE_PATH;
 use anyhow::Context;
 use distant_core::net::common::ConnectionId;
 use serde::{Deserialize, Serialize};

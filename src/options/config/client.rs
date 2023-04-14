@@ -1,4 +1,4 @@
-use super::{CommonConfig, NetworkConfig};
+use super::common::{self, LoggingSettings, NetworkSettings};
 use serde::{Deserialize, Serialize};
 
 mod action;
@@ -15,13 +15,13 @@ pub use repl::*;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClientConfig {
     #[serde(flatten)]
-    pub common: CommonConfig,
+    pub logging: LoggingSettings,
+
+    #[serde(flatten)]
+    pub network: NetworkSettings,
 
     pub action: ClientActionConfig,
     pub connect: ClientConnectConfig,
     pub launch: ClientLaunchConfig,
     pub repl: ClientReplConfig,
-
-    #[serde(flatten)]
-    pub network: NetworkConfig,
 }

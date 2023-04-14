@@ -1,11 +1,20 @@
-use super::common::{AccessControl, LoggingSettings, NetworkSettings, Value};
+use crate::constants;
 use crate::constants::user::CACHE_FILE_PATH_STR;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
+use derive_more::IsVariant;
 use distant_core::data::{DistantRequestData, Environment};
-use distant_core::net::common::{ConnectionId, Destination, Map};
+use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
+use distant_core::net::server::Shutdown;
 use service_manager::ServiceManagerKind;
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
+mod common;
+mod config;
+
+pub use self::config::*;
+pub use common::*;
 
 /// Primary entrypoint into options & subcommands for the CLI.
 #[derive(Debug, Parser)]
@@ -23,9 +32,80 @@ pub struct Options {
     pub command: DistantSubcommand,
 }
 
+impl Options {
+    /// Creates a new CLI instance by parsing command-line arguments
+    pub fn load() -> anyhow::Result<Self> {
+        Self::load_from(std::env::args_os())
+    }
+
+    /// Creates a new CLI instance by parsing providing arguments
+    pub fn load_from<I, T>(args: I) -> anyhow::Result<Self>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut this = Self::try_parse_from(args)?;
+        let config = Config::load_multi(this.config_path)?;
+        this.merge(config);
+
+        // Assign the appropriate log file based on client/manager/server
+        if this.logging.log_file.is_none() {
+            // NOTE: We assume that any of these commands will log to the user-specific path
+            //       and that services that run manager will explicitly override the
+            //       log file path
+            this.logging.log_file = Some(match &this.command {
+                DistantSubcommand::Client(_) => constants::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Server(_) => constants::user::SERVER_LOG_FILE_PATH.to_path_buf(),
+                DistantSubcommand::Generate(_) => {
+                    constants::user::GENERATE_LOG_FILE_PATH.to_path_buf()
+                }
+
+                // If we are listening as a manager, then we want to log to a manager-specific file
+                DistantSubcommand::Manager(cmd) if cmd.is_listen() => {
+                    constants::user::MANAGER_LOG_FILE_PATH.to_path_buf()
+                }
+
+                // Otherwise, if we are performing some operation as a client talking to the
+                // manager, then we want to log to the client file
+                DistantSubcommand::Manager(_) => {
+                    constants::user::CLIENT_LOG_FILE_PATH.to_path_buf()
+                }
+            });
+        }
+
+        Ok(this)
+    }
+
+    /// Updates options based on configuration values.
+    fn merge(&mut self, config: Config) {
+        /* pub log_level: Option<LogLevel>,
+        pub log_file: Option<PathBuf>, */
+        match self.command {
+            DistantSubcommand::Client(_) => {
+                self.logging.log_file = self.logging.log_file.or(config.client.logging.log_file);
+                self.logging.log_level = self.logging.log_level.or(config.client.logging.log_level);
+            }
+            DistantSubcommand::Generate(_) => {
+                self.logging.log_file = self.logging.log_file.or(config.generate.logging.log_file);
+                self.logging.log_level =
+                    self.logging.log_level.or(config.generate.logging.log_level);
+            }
+            DistantSubcommand::Manager(_) => {
+                self.logging.log_file = self.logging.log_file.or(config.manager.logging.log_file);
+                self.logging.log_level =
+                    self.logging.log_level.or(config.manager.logging.log_level);
+            }
+            DistantSubcommand::Server(_) => {
+                self.logging.log_file = self.logging.log_file.or(config.server.logging.log_file);
+                self.logging.log_level = self.logging.log_level.or(config.server.logging.log_level);
+            }
+        }
+    }
+}
+
 /// Subcommands for the CLI.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, IsVariant)]
 pub enum DistantSubcommand {
     /// Perform client commands
     #[clap(subcommand)]
@@ -45,7 +125,7 @@ pub enum DistantSubcommand {
 }
 
 /// Subcommands for `distant client`.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, IsVariant)]
 pub enum ClientSubcommand {
     /// Performs some action on a remote machine
     Action {
@@ -111,6 +191,30 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
+        /// Path to distant program on remote machine to execute via ssh;
+        /// by default, this program needs to be available within PATH as
+        /// specified when compiling ssh (not your login shell)
+        #[clap(name = "distant", long)]
+        bin: Option<String>,
+
+        /// Control the IP address that the server binds to.
+        ///
+        /// The default is `ssh', in which case the server will reply from the IP address that the SSH
+        /// connection came from (as found in the SSH_CONNECTION environment variable). This is
+        /// useful for multihomed servers.
+        ///
+        /// With --bind-server=any, the server will reply on the default interface and will not bind to
+        /// a particular IP address. This can be useful if the connection is made through sslh or
+        /// another tool that makes the SSH connection appear to come from localhost.
+        ///
+        /// With --bind-server=IP, the server will attempt to bind to the specified IP address.
+        #[clap(name = "distant-bind-server", long, value_name = "ssh|any|IP")]
+        bind_server: Option<BindAddress>,
+
+        /// Additional arguments to provide to the server
+        #[clap(name = "distant-args", long, allow_hyphen_values(true))]
+        args: Option<String>,
+
         /// Additional options to provide, typically forwarded to the handler within the manager
         /// facilitating the launch of a distant server. Options are key-value pairs separated by
         /// comma.
@@ -168,8 +272,9 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
 
-        #[clap(flatten)]
-        config: ClientReplConfig,
+        /// Represents the maximum time (in seconds) to wait for a network request before timing out.
+        #[clap(long)]
+        timeout: Option<f32>,
 
         /// Specify a connection being managed
         #[clap(long)]
@@ -235,8 +340,34 @@ pub enum ClientSubcommand {
     },
 }
 
+impl ClientSubcommand {
+    pub fn cache_path(&self) -> &Path {
+        match self {
+            Self::Action { cache, .. } => cache.as_path(),
+            Self::Connect { cache, .. } => cache.as_path(),
+            Self::Launch { cache, .. } => cache.as_path(),
+            Self::Lsp { cache, .. } => cache.as_path(),
+            Self::Repl { cache, .. } => cache.as_path(),
+            Self::Select { cache, .. } => cache.as_path(),
+            Self::Shell { cache, .. } => cache.as_path(),
+        }
+    }
+
+    pub fn network_settings(&self) -> &NetworkSettings {
+        match self {
+            Self::Action { network, .. } => network,
+            Self::Connect { network, .. } => network,
+            Self::Launch { network, .. } => network,
+            Self::Lsp { network, .. } => network,
+            Self::Repl { network, .. } => network,
+            Self::Select { network, .. } => network,
+            Self::Shell { network, .. } => network,
+        }
+    }
+}
+
 /// Subcommands for `distant generate`.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, IsVariant)]
 pub enum GenerateSubcommand {
     /// Generate configuration file with base settings
     Config {
@@ -264,7 +395,7 @@ pub enum GenerateSubcommand {
 }
 
 /// Subcommands for `distant manager`.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
     /// Interact with a manager being run by a service management platform
     #[clap(subcommand)]
@@ -325,7 +456,7 @@ pub enum ManagerSubcommand {
 }
 
 /// Subcommands for `distant manager service`.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, IsVariant)]
 pub enum ManagerServiceSubcommand {
     /// Start the manager as a service
     Start {
@@ -370,12 +501,52 @@ pub enum ManagerServiceSubcommand {
 }
 
 /// Subcommands for `distant server`.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, IsVariant)]
 pub enum ServerSubcommand {
     /// Listen for incoming requests as a server
     Listen {
-        #[clap(flatten)]
-        config: ServerListenConfig,
+        /// Control the IP address that the distant binds to
+        ///
+        /// There are three options here:
+        ///
+        /// 1. `ssh`: the server will reply from the IP address that the SSH
+        /// connection came from (as found in the SSH_CONNECTION environment variable). This is
+        /// useful for multihomed servers.
+        ///
+        /// 2. `any`: the server will reply on the default interface and will not bind to
+        /// a particular IP address. This can be useful if the connection is made through ssh or
+        /// another tool that makes the SSH connection appear to come from localhost.
+        ///
+        /// 3. `IP`: the server will attempt to bind to the specified IP address.
+        #[clap(long, value_name = "ssh|any|IP", default_value_t = Value::Default(BindAddress::Any))]
+        host: Value<BindAddress>,
+
+        /// Set the port(s) that the server will attempt to bind to
+        ///
+        /// This can be in the form of PORT1 or PORT1:PORTN to provide a range of ports.
+        /// With `--port 0`, the server will let the operating system pick an available TCP port.
+        ///
+        /// Please note that this option does not affect the server-side port used by SSH
+        #[clap(long, value_name = "PORT[:PORT2]", default_value_t = Value::Default(PortRange::EPHEMERAL))]
+        port: Value<PortRange>,
+
+        /// If specified, will bind to the ipv6 interface if host is "any" instead of ipv4
+        #[clap(short = '6', long)]
+        use_ipv6: bool,
+
+        /// Logic to apply to server when determining when to shutdown automatically
+        ///
+        /// 1. "never" means the server will never automatically shut down
+        /// 2. "after=<N>" means the server will shut down after N seconds
+        /// 3. "lonely=<N>" means the server will shut down after N seconds with no connections
+        ///
+        /// Default is to never shut down
+        #[clap(long, default_value_t = Value::Default(Shutdown::Never))]
+        shutdown: Value<Shutdown>,
+
+        /// Changes the current working directory (cwd) to the specified directory
+        #[clap(long)]
+        current_dir: Option<PathBuf>,
 
         /// If specified, will fork the process to run as a standalone daemon
         #[clap(long)]

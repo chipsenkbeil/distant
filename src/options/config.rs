@@ -1,4 +1,5 @@
-use crate::paths;
+use super::common;
+use crate::constants;
 use anyhow::Context;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -11,13 +12,11 @@ use toml_edit::Document;
 mod client;
 mod generate;
 mod manager;
-mod network;
 mod server;
 
 pub use client::*;
 pub use generate::*;
 pub use manager::*;
-pub use network::*;
 pub use server::*;
 
 const DEFAULT_RAW_STR: &str = include_str!("config.toml");
@@ -51,8 +50,8 @@ impl Config {
             }
             None => {
                 let paths = vec![
-                    paths::global::CONFIG_FILE_PATH.as_path(),
-                    paths::user::CONFIG_FILE_PATH.as_path(),
+                    constants::global::CONFIG_FILE_PATH.as_path(),
+                    constants::user::CONFIG_FILE_PATH.as_path(),
                 ];
 
                 match (paths[0].exists(), paths[1].exists()) {
@@ -145,6 +144,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::*;
     use distant_core::net::common::{Host, Map, PortRange};
     use distant_core::net::map;
     use distant_core::net::server::Shutdown;
@@ -160,10 +160,6 @@ mod tests {
             Config {
                 client: ClientConfig {
                     action: ClientActionConfig { timeout: Some(0.) },
-                    common: CommonConfig {
-                        log_level: Some(LogLevel::Info),
-                        log_file: None
-                    },
                     connect: ClientConnectConfig {
                         options: Map::new()
                     },
@@ -175,34 +171,34 @@ mod tests {
                         },
                         options: Map::new(),
                     },
-                    network: NetworkConfig {
+                    logging: LoggingSettings {
+                        log_level: Some(LogLevel::Info),
+                        log_file: None
+                    },
+                    network: NetworkSettings {
                         unix_socket: None,
                         windows_pipe: None
                     },
                     repl: ClientReplConfig { timeout: Some(0.) },
                 },
                 generate: GenerateConfig {
-                    common: CommonConfig {
+                    logging: LoggingSettings {
                         log_level: Some(LogLevel::Info),
                         log_file: None
                     },
                 },
                 manager: ManagerConfig {
                     access: Some(AccessControl::Owner),
-                    common: CommonConfig {
+                    logging: LoggingSettings {
                         log_level: Some(LogLevel::Info),
                         log_file: None
                     },
-                    network: NetworkConfig {
+                    network: NetworkSettings {
                         unix_socket: None,
                         windows_pipe: None
                     },
                 },
                 server: ServerConfig {
-                    common: CommonConfig {
-                        log_level: Some(LogLevel::Info),
-                        log_file: None
-                    },
                     listen: ServerListenConfig {
                         host: Some(BindAddress::Any),
                         port: Some(0.into()),
@@ -210,13 +206,17 @@ mod tests {
                         shutdown: Some(Shutdown::Never),
                         current_dir: None,
                     },
+                    logging: LoggingSettings {
+                        log_level: Some(LogLevel::Info),
+                        log_file: None
+                    },
                 },
             }
         );
     }
 
     #[test(tokio::test)]
-    async fn default_should_parse_config_from_specified_file() {
+    async fn load_should_parse_config_from_specified_file() {
         use assert_fs::prelude::*;
         let config_file = assert_fs::NamedTempFile::new("config.toml").unwrap();
         config_file
@@ -276,10 +276,6 @@ current_dir = "server-current-dir"
                     action: ClientActionConfig {
                         timeout: Some(123.)
                     },
-                    common: CommonConfig {
-                        log_level: Some(LogLevel::Trace),
-                        log_file: Some(PathBuf::from("client-log-file")),
-                    },
                     connect: ClientConnectConfig {
                         options: map!("key" -> "value", "key2" -> "value2"),
                     },
@@ -291,7 +287,11 @@ current_dir = "server-current-dir"
                         },
                         options: map!("key3" -> "value3", "key4" -> "value4"),
                     },
-                    network: NetworkConfig {
+                    logging: LoggingSettings {
+                        log_level: Some(LogLevel::Trace),
+                        log_file: Some(PathBuf::from("client-log-file")),
+                    },
+                    network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("client-unix-socket")),
                         windows_pipe: Some(String::from("client-windows-pipe"))
                     },
@@ -300,27 +300,23 @@ current_dir = "server-current-dir"
                     },
                 },
                 generate: GenerateConfig {
-                    common: CommonConfig {
+                    logging: LoggingSettings {
                         log_level: Some(LogLevel::Debug),
                         log_file: Some(PathBuf::from("generate-log-file"))
                     },
                 },
                 manager: ManagerConfig {
                     access: Some(AccessControl::Anyone),
-                    common: CommonConfig {
+                    logging: LoggingSettings {
                         log_level: Some(LogLevel::Warn),
                         log_file: Some(PathBuf::from("manager-log-file"))
                     },
-                    network: NetworkConfig {
+                    network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("manager-unix-socket")),
                         windows_pipe: Some(String::from("manager-windows-pipe")),
                     },
                 },
                 server: ServerConfig {
-                    common: CommonConfig {
-                        log_level: Some(LogLevel::Error),
-                        log_file: Some(PathBuf::from("server-log-file")),
-                    },
                     listen: ServerListenConfig {
                         host: Some(BindAddress::Host(Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1)))),
                         port: Some(PortRange {
@@ -330,6 +326,10 @@ current_dir = "server-current-dir"
                         use_ipv6: true,
                         shutdown: Some(Shutdown::After(Duration::from_secs(123))),
                         current_dir: Some(PathBuf::from("server-current-dir")),
+                    },
+                    logging: LoggingSettings {
+                        log_level: Some(LogLevel::Error),
+                        log_file: Some(PathBuf::from("server-log-file")),
                     },
                 },
             }
