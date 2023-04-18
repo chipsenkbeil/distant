@@ -1,13 +1,8 @@
-use anyhow::Context;
-use distant_core::net::common::{Host, HostParseError, Map, PortRange};
+use crate::options::BindAddress;
+use distant_core::net::common::{Map, PortRange};
 use distant_core::net::server::Shutdown;
 use serde::{Deserialize, Serialize};
-use std::{
-    env, fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    path::PathBuf,
-    str::FromStr,
-};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerListenConfig {

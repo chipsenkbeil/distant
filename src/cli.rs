@@ -1,19 +1,16 @@
+use crate::options::DistantSubcommand;
 use crate::{CliResult, Options};
 use std::ffi::OsString;
 
-mod cache;
-mod client;
 mod commands;
-mod manager;
-mod spawner;
+mod common;
 
-pub(crate) use cache::Cache;
-pub(crate) use client::Client;
-use commands::DistantSubcommand;
-pub(crate) use manager::Manager;
+pub(crate) use common::Cache;
+pub(crate) use common::Client;
+pub(crate) use common::Manager;
 
 #[cfg_attr(unix, allow(unused_imports))]
-pub(crate) use spawner::Spawner;
+pub(crate) use common::Spawner;
 
 /// Represents the primary CLI entrypoint
 pub struct Cli {
@@ -50,7 +47,8 @@ impl Cli {
         for module in modules {
             builder.module(
                 module,
-                self.common
+                self.options
+                    .logging
                     .log_level
                     .unwrap_or_default()
                     .to_log_level_filter(),
@@ -63,7 +61,7 @@ impl Cli {
         // Assign our log output to a file
         // NOTE: We can unwrap here as we assign the log file earlier
         let logger = logger.log_to_file(
-            FileSpec::try_from(self.common.log_file.as_ref().unwrap())
+            FileSpec::try_from(self.options.logging.log_file.as_ref().unwrap())
                 .expect("Failed to create log file spec"),
         );
 
@@ -80,11 +78,11 @@ impl Cli {
 
     /// Runs the CLI
     pub fn run(self) -> CliResult {
-        match self.command {
-            DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
-            DistantSubcommand::Generate(cmd) => cmd.run(self.config.generate),
-            DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),
-            DistantSubcommand::Server(cmd) => cmd.run(self.config.server),
+        match self.options.command {
+            DistantSubcommand::Client(cmd) => commands::client::run(cmd),
+            DistantSubcommand::Generate(cmd) => commands::generate::run(cmd),
+            DistantSubcommand::Manager(cmd) => commands::manager::run(cmd),
+            DistantSubcommand::Server(cmd) => commands::server::run(cmd),
         }
     }
 }

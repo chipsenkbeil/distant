@@ -1,12 +1,9 @@
+use crate::cli::common::{
+    Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
+};
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{ClientSubcommand, Format};
-use crate::{
-    cli::{
-        client::{JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler},
-        Cache, Client,
-    },
-    CliError, CliResult,
-};
+use crate::{CliError, CliResult};
 use anyhow::Context;
 use distant_core::{
     data::ChangeKindSet,

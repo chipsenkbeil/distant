@@ -1,3 +1,4 @@
+use crate::cli::common::{MsgReceiver, MsgSender};
 use crate::options::NetworkSettings;
 use async_trait::async_trait;
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
@@ -9,9 +10,6 @@ use distant_core::net::manager::ManagerClient;
 use log::*;
 use std::io;
 use std::time::Duration;
-
-mod msg;
-pub use msg::*;
 
 pub struct Client<T> {
     network: NetworkSettings,

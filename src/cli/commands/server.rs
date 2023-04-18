@@ -99,7 +99,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             use_ipv6,
             shutdown,
             current_dir,
-            daemon,
+            daemon: _,
             key_from_stdin,
             #[cfg(windows)]
             output_to_local_pipe,
