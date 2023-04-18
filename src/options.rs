@@ -45,7 +45,7 @@ impl Options {
         T: Into<OsString> + Clone,
     {
         let mut this = Self::try_parse_from(args)?;
-        let config = Config::load_multi(this.config_path)?;
+        let config = Config::load_multi(this.config_path.take())?;
         this.merge(config);
 
         // Assign the appropriate log file based on client/manager/server
@@ -82,21 +82,37 @@ impl Options {
         pub log_file: Option<PathBuf>, */
         match self.command {
             DistantSubcommand::Client(_) => {
-                self.logging.log_file = self.logging.log_file.or(config.client.logging.log_file);
+                self.logging.log_file = self
+                    .logging
+                    .log_file
+                    .take()
+                    .or(config.client.logging.log_file);
                 self.logging.log_level = self.logging.log_level.or(config.client.logging.log_level);
             }
             DistantSubcommand::Generate(_) => {
-                self.logging.log_file = self.logging.log_file.or(config.generate.logging.log_file);
+                self.logging.log_file = self
+                    .logging
+                    .log_file
+                    .take()
+                    .or(config.generate.logging.log_file);
                 self.logging.log_level =
                     self.logging.log_level.or(config.generate.logging.log_level);
             }
             DistantSubcommand::Manager(_) => {
-                self.logging.log_file = self.logging.log_file.or(config.manager.logging.log_file);
+                self.logging.log_file = self
+                    .logging
+                    .log_file
+                    .take()
+                    .or(config.manager.logging.log_file);
                 self.logging.log_level =
                     self.logging.log_level.or(config.manager.logging.log_level);
             }
             DistantSubcommand::Server(_) => {
-                self.logging.log_file = self.logging.log_file.or(config.server.logging.log_file);
+                self.logging.log_file = self
+                    .logging
+                    .log_file
+                    .take()
+                    .or(config.server.logging.log_file);
                 self.logging.log_level = self.logging.log_level.or(config.server.logging.log_level);
             }
         }

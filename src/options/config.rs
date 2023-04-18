@@ -3,11 +3,7 @@ use crate::constants;
 use anyhow::Context;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
-use toml_edit::Document;
+use std::path::PathBuf;
 
 mod client;
 mod generate;
@@ -74,59 +70,12 @@ impl Config {
     }
 
     /// Loads the specified `path` as a [`Config`]
-    pub async fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    #[cfg(test)]
+    pub async fn load(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let bytes = tokio::fs::read(path.as_ref())
             .await
             .with_context(|| format!("Failed to read config file {:?}", path.as_ref()))?;
         toml_edit::de::from_slice(&bytes).context("Failed to parse config")
-    }
-
-    /// Like `edit` but will succeed without invoking `f` if the path is not found
-    pub async fn edit_if_exists(
-        path: impl AsRef<Path>,
-        f: impl FnOnce(&mut Document) -> io::Result<()>,
-    ) -> io::Result<()> {
-        Self::edit(path, f).await.or_else(|x| {
-            if x.kind() == io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(x)
-            }
-        })
-    }
-
-    /// Loads the specified `path` as a [`Document`], performs changes to the document using `f`,
-    /// and overwrites the `path` with the updated [`Document`]
-    pub async fn edit(
-        path: impl AsRef<Path>,
-        f: impl FnOnce(&mut Document) -> io::Result<()>,
-    ) -> io::Result<()> {
-        let mut document = tokio::fs::read_to_string(path.as_ref())
-            .await?
-            .parse::<Document>()
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
-        f(&mut document)?;
-        tokio::fs::write(path, document.to_string()).await
-    }
-
-    /// Saves the [`Config`] to the specified `path` only if the path points to no file
-    pub async fn save_if_not_found(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        use tokio::io::AsyncWriteExt;
-        let text = toml_edit::ser::to_string_pretty(self)
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
-        tokio::fs::OpenOptions::new()
-            .create_new(true)
-            .open(path)
-            .await?
-            .write_all(text.as_bytes())
-            .await
-    }
-
-    /// Saves the [`Config`] to the specified `path`, overwriting the file if it exists
-    pub async fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        let text = toml_edit::ser::to_string_pretty(self)
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
-        tokio::fs::write(path, text).await
     }
 }
 

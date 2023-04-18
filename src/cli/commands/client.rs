@@ -2,7 +2,7 @@ use crate::cli::common::{
     Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
-use crate::options::{ClientSubcommand, Format};
+use crate::options::{ClientSubcommand, Format, NetworkSettings};
 use crate::{CliError, CliResult};
 use anyhow::Context;
 use distant_core::{
@@ -205,18 +205,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             options,
         } => {
             debug!("Connecting to manager");
-            let mut client = match format {
-                Format::Shell => Client::new(network)
-                    .using_prompt_auth_handler()
-                    .connect()
-                    .await
-                    .context("Failed to connect to manager")?,
-                Format::Json => Client::new(network)
-                    .using_json_auth_handler()
-                    .connect()
-                    .await
-                    .context("Failed to connect to manager")?,
-            };
+            let mut client = connect_to_manager(format, network).await?;
 
             // Trigger our manager to connect to the launched server
             let options = options.unwrap_or_default();
@@ -261,18 +250,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             options,
         } => {
             debug!("Connecting to manager");
-            let mut client = match format {
-                Format::Shell => Client::new(network)
-                    .using_prompt_auth_handler()
-                    .connect()
-                    .await
-                    .context("Failed to connect to manager")?,
-                Format::Json => Client::new(network)
-                    .using_json_auth_handler()
-                    .connect()
-                    .await
-                    .context("Failed to connect to manager")?,
-            };
+            let mut client = connect_to_manager(format, network).await?;
 
             // Grab the host we are connecting to for later use
             let host = destination.host.to_string();
@@ -286,8 +264,19 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 destination.scheme = Some("ssh".to_string());
             }
 
+            // TODO: Handle this more cleanly
+            let mut options = options.unwrap_or_default();
+            if let Some(x) = distant_args {
+                options.insert("distant.args".to_string(), x);
+            }
+            if let Some(x) = distant_bin {
+                options.insert("distant.bin".to_string(), x);
+            }
+            if let Some(x) = distant_bind_server {
+                options.insert("distant.bind_server".to_string(), x.to_string());
+            }
+
             // Start the server using our manager
-            let options = options.unwrap_or_default();
             debug!("Launching server at {} with {}", destination, options);
             let mut new_destination = match format {
                 Format::Shell => client
@@ -593,4 +582,22 @@ async fn use_or_lookup_connection_id(
             }
         }
     }
+}
+
+async fn connect_to_manager(
+    format: Format,
+    network: NetworkSettings,
+) -> anyhow::Result<ManagerClient> {
+    Ok(match format {
+        Format::Shell => Client::new(network)
+            .using_prompt_auth_handler()
+            .connect()
+            .await
+            .context("Failed to connect to manager")?,
+        Format::Json => Client::new(network)
+            .using_json_auth_handler()
+            .connect()
+            .await
+            .context("Failed to connect to manager")?,
+    })
 }
