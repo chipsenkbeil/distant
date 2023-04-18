@@ -681,3 +681,108 @@ impl Default for Format {
         Self::Shell
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distant_action_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+        todo!("Test timeout override");
+    }
+
+    #[test]
+    fn distant_connect_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+        todo!("Test options merge");
+    }
+
+    #[test]
+    fn distant_launch_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+        todo!("Test options merge");
+        todo!("Test distant args override");
+        todo!("Test distant bin override");
+        todo!("Test distant bind-server override");
+    }
+
+    #[test]
+    fn distant_lsp_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_repl_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+        todo!("Test timeout override");
+    }
+
+    #[test]
+    fn distant_shell_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_generate_should_support_merging_with_config() {
+        todo!("Test logging override");
+    }
+
+    #[test]
+    fn distant_manager_capabilities_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_info_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_kill_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_list_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_listen_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+        todo!("Test access control override");
+    }
+
+    #[test]
+    fn distant_manager_select_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_service_should_support_merging_with_config() {
+        todo!("Test logging override");
+    }
+
+    #[test]
+    fn distant_server_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test current-dir override");
+        todo!("Test host override");
+        todo!("Test port override");
+        todo!("Test shutdown override");
+        todo!("Test use-ipv6 override");
+    }
+}
