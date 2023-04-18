@@ -173,7 +173,6 @@ impl DistantManagerCtx {
                 // Connect manager to server
                 let mut connect_cmd = StdCommand::new(bin_path());
                 connect_cmd
-                    .arg("client")
                     .arg("connect")
                     .arg("--log-file")
                     .arg(random_log_file("connect"))
@@ -316,26 +315,26 @@ pub fn ctx() -> DistantManagerCtx {
 
 #[fixture]
 pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
-    let cmd = ctx.new_assert_cmd(vec!["client", "lsp"]);
+    let cmd = ctx.new_assert_cmd(vec!["lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
 pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
-    let cmd = ctx.new_assert_cmd(vec!["client", "action"]);
+    let cmd = ctx.new_assert_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
 pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
-    let cmd = ctx.new_std_cmd(vec!["client", "action"]);
+    let cmd = ctx.new_std_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
 pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
     let child = ctx
-        .new_std_cmd(vec!["client", "repl"])
+        .new_std_cmd(vec!["repl"])
         .arg("--format")
         .arg("json")
         .spawn()
