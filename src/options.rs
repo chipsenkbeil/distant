@@ -26,7 +26,7 @@ pub struct Options {
 
     /// Configuration file to load instead of the default paths
     #[clap(short = 'c', long = "config", global = true, value_parser)]
-    pub config_path: Option<PathBuf>,
+    config_path: Option<PathBuf>,
 
     #[clap(subcommand)]
     pub command: DistantSubcommand,
@@ -78,42 +78,120 @@ impl Options {
 
     /// Updates options based on configuration values.
     fn merge(&mut self, config: Config) {
-        /* pub log_level: Option<LogLevel>,
-        pub log_file: Option<PathBuf>, */
-        match self.command {
-            DistantSubcommand::Client(_) => {
+        macro_rules! update_logging {
+            ($kind:ident) => {{
                 self.logging.log_file = self
                     .logging
                     .log_file
                     .take()
-                    .or(config.client.logging.log_file);
-                self.logging.log_level = self.logging.log_level.or(config.client.logging.log_level);
+                    .or(config.$kind.logging.log_file);
+                self.logging.log_level = self.logging.log_level.or(config.$kind.logging.log_level);
+            }};
+        }
+
+        match &mut self.command {
+            DistantSubcommand::Client(cmd) => {
+                update_logging!(client);
+                match cmd {
+                    ClientSubcommand::Action {
+                        network, timeout, ..
+                    } => {
+                        network.merge(config.client.network);
+                        *timeout = timeout.take().or(config.client.action.timeout);
+                    }
+                    ClientSubcommand::Connect {
+                        network, options, ..
+                    } => {
+                        network.merge(config.client.network);
+                        options.merge(config.client.connect.options, /* keep */ true);
+                    }
+                    ClientSubcommand::Launch {
+                        distant_args,
+                        distant_bin,
+                        distant_bind_server,
+                        network,
+                        options,
+                        ..
+                    } => {
+                        network.merge(config.client.network);
+                        options.merge(config.client.launch.options, /* keep */ true);
+                        *distant_args = distant_args.take().or(config.client.launch.distant.args);
+                        *distant_bin = distant_bin.take().or(config.client.launch.distant.bin);
+                        *distant_bind_server =
+                            distant_bind_server
+                                .take()
+                                .or(config.client.launch.distant.bind_server);
+                    }
+                    ClientSubcommand::Lsp { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::Repl {
+                        network, timeout, ..
+                    } => {
+                        network.merge(config.client.network);
+                        *timeout = timeout.take().or(config.client.action.timeout);
+                    }
+                    ClientSubcommand::Shell { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                }
             }
             DistantSubcommand::Generate(_) => {
-                self.logging.log_file = self
-                    .logging
-                    .log_file
-                    .take()
-                    .or(config.generate.logging.log_file);
-                self.logging.log_level =
-                    self.logging.log_level.or(config.generate.logging.log_level);
+                update_logging!(generate);
             }
-            DistantSubcommand::Manager(_) => {
-                self.logging.log_file = self
-                    .logging
-                    .log_file
-                    .take()
-                    .or(config.manager.logging.log_file);
-                self.logging.log_level =
-                    self.logging.log_level.or(config.manager.logging.log_level);
+            DistantSubcommand::Manager(cmd) => {
+                update_logging!(manager);
+                match cmd {
+                    ManagerSubcommand::Capabilities { network, .. } => {
+                        network.merge(config.manager.network);
+                    }
+                    ManagerSubcommand::Info { network, .. } => {
+                        network.merge(config.manager.network);
+                    }
+                    ManagerSubcommand::Kill { network, .. } => {
+                        network.merge(config.manager.network);
+                    }
+                    ManagerSubcommand::List { network, .. } => {
+                        network.merge(config.manager.network);
+                    }
+                    ManagerSubcommand::Listen {
+                        access, network, ..
+                    } => {
+                        *access = access.take().or(config.manager.access);
+                        network.merge(config.manager.network);
+                    }
+                    ManagerSubcommand::Select { network, .. } => {
+                        network.merge(config.manager.network);
+                    }
+                    ManagerSubcommand::Service(_) => (),
+                }
             }
-            DistantSubcommand::Server(_) => {
-                self.logging.log_file = self
-                    .logging
-                    .log_file
-                    .take()
-                    .or(config.server.logging.log_file);
-                self.logging.log_level = self.logging.log_level.or(config.server.logging.log_level);
+            DistantSubcommand::Server(cmd) => {
+                update_logging!(server);
+                match cmd {
+                    ServerSubcommand::Listen {
+                        current_dir,
+                        host,
+                        port,
+                        shutdown,
+                        use_ipv6,
+                        ..
+                    } => {
+                        *current_dir = current_dir.take().or(config.server.listen.current_dir);
+                        if host.is_default() && config.server.listen.host.is_some() {
+                            *host = Value::Explicit(config.server.listen.host.unwrap());
+                        }
+                        if port.is_default() && config.server.listen.port.is_some() {
+                            *port = Value::Explicit(config.server.listen.port.unwrap());
+                        }
+                        if shutdown.is_default() && config.server.listen.shutdown.is_some() {
+                            *shutdown = Value::Explicit(config.server.listen.shutdown.unwrap());
+                        }
+                        if !*use_ipv6 && config.server.listen.use_ipv6 {
+                            *use_ipv6 = true;
+                        }
+                    }
+                }
             }
         }
     }
@@ -184,8 +262,8 @@ pub enum ClientSubcommand {
         /// facilitating the connection. Options are key-value pairs separated by comma.
         ///
         /// E.g. `key="value",key2="value2"`
-        #[clap(long)]
-        options: Option<Map>,
+        #[clap(long, default_value_t)]
+        options: Map,
 
         #[clap(flatten)]
         network: NetworkSettings,
@@ -236,8 +314,8 @@ pub enum ClientSubcommand {
         /// comma.
         ///
         /// E.g. `key="value",key2="value2"`
-        #[clap(long)]
-        options: Option<Map>,
+        #[clap(long, default_value_t)]
+        options: Map,
 
         #[clap(flatten)]
         network: NetworkSettings,

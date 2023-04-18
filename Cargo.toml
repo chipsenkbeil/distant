@@ -3,7 +3,7 @@ name = "distant"
 description = "Operate on a remote computer through file and process manipulation"
 categories = ["command-line-utilities"]
 keywords = ["cli"]
-version = "0.20.0-alpha.4"
+version = "0.20.0-alpha.5"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -32,7 +32,7 @@ clap_complete = "4.2.0"
 config = { version = "0.13.3", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.3", default-features = false }
-distant-core = { version = "=0.20.0-alpha.4", path = "distant-core", features = ["clap", "schemars"] }
+distant-core = { version = "=0.20.0-alpha.5", path = "distant-core", features = ["clap", "schemars"] }
 directories = "5.0.0"
 flexi_logger = "0.25.3"
 indoc = "2.0.1"
@@ -54,7 +54,7 @@ winsplit = "0.1.0"
 whoami = "1.4.0"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.20.0-alpha.4", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
+distant-ssh2 = { version = "=0.20.0-alpha.5", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.21"

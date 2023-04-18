@@ -208,7 +208,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             let mut client = connect_to_manager(format, network).await?;
 
             // Trigger our manager to connect to the launched server
-            let options = options.unwrap_or_default();
             debug!("Connecting to server at {} with {}", destination, options);
             let id = match format {
                 Format::Shell => client
@@ -247,7 +246,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             distant_bind_server,
             format,
             network,
-            options,
+            mut options,
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network).await?;
@@ -265,7 +264,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             }
 
             // TODO: Handle this more cleanly
-            let mut options = options.unwrap_or_default();
             if let Some(x) = distant_args {
                 options.insert("distant.args".to_string(), x);
             }

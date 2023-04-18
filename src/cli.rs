@@ -13,6 +13,7 @@ pub(crate) use common::Manager;
 pub(crate) use common::Spawner;
 
 /// Represents the primary CLI entrypoint
+#[derive(Debug)]
 pub struct Cli {
     options: Options,
 }

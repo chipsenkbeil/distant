@@ -50,11 +50,9 @@ pub struct NetworkSettings {
 impl NetworkSettings {
     /// Merge these settings with the `other` settings. These settings take priority
     /// over the `other` settings.
-    pub fn merge(self, other: Self) -> Self {
-        Self {
-            unix_socket: self.unix_socket.or(other.unix_socket),
-            windows_pipe: self.windows_pipe.or(other.windows_pipe),
-        }
+    pub fn merge(&mut self, other: Self) {
+        self.unix_socket = self.unix_socket.take().or(other.unix_socket);
+        self.windows_pipe = self.windows_pipe.take().or(other.windows_pipe);
     }
 
     /// Returns option containing reference to unix path if configured

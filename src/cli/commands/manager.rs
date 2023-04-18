@@ -161,14 +161,14 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
             info!(
                 "Starting manager (network = {})",
-                if (cfg!(windows) && network.windows_pipe.is_some())
-                    || (cfg!(unix) && network.unix_socket.is_some())
-                {
-                    "custom"
+                if cfg!(windows) && network.windows_pipe.is_some() {
+                    format!("custom:windows:{}", network.windows_pipe.as_ref().unwrap())
+                } else if cfg!(unix) && network.unix_socket.is_some() {
+                    format!("custom:unix:{:?}", network.unix_socket.as_ref().unwrap())
                 } else if user {
-                    "user"
+                    "user".to_string()
                 } else {
-                    "global"
+                    "global".to_string()
                 }
             );
             let manager_ref = Manager {

@@ -3,7 +3,7 @@ name = "distant-core"
 description = "Core library for distant, enabling operation on a remote computer through file and process manipulation"
 categories = ["network-programming"]
 keywords = ["api", "async"]
-version = "0.20.0-alpha.4"
+version = "0.20.0-alpha.5"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -19,7 +19,7 @@ async-trait = "0.1.68"
 bitflags = "2.0.2"
 bytes = "1.4.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
-distant-net = { version = "=0.20.0-alpha.4", path = "../distant-net" }
+distant-net = { version = "=0.20.0-alpha.5", path = "../distant-net" }
 futures = "0.3.28"
 grep = "0.2.11"
 hex = "0.4.3"
