@@ -1,4 +1,4 @@
-use clap::ValueEnum;
+use crate::options::Format;
 use distant_core::{
     data::{
         ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
@@ -13,30 +13,6 @@ use std::{
     path::PathBuf,
 };
 use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
-pub enum Format {
-    /// Sends and receives data in JSON format
-    Json,
-
-    /// Commands are traditional shell commands and output responses are
-    /// inline with what is expected of a program's output in a shell
-    Shell,
-}
-
-impl Format {
-    /// Returns true if json format
-    pub fn is_json(self) -> bool {
-        matches!(self, Self::Json)
-    }
-}
-
-impl Default for Format {
-    fn default() -> Self {
-        Self::Shell
-    }
-}
 
 #[derive(Default)]
 struct FormatterState {

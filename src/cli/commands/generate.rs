@@ -1,14 +1,10 @@
-use crate::{
-    options::{Config, GenerateSubcommand},
-    CliResult, Options,
-};
+use crate::options::{Config, GenerateSubcommand};
+use crate::{CliResult, Options};
 use anyhow::Context;
 use clap::CommandFactory;
 use clap_complete::generate as clap_generate;
-use distant_core::{
-    net::common::{Request, Response},
-    DistantMsg, DistantRequestData, DistantResponseData,
-};
+use distant_core::net::common::{Request, Response};
+use distant_core::{DistantMsg, DistantRequestData, DistantResponseData};
 use std::{fs, io};
 
 pub fn run(cmd: GenerateSubcommand) -> CliResult {

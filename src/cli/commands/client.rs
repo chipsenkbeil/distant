@@ -1,44 +1,28 @@
-use crate::options::ClientSubcommand;
+use crate::constants::MAX_PIPE_CHUNK_SIZE;
+use crate::options::{ClientSubcommand, Format};
 use crate::{
     cli::{
         client::{JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler},
         Cache, Client,
     },
-    config::{
-        ClientActionConfig, ClientConfig, ClientConnectConfig, ClientLaunchConfig,
-        ClientReplConfig, NetworkConfig,
-    },
-    constants::user::CACHE_FILE_PATH_STR,
     CliError, CliResult,
 };
 use anyhow::Context;
-use clap::{Subcommand, ValueHint};
-use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::{
-    data::{ChangeKindSet, Environment},
-    net::common::{ConnectionId, Destination, Host, Map, Request, Response},
+    data::ChangeKindSet,
+    net::common::{ConnectionId, Host, Map, Request, Response},
     net::manager::ManagerClient,
     DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher, Watcher,
 };
 use log::*;
-use serde_json::{json, Value};
-use std::{
-    io,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use serde_json::json;
+use std::{io, path::Path, time::Duration};
 use tokio::sync::mpsc;
 
-mod buf;
-mod format;
-mod link;
 mod lsp;
 mod shell;
-mod stdin;
 
-pub use format::Format;
-use format::Formatter;
-use link::RemoteProcessLink;
+use super::common::{Formatter, RemoteProcessLink};
 use lsp::Lsp;
 use shell::Shell;
 
@@ -49,21 +33,22 @@ pub fn run(cmd: ClientSubcommand) -> CliResult {
     rt.block_on(async_run(cmd))
 }
 
-async fn async_run(cmd: ClientSubcommand) -> CliResult {
+async fn read_cache(path: &Path) -> Cache {
     // If we get an error, just default anyway
-    let mut cache = Cache::read_from_disk_or_default(cmd.cache_path().to_path_buf())
+    Cache::read_from_disk_or_default(path.to_path_buf())
         .await
-        .unwrap_or_else(|_| Cache::new(cmd.cache_path().to_path_buf()));
+        .unwrap_or_else(|_| Cache::new(path.to_path_buf()))
+}
 
+async fn async_run(cmd: ClientSubcommand) -> CliResult {
     match cmd {
         ClientSubcommand::Action {
-            config: action_config,
+            cache,
             connection,
             network,
             request,
-            ..
+            timeout,
         } => {
-            let network = network.merge(config.network);
             debug!("Connecting to manager");
             let mut client = Client::new(network)
                 .using_prompt_auth_handler()
@@ -71,6 +56,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .context("Failed to connect to manager")?;
 
+            let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
@@ -80,7 +66,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
-            let timeout = match action_config.timeout.or(config.action.timeout) {
+            let timeout = match timeout {
                 Some(timeout) if timeout >= f32::EPSILON => Some(timeout),
                 _ => None,
             };
@@ -117,6 +103,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                         proc.stdin.take(),
                         proc.stdout.take().unwrap(),
                         proc.stderr.take().unwrap(),
+                        MAX_PIPE_CHUNK_SIZE,
                     );
 
                     let status = proc.wait().await.context("Failed to wait for process")?;
@@ -213,14 +200,13 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 }
             }
         }
-        Self::Connect {
-            config: connect_config,
-            network,
-            format,
+        ClientSubcommand::Connect {
+            cache,
             destination,
-            ..
+            format,
+            network,
+            options,
         } => {
-            let network = network.merge(config.network);
             debug!("Connecting to manager");
             let mut client = match format {
                 Format::Shell => Client::new(network)
@@ -235,12 +221,8 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     .context("Failed to connect to manager")?,
             };
 
-            // Merge our connect configs, overwriting anything in the config file with our cli
-            // arguments
-            let mut options = Map::from(config.connect);
-            options.extend(Map::from(connect_config).into_map());
-
             // Trigger our manager to connect to the launched server
+            let options = options.unwrap_or_default();
             debug!("Connecting to server at {} with {}", destination, options);
             let id = match format {
                 Format::Shell => client
@@ -255,6 +237,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             // Mark the server's id as the new default
             debug!("Updating selected connection id in cache to {}", id);
+            let mut cache = read_cache(&cache).await;
             *cache.data.selected = id;
             cache.write_to_disk().await?;
 
@@ -270,14 +253,16 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 ),
             }
         }
-        Self::Launch {
-            config: launch_config,
-            network,
-            format,
+        ClientSubcommand::Launch {
+            cache,
             mut destination,
-            ..
+            distant_args,
+            distant_bin,
+            distant_bind_server,
+            format,
+            network,
+            options,
         } => {
-            let network = network.merge(config.network);
             debug!("Connecting to manager");
             let mut client = match format {
                 Format::Shell => Client::new(network)
@@ -292,11 +277,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     .context("Failed to connect to manager")?,
             };
 
-            // Merge our launch configs, overwriting anything in the config file
-            // with our cli arguments
-            let mut options = Map::from(config.launch);
-            options.extend(Map::from(launch_config).into_map());
-
             // Grab the host we are connecting to for later use
             let host = destination.host.to_string();
 
@@ -310,6 +290,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             }
 
             // Start the server using our manager
+            let options = options.unwrap_or_default();
             debug!("Launching server at {} with {}", destination, options);
             let mut new_destination = match format {
                 Format::Shell => client
@@ -353,6 +334,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             // Mark the server's id as the new default
             debug!("Updating selected connection id in cache to {}", id);
+            let mut cache = read_cache(&cache).await;
             *cache.data.selected = id;
             cache.write_to_disk().await?;
 
@@ -368,15 +350,14 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 ),
             }
         }
-        Self::Lsp {
-            connection,
-            network,
-            current_dir,
-            pty,
+        ClientSubcommand::Lsp {
+            cache,
             cmd,
-            ..
+            connection,
+            current_dir,
+            network,
+            pty,
         } => {
-            let network = network.merge(config.network);
             debug!("Connecting to manager");
             let mut client = Client::new(network)
                 .using_prompt_auth_handler()
@@ -384,6 +365,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .context("Failed to connect to manager")?;
 
+            let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
@@ -395,15 +377,15 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             debug!("Spawning LSP server (pty = {}): {}", pty, cmd);
             Lsp::new(channel.into_client().into_channel())
-                .spawn(cmd, current_dir, pty)
+                .spawn(cmd, current_dir, pty, MAX_PIPE_CHUNK_SIZE)
                 .await?;
         }
-        Self::Repl {
-            config: repl_config,
+        ClientSubcommand::Repl {
+            cache,
             connection,
-            network,
             format,
-            ..
+            network,
+            timeout,
         } => {
             // TODO: Support shell format?
             if !format.is_json() {
@@ -412,7 +394,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 )));
             }
 
-            let network = network.merge(config.network);
             debug!("Connecting to manager");
             let mut client = Client::new(network)
                 .using_json_auth_handler()
@@ -420,10 +401,11 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .context("Failed to connect to manager")?;
 
+            let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
-            let timeout = match repl_config.timeout.or(config.repl.timeout) {
+            let timeout = match timeout {
                 Some(timeout) if timeout >= f32::EPSILON => Some(timeout),
                 _ => None,
             };
@@ -535,145 +517,14 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             debug!("Shutting down repl");
         }
-        Self::Select {
+        ClientSubcommand::Shell {
+            cache,
+            cmd,
             connection,
-            format,
-            network,
-            ..
-        } => match connection {
-            Some(id) => {
-                *cache.data.selected = id;
-                cache.write_to_disk().await?;
-            }
-            None => {
-                let network = network.merge(config.network);
-                debug!("Connecting to manager");
-                let mut client = match format {
-                    Format::Json => Client::new(network)
-                        .using_json_auth_handler()
-                        .connect()
-                        .await
-                        .context("Failed to connect to manager")?,
-                    Format::Shell => Client::new(network)
-                        .using_prompt_auth_handler()
-                        .connect()
-                        .await
-                        .context("Failed to connect to manager")?,
-                };
-                let list = client
-                    .list()
-                    .await
-                    .context("Failed to get a list of managed connections")?;
-
-                if list.is_empty() {
-                    return Err(CliError::Error(anyhow::anyhow!(
-                        "No connection available in manager"
-                    )));
-                }
-
-                // Figure out the current selection
-                let current = list
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, (id, _))| {
-                        if *cache.data.selected == *id {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
-
-                trace!("Building selection prompt of {} choices", list.len());
-                let items: Vec<String> = list
-                    .iter()
-                    .map(|(_, destination)| {
-                        format!(
-                            "{}{}{}",
-                            destination
-                                .scheme
-                                .as_ref()
-                                .map(|scheme| format!(r"{scheme}://"))
-                                .unwrap_or_default(),
-                            destination.host,
-                            destination
-                                .port
-                                .map(|port| format!(":{port}"))
-                                .unwrap_or_default()
-                        )
-                    })
-                    .collect();
-
-                // Prompt for a selection, with None meaning no change
-                let selected = match format {
-                    Format::Shell => {
-                        trace!("Rendering prompt");
-                        Select::with_theme(&ColorfulTheme::default())
-                            .items(&items)
-                            .default(current)
-                            .interact_on_opt(&Term::stderr())
-                            .context("Failed to render prompt")?
-                    }
-
-                    Format::Json => {
-                        // Print out choices
-                        MsgSender::from_stdout()
-                            .send_blocking(&json!({
-                                "type": "select",
-                                "choices": items,
-                                "current": current,
-                            }))
-                            .context("Failed to send JSON choices")?;
-
-                        // Wait for a response
-                        let msg = MsgReceiver::from_stdin()
-                            .recv_blocking::<Value>()
-                            .context("Failed to receive JSON selection")?;
-
-                        // Verify the response type is "selected"
-                        match msg.get("type") {
-                            Some(value) if value == "selected" => msg
-                                .get("choice")
-                                .and_then(|value| value.as_u64())
-                                .map(|choice| choice as usize),
-                            Some(value) => {
-                                return Err(CliError::Error(anyhow::anyhow!(
-                                    "Unexpected 'type' field value: {value}"
-                                )))
-                            }
-                            None => {
-                                return Err(CliError::Error(anyhow::anyhow!(
-                                    "Missing 'type' field"
-                                )))
-                            }
-                        }
-                    }
-                };
-
-                match selected {
-                    Some(index) => {
-                        trace!("Selected choice {}", index);
-                        if let Some((id, _)) = list.iter().nth(index) {
-                            debug!("Updating selected connection id in cache to {}", id);
-                            *cache.data.selected = *id;
-                            cache.write_to_disk().await?;
-                        }
-                    }
-                    None => {
-                        debug!("No change in selection of default connection id");
-                    }
-                }
-            }
-        },
-        Self::Shell {
-            connection,
-            network,
             current_dir,
             environment,
-            cmd,
-            ..
+            network,
         } => {
-            let network = network.merge(config.network);
             debug!("Connecting to manager");
             let mut client = Client::new(network)
                 .using_prompt_auth_handler()
@@ -681,6 +532,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .context("Failed to connect to manager")?;
 
+            let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
@@ -696,7 +548,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 cmd.as_deref().unwrap_or(r"$SHELL")
             );
             Shell::new(channel.into_client().into_channel())
-                .spawn(cmd, environment, current_dir)
+                .spawn(cmd, environment, current_dir, MAX_PIPE_CHUNK_SIZE)
                 .await?;
         }
     }

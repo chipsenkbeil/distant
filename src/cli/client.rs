@@ -1,4 +1,4 @@
-use crate::config::NetworkConfig;
+use crate::options::NetworkSettings;
 use async_trait::async_trait;
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
 use distant_core::net::common::authentication::msg::*;
@@ -14,12 +14,12 @@ mod msg;
 pub use msg::*;
 
 pub struct Client<T> {
-    network: NetworkConfig,
+    network: NetworkSettings,
     auth_handler: T,
 }
 
 impl Client<()> {
-    pub fn new(network: NetworkConfig) -> Self {
+    pub fn new(network: NetworkSettings) -> Self {
         Self {
             network,
             auth_handler: (),
@@ -45,7 +45,7 @@ impl<T> Client<T> {
 
 impl<T: AuthHandler + Clone> Client<T> {
     /// Connect to the manager listening on the socket or windows pipe based on
-    /// the [`NetworkConfig`] provided to the client earlier. Will return a new instance
+    /// the [`NetworkSettings`] provided to the client earlier. Will return a new instance
     /// of the [`ManagerClient`] upon successful connection
     pub async fn connect(self) -> anyhow::Result<ManagerClient> {
         let client = self.connect_impl().await?;

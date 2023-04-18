@@ -1,4 +1,5 @@
-use super::{link::RemoteProcessLink, CliError, CliResult};
+use super::super::common::RemoteProcessLink;
+use super::{CliError, CliResult};
 use anyhow::Context;
 use distant_core::{data::PtySize, DistantChannel, RemoteLspCommand};
 use std::path::PathBuf;

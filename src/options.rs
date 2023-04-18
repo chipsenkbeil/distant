@@ -108,7 +108,7 @@ impl Options {
 #[derive(Debug, Subcommand, IsVariant)]
 pub enum DistantSubcommand {
     /// Perform client commands
-    #[clap(subcommand)]
+    #[clap(flatten)]
     Client(ClientSubcommand),
 
     /// Perform manager commands
@@ -195,7 +195,7 @@ pub enum ClientSubcommand {
         /// by default, this program needs to be available within PATH as
         /// specified when compiling ssh (not your login shell)
         #[clap(name = "distant", long)]
-        bin: Option<String>,
+        distant_bin: Option<String>,
 
         /// Control the IP address that the server binds to.
         ///
@@ -209,11 +209,11 @@ pub enum ClientSubcommand {
         ///
         /// With --bind-server=IP, the server will attempt to bind to the specified IP address.
         #[clap(name = "distant-bind-server", long, value_name = "ssh|any|IP")]
-        bind_server: Option<BindAddress>,
+        distant_bind_server: Option<BindAddress>,
 
         /// Additional arguments to provide to the server
         #[clap(name = "distant-args", long, allow_hyphen_values(true))]
-        args: Option<String>,
+        distant_args: Option<String>,
 
         /// Additional options to provide, typically forwarded to the handler within the manager
         /// facilitating the launch of a distant server. Options are key-value pairs separated by
@@ -288,27 +288,6 @@ pub enum ClientSubcommand {
         format: Format,
     },
 
-    /// Select the active connection
-    Select {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Connection to use, otherwise will prompt to select
-        connection: Option<ConnectionId>,
-
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-    },
-
     /// Specialized treatment of running a remote shell process
     Shell {
         /// Location to store cached data
@@ -348,7 +327,6 @@ impl ClientSubcommand {
             Self::Launch { cache, .. } => cache.as_path(),
             Self::Lsp { cache, .. } => cache.as_path(),
             Self::Repl { cache, .. } => cache.as_path(),
-            Self::Select { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
         }
     }
@@ -360,7 +338,6 @@ impl ClientSubcommand {
             Self::Launch { network, .. } => network,
             Self::Lsp { network, .. } => network,
             Self::Repl { network, .. } => network,
-            Self::Select { network, .. } => network,
             Self::Shell { network, .. } => network,
         }
     }
@@ -397,6 +374,27 @@ pub enum GenerateSubcommand {
 /// Subcommands for `distant manager`.
 #[derive(Debug, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
+    /// Select the active connection
+    Select {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Connection to use, otherwise will prompt to select
+        connection: Option<ConnectionId>,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
     /// Interact with a manager being run by a service management platform
     #[clap(subcommand)]
     Service(ManagerServiceSubcommand),

@@ -1,9 +1,8 @@
-use crate::options::{ManagerServiceSubcommand, ManagerSubcommand};
-use crate::{
-    cli::{Cache, Client, Manager},
-    CliResult,
-};
+use crate::cli::{Cache, Client, Manager};
+use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
+use crate::{CliError, CliResult};
 use anyhow::Context;
+use dialoguer::{console::Term, theme::ColorfulTheme, Select};
 use distant_core::net::common::ConnectionId;
 use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
 use log::*;
@@ -45,7 +44,6 @@ fn run_daemon(_cmd: ManagerSubcommand) -> CliResult {
 
 #[cfg(unix)]
 fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
-    use crate::CliError;
     use fork::{daemon, Fork};
 
     debug!("Forking process");
@@ -341,5 +339,134 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             debug!("Connection killed");
             Ok(())
         }
+        ManagerSubcommand::Select {
+            cache,
+            connection,
+            format,
+            network,
+        } => match connection {
+            Some(id) => {
+                *cache.data.selected = id;
+                cache.write_to_disk().await?;
+            }
+            None => {
+                debug!("Connecting to manager");
+                let mut client = match format {
+                    Format::Json => Client::new(network)
+                        .using_json_auth_handler()
+                        .connect()
+                        .await
+                        .context("Failed to connect to manager")?,
+                    Format::Shell => Client::new(network)
+                        .using_prompt_auth_handler()
+                        .connect()
+                        .await
+                        .context("Failed to connect to manager")?,
+                };
+                let list = client
+                    .list()
+                    .await
+                    .context("Failed to get a list of managed connections")?;
+
+                if list.is_empty() {
+                    return Err(CliError::Error(anyhow::anyhow!(
+                        "No connection available in manager"
+                    )));
+                }
+
+                // Figure out the current selection
+                let current = list
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, (id, _))| {
+                        if *cache.data.selected == *id {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+
+                trace!("Building selection prompt of {} choices", list.len());
+                let items: Vec<String> = list
+                    .iter()
+                    .map(|(_, destination)| {
+                        format!(
+                            "{}{}{}",
+                            destination
+                                .scheme
+                                .as_ref()
+                                .map(|scheme| format!(r"{scheme}://"))
+                                .unwrap_or_default(),
+                            destination.host,
+                            destination
+                                .port
+                                .map(|port| format!(":{port}"))
+                                .unwrap_or_default()
+                        )
+                    })
+                    .collect();
+
+                // Prompt for a selection, with None meaning no change
+                let selected = match format {
+                    Format::Shell => {
+                        trace!("Rendering prompt");
+                        Select::with_theme(&ColorfulTheme::default())
+                            .items(&items)
+                            .default(current)
+                            .interact_on_opt(&Term::stderr())
+                            .context("Failed to render prompt")?
+                    }
+
+                    Format::Json => {
+                        // Print out choices
+                        MsgSender::from_stdout()
+                            .send_blocking(&json!({
+                                "type": "select",
+                                "choices": items,
+                                "current": current,
+                            }))
+                            .context("Failed to send JSON choices")?;
+
+                        // Wait for a response
+                        let msg = MsgReceiver::from_stdin()
+                            .recv_blocking::<Value>()
+                            .context("Failed to receive JSON selection")?;
+
+                        // Verify the response type is "selected"
+                        match msg.get("type") {
+                            Some(value) if value == "selected" => msg
+                                .get("choice")
+                                .and_then(|value| value.as_u64())
+                                .map(|choice| choice as usize),
+                            Some(value) => {
+                                return Err(CliError::Error(anyhow::anyhow!(
+                                    "Unexpected 'type' field value: {value}"
+                                )))
+                            }
+                            None => {
+                                return Err(CliError::Error(anyhow::anyhow!(
+                                    "Missing 'type' field"
+                                )))
+                            }
+                        }
+                    }
+                };
+
+                match selected {
+                    Some(index) => {
+                        trace!("Selected choice {}", index);
+                        if let Some((id, _)) = list.iter().nth(index) {
+                            debug!("Updating selected connection id in cache to {}", id);
+                            *cache.data.selected = *id;
+                            cache.write_to_disk().await?;
+                        }
+                    }
+                    None => {
+                        debug!("No change in selection of default connection id");
+                    }
+                }
+            }
+        },
     }
 }
