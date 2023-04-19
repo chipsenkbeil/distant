@@ -2,18 +2,19 @@ use crate::cli::common::{
     Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
-use crate::options::{ClientSubcommand, Format, NetworkSettings};
+use crate::options::{ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings};
 use crate::{CliError, CliResult};
 use anyhow::Context;
-use distant_core::{
-    data::ChangeKindSet,
-    net::common::{ConnectionId, Host, Map, Request, Response},
-    net::manager::ManagerClient,
-    DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher, Watcher,
-};
+use distant_core::data::{FileType, SearchQuery, SystemInfo};
+use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
+use distant_core::net::manager::ManagerClient;
+use distant_core::{DistantChannel, DistantChannelExt};
+use distant_core::{DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher};
 use log::*;
 use serde_json::json;
+use std::io::Write;
 use std::{io, path::Path, time::Duration};
+use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
 use tokio::sync::mpsc;
 
 mod lsp;
@@ -39,164 +40,6 @@ async fn read_cache(path: &Path) -> Cache {
 
 async fn async_run(cmd: ClientSubcommand) -> CliResult {
     match cmd {
-        ClientSubcommand::Action {
-            cache,
-            connection,
-            network,
-            request,
-            timeout,
-        } => {
-            debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
-
-            let mut cache = read_cache(&cache).await;
-            let connection_id =
-                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
-
-            debug!("Opening channel to connection {}", connection_id);
-            let channel = client
-                .open_raw_channel(connection_id)
-                .await
-                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
-
-            let timeout = match timeout {
-                Some(timeout) if timeout >= f32::EPSILON => Some(timeout),
-                _ => None,
-            };
-
-            debug!(
-                "Timeout configured to be {}",
-                match timeout {
-                    Some(secs) => format!("{secs}s"),
-                    None => "none".to_string(),
-                }
-            );
-
-            let mut formatter = Formatter::shell();
-
-            debug!("Sending request {:?}", request);
-            match request {
-                DistantRequestData::ProcSpawn {
-                    cmd,
-                    environment,
-                    current_dir,
-                    pty,
-                } => {
-                    debug!("Special request spawning {:?}", cmd);
-                    let mut proc = RemoteCommand::new()
-                        .environment(environment)
-                        .current_dir(current_dir)
-                        .pty(pty)
-                        .spawn(channel.into_client().into_channel(), cmd.as_str())
-                        .await
-                        .with_context(|| format!("Failed to spawn {cmd}"))?;
-
-                    // Now, map the remote process' stdin/stdout/stderr to our own process
-                    let link = RemoteProcessLink::from_remote_pipes(
-                        proc.stdin.take(),
-                        proc.stdout.take().unwrap(),
-                        proc.stderr.take().unwrap(),
-                        MAX_PIPE_CHUNK_SIZE,
-                    );
-
-                    let status = proc.wait().await.context("Failed to wait for process")?;
-
-                    // Shut down our link
-                    link.shutdown().await;
-
-                    if !status.success {
-                        if let Some(code) = status.code {
-                            return Err(CliError::Exit(code as u8));
-                        } else {
-                            return Err(CliError::FAILURE);
-                        }
-                    }
-                }
-                DistantRequestData::Search { query } => {
-                    debug!("Special request creating searcher for {:?}", query);
-                    let mut searcher =
-                        Searcher::search(channel.into_client().into_channel(), query)
-                            .await
-                            .context("Failed to start search")?;
-
-                    // Continue to receive and process matches
-                    while let Some(m) = searcher.next().await {
-                        // TODO: Provide a cleaner way to print just a match
-                        let res = Response::new(
-                            "".to_string(),
-                            DistantMsg::Single(DistantResponseData::SearchResults {
-                                id: 0,
-                                matches: vec![m],
-                            }),
-                        );
-
-                        formatter.print(res).context("Failed to print match")?;
-                    }
-                }
-                DistantRequestData::Watch {
-                    path,
-                    recursive,
-                    only,
-                    except,
-                } => {
-                    debug!("Special request creating watcher for {:?}", path);
-                    let mut watcher = Watcher::watch(
-                        channel.into_client().into_channel(),
-                        path.as_path(),
-                        recursive,
-                        only.into_iter().collect::<ChangeKindSet>(),
-                        except.into_iter().collect::<ChangeKindSet>(),
-                    )
-                    .await
-                    .with_context(|| format!("Failed to watch {path:?}"))?;
-
-                    // Continue to receive and process changes
-                    while let Some(change) = watcher.next().await {
-                        // TODO: Provide a cleaner way to print just a change
-                        let res = Response::new(
-                            "".to_string(),
-                            DistantMsg::Single(DistantResponseData::Changed(change)),
-                        );
-
-                        formatter.print(res).context("Failed to print change")?;
-                    }
-                }
-                request => {
-                    let response = channel
-                        .into_client()
-                        .into_channel()
-                        .send_timeout(
-                            DistantMsg::Single(request),
-                            timeout.map(Duration::from_secs_f32),
-                        )
-                        .await
-                        .context("Failed to send request")?;
-
-                    debug!("Got response {:?}", response);
-
-                    // NOTE: We expect a single response, and if that is an error then
-                    //       we want to pass that error up the stack
-                    let id = response.id;
-                    let origin_id = response.origin_id;
-                    match response.payload {
-                        DistantMsg::Single(DistantResponseData::Error(x)) => {
-                            return Err(CliError::Error(anyhow::anyhow!(x)));
-                        }
-                        payload => formatter
-                            .print(Response {
-                                id,
-                                origin_id,
-                                payload,
-                            })
-                            .context("Failed to print response")?,
-                    }
-                }
-            }
-        }
         ClientSubcommand::Connect {
             cache,
             destination,
@@ -333,36 +176,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     .unwrap()
                 ),
             }
-        }
-        ClientSubcommand::Lsp {
-            cache,
-            cmd,
-            connection,
-            current_dir,
-            network,
-            pty,
-        } => {
-            debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
-
-            let mut cache = read_cache(&cache).await;
-            let connection_id =
-                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
-
-            debug!("Opening channel to connection {}", connection_id);
-            let channel = client
-                .open_raw_channel(connection_id)
-                .await
-                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
-
-            debug!("Spawning LSP server (pty = {}): {}", pty, cmd);
-            Lsp::new(channel.into_client().into_channel())
-                .spawn(cmd, current_dir, pty, MAX_PIPE_CHUNK_SIZE)
-                .await?;
         }
         ClientSubcommand::Repl {
             cache,
@@ -503,8 +316,8 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
         }
         ClientSubcommand::Shell {
             cache,
-            cmd,
             connection,
+            cmd,
             current_dir,
             environment,
             network,
@@ -526,6 +339,9 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
+            // Convert cmd into string
+            let cmd = cmd.map(Into::into);
+
             debug!(
                 "Spawning shell (environment = {:?}): {}",
                 environment,
@@ -534,6 +350,498 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             Shell::new(channel.into_client().into_channel())
                 .spawn(cmd, environment, current_dir, MAX_PIPE_CHUNK_SIZE)
                 .await?;
+        }
+        ClientSubcommand::Spawn {
+            cache,
+            connection,
+            cmd,
+            current_dir,
+            environment,
+            lsp,
+            pty,
+            network,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            if lsp {
+                debug!(
+                    "Spawning LSP server (pty = {}, cwd = {:?}): {}",
+                    pty, current_dir, cmd
+                );
+                Lsp::new(channel.into_client().into_channel())
+                    .spawn(cmd, current_dir, pty, MAX_PIPE_CHUNK_SIZE)
+                    .await?;
+            } else if pty {
+                // Convert cmd into string
+                let cmd = String::from(cmd);
+
+                debug!(
+                    "Spawning pty process (environment = {:?}, cwd = {:?}): {}",
+                    environment, current_dir, cmd
+                );
+                Shell::new(channel.into_client().into_channel())
+                    .spawn(cmd, environment, current_dir, MAX_PIPE_CHUNK_SIZE)
+                    .await?;
+            } else {
+                debug!(
+                    "Spawning regular process (environment = {:?}, cwd = {:?}): {}",
+                    environment, current_dir, cmd
+                );
+                let mut proc = RemoteCommand::new()
+                    .environment(environment)
+                    .current_dir(current_dir)
+                    .pty(None)
+                    .spawn(channel.into_client().into_channel(), cmd.as_str())
+                    .await
+                    .with_context(|| format!("Failed to spawn {cmd}"))?;
+
+                // Now, map the remote process' stdin/stdout/stderr to our own process
+                let link = RemoteProcessLink::from_remote_pipes(
+                    proc.stdin.take(),
+                    proc.stdout.take().unwrap(),
+                    proc.stderr.take().unwrap(),
+                    MAX_PIPE_CHUNK_SIZE,
+                );
+
+                let status = proc.wait().await.context("Failed to wait for process")?;
+
+                // Shut down our link
+                link.shutdown().await;
+
+                if !status.success {
+                    if let Some(code) = status.code {
+                        return Err(CliError::Exit(code as u8));
+                    } else {
+                        return Err(CliError::FAILURE);
+                    }
+                }
+            }
+        }
+        ClientSubcommand::SystemInfo {
+            cache,
+            connection,
+            network,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Retrieving system information");
+            let SystemInfo {
+                family,
+                os,
+                arch,
+                current_dir,
+                main_separator,
+                username,
+                shell,
+            } = channel
+                .into_client()
+                .into_channel()
+                .system_info()
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to retrieve system information using connection {connection_id}"
+                    )
+                })?;
+
+            let mut out = std::io::stdout();
+
+            out.write_all(
+                &format!(
+                    concat!(
+                        "Family: {:?}\n",
+                        "Operating System: {:?}\n",
+                        "Arch: {:?}\n",
+                        "Cwd: {:?}\n",
+                        "Path Sep: {:?}\n",
+                        "Username: {:?}\n",
+                        "Shell: {:?}"
+                    ),
+                    family, os, arch, current_dir, main_separator, username, shell
+                )
+                .into_bytes(),
+            )
+            .context("Failed to write system information to stdout")?;
+            out.flush().context("Failed to flush stdout")?;
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Copy {
+            cache,
+            connection,
+            network,
+            src,
+            dst,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Copying {src:?} to {dst:?}");
+            channel
+                .into_client()
+                .into_channel()
+                .copy(src.as_path(), dst.as_path())
+                .await
+                .with_context(|| {
+                    format!("Failed to copy {src:?} to {dst:?} using connection {connection_id}")
+                })?;
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::MakeDir {
+            cache,
+            connection,
+            network,
+            path,
+            all,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Making directory {path:?} (all = {all})");
+            channel
+                .into_client()
+                .into_channel()
+                .create_dir(path.as_path(), all)
+                .await
+                .with_context(|| {
+                    format!("Failed to make directory {path:?} using connection {connection_id}")
+                })?;
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Read {
+            cache,
+            connection,
+            network,
+            path,
+            depth,
+            absolute,
+            canonicalize,
+            include_root,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let mut channel: DistantChannel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
+                .into_client()
+                .into_channel();
+
+            // NOTE: We don't know whether the path is for a file or directory, so we try both
+            //       at the same time and return the first result, or fail if both fail!
+            debug!(
+                "Reading {path:?} (depth = {}, absolute = {}, canonicalize = {}, include_root = {})",
+                depth, absolute, canonicalize, include_root
+            );
+            let results = channel
+                .send(DistantMsg::Batch(vec![
+                    DistantRequestData::DirRead {
+                        path: path.to_path_buf(),
+                        depth,
+                        absolute,
+                        canonicalize,
+                        include_root,
+                    },
+                    DistantRequestData::FileRead {
+                        path: path.to_path_buf(),
+                    },
+                ]))
+                .await
+                .with_context(|| {
+                    format!("Failed to read {path:?} using connection {connection_id}")
+                })?;
+
+            let mut errors = Vec::new();
+            for response in results
+                .payload
+                .into_batch()
+                .context("Got single response to batch request")?
+            {
+                match response {
+                    DistantResponseData::DirEntries { entries, .. } => {
+                        #[derive(Tabled)]
+                        struct EntryRow {
+                            ty: String,
+                            path: String,
+                        }
+
+                        let data = Table::new(entries.into_iter().map(|entry| EntryRow {
+                            ty: String::from(match entry.file_type {
+                                FileType::Dir => "<DIR>",
+                                FileType::File => "",
+                                FileType::Symlink => "<SYMLINK>",
+                            }),
+                            path: entry.path.to_string_lossy().to_string(),
+                        }))
+                        .with(Style::blank())
+                        .with(Disable::row(Rows::new(..1)))
+                        .with(Modify::new(Rows::new(..)).with(Alignment::left()))
+                        .to_string()
+                        .into_bytes();
+
+                        let mut out = std::io::stdout();
+                        out.write_all(&data)
+                            .context("Failed to write directory contents to stdout")?;
+                        out.flush().context("Failed to flush stdout")?;
+                    }
+                    DistantResponseData::Blob { data } => {
+                        let mut out = std::io::stdout();
+                        out.write_all(&data)
+                            .context("Failed to write file contents to stdout")?;
+                        out.flush().context("Failed to flush stdout")?;
+                    }
+                    DistantResponseData::Error(x) => errors.push(x),
+                    _ => continue,
+                }
+            }
+
+            if let Some(x) = errors.first() {
+                return Err(CliError::from(anyhow::anyhow!(x.to_io_error())));
+            }
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Remove {
+            cache,
+            connection,
+            network,
+            path,
+            force,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Removing {path:?} (force = {force}");
+            channel
+                .into_client()
+                .into_channel()
+                .remove(path.as_path(), force)
+                .await
+                .with_context(|| {
+                    format!("Failed to remove {path:?} using connection {connection_id}")
+                })?;
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Rename {
+            cache,
+            connection,
+            network,
+            src,
+            dst,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Renaming {src:?} to {dst:?}");
+            channel
+                .into_client()
+                .into_channel()
+                .rename(src.as_path(), dst.as_path())
+                .await
+                .with_context(|| {
+                    format!("Failed to rename {src:?} to {dst:?} using connection {connection_id}")
+                })?;
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Search {
+            cache,
+            connection,
+            network,
+            target,
+            condition,
+            options,
+            paths,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            let mut formatter = Formatter::shell();
+            let query = SearchQuery {
+                target: target.into(),
+                condition,
+                paths,
+                options: options.into(),
+            };
+
+            let mut searcher = Searcher::search(channel.into_client().into_channel(), query)
+                .await
+                .context("Failed to start search")?;
+
+            // Continue to receive and process matches
+            while let Some(m) = searcher.next().await {
+                // TODO: Provide a cleaner way to print just a match
+                let res = Response::new(
+                    "".to_string(),
+                    DistantMsg::Single(DistantResponseData::SearchResults {
+                        id: 0,
+                        matches: vec![m],
+                    }),
+                );
+
+                formatter.print(res).context("Failed to print match")?;
+            }
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Write {
+            cache,
+            connection,
+            network,
+            append,
+            path,
+            data,
+        }) => {
+            let data = match data {
+                Some(x) => x,
+                None => {
+                    debug!("No data provided, reading from stdin");
+                    use std::io::Read;
+                    let mut buf = Vec::new();
+                    std::io::stdin()
+                        .read_to_end(&mut buf)
+                        .context("Failed to read stdin")?;
+                    buf
+                }
+            };
+
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            if append {
+                debug!("Appending contents to {path:?}");
+                channel
+                    .into_client()
+                    .into_channel()
+                    .append_file(path.as_path(), data)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to write to {path:?} using connection {connection_id}")
+                    })?;
+            } else {
+                debug!("Writing contents to {path:?}");
+                channel
+                    .into_client()
+                    .into_channel()
+                    .write_file(path.as_path(), data)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to write to {path:?} using connection {connection_id}")
+                    })?;
+            }
         }
     }
 

@@ -22,13 +22,6 @@ log_level = "info"
 # manager (Windows only)
 # windows_pipe = "some_name"
 
-# Configuration related to the client's action command
-[client.action]
-
-# Maximum time (in seconds) to wait for a network request before timing out
-# where 0 indicates no timeout will occur
-timeout = 0
-
 # Configuration related to the client's connect command
 [client.connect]
 

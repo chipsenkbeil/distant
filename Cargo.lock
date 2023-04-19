@@ -898,7 +898,6 @@ dependencies = [
  "async-trait",
  "bitflags 2.0.2",
  "bytes",
- "clap",
  "derive_more",
  "distant-net",
  "env_logger",

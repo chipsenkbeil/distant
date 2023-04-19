@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.20.0-alpha.5]
 
+### Added
+
+- CLI now offers the following new subcommands
+  - `distant fs copy` is a refactoring of `distant client action copy`
+  - `distant fs read` is a refactoring of `distant client action file-read`,
+    `distant client action file-read-text`, and `distant client action dir-read`
+  - `distant fs rename` is a refactoring of `distant client action rename`
+  - `distant fs write` is a refactoring of `distant client action file-write`,
+    `distant client action file-write-text`, `distant client action file-append`,
+  - `distant fs make-dir` is a refactoring of `distant client action dir-create`
+  - `distant fs remove` is a refactoring of `distant client action remove`
+  - `distant fs search` is a refactoring of `distant client action search`
+  - `distant spawn` is a refactoring of `distant client action proc-spawn`
+    with `distant client lsp` merged in using the `--lsp` flag
+  - `distant system-info` is a refactoring of `distant client action system-info`
+
 ### Changed
 
 - CLI subcommands refactored
@@ -19,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `distant client lsp` moved to `distant lsp`
   - `distant client repl` moved to `distant repl`
   - `distant client shell` moved to `distant shell`
+
+### Removed
+
+- `distant-core` crate no longer offers the `clap` feature
 
 ## [0.20.0-alpha.4] - 2023-03-31
 

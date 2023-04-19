@@ -3,7 +3,7 @@ use crate::constants::user::CACHE_FILE_PATH_STR;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
 use derive_more::IsVariant;
-use distant_core::data::{DistantRequestData, Environment};
+use distant_core::data::Environment;
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
 use distant_core::net::server::Shutdown;
 use service_manager::ServiceManagerKind;
@@ -93,17 +93,22 @@ impl Options {
             DistantSubcommand::Client(cmd) => {
                 update_logging!(client);
                 match cmd {
-                    ClientSubcommand::Action {
-                        network, timeout, ..
-                    } => {
-                        network.merge(config.client.network);
-                        *timeout = timeout.take().or(config.client.action.timeout);
-                    }
                     ClientSubcommand::Connect {
                         network, options, ..
                     } => {
                         network.merge(config.client.network);
                         options.merge(config.client.connect.options, /* keep */ true);
+                    }
+                    ClientSubcommand::FileSystem(
+                        ClientFileSystemSubcommand::Copy { network, .. }
+                        | ClientFileSystemSubcommand::MakeDir { network, .. }
+                        | ClientFileSystemSubcommand::Read { network, .. }
+                        | ClientFileSystemSubcommand::Remove { network, .. }
+                        | ClientFileSystemSubcommand::Rename { network, .. }
+                        | ClientFileSystemSubcommand::Search { network, .. }
+                        | ClientFileSystemSubcommand::Write { network, .. },
+                    ) => {
+                        network.merge(config.client.network);
                     }
                     ClientSubcommand::Launch {
                         distant_args,
@@ -122,9 +127,6 @@ impl Options {
                                 .take()
                                 .or(config.client.launch.distant.bind_server);
                     }
-                    ClientSubcommand::Lsp { network, .. } => {
-                        network.merge(config.client.network);
-                    }
                     ClientSubcommand::Repl {
                         network, timeout, ..
                     } => {
@@ -132,6 +134,12 @@ impl Options {
                         *timeout = timeout.take().or(config.client.repl.timeout);
                     }
                     ClientSubcommand::Shell { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::Spawn { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::SystemInfo { network, .. } => {
                         network.merge(config.client.network);
                     }
                 }
@@ -221,32 +229,6 @@ pub enum DistantSubcommand {
 /// Subcommands for `distant client`.
 #[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ClientSubcommand {
-    /// Performs some action on a remote machine
-    Action {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Represents the maximum time (in seconds) to wait for a network request before timing out.
-        #[clap(long)]
-        timeout: Option<f32>,
-
-        /// Specify a connection being managed
-        #[clap(long)]
-        connection: Option<ConnectionId>,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        #[clap(subcommand)]
-        request: DistantRequestData,
-    },
-
     /// Requests that active manager connects to the server at the specified destination
     Connect {
         /// Location to store cached data
@@ -273,6 +255,10 @@ pub enum ClientSubcommand {
 
         destination: Box<Destination>,
     },
+
+    /// Subcommands for file system operations
+    #[clap(subcommand, name = "fs")]
+    FileSystem(ClientFileSystemSubcommand),
 
     /// Launches the server-portion of the binary on a remote machine
     Launch {
@@ -324,35 +310,6 @@ pub enum ClientSubcommand {
         format: Format,
 
         destination: Box<Destination>,
-    },
-
-    /// Specialized treatment of running a remote LSP process
-    Lsp {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Specify a connection being managed
-        #[clap(long)]
-        connection: Option<ConnectionId>,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        /// Alternative current directory for the remote process
-        #[clap(long)]
-        current_dir: Option<PathBuf>,
-
-        /// If provided, will run LSP in a pty
-        #[clap(long)]
-        pty: bool,
-
-        cmd: String,
     },
 
     /// Runs actions in a read-eval-print loop
@@ -409,36 +366,349 @@ pub enum ClientSubcommand {
         environment: Environment,
 
         /// Optional command to run instead of $SHELL
-        cmd: Option<String>,
+        cmd: Option<Cmd>,
+    },
+
+    /// Spawn a process on the remote machine
+    Spawn {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// If specified, will assume the remote process is a LSP server
+        /// and will translate paths that are local into distant:// and vice versa
+        #[clap(long)]
+        lsp: bool,
+
+        /// If specified, will spawn process using a pseudo tty
+        #[clap(long)]
+        pty: bool,
+
+        /// Alternative current directory for the remote process
+        #[clap(long)]
+        current_dir: Option<PathBuf>,
+
+        /// Environment variables to provide to the shell
+        #[clap(long, default_value_t)]
+        environment: Environment,
+
+        /// Command to run
+        cmd: Cmd,
+    },
+
+    SystemInfo {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
     },
 }
 
 impl ClientSubcommand {
     pub fn cache_path(&self) -> &Path {
         match self {
-            Self::Action { cache, .. } => cache.as_path(),
             Self::Connect { cache, .. } => cache.as_path(),
+            Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
-            Self::Lsp { cache, .. } => cache.as_path(),
             Self::Repl { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
+            Self::Spawn { cache, .. } => cache.as_path(),
+            Self::SystemInfo { cache, .. } => cache.as_path(),
         }
     }
 
     pub fn network_settings(&self) -> &NetworkSettings {
         match self {
-            Self::Action { network, .. } => network,
             Self::Connect { network, .. } => network,
+            Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
-            Self::Lsp { network, .. } => network,
             Self::Repl { network, .. } => network,
             Self::Shell { network, .. } => network,
+            Self::Spawn { network, .. } => network,
+            Self::SystemInfo { network, .. } => network,
+        }
+    }
+}
+
+/// Subcommands for `distant fs`.
+#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
+pub enum ClientFileSystemSubcommand {
+    /// Copies a file or directory on the remote machine
+    Copy {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// The path to the file or directory on the remote machine
+        src: PathBuf,
+
+        /// New location on the remote machine for copy of file or directory
+        dst: PathBuf,
+    },
+
+    /// Creates a directory on the remote machine
+    MakeDir {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Whether or not to create all parent directories
+        #[clap(long)]
+        all: bool,
+
+        /// The path to the directory on the remote machine
+        path: PathBuf,
+    },
+
+    /// Reads the contents of a file or retrieves the entries within a directory on the remote
+    /// machine
+    Read {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Maximum depth to traverse with 0 indicating there is no maximum
+        /// depth and 1 indicating the most immediate children within the
+        /// directory.
+        ///
+        /// (directory only)
+        #[clap(long, default_value_t = 1)]
+        depth: usize,
+
+        /// Whether or not to return absolute or relative paths.
+        ///
+        /// (directory only)
+        #[clap(long)]
+        absolute: bool,
+
+        /// Whether or not to canonicalize the resulting paths, meaning
+        /// returning the canonical, absolute form of a path with all
+        /// intermediate components normalized and symbolic links resolved.
+        ///
+        /// Note that the flag absolute must be true to have absolute paths
+        /// returned, even if canonicalize is flagged as true.
+        ///
+        /// (directory only)
+        #[clap(long)]
+        canonicalize: bool,
+
+        /// Whether or not to include the root directory in the retrieved entries.
+        ///
+        /// If included, the root directory will also be a canonicalized,
+        /// absolute path and will not follow any of the other flags.
+        ///
+        /// (directory only)
+        #[clap(long)]
+        include_root: bool,
+
+        /// The path to the file or directory on the remote machine.
+        path: PathBuf,
+    },
+
+    /// Removes a file or directory on the remote machine
+    Remove {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Whether or not to remove all contents within directory if is a directory.
+        /// Does nothing different for files
+        #[clap(long)]
+        force: bool,
+
+        /// The path to the file or directory on the remote machine
+        path: PathBuf,
+    },
+
+    /// Moves/renames a file or directory on the remote machine
+    Rename {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// The path to the file or directory on the remote machine
+        src: PathBuf,
+
+        /// New location on the remote machine for the file or directory
+        dst: PathBuf,
+    },
+
+    /// Search files & directories on the remote machine
+    Search {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Kind of data to examine using condition
+        #[clap(long, value_enum, default_value_t = CliSearchQueryTarget::Contents)]
+        target: CliSearchQueryTarget,
+
+        /// Condition to meet to be considered a match
+        #[clap(name = "pattern")]
+        condition: CliSearchQueryCondition,
+
+        /// Options to apply to the query
+        #[clap(flatten)]
+        options: CliSearchQueryOptions,
+
+        /// Paths in which to perform the query
+        #[clap(default_value = ".")]
+        paths: Vec<PathBuf>,
+    },
+
+    /// Writes the contents to a file on the remote machine
+    Write {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// If specified, will append to a file versus overwriting it
+        #[clap(long)]
+        append: bool,
+
+        /// The path to the file on the remote machine
+        path: PathBuf,
+
+        /// Data for server-side writing of content. If not provided, will read from stdin.
+        data: Option<Vec<u8>>,
+    },
+}
+
+impl ClientFileSystemSubcommand {
+    pub fn cache_path(&self) -> &Path {
+        match self {
+            Self::Copy { cache, .. } => cache.as_path(),
+            Self::MakeDir { cache, .. } => cache.as_path(),
+            Self::Read { cache, .. } => cache.as_path(),
+            Self::Remove { cache, .. } => cache.as_path(),
+            Self::Rename { cache, .. } => cache.as_path(),
+            Self::Search { cache, .. } => cache.as_path(),
+            Self::Write { cache, .. } => cache.as_path(),
+        }
+    }
+
+    pub fn network_settings(&self) -> &NetworkSettings {
+        match self {
+            Self::Copy { network, .. } => network,
+            Self::MakeDir { network, .. } => network,
+            Self::Read { network, .. } => network,
+            Self::Remove { network, .. } => network,
+            Self::Rename { network, .. } => network,
+            Self::Search { network, .. } => network,
+            Self::Write { network, .. } => network,
         }
     }
 }
 
 /// Subcommands for `distant generate`.
-#[derive(Debug, PartialEq, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
 pub enum GenerateSubcommand {
     /// Generate configuration file with base settings
     Config {
@@ -466,7 +736,7 @@ pub enum GenerateSubcommand {
 }
 
 /// Subcommands for `distant manager`.
-#[derive(Debug, PartialEq, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
     /// Select the active connection
     Select {
@@ -562,7 +832,7 @@ pub enum ManagerSubcommand {
 }
 
 /// Subcommands for `distant manager service`.
-#[derive(Debug, PartialEq, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
 pub enum ManagerServiceSubcommand {
     /// Start the manager as a service
     Start {
@@ -702,122 +972,6 @@ mod tests {
     use distant_core::net::common::Host;
     use distant_core::net::map;
     use std::time::Duration;
-
-    #[test]
-    fn distant_action_should_support_merging_with_config() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: None,
-                log_level: None,
-            },
-            command: DistantSubcommand::Client(ClientSubcommand::Action {
-                cache: PathBuf::new(),
-                connection: None,
-                timeout: None,
-                network: NetworkSettings {
-                    unix_socket: None,
-                    windows_pipe: None,
-                },
-                request: DistantRequestData::SystemInfo {},
-            }),
-        };
-
-        options.merge(Config {
-            client: ClientConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                action: ClientActionConfig { timeout: Some(5.0) },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                command: DistantSubcommand::Client(ClientSubcommand::Action {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    timeout: Some(5.0),
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("config-unix-socket")),
-                        windows_pipe: Some(String::from("config-windows-pipe")),
-                    },
-                    request: DistantRequestData::SystemInfo {},
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_action_should_prioritize_explicit_cli_options_when_merging() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: Some(PathBuf::from("cli-log-file")),
-                log_level: Some(LogLevel::Info),
-            },
-            command: DistantSubcommand::Client(ClientSubcommand::Action {
-                cache: PathBuf::new(),
-                connection: None,
-                timeout: Some(99.0),
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                    windows_pipe: Some(String::from("cli-windows-pipe")),
-                },
-                request: DistantRequestData::SystemInfo {},
-            }),
-        };
-
-        options.merge(Config {
-            client: ClientConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                action: ClientActionConfig { timeout: Some(5.0) },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("cli-log-file")),
-                    log_level: Some(LogLevel::Info),
-                },
-                command: DistantSubcommand::Client(ClientSubcommand::Action {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    timeout: Some(99.0),
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                        windows_pipe: Some(String::from("cli-windows-pipe")),
-                    },
-                    request: DistantRequestData::SystemInfo {},
-                }),
-            }
-        );
-    }
 
     #[test]
     fn distant_connect_should_support_merging_with_config() {
@@ -1090,124 +1244,6 @@ mod tests {
     }
 
     #[test]
-    fn distant_lsp_should_support_merging_with_config() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: None,
-                log_level: None,
-            },
-            command: DistantSubcommand::Client(ClientSubcommand::Lsp {
-                cache: PathBuf::new(),
-                connection: None,
-                network: NetworkSettings {
-                    unix_socket: None,
-                    windows_pipe: None,
-                },
-                current_dir: None,
-                pty: false,
-                cmd: String::from("cmd"),
-            }),
-        };
-
-        options.merge(Config {
-            client: ClientConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                command: DistantSubcommand::Client(ClientSubcommand::Lsp {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("config-unix-socket")),
-                        windows_pipe: Some(String::from("config-windows-pipe")),
-                    },
-                    current_dir: None,
-                    pty: false,
-                    cmd: String::from("cmd"),
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_lsp_should_prioritize_explicit_cli_options_when_merging() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: Some(PathBuf::from("cli-log-file")),
-                log_level: Some(LogLevel::Info),
-            },
-            command: DistantSubcommand::Client(ClientSubcommand::Lsp {
-                cache: PathBuf::new(),
-                connection: None,
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                    windows_pipe: Some(String::from("cli-windows-pipe")),
-                },
-                current_dir: None,
-                pty: false,
-                cmd: String::from("cmd"),
-            }),
-        };
-
-        options.merge(Config {
-            client: ClientConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("cli-log-file")),
-                    log_level: Some(LogLevel::Info),
-                },
-                command: DistantSubcommand::Client(ClientSubcommand::Lsp {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                        windows_pipe: Some(String::from("cli-windows-pipe")),
-                    },
-                    current_dir: None,
-                    pty: false,
-                    cmd: String::from("cmd"),
-                }),
-            }
-        );
-    }
-
-    #[test]
     fn distant_repl_should_support_merging_with_config() {
         let mut options = Options {
             config_path: None,
@@ -1354,7 +1390,6 @@ mod tests {
                     unix_socket: Some(PathBuf::from("config-unix-socket")),
                     windows_pipe: Some(String::from("config-windows-pipe")),
                 },
-                repl: ClientReplConfig { timeout: Some(5.0) },
                 ..Default::default()
             },
             ..Default::default()
@@ -1414,7 +1449,6 @@ mod tests {
                     unix_socket: Some(PathBuf::from("config-unix-socket")),
                     windows_pipe: Some(String::from("config-windows-pipe")),
                 },
-                repl: ClientReplConfig { timeout: Some(5.0) },
                 ..Default::default()
             },
             ..Default::default()
@@ -1439,6 +1473,1116 @@ mod tests {
                     environment: map!(),
                     cmd: None,
                 }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_spawn_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Spawn {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                current_dir: None,
+                environment: map!(),
+                lsp: true,
+                pty: true,
+                cmd: Cmd::from("cmd"),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Spawn {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    current_dir: None,
+                    environment: map!(),
+                    lsp: true,
+                    pty: true,
+                    cmd: Cmd::from("cmd"),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_spawn_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Spawn {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                current_dir: None,
+                environment: map!(),
+                lsp: true,
+                pty: true,
+                cmd: Cmd::from("cmd"),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Spawn {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    current_dir: None,
+                    environment: map!(),
+                    lsp: true,
+                    pty: true,
+                    cmd: Cmd::from("cmd"),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_system_info_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::SystemInfo {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::SystemInfo {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_system_info_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::SystemInfo {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::SystemInfo {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_copy_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Copy {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    src: PathBuf::from("src"),
+                    dst: PathBuf::from("dst"),
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Copy {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        src: PathBuf::from("src"),
+                        dst: PathBuf::from("dst"),
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_copy_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Copy {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    src: PathBuf::from("src"),
+                    dst: PathBuf::from("dst"),
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Copy {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        src: PathBuf::from("src"),
+                        dst: PathBuf::from("dst"),
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_makedir_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::MakeDir {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    path: PathBuf::from("path"),
+                    all: true,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::MakeDir {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        path: PathBuf::from("path"),
+                        all: true,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_makedir_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::MakeDir {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    path: PathBuf::from("path"),
+                    all: true,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::MakeDir {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        path: PathBuf::from("path"),
+                        all: true,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_read_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Read {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    path: PathBuf::from("path"),
+                    depth: 1,
+                    absolute: true,
+                    canonicalize: true,
+                    include_root: true,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Read {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        path: PathBuf::from("path"),
+                        depth: 1,
+                        absolute: true,
+                        canonicalize: true,
+                        include_root: true,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_read_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Read {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    path: PathBuf::from("path"),
+                    depth: 1,
+                    absolute: true,
+                    canonicalize: true,
+                    include_root: true,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Read {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        path: PathBuf::from("path"),
+                        depth: 1,
+                        absolute: true,
+                        canonicalize: true,
+                        include_root: true,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_remove_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Remove {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    path: PathBuf::from("path"),
+                    force: true,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Remove {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        path: PathBuf::from("path"),
+                        force: true,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_remove_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Remove {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    path: PathBuf::from("path"),
+                    force: true,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Remove {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        path: PathBuf::from("path"),
+                        force: true,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_rename_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Rename {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    src: PathBuf::from("src"),
+                    dst: PathBuf::from("dst"),
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Rename {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        src: PathBuf::from("src"),
+                        dst: PathBuf::from("dst"),
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_rename_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Rename {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    src: PathBuf::from("src"),
+                    dst: PathBuf::from("dst"),
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Rename {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        src: PathBuf::from("src"),
+                        dst: PathBuf::from("dst"),
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_search_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Search {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    target: CliSearchQueryTarget::Contents,
+                    condition: CliSearchQueryCondition::regex(".*"),
+                    options: Default::default(),
+                    paths: vec![PathBuf::from(".")],
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Search {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        target: CliSearchQueryTarget::Contents,
+                        condition: CliSearchQueryCondition::regex(".*"),
+                        options: Default::default(),
+                        paths: vec![PathBuf::from(".")],
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_search_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Search {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    target: CliSearchQueryTarget::Contents,
+                    condition: CliSearchQueryCondition::regex(".*"),
+                    options: Default::default(),
+                    paths: vec![PathBuf::from(".")],
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Search {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        target: CliSearchQueryTarget::Contents,
+                        condition: CliSearchQueryCondition::regex(".*"),
+                        options: Default::default(),
+                        paths: vec![PathBuf::from(".")],
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_write_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Write {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: None,
+                        windows_pipe: None,
+                    },
+                    append: false,
+                    path: PathBuf::from("path"),
+                    data: None,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Write {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("config-unix-socket")),
+                            windows_pipe: Some(String::from("config-windows-pipe")),
+                        },
+                        append: false,
+                        path: PathBuf::from("path"),
+                        data: None,
+                    }
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_fs_write_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                ClientFileSystemSubcommand::Write {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    append: false,
+                    path: PathBuf::from("path"),
+                    data: None,
+                },
+            )),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::FileSystem(
+                    ClientFileSystemSubcommand::Write {
+                        cache: PathBuf::new(),
+                        connection: None,
+                        network: NetworkSettings {
+                            unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                            windows_pipe: Some(String::from("cli-windows-pipe")),
+                        },
+                        append: false,
+                        path: PathBuf::from("path"),
+                        data: None,
+                    }
+                )),
             }
         );
     }

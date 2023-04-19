@@ -43,7 +43,6 @@ whoami = "1.4.0"
 winsplit = "0.1.0"
 
 # Optional dependencies based on features
-clap = { version = "4.2.1", features = ["derive"], optional = true }
 schemars = { version = "0.8.12", optional = true }
 
 [dev-dependencies]

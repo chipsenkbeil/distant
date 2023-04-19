@@ -108,7 +108,6 @@ mod tests {
             config,
             Config {
                 client: ClientConfig {
-                    action: ClientActionConfig { timeout: Some(0.) },
                     connect: ClientConnectConfig {
                         options: Map::new()
                     },
@@ -177,9 +176,6 @@ log_level = "trace"
 unix_socket = "client-unix-socket"
 windows_pipe = "client-windows-pipe"
 
-[client.action]
-timeout = 123
-
 [client.connect]
 options = "key=\"value\",key2=\"value2\""
 
@@ -222,9 +218,6 @@ current_dir = "server-current-dir"
             config,
             Config {
                 client: ClientConfig {
-                    action: ClientActionConfig {
-                        timeout: Some(123.)
-                    },
                     connect: ClientConnectConfig {
                         options: map!("key" -> "value", "key2" -> "value2"),
                     },
