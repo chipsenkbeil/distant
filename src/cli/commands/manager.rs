@@ -218,81 +218,107 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
             Ok(())
         }
-        ManagerSubcommand::Capabilities { network } => {
+        ManagerSubcommand::Capabilities { format, network } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network).await?;
+
             debug!("Getting list of capabilities");
-            let caps = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?
+            let caps = client
                 .capabilities()
                 .await
                 .context("Failed to get list of capabilities")?;
             debug!("Got capabilities: {caps:?}");
 
-            #[derive(Tabled)]
-            struct CapabilityRow {
-                kind: String,
-                description: String,
-            }
-
-            println!(
-                "{}",
-                Table::new(caps.into_sorted_vec().into_iter().map(|cap| {
-                    CapabilityRow {
-                        kind: cap.kind,
-                        description: cap.description,
+            match format {
+                Format::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&caps)
+                            .context("Failed to format capabilities as json")?
+                    );
+                }
+                Format::Shell => {
+                    #[derive(Tabled)]
+                    struct CapabilityRow {
+                        kind: String,
+                        description: String,
                     }
-                }))
-            );
+
+                    println!(
+                        "{}",
+                        Table::new(caps.into_sorted_vec().into_iter().map(|cap| {
+                            CapabilityRow {
+                                kind: cap.kind,
+                                description: cap.description,
+                            }
+                        }))
+                    );
+                }
+            }
 
             Ok(())
         }
-        ManagerSubcommand::Info { id, network } => {
+        ManagerSubcommand::Info {
+            format,
+            id,
+            network,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network).await?;
+
             debug!("Getting info about connection {}", id);
-            let info = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?
+            let info = client
                 .info(id)
                 .await
                 .context("Failed to get info about connection")?;
             debug!("Got info: {info:?}");
 
-            #[derive(Tabled)]
-            struct InfoRow {
-                id: ConnectionId,
-                scheme: String,
-                host: String,
-                port: String,
-                options: String,
+            match format {
+                Format::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&info)
+                            .context("Failed to format connection info as json")?
+                    );
+                }
+                Format::Shell => {
+                    #[derive(Tabled)]
+                    struct InfoRow {
+                        id: ConnectionId,
+                        scheme: String,
+                        host: String,
+                        port: String,
+                        options: String,
+                    }
+                    println!(
+                        "{}",
+                        Table::new(vec![InfoRow {
+                            id: info.id,
+                            scheme: info.destination.scheme.unwrap_or_default(),
+                            host: info.destination.host.to_string(),
+                            port: info
+                                .destination
+                                .port
+                                .map(|x| x.to_string())
+                                .unwrap_or_default(),
+                            options: info.options.to_string()
+                        }])
+                    );
+                }
             }
-
-            println!(
-                "{}",
-                Table::new(vec![InfoRow {
-                    id: info.id,
-                    scheme: info.destination.scheme.unwrap_or_default(),
-                    host: info.destination.host.to_string(),
-                    port: info
-                        .destination
-                        .port
-                        .map(|x| x.to_string())
-                        .unwrap_or_default(),
-                    options: info.options.to_string()
-                }])
-            );
 
             Ok(())
         }
-        ManagerSubcommand::List { cache, network } => {
+        ManagerSubcommand::List {
+            cache,
+            format,
+            network,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network).await?;
+
             debug!("Getting list of connections");
-            let list = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?
+            let list = client
                 .list()
                 .await
                 .context("Failed to get list of connections")?;
@@ -306,41 +332,61 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 .selected;
             debug!("Using selected: {selected}");
 
-            #[derive(Tabled)]
-            struct ListRow {
-                selected: bool,
-                id: ConnectionId,
-                scheme: String,
-                host: String,
-                port: String,
-            }
-
-            println!(
-                "{}",
-                Table::new(list.into_iter().map(|(id, destination)| {
-                    ListRow {
-                        selected: *selected == id,
-                        id,
-                        scheme: destination.scheme.unwrap_or_default(),
-                        host: destination.host.to_string(),
-                        port: destination.port.map(|x| x.to_string()).unwrap_or_default(),
+            match format {
+                Format::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&list)
+                            .context("Failed to format connection list as json")?
+                    );
+                }
+                Format::Shell => {
+                    #[derive(Tabled)]
+                    struct ListRow {
+                        selected: bool,
+                        id: ConnectionId,
+                        scheme: String,
+                        host: String,
+                        port: String,
                     }
-                }))
-            );
+
+                    println!(
+                        "{}",
+                        Table::new(list.into_iter().map(|(id, destination)| {
+                            ListRow {
+                                selected: *selected == id,
+                                id,
+                                scheme: destination.scheme.unwrap_or_default(),
+                                host: destination.host.to_string(),
+                                port: destination.port.map(|x| x.to_string()).unwrap_or_default(),
+                            }
+                        }))
+                    );
+                }
+            }
 
             Ok(())
         }
-        ManagerSubcommand::Kill { network, id } => {
+        ManagerSubcommand::Kill {
+            format,
+            id,
+            network,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network).await?;
+
             debug!("Killing connection {}", id);
-            Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?
+            client
                 .kill(id)
                 .await
                 .with_context(|| format!("Failed to kill connection to server {id}"))?;
+
             debug!("Connection killed");
+            match format {
+                Format::Json => println!("{}", json!({"type": "ok"})),
+                Format::Shell => (),
+            }
+
             Ok(())
         }
         ManagerSubcommand::Select {

@@ -513,19 +513,29 @@ pub enum ManagerSubcommand {
 
     /// Retrieve a list of capabilities that the manager supports
     Capabilities {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
         #[clap(flatten)]
         network: NetworkSettings,
     },
 
     /// Retrieve information about a specific connection
     Info {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
         id: ConnectionId,
+
         #[clap(flatten)]
         network: NetworkSettings,
     },
 
     /// List information about all connections
     List {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
         #[clap(flatten)]
         network: NetworkSettings,
 
@@ -541,8 +551,12 @@ pub enum ManagerSubcommand {
 
     /// Kill a specific connection
     Kill {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
         #[clap(flatten)]
         network: NetworkSettings,
+
         id: ConnectionId,
     },
 }
