@@ -17,7 +17,7 @@ pub use self::config::*;
 pub use common::*;
 
 /// Primary entrypoint into options & subcommands for the CLI.
-#[derive(Debug, Parser)]
+#[derive(Debug, PartialEq, Parser)]
 #[clap(author, version, about)]
 #[clap(name = "distant")]
 pub struct Options {
@@ -129,7 +129,7 @@ impl Options {
                         network, timeout, ..
                     } => {
                         network.merge(config.client.network);
-                        *timeout = timeout.take().or(config.client.action.timeout);
+                        *timeout = timeout.take().or(config.client.repl.timeout);
                     }
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
@@ -199,7 +199,7 @@ impl Options {
 
 /// Subcommands for the CLI.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum DistantSubcommand {
     /// Perform client commands
     #[clap(flatten)]
@@ -219,7 +219,7 @@ pub enum DistantSubcommand {
 }
 
 /// Subcommands for `distant client`.
-#[derive(Debug, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ClientSubcommand {
     /// Performs some action on a remote machine
     Action {
@@ -438,7 +438,7 @@ impl ClientSubcommand {
 }
 
 /// Subcommands for `distant generate`.
-#[derive(Debug, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum GenerateSubcommand {
     /// Generate configuration file with base settings
     Config {
@@ -466,7 +466,7 @@ pub enum GenerateSubcommand {
 }
 
 /// Subcommands for `distant manager`.
-#[derive(Debug, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
     /// Select the active connection
     Select {
@@ -562,7 +562,7 @@ pub enum ManagerSubcommand {
 }
 
 /// Subcommands for `distant manager service`.
-#[derive(Debug, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ManagerServiceSubcommand {
     /// Start the manager as a service
     Start {
@@ -607,7 +607,7 @@ pub enum ManagerServiceSubcommand {
 }
 
 /// Subcommands for `distant server`.
-#[derive(Debug, Subcommand, IsVariant)]
+#[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ServerSubcommand {
     /// Listen for incoming requests as a server
     Listen {
@@ -699,46 +699,637 @@ impl Default for Format {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use distant_core::net::common::Host;
+    use distant_core::net::map;
 
     #[test]
     fn distant_action_should_support_merging_with_config() {
-        todo!("Test logging override");
-        todo!("Test network override");
-        todo!("Test timeout override");
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Action {
+                cache: PathBuf::new(),
+                connection: None,
+                timeout: None,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                request: DistantRequestData::SystemInfo {},
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                action: ClientActionConfig { timeout: Some(5.0) },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Action {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    timeout: Some(5.0),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    request: DistantRequestData::SystemInfo {},
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_action_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Action {
+                cache: PathBuf::new(),
+                connection: None,
+                timeout: Some(99.0),
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                request: DistantRequestData::SystemInfo {},
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                action: ClientActionConfig { timeout: Some(5.0) },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Action {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    timeout: Some(99.0),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    request: DistantRequestData::SystemInfo {},
+                }),
+            }
+        );
     }
 
     #[test]
     fn distant_connect_should_support_merging_with_config() {
-        todo!("Test logging override");
-        todo!("Test network override");
-        todo!("Test options merge");
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Connect {
+                cache: PathBuf::new(),
+                options: map!(),
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                format: Format::Json,
+                destination: Box::new("test://destination".parse().unwrap()),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                connect: ClientConnectConfig {
+                    options: map!("hello" -> "world"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Connect {
+                    cache: PathBuf::new(),
+                    options: map!("hello" -> "world"),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    format: Format::Json,
+                    destination: Box::new("test://destination".parse().unwrap()),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_connect_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Connect {
+                cache: PathBuf::new(),
+                options: map!("hello" -> "test", "cli" -> "value"),
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                format: Format::Json,
+                destination: Box::new("test://destination".parse().unwrap()),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                connect: ClientConnectConfig {
+                    options: map!("hello" -> "world", "config" -> "value"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Connect {
+                    cache: PathBuf::new(),
+                    options: map!("hello" -> "test", "cli" -> "value", "config" -> "value"),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    format: Format::Json,
+                    destination: Box::new("test://destination".parse().unwrap()),
+                }),
+            }
+        );
     }
 
     #[test]
     fn distant_launch_should_support_merging_with_config() {
-        todo!("Test logging override");
-        todo!("Test network override");
-        todo!("Test options merge");
-        todo!("Test distant args override");
-        todo!("Test distant bin override");
-        todo!("Test distant bind-server override");
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Launch {
+                cache: PathBuf::new(),
+                distant_bin: None,
+                distant_bind_server: None,
+                distant_args: None,
+                options: map!(),
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                format: Format::Json,
+                destination: Box::new("test://destination".parse().unwrap()),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                launch: ClientLaunchConfig {
+                    distant: ClientLaunchDistantConfig {
+                        args: Some(String::from("config-args")),
+                        bin: Some(String::from("config-bin")),
+                        bind_server: Some(BindAddress::Host(Host::Name(String::from(
+                            "config-host",
+                        )))),
+                    },
+                    options: map!("hello" -> "world"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Launch {
+                    cache: PathBuf::new(),
+                    distant_args: Some(String::from("config-args")),
+                    distant_bin: Some(String::from("config-bin")),
+                    distant_bind_server: Some(BindAddress::Host(Host::Name(String::from(
+                        "config-host",
+                    )))),
+                    options: map!("hello" -> "world"),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    format: Format::Json,
+                    destination: Box::new("test://destination".parse().unwrap()),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_launch_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Launch {
+                cache: PathBuf::new(),
+                distant_args: Some(String::from("cli-args")),
+                distant_bin: Some(String::from("cli-bin")),
+                distant_bind_server: Some(BindAddress::Host(Host::Name(String::from("cli-host")))),
+                options: map!("hello" -> "test", "cli" -> "value"),
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                format: Format::Json,
+                destination: Box::new("test://destination".parse().unwrap()),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                launch: ClientLaunchConfig {
+                    distant: ClientLaunchDistantConfig {
+                        args: Some(String::from("config-args")),
+                        bin: Some(String::from("config-bin")),
+                        bind_server: Some(BindAddress::Host(Host::Name(String::from(
+                            "config-host",
+                        )))),
+                    },
+                    options: map!("hello" -> "world", "config" -> "value"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Launch {
+                    cache: PathBuf::new(),
+                    distant_args: Some(String::from("cli-args")),
+                    distant_bin: Some(String::from("cli-bin")),
+                    distant_bind_server: Some(BindAddress::Host(Host::Name(String::from(
+                        "cli-host",
+                    )))),
+                    options: map!("hello" -> "test", "config" -> "value", "cli" -> "value"),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    format: Format::Json,
+                    destination: Box::new("test://destination".parse().unwrap()),
+                }),
+            }
+        );
     }
 
     #[test]
     fn distant_lsp_should_support_merging_with_config() {
-        todo!("Test logging override");
-        todo!("Test network override");
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Lsp {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                current_dir: None,
+                pty: false,
+                cmd: String::from("cmd"),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Lsp {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    current_dir: None,
+                    pty: false,
+                    cmd: String::from("cmd"),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_lsp_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Lsp {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                current_dir: None,
+                pty: false,
+                cmd: String::from("cmd"),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Lsp {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    current_dir: None,
+                    pty: false,
+                    cmd: String::from("cmd"),
+                }),
+            }
+        );
     }
 
     #[test]
     fn distant_repl_should_support_merging_with_config() {
-        todo!("Test logging override");
-        todo!("Test network override");
-        todo!("Test timeout override");
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Repl {
+                cache: PathBuf::new(),
+                connection: None,
+                format: Format::Json,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                timeout: None,
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                repl: ClientReplConfig { timeout: Some(5.0) },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Repl {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    format: Format::Json,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    timeout: Some(5.0),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_repl_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Repl {
+                cache: PathBuf::new(),
+                connection: None,
+                format: Format::Json,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                timeout: Some(99.0),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                repl: ClientReplConfig { timeout: Some(5.0) },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Repl {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    format: Format::Json,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    timeout: Some(99.0),
+                }),
+            }
+        );
     }
 
     #[test]
     fn distant_shell_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_shell_should_prioritize_explicit_cli_options_when_merging() {
         todo!("Test logging override");
         todo!("Test network override");
     }
@@ -749,7 +1340,18 @@ mod tests {
     }
 
     #[test]
+    fn distant_generate_should_prioritize_explicit_cli_options_when_merging() {
+        todo!("Test logging override");
+    }
+
+    #[test]
     fn distant_manager_capabilities_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_capabilities_should_prioritize_explicit_cli_options_when_merging() {
         todo!("Test logging override");
         todo!("Test network override");
     }
@@ -761,13 +1363,31 @@ mod tests {
     }
 
     #[test]
+    fn distant_manager_info_should_prioritize_explicit_cli_options_when_merging() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
     fn distant_manager_kill_should_support_merging_with_config() {
         todo!("Test logging override");
         todo!("Test network override");
     }
 
     #[test]
+    fn distant_manager_kill_should_prioritize_explicit_cli_options_when_merging() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
     fn distant_manager_list_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_list_should_prioritize_explicit_cli_options_when_merging() {
         todo!("Test logging override");
         todo!("Test network override");
     }
@@ -780,7 +1400,20 @@ mod tests {
     }
 
     #[test]
+    fn distant_manager_listen_should_prioritize_explicit_cli_options_when_merging() {
+        todo!("Test logging override");
+        todo!("Test network override");
+        todo!("Test access control override");
+    }
+
+    #[test]
     fn distant_manager_select_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test network override");
+    }
+
+    #[test]
+    fn distant_manager_select_should_prioritize_explicit_cli_options_when_merging() {
         todo!("Test logging override");
         todo!("Test network override");
     }
@@ -791,7 +1424,22 @@ mod tests {
     }
 
     #[test]
+    fn distant_manager_service_should_prioritize_explicit_cli_options_when_merging() {
+        todo!("Test logging override");
+    }
+
+    #[test]
     fn distant_server_should_support_merging_with_config() {
+        todo!("Test logging override");
+        todo!("Test current-dir override");
+        todo!("Test host override");
+        todo!("Test port override");
+        todo!("Test shutdown override");
+        todo!("Test use-ipv6 override");
+    }
+
+    #[test]
+    fn distant_server_should_prioritize_explicit_cli_options_when_merging() {
         todo!("Test logging override");
         todo!("Test current-dir override");
         todo!("Test host override");

@@ -26,6 +26,15 @@ impl PortRange {
         end: None,
     };
 
+    /// Creates a port range targeting a single `port`.
+    #[inline]
+    pub fn single(port: u16) -> Self {
+        Self {
+            start: port,
+            end: None,
+        }
+    }
+
     /// Builds a collection of `SocketAddr` instances from the port range and given ip address
     pub fn make_socket_addrs(&self, addr: impl Into<IpAddr>) -> Vec<SocketAddr> {
         let mut socket_addrs = Vec::new();
@@ -39,6 +48,7 @@ impl PortRange {
     }
 
     /// Returns true if port range represents the ephemeral port.
+    #[inline]
     pub fn is_ephemeral(&self) -> bool {
         self == &Self::EPHEMERAL
     }
@@ -46,10 +56,7 @@ impl PortRange {
 
 impl From<u16> for PortRange {
     fn from(port: u16) -> Self {
-        Self {
-            start: port,
-            end: None,
-        }
+        Self::single(port)
     }
 }
 
