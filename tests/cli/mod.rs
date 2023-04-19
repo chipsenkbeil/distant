@@ -1,4 +1,4 @@
-mod action;
+mod client;
 mod fixtures;
 mod manager;
 mod repl;

@@ -1,18 +1,17 @@
 use crate::cli::{fixtures::*, utils::FAILURE_LINE};
-use assert_cmd::Command;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
 #[rstest]
 #[test_log::test]
-fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
+fn should_report_ok_when_done(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
 
     // distant action dir-create {path}
-    action_cmd
-        .args(["dir-create", dir.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "make-dir"])
+        .args([dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -24,15 +23,13 @@ fn should_report_ok_when_done(mut action_cmd: CtxCommand<Command>) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_creating_missing_parent_directories_if_specified(
-    mut action_cmd: CtxCommand<Command>,
-) {
+fn should_support_creating_missing_parent_directories_if_specified(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir1").child("dir2");
 
     // distant action dir-create {path}
-    action_cmd
-        .args(["dir-create", "--all", dir.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "make-dir"])
+        .args(["--all", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -44,13 +41,13 @@ fn should_support_creating_missing_parent_directories_if_specified(
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
+fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("missing-dir").child("dir");
 
     // distant action dir-create {path}
-    action_cmd
-        .args(["dir-create", dir.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "make-dir"])
+        .args([dir.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

@@ -1,5 +1,4 @@
 use crate::cli::{fixtures::*, utils::FAILURE_LINE};
-use assert_cmd::Command;
 use assert_fs::prelude::*;
 use rstest::*;
 
@@ -11,14 +10,14 @@ that is a file's contents
 
 #[rstest]
 #[test_log::test]
-fn should_print_out_file_contents(mut action_cmd: CtxCommand<Command>) {
+fn should_print_out_file_contents(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
 
-    // distant action file-read {path}
-    action_cmd
-        .args(["file-read", file.to_str().unwrap()])
+    // distant fs read {path}
+    ctx.new_assert_cmd(["fs", "read"])
+        .args([file.to_str().unwrap()])
         .assert()
         .success()
         .stdout(format!("{}\n", FILE_CONTENTS))
@@ -27,13 +26,13 @@ fn should_print_out_file_contents(mut action_cmd: CtxCommand<Command>) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
+fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
 
-    // distant action file-read {path}
-    action_cmd
-        .args(["file-read", file.to_str().unwrap()])
+    // distant fs read {path}
+    ctx.new_assert_cmd(["fs", "read"])
+        .args([file.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

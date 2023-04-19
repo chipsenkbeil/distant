@@ -234,6 +234,13 @@ impl DistantManagerCtx {
         }
     }
 
+    /// Produces a new test command configured with a singular subcommand. Useful for root-level
+    /// subcommands.
+    #[inline]
+    pub fn cmd(&self, subcommand: &'static str) -> Command {
+        self.new_assert_cmd(vec![subcommand])
+    }
+
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
@@ -316,12 +323,6 @@ pub fn ctx() -> DistantManagerCtx {
 #[fixture]
 pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["lsp"]);
-    CtxCommand { ctx, cmd }
-}
-
-#[fixture]
-pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
-    let cmd = ctx.new_assert_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 

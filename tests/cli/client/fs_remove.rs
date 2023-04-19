@@ -1,19 +1,18 @@
 use crate::cli::{fixtures::*, utils::FAILURE_LINE};
-use assert_cmd::Command;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
 #[rstest]
 #[test_log::test]
-fn should_support_removing_file(mut action_cmd: CtxCommand<Command>) {
+fn should_support_removing_file(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
 
     // distant action remove {path}
-    action_cmd
-        .args(["remove", file.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "remove"])
+        .args([file.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -24,7 +23,7 @@ fn should_support_removing_file(mut action_cmd: CtxCommand<Command>) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_removing_empty_directory(mut action_cmd: CtxCommand<Command>) {
+fn should_support_removing_empty_directory(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -32,8 +31,8 @@ fn should_support_removing_empty_directory(mut action_cmd: CtxCommand<Command>) 
     dir.create_dir_all().unwrap();
 
     // distant action remove {path}
-    action_cmd
-        .args(["remove", dir.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "remove"])
+        .args([dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -44,9 +43,7 @@ fn should_support_removing_empty_directory(mut action_cmd: CtxCommand<Command>) 
 
 #[rstest]
 #[test_log::test]
-fn should_support_removing_nonempty_directory_if_force_specified(
-    mut action_cmd: CtxCommand<Command>,
-) {
+fn should_support_removing_nonempty_directory_if_force_specified(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -55,8 +52,8 @@ fn should_support_removing_nonempty_directory_if_force_specified(
     dir.child("file").touch().unwrap();
 
     // distant action remove --force {path}
-    action_cmd
-        .args(["remove", "--force", dir.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "remove"])
+        .args(["--force", dir.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -67,7 +64,7 @@ fn should_support_removing_nonempty_directory_if_force_specified(
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
+fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -76,8 +73,8 @@ fn yield_an_error_when_fails(mut action_cmd: CtxCommand<Command>) {
     dir.child("file").touch().unwrap();
 
     // distant action remove {path}
-    action_cmd
-        .args(["remove", dir.to_str().unwrap()])
+    ctx.new_assert_cmd(["fs", "remove"])
+        .args([dir.to_str().unwrap()])
         .assert()
         .code(1)
         .stdout("")

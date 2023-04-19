@@ -1,5 +1,4 @@
 use crate::cli::fixtures::*;
-use assert_cmd::Command;
 use indoc::indoc;
 use rstest::*;
 
@@ -57,10 +56,8 @@ const EXPECTED_TABLE: &str = indoc! {"
 
 #[rstest]
 #[test_log::test]
-fn should_output_capabilities(mut action_cmd: CtxCommand<Command>) {
-    // distant action capabilities
-    action_cmd
-        .arg("capabilities")
+fn should_output_capabilities(ctx: DistantManagerCtx) {
+    ctx.cmd("capabilities")
         .assert()
         .success()
         .stdout(EXPECTED_TABLE)

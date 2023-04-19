@@ -1,5 +1,4 @@
 use crate::cli::fixtures::*;
-use assert_cmd::Command;
 use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::Predicate;
@@ -18,7 +17,7 @@ const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 
 #[rstest]
 #[test_log::test]
-fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
+fn should_search_filesystem_using_query(ctx: DistantManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file1.txt").write_str("some file text").unwrap();
     root.child("file2.txt")
@@ -46,8 +45,7 @@ fn should_search_filesystem_using_query(mut action_cmd: CtxCommand<Command>) {
     });
 
     // distant action search
-    action_cmd
-        .arg("search")
+    ctx.new_assert_cmd(["fs", "search"])
         .arg("te[a-z]*\\b")
         .arg(root.path())
         .assert()

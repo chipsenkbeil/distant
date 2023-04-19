@@ -1,14 +1,11 @@
 use crate::cli::fixtures::*;
-use assert_cmd::Command;
 use rstest::*;
 use std::env;
 
 #[rstest]
 #[test_log::test]
-fn should_output_system_info(mut action_cmd: CtxCommand<Command>) {
-    // distant action system-info
-    action_cmd
-        .arg("system-info")
+fn should_output_system_info(ctx: DistantManagerCtx) {
+    ctx.cmd("system-info")
         .assert()
         .success()
         .stdout(format!(
