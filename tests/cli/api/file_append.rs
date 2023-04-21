@@ -10,25 +10,31 @@ on multiple lines
 that is a file's contents
 "#;
 
+const APPENDED_FILE_CONTENTS: &str = r#"
+even more
+file contents
+"#;
+
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
+    file.write_str(FILE_CONTENTS).unwrap();
 
     let id = rand::random::<u64>().to_string();
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_write_text",
+            "type": "file_append",
             "path": file.to_path_buf(),
-            "text": FILE_CONTENTS.to_string(),
+            "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -43,13 +49,13 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Because we're talking to a local server, we can verify locally
-    file.assert(FILE_CONTENTS);
+    file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
 }
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-dir").child("missing-file");
@@ -58,13 +64,13 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_write_text",
+            "type": "file_append",
             "path": file.to_path_buf(),
-            "text": FILE_CONTENTS.to_string(),
+            "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "error", "JSON: {res}");

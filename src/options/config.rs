@@ -108,6 +108,7 @@ mod tests {
             config,
             Config {
                 client: ClientConfig {
+                    api: ClientApiConfig { timeout: Some(0.) },
                     connect: ClientConnectConfig {
                         options: Map::new()
                     },
@@ -127,7 +128,6 @@ mod tests {
                         unix_socket: None,
                         windows_pipe: None
                     },
-                    repl: ClientReplConfig { timeout: Some(0.) },
                 },
                 generate: GenerateConfig {
                     logging: LoggingSettings {
@@ -176,6 +176,9 @@ log_level = "trace"
 unix_socket = "client-unix-socket"
 windows_pipe = "client-windows-pipe"
 
+[client.api]
+timeout = 456
+
 [client.connect]
 options = "key=\"value\",key2=\"value2\""
 
@@ -184,9 +187,6 @@ bin = "some-bin"
 bind_server = "any"
 args = "a b c"
 options = "key3=\"value3\",key4=\"value4\""
-
-[client.repl]
-timeout = 456
 
 [generate]
 log_file = "generate-log-file"
@@ -218,6 +218,9 @@ current_dir = "server-current-dir"
             config,
             Config {
                 client: ClientConfig {
+                    api: ClientApiConfig {
+                        timeout: Some(456.)
+                    },
                     connect: ClientConnectConfig {
                         options: map!("key" -> "value", "key2" -> "value2"),
                     },
@@ -236,9 +239,6 @@ current_dir = "server-current-dir"
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("client-unix-socket")),
                         windows_pipe: Some(String::from("client-windows-pipe"))
-                    },
-                    repl: ClientReplConfig {
-                        timeout: Some(456.)
                     },
                 },
                 generate: GenerateConfig {

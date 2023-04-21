@@ -6,8 +6,8 @@ use test_log::test;
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_capabilities(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_capabilities(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let id = rand::random::<u64>().to_string();
     let req = json!({
@@ -15,7 +15,7 @@ async fn should_support_json_capabilities(mut json_repl: CtxCommand<Repl>) {
         "payload": { "type": "capabilities" },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "capabilities", "JSON: {res}");

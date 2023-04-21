@@ -6,8 +6,8 @@ use test_log::test;
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_true_if_exists(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -24,7 +24,7 @@ async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -39,8 +39,8 @@ async fn should_support_json_true_if_exists(mut json_repl: CtxCommand<Repl>) {
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_false_if_not_exists(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -56,7 +56,7 @@ async fn should_support_json_false_if_not_exists(mut json_repl: CtxCommand<Repl>
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(

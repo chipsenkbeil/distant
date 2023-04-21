@@ -1,13 +1,13 @@
 use super::common::{self, LoggingSettings, NetworkSettings};
 use serde::{Deserialize, Serialize};
 
+mod api;
 mod connect;
 mod launch;
-mod repl;
 
+pub use api::*;
 pub use connect::*;
 pub use launch::*;
-pub use repl::*;
 
 /// Represents configuration settings for the distant client
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct ClientConfig {
     #[serde(flatten)]
     pub network: NetworkSettings,
 
+    pub api: ClientApiConfig,
     pub connect: ClientConnectConfig,
     pub launch: ClientLaunchConfig,
-    pub repl: ClientReplConfig,
 }

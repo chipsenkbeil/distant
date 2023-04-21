@@ -72,9 +72,9 @@ fn check_value_as_str(value: &serde_json::Value, other: &str) {
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_to_execute_program_and_return_exit_status(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap()]);
 
@@ -88,7 +88,7 @@ async fn should_support_json_to_execute_program_and_return_exit_status(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_spawned", "JSON: {res}");
@@ -96,8 +96,8 @@ async fn should_support_json_to_execute_program_and_return_exit_status(
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_to_capture_and_print_stdout(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDOUT.to_str().unwrap(), "some output"]);
 
@@ -112,20 +112,20 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxComma
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_spawned", "JSON: {res}");
 
     // Wait for output to show up (for stderr)
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_stdout", "JSON: {res}");
     check_value_as_str(&res["payload"]["data"], "some output");
 
     // Now we wait for the process to complete
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_done", "JSON: {res}");
@@ -134,8 +134,8 @@ async fn should_support_json_to_capture_and_print_stdout(mut json_repl: CtxComma
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_to_capture_and_print_stderr(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let cmd = make_cmd(vec![ECHO_ARGS_TO_STDERR.to_str().unwrap(), "some output"]);
 
@@ -150,20 +150,20 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxComma
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_spawned", "JSON: {res}");
 
     // Wait for output to show up (for stderr)
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_stderr", "JSON: {res}");
     check_value_as_str(&res["payload"]["data"], "some output");
 
     // Now we wait for the process to complete
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_done", "JSON: {res}");
@@ -172,8 +172,10 @@ async fn should_support_json_to_capture_and_print_stderr(mut json_repl: CtxComma
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_to_forward_stdin_to_remote_process(
+    mut api_process: CtxCommand<ApiProcess>,
+) {
+    validate_authentication(&mut api_process).await;
 
     let cmd = make_cmd(vec![ECHO_STDIN_TO_STDOUT.to_str().unwrap()]);
 
@@ -188,7 +190,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_spawned", "JSON: {res}");
@@ -207,12 +209,12 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "ok", "JSON: {res}");
 
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], origin_id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "proc_stdout", "JSON: {res}");
@@ -220,7 +222,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
 
     // Now kill the process and wait for it to complete
     let id = rand::random::<u64>().to_string();
-    let res = json_repl
+    let res = api_process
         .write_and_read_json(json!({
             "id": id,
             "payload": {
@@ -237,7 +239,7 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
     //
     // NOTE: The above is a situation in Windows, but I've not seen it happen with Mac/Linux.
     if res["payload"]["type"] == "ok" {
-        let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+        let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
         assert_eq!(
             res["payload"]["type"], "proc_done",
             "Did not receive proc_done from killed process: {res}"
@@ -249,8 +251,8 @@ async fn should_support_json_to_forward_stdin_to_remote_process(mut json_repl: C
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let id = rand::random::<u64>().to_string();
     let req = json!({
@@ -262,7 +264,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "error", "JSON: {res}");

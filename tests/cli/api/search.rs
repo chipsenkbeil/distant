@@ -6,8 +6,10 @@ use test_log::test;
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_search_filesystem_using_query(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_search_filesystem_using_query(
+    mut api_process: CtxCommand<ApiProcess>,
+) {
+    validate_authentication(&mut api_process).await;
 
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file1.txt").write_str("some file text").unwrap();
@@ -30,7 +32,7 @@ async fn should_support_json_search_filesystem_using_query(mut json_repl: CtxCom
     });
 
     // Submit search request and get back started confirmation
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     // Get id from started confirmation
     assert_eq!(res["origin_id"], id, "JSON: {res}");
@@ -40,7 +42,7 @@ async fn should_support_json_search_filesystem_using_query(mut json_repl: CtxCom
         .expect("id missing or not number");
 
     // Get search results back
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
@@ -74,7 +76,7 @@ async fn should_support_json_search_filesystem_using_query(mut json_repl: CtxCom
     );
 
     // Get search completion confirmation
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],

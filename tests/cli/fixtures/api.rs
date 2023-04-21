@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 const CHANNEL_BUFFER: usize = 100;
 
-pub struct Repl {
+pub struct ApiProcess {
     child: Child,
     stdin: mpsc::Sender<String>,
     stdout: mpsc::Receiver<String>,
@@ -17,8 +17,8 @@ pub struct Repl {
     timeout: Option<Duration>,
 }
 
-impl Repl {
-    /// Create a new [`Repl`] wrapping around a [`Child`]
+impl ApiProcess {
+    /// Create a new [`ApiProcess`] wrapping around a [`Child`]
     pub fn new(mut child: Child, timeout: impl Into<Option<Duration>>) -> Self {
         let mut stdin = BufWriter::new(child.stdin.take().expect("Child missing stdin"));
         let mut stdout = BufReader::new(child.stdout.take().expect("Child missing stdout"));
@@ -80,7 +80,7 @@ impl Repl {
         }
     }
 
-    /// Writes json to the repl over stdin and then waits for json to be received over stdout,
+    /// Writes json to the api over stdin and then waits for json to be received over stdout,
     /// failing if either operation exceeds timeout if set or if the output to stdout is not json,
     /// and returns none if stdout channel has closed
     pub async fn write_and_read_json(
@@ -200,13 +200,13 @@ impl Repl {
         stderr
     }
 
-    /// Kills the repl by sending a signal to the process
+    /// Kills the api by sending a signal to the process
     pub fn kill(&mut self) -> io::Result<()> {
         self.child.kill()
     }
 }
 
-impl Drop for Repl {
+impl Drop for ApiProcess {
     fn drop(&mut self) {
         let _ = self.kill();
     }

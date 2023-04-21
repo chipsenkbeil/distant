@@ -71,8 +71,8 @@ fn make_directory() -> assert_fs::TempDir {
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = make_directory();
 
@@ -89,7 +89,7 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -111,9 +111,9 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_returning_absolute_paths_if_specified(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let temp = make_directory();
 
@@ -134,7 +134,7 @@ async fn should_support_json_returning_absolute_paths_if_specified(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -156,9 +156,9 @@ async fn should_support_json_returning_absolute_paths_if_specified(
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let temp = make_directory();
 
@@ -175,7 +175,7 @@ async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -207,9 +207,9 @@ async fn should_support_json_returning_all_files_and_directories_if_depth_is_0(
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_including_root_directory_if_specified(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let temp = make_directory();
 
@@ -230,7 +230,7 @@ async fn should_support_json_including_root_directory_if_specified(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -252,8 +252,8 @@ async fn should_support_json_including_root_directory_if_specified(
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = make_directory();
     let dir = temp.child("missing-dir");
@@ -271,7 +271,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "error", "JSON: {res}");

@@ -19,8 +19,8 @@ async fn wait_millis(millis: u64) {
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_watching_single_file(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -37,7 +37,7 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -56,7 +56,7 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
@@ -69,8 +69,10 @@ async fn should_support_json_watching_single_file(mut json_repl: CtxCommand<Repl
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_watching_directory_recursively(
+    mut api_process: CtxCommand<ApiProcess>,
+) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -91,7 +93,7 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
@@ -112,7 +114,7 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
 
         // Get the response and verify the change
         // NOTE: Don't bother checking the kind as it can vary by platform
-        let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+        let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
         assert_eq!(res["origin_id"], id, "JSON: {res}");
         assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
@@ -128,7 +130,7 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
@@ -142,9 +144,9 @@ async fn should_support_json_watching_directory_recursively(mut json_repl: CtxCo
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_reporting_changes_using_correct_request_id(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -164,7 +166,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id_1, "JSON: {res}");
     assert_eq!(
@@ -185,7 +187,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id_2, "JSON: {res}");
     assert_eq!(
@@ -204,7 +206,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id_1, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
@@ -219,7 +221,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
         // Sleep a bit to give time to get all changes happening
         wait_a_bit().await;
 
-        if json_repl
+        if api_process
             .try_read_line_from_stdout()
             .expect("stdout closed unexpectedly")
             .is_none()
@@ -236,7 +238,7 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
     // Get the response and verify the change
     // NOTE: Don't bother checking the kind as it can vary by platform
-    let res = json_repl.read_json_from_stdout().await.unwrap().unwrap();
+    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id_2, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
@@ -249,8 +251,8 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
     let path = temp.to_path_buf().join("missing");
@@ -265,7 +267,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     // Ensure we got an acknowledgement of watching that failed
     assert_eq!(res["origin_id"], id, "JSON: {res}");

@@ -94,6 +94,12 @@ impl Options {
             DistantSubcommand::Client(cmd) => {
                 update_logging!(client);
                 match cmd {
+                    ClientSubcommand::Api {
+                        network, timeout, ..
+                    } => {
+                        network.merge(config.client.network);
+                        *timeout = timeout.take().or(config.client.api.timeout);
+                    }
                     ClientSubcommand::Capabilities { network, .. } => {
                         network.merge(config.client.network);
                     }
@@ -133,12 +139,6 @@ impl Options {
                             distant_bind_server
                                 .take()
                                 .or(config.client.launch.distant.bind_server);
-                    }
-                    ClientSubcommand::Repl {
-                        network, timeout, ..
-                    } => {
-                        network.merge(config.client.network);
-                        *timeout = timeout.take().or(config.client.repl.timeout);
                     }
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
@@ -236,6 +236,29 @@ pub enum DistantSubcommand {
 /// Subcommands for `distant client`.
 #[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ClientSubcommand {
+    /// Listen over stdin & stdout to communicate with a distant server using the JSON lines API
+    Api {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Represents the maximum time (in seconds) to wait for a network request before timing out.
+        #[clap(long)]
+        timeout: Option<f32>,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
     /// Retrieves capabilities of the remote server
     Capabilities {
         /// Location to store cached data
@@ -341,33 +364,6 @@ pub enum ClientSubcommand {
         destination: Box<Destination>,
     },
 
-    /// Runs actions in a read-eval-print loop
-    Repl {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Represents the maximum time (in seconds) to wait for a network request before timing out.
-        #[clap(long)]
-        timeout: Option<f32>,
-
-        /// Specify a connection being managed
-        #[clap(long)]
-        connection: Option<ConnectionId>,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        /// Format used for input into and output from the repl
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-    },
-
     /// Specialized treatment of running a remote shell process
     Shell {
         /// Location to store cached data
@@ -465,7 +461,7 @@ impl ClientSubcommand {
             Self::Connect { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
-            Self::Repl { cache, .. } => cache.as_path(),
+            Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
             Self::SystemInfo { cache, .. } => cache.as_path(),
@@ -478,7 +474,7 @@ impl ClientSubcommand {
             Self::Connect { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
-            Self::Repl { network, .. } => network,
+            Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
@@ -1114,6 +1110,118 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn distant_api_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Api {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                timeout: None,
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                api: ClientApiConfig { timeout: Some(5.0) },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Api {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    timeout: Some(5.0),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_api_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Api {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                timeout: Some(99.0),
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                api: ClientApiConfig { timeout: Some(5.0) },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Api {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    timeout: Some(99.0),
+                }),
+            }
+        );
+    }
+
+    #[test]
     fn distant_capabilities_should_support_merging_with_config() {
         let mut options = Options {
             config_path: None,
@@ -1494,122 +1602,6 @@ mod tests {
                     },
                     format: Format::Json,
                     destination: Box::new("test://destination".parse().unwrap()),
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_repl_should_support_merging_with_config() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: None,
-                log_level: None,
-            },
-            command: DistantSubcommand::Client(ClientSubcommand::Repl {
-                cache: PathBuf::new(),
-                connection: None,
-                format: Format::Json,
-                network: NetworkSettings {
-                    unix_socket: None,
-                    windows_pipe: None,
-                },
-                timeout: None,
-            }),
-        };
-
-        options.merge(Config {
-            client: ClientConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                repl: ClientReplConfig { timeout: Some(5.0) },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                command: DistantSubcommand::Client(ClientSubcommand::Repl {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    format: Format::Json,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("config-unix-socket")),
-                        windows_pipe: Some(String::from("config-windows-pipe")),
-                    },
-                    timeout: Some(5.0),
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_repl_should_prioritize_explicit_cli_options_when_merging() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: Some(PathBuf::from("cli-log-file")),
-                log_level: Some(LogLevel::Info),
-            },
-            command: DistantSubcommand::Client(ClientSubcommand::Repl {
-                cache: PathBuf::new(),
-                connection: None,
-                format: Format::Json,
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                    windows_pipe: Some(String::from("cli-windows-pipe")),
-                },
-                timeout: Some(99.0),
-            }),
-        };
-
-        options.merge(Config {
-            client: ClientConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                repl: ClientReplConfig { timeout: Some(5.0) },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("cli-log-file")),
-                    log_level: Some(LogLevel::Info),
-                },
-                command: DistantSubcommand::Client(ClientSubcommand::Repl {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    format: Format::Json,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                        windows_pipe: Some(String::from("cli-windows-pipe")),
-                    },
-                    timeout: Some(99.0),
                 }),
             }
         );

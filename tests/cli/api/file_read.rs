@@ -12,8 +12,8 @@ that is a file's contents
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
@@ -23,19 +23,19 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_read_text",
+            "type": "file_read",
             "path": file.to_path_buf(),
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(
         res["payload"],
         json!({
-            "type": "text",
-            "data": FILE_CONTENTS.to_string()
+            "type": "blob",
+            "data": FILE_CONTENTS.as_bytes().to_vec()
         }),
         "JSON: {res}"
     );
@@ -43,8 +43,8 @@ async fn should_support_json_output(mut json_repl: CtxCommand<Repl>) {
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
@@ -53,12 +53,12 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_read_text",
+            "type": "file_read",
             "path": file.to_path_buf(),
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "error", "JSON: {res}");

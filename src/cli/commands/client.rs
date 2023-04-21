@@ -231,20 +231,12 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 ),
             }
         }
-        ClientSubcommand::Repl {
+        ClientSubcommand::Api {
             cache,
             connection,
-            format,
             network,
             timeout,
         } => {
-            // TODO: Support shell format?
-            if !format.is_json() {
-                return Err(CliError::Error(anyhow::anyhow!(
-                    "Only JSON format is supported"
-                )));
-            }
-
             debug!("Connecting to manager");
             let mut client = Client::new(network)
                 .using_json_auth_handler()
@@ -277,7 +269,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 }
             );
 
-            debug!("Starting repl using format {:?}", format);
+            debug!("Starting api tasks");
             let (msg_tx, mut msg_rx) = mpsc::channel(1);
             let request_task = tokio::spawn(async move {
                 let mut rx =

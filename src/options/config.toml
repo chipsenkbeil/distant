@@ -15,6 +15,13 @@
 # The default setting is info
 log_level = "info"
 
+# Configuration related to the client's api command
+[client.api]
+
+# Maximum time (in seconds) to wait for a network request before timing out
+# where 0 indicates no timeout will occur
+timeout = 0
+
 # Alternative unix domain socket to connect to when using a manger (Unix only)
 # unix_socket = "path/to/socket"
 
@@ -64,13 +71,6 @@ args = ""
 #
 # E.g. `key="value",key2="value2"`
 options = ""
-
-# Configuration related to the client's repl command
-[client.repl]
-
-# Maximum time (in seconds) to wait for a network request before timing out
-# where 0 indicates no timeout will occur
-timeout = 0
 
 ###############################################################################
 # All configuration specific to the distant generate option will be found under

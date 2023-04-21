@@ -12,8 +12,8 @@ that is a file's contents
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_metadata_for_file(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_metadata_for_file(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -31,7 +31,7 @@ async fn should_support_json_metadata_for_file(mut json_repl: CtxCommand<Repl>) 
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
@@ -46,8 +46,8 @@ async fn should_support_json_metadata_for_file(mut json_repl: CtxCommand<Repl>) 
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_metadata_for_directory(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_metadata_for_directory(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -65,7 +65,7 @@ async fn should_support_json_metadata_for_directory(mut json_repl: CtxCommand<Re
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
@@ -81,9 +81,9 @@ async fn should_support_json_metadata_for_directory(mut json_repl: CtxCommand<Re
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_metadata_for_including_a_canonicalized_path(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -104,7 +104,7 @@ async fn should_support_json_metadata_for_including_a_canonicalized_path(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
@@ -120,9 +120,9 @@ async fn should_support_json_metadata_for_including_a_canonicalized_path(
 #[rstest]
 #[test(tokio::test)]
 async fn should_support_json_metadata_for_resolving_file_type_of_symlink(
-    mut json_repl: CtxCommand<Repl>,
+    mut api_process: CtxCommand<ApiProcess>,
 ) {
-    validate_authentication(&mut json_repl).await;
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -143,7 +143,7 @@ async fn should_support_json_metadata_for_resolving_file_type_of_symlink(
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "metadata", "JSON: {res}");
@@ -152,8 +152,8 @@ async fn should_support_json_metadata_for_resolving_file_type_of_symlink(
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
-    validate_authentication(&mut json_repl).await;
+async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
 
     let temp = assert_fs::TempDir::new().unwrap();
 
@@ -171,7 +171,7 @@ async fn should_support_json_output_for_error(mut json_repl: CtxCommand<Repl>) {
         },
     });
 
-    let res = json_repl.write_and_read_json(req).await.unwrap().unwrap();
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
