@@ -1,6 +1,6 @@
+use crate::cli::utils::missing_path_pred;
 use crate::cli::{fixtures::*, utils::regex_pred};
 use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
 const FILE_CONTENTS: &str = r#"
@@ -131,5 +131,5 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(predicate::str::contains("No such file or directory"));
+        .stderr(missing_path_pred());
 }

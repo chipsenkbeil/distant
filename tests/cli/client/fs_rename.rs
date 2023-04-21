@@ -74,7 +74,13 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(predicate::str::contains("No such file or directory"));
+        .stderr(if cfg!(unix) {
+            predicate::str::contains("No such file or directory")
+        } else if cfg!(windows) {
+            predicate::str::contains("The system cannot find the file specified")
+        } else {
+            unreachable!("Only other option is wasm, which is not supported")
+        });
 
     src.assert(predicate::path::missing());
     dst.assert(predicate::path::missing());
