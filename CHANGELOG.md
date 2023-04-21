@@ -13,14 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CLI now offers the following new subcommands
   - `distant fs copy` is a refactoring of `distant client action copy`
+  - `distant fs exists` is a refactoring of `distant client action exists`
   - `distant fs read` is a refactoring of `distant client action file-read`,
     `distant client action file-read-text`, and `distant client action dir-read`
   - `distant fs rename` is a refactoring of `distant client action rename`
   - `distant fs write` is a refactoring of `distant client action file-write`,
     `distant client action file-write-text`, `distant client action file-append`,
   - `distant fs make-dir` is a refactoring of `distant client action dir-create`
+  - `distant fs metadata` is a refactoring of `distant client action metadata`
   - `distant fs remove` is a refactoring of `distant client action remove`
   - `distant fs search` is a refactoring of `distant client action search`
+  - `distant fs watch` is a refactoring of `distant client action watch`
   - `distant spawn` is a refactoring of `distant client action proc-spawn`
     with `distant client lsp` merged in using the `--lsp` flag
   - `distant system-info` is a refactoring of `distant client action system-info`
@@ -33,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `distant client launch` moved to `distant launch`
   - `distant client connect` moved to `distant connect`
   - `distant client lsp` moved to `distant lsp`
-  - `distant client repl` moved to `distant repl`
+  - `distant client repl` moved to `distant api`
   - `distant client shell` moved to `distant shell`
 
 ### Removed
