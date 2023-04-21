@@ -1,4 +1,4 @@
-use crate::cli::{fixtures::*, utils::FAILURE_LINE};
+use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
@@ -51,7 +51,7 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(FAILURE_LINE.clone());
+        .stderr(predicate::str::contains("No such file or directory"));
 
     dir.assert(predicate::path::missing());
 }

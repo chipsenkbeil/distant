@@ -1,56 +1,90 @@
-use clap::error::{Error, ErrorKind};
-use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches};
-use derive_more::{Display, From, Into};
-use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut};
+use clap::Args;
+use std::fmt;
+use std::str::FromStr;
 
-/// Represents some command with arguments to execute
-#[derive(Clone, Debug, Display, From, Into, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Cmd(String);
+/// Represents some command with arguments to execute.
+///
+/// NOTE: Must be derived with `#[clap(flatten)]` to properly take effect.
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+pub struct Cmd {
+    /// The command to execute.
+    #[clap(name = "CMD")]
+    cmd: String,
+
+    /// Arguments to provide to the command.
+    #[clap(name = "ARGS")]
+    args: Vec<String>,
+}
 
 impl Cmd {
-    /// Creates a new command from the given `cmd`
-    pub fn new(cmd: impl Into<String>) -> Self {
-        Self(cmd.into())
-    }
-
-    /// Returns reference to the program portion of the command
-    pub fn program(&self) -> &str {
-        match self.0.split_once(' ') {
-            Some((program, _)) => program.trim(),
-            None => self.0.trim(),
-        }
-    }
-
-    /// Returns reference to the arguments portion of the command
-    pub fn arguments(&self) -> &str {
-        match self.0.split_once(' ') {
-            Some((_, arguments)) => arguments.trim(),
-            None => "",
+    /// Creates a new command from the given `cmd`.
+    pub fn new<C, I, A>(cmd: C, args: I) -> Self
+    where
+        C: Into<String>,
+        I: Iterator<Item = A>,
+        A: Into<String>,
+    {
+        Self {
+            cmd: cmd.into(),
+            args: args.map(Into::into).collect(),
         }
     }
 }
 
-impl Deref for Cmd {
-    type Target = String;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl From<Cmd> for String {
+    fn from(cmd: Cmd) -> Self {
+        cmd.to_string()
     }
 }
 
-impl DerefMut for Cmd {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+impl fmt::Display for Cmd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.cmd)?;
+        for arg in self.args.iter() {
+            write!(f, " {arg}")?;
+        }
+        Ok(())
     }
 }
 
 impl<'a> From<&'a str> for Cmd {
+    /// Parses `s` into [`Cmd`], or panics if unable to parse.
     fn from(s: &'a str) -> Self {
-        Self(s.to_string())
+        s.parse().expect("Failed to parse into cmd")
     }
 }
 
+impl FromStr for Cmd {
+    type Err = Box<dyn std::error::Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let tokens = if cfg!(unix) {
+            shell_words::split(s)?
+        } else if cfg!(windows) {
+            winsplit::split(s)
+        } else {
+            unreachable!(
+                "FromStr<Cmd>: Unsupported operating system outside Unix and Windows families!"
+            );
+        };
+
+        // If we get nothing, then we want an empty command
+        if tokens.is_empty() {
+            return Ok(Self {
+                cmd: String::new(),
+                args: Vec::new(),
+            });
+        }
+
+        let mut it = tokens.into_iter();
+        Ok(Self {
+            cmd: it.next().unwrap(),
+            args: it.collect(),
+        })
+    }
+}
+
+/*
 impl FromArgMatches for Cmd {
     fn from_arg_matches(matches: &ArgMatches) -> Result<Self, Error> {
         let mut matches = matches.clone();
@@ -85,6 +119,7 @@ impl Args for Cmd {
             Arg::new("cmd")
                 .required(true)
                 .value_name("CMD")
+                .help("")
                 .action(ArgAction::Set),
         )
         .trailing_var_arg(true)
@@ -96,6 +131,16 @@ impl Args for Cmd {
         )
     }
     fn augment_args_for_update(cmd: Command) -> Command {
-        cmd
+        Self::augment_args(cmd)
     }
-}
+} */
+
+/* #[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cmd() {
+        Cmd::augment_args(Command::new("distant")).debug_assert();
+    }
+} */

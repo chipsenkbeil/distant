@@ -93,6 +93,9 @@ impl Options {
             DistantSubcommand::Client(cmd) => {
                 update_logging!(client);
                 match cmd {
+                    ClientSubcommand::Capabilities { network, .. } => {
+                        network.merge(config.client.network);
+                    }
                     ClientSubcommand::Connect {
                         network, options, ..
                     } => {
@@ -229,6 +232,28 @@ pub enum DistantSubcommand {
 /// Subcommands for `distant client`.
 #[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ClientSubcommand {
+    /// Retrieves capabilities of the remote server
+    Capabilities {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+    },
+
     /// Requests that active manager connects to the server at the specified destination
     Connect {
         /// Location to store cached data
@@ -366,7 +391,8 @@ pub enum ClientSubcommand {
         environment: Environment,
 
         /// Optional command to run instead of $SHELL
-        cmd: Option<Cmd>,
+        #[clap(name = "CMD", last = true)]
+        cmd: Option<Vec<String>>,
     },
 
     /// Spawn a process on the remote machine
@@ -405,7 +431,8 @@ pub enum ClientSubcommand {
         environment: Environment,
 
         /// Command to run
-        cmd: Cmd,
+        #[clap(name = "CMD", num_args = 1.., last = true)]
+        cmd: Vec<String>,
     },
 
     SystemInfo {
@@ -430,6 +457,7 @@ pub enum ClientSubcommand {
 impl ClientSubcommand {
     pub fn cache_path(&self) -> &Path {
         match self {
+            Self::Capabilities { cache, .. } => cache.as_path(),
             Self::Connect { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
@@ -442,6 +470,7 @@ impl ClientSubcommand {
 
     pub fn network_settings(&self) -> &NetworkSettings {
         match self {
+            Self::Capabilities { network, .. } => network,
             Self::Connect { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
@@ -677,7 +706,7 @@ pub enum ClientFileSystemSubcommand {
         path: PathBuf,
 
         /// Data for server-side writing of content. If not provided, will read from stdin.
-        data: Option<Vec<u8>>,
+        data: Option<OsString>,
     },
 }
 
@@ -972,6 +1001,122 @@ mod tests {
     use distant_core::net::common::Host;
     use distant_core::net::map;
     use std::time::Duration;
+
+    #[test]
+    fn distant_capabilities_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                format: Format::Json,
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                connect: ClientConnectConfig {
+                    options: map!("hello" -> "world"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    format: Format::Json,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_capabilities_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                cache: PathBuf::new(),
+                connection: None,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                format: Format::Json,
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                connect: ClientConnectConfig {
+                    options: map!("hello" -> "world", "config" -> "value"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                    cache: PathBuf::new(),
+                    connection: None,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    format: Format::Json,
+                }),
+            }
+        );
+    }
 
     #[test]
     fn distant_connect_should_support_merging_with_config() {
@@ -1496,7 +1641,7 @@ mod tests {
                 environment: map!(),
                 lsp: true,
                 pty: true,
-                cmd: Cmd::from("cmd"),
+                cmd: vec![String::from("cmd")],
             }),
         };
 
@@ -1534,7 +1679,7 @@ mod tests {
                     environment: map!(),
                     lsp: true,
                     pty: true,
-                    cmd: Cmd::from("cmd"),
+                    cmd: vec![String::from("cmd")],
                 }),
             }
         );
@@ -1559,7 +1704,7 @@ mod tests {
                 environment: map!(),
                 lsp: true,
                 pty: true,
-                cmd: Cmd::from("cmd"),
+                cmd: vec![String::from("cmd")],
             }),
         };
 
@@ -1597,7 +1742,7 @@ mod tests {
                     environment: map!(),
                     lsp: true,
                     pty: true,
-                    cmd: Cmd::from("cmd"),
+                    cmd: vec![String::from("cmd")],
                 }),
             }
         );

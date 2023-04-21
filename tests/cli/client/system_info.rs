@@ -16,7 +16,7 @@ fn should_output_system_info(ctx: DistantManagerCtx) {
                 "Cwd: {:?}\n",
                 "Path Sep: {:?}\n",
                 "Username: {:?}\n",
-                "Shell: {:?}\n",
+                "Shell: {:?}",
             ),
             env::consts::FAMILY.to_string(),
             env::consts::OS.to_string(),

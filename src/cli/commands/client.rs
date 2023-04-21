@@ -40,6 +40,60 @@ async fn read_cache(path: &Path) -> Cache {
 
 async fn async_run(cmd: ClientSubcommand) -> CliResult {
     match cmd {
+        ClientSubcommand::Capabilities {
+            cache,
+            connection,
+            format,
+            network,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network).await?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening raw channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| {
+                    format!("Failed to open raw channel to connection {connection_id}")
+                })?;
+
+            debug!("Retrieving capabilities");
+            let capabilities = channel
+                .into_client()
+                .into_channel()
+                .capabilities()
+                .await
+                .with_context(|| {
+                    format!("Failed to retrieve capabilities using connection {connection_id}")
+                })?;
+
+            match format {
+                Format::Shell => {
+                    #[derive(Tabled)]
+                    struct EntryRow {
+                        kind: String,
+                        description: String,
+                    }
+
+                    let table = Table::new(capabilities.into_sorted_vec().into_iter().map(|cap| {
+                        EntryRow {
+                            kind: cap.kind,
+                            description: cap.description,
+                        }
+                    }))
+                    .with(Style::ascii())
+                    .with(Modify::new(Rows::new(..)).with(Alignment::left()))
+                    .to_string();
+
+                    println!("{table}");
+                }
+                Format::Json => println!("{}", serde_json::to_string(&capabilities).unwrap()),
+            }
+        }
         ClientSubcommand::Connect {
             cache,
             destination,
@@ -316,8 +370,8 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
         }
         ClientSubcommand::Shell {
             cache,
-            connection,
             cmd,
+            connection,
             current_dir,
             environment,
             network,
@@ -340,7 +394,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
             // Convert cmd into string
-            let cmd = cmd.map(Into::into);
+            let cmd = cmd.map(|cmd| cmd.join(" "));
 
             debug!(
                 "Spawning shell (environment = {:?}): {}",
@@ -378,6 +432,9 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
+            // Convert cmd into string
+            let cmd = cmd.join(" ");
+
             if lsp {
                 debug!(
                     "Spawning LSP server (pty = {}, cwd = {:?}): {}",
@@ -387,9 +444,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     .spawn(cmd, current_dir, pty, MAX_PIPE_CHUNK_SIZE)
                     .await?;
             } else if pty {
-                // Convert cmd into string
-                let cmd = String::from(cmd);
-
                 debug!(
                     "Spawning pty process (environment = {:?}, cwd = {:?}): {}",
                     environment, current_dir, cmd
@@ -406,7 +460,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     .environment(environment)
                     .current_dir(current_dir)
                     .pty(None)
-                    .spawn(channel.into_client().into_channel(), cmd.as_str())
+                    .spawn(channel.into_client().into_channel(), &cmd)
                     .await
                     .with_context(|| format!("Failed to spawn {cmd}"))?;
 
@@ -599,15 +653,15 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             );
             let results = channel
                 .send(DistantMsg::Batch(vec![
+                    DistantRequestData::FileRead {
+                        path: path.to_path_buf(),
+                    },
                     DistantRequestData::DirRead {
                         path: path.to_path_buf(),
                         depth,
                         absolute,
                         canonicalize,
                         include_root,
-                    },
-                    DistantRequestData::FileRead {
-                        path: path.to_path_buf(),
                     },
                 ]))
                 .await
@@ -647,12 +701,14 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                         out.write_all(&data)
                             .context("Failed to write directory contents to stdout")?;
                         out.flush().context("Failed to flush stdout")?;
+                        return Ok(());
                     }
                     DistantResponseData::Blob { data } => {
                         let mut out = std::io::stdout();
                         out.write_all(&data)
                             .context("Failed to write file contents to stdout")?;
                         out.flush().context("Failed to flush stdout")?;
+                        return Ok(());
                     }
                     DistantResponseData::Error(x) => errors.push(x),
                     _ => continue,
@@ -792,7 +848,14 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             data,
         }) => {
             let data = match data {
-                Some(x) => x,
+                Some(x) => match x.into_string() {
+                    Ok(x) => x.into_bytes(),
+                    Err(_) => {
+                        return Err(CliError::from(anyhow::anyhow!(
+                            "Non-unicode input is disallowed!"
+                        )));
+                    }
+                },
                 None => {
                     debug!("No data provided, reading from stdin");
                     use std::io::Read;

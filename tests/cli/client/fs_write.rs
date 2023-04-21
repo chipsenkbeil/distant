@@ -1,17 +1,19 @@
-use crate::cli::{fixtures::*, utils::FAILURE_LINE};
+use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
+use indoc::indoc;
+use predicates::prelude::*;
 use rstest::*;
 
-const FILE_CONTENTS: &str = r#"
-some text
-on multiple lines
-that is a file's contents
-"#;
+const FILE_CONTENTS: &str = indoc! {r#"
+    some text
+    on multiple lines
+    that is a file's contents
+"#};
 
-const APPENDED_FILE_CONTENTS: &str = r#"
-even more
-file contents
-"#;
+const APPENDED_FILE_CONTENTS: &str = indoc! {r#"
+    even more
+    file contents
+"#};
 
 #[rstest]
 #[test_log::test]
@@ -40,11 +42,12 @@ fn should_support_writing_stdin_to_file(ctx: DistantManagerCtx) {
 fn should_support_appending_stdin_to_file(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
+    file.write_str(FILE_CONTENTS).unwrap();
 
     // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
         .args(["--append", file.to_str().unwrap()])
-        .write_stdin(FILE_CONTENTS)
+        .write_stdin(APPENDED_FILE_CONTENTS)
         .assert()
         .success()
         .stdout("")
@@ -65,7 +68,8 @@ fn should_support_writing_argument_to_file(ctx: DistantManagerCtx) {
 
     // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap(), "--", FILE_CONTENTS])
+        .args([file.to_str().unwrap(), "--"])
+        .arg(FILE_CONTENTS)
         .assert()
         .success()
         .stdout("")
@@ -83,10 +87,12 @@ fn should_support_writing_argument_to_file(ctx: DistantManagerCtx) {
 fn should_support_appending_argument_to_file(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
+    file.write_str(FILE_CONTENTS).unwrap();
 
     // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
-        .args(["--append", file.to_str().unwrap(), "--", FILE_CONTENTS])
+        .args(["--append", file.to_str().unwrap(), "--"])
+        .arg(APPENDED_FILE_CONTENTS)
         .assert()
         .success()
         .stdout("")
@@ -107,11 +113,12 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
 
     // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap(), "--", FILE_CONTENTS])
+        .args([file.to_str().unwrap(), "--"])
+        .arg(FILE_CONTENTS)
         .assert()
         .code(1)
         .stdout("")
-        .stderr(FAILURE_LINE.clone());
+        .stderr(predicate::str::contains("No such file or directory"));
 
     // Because we're talking to a local server, we can verify locally
     file.assert(predicates::path::missing());

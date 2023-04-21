@@ -1,12 +1,14 @@
-use crate::cli::{fixtures::*, utils::FAILURE_LINE};
+use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
+use indoc::indoc;
+use predicates::prelude::*;
 use rstest::*;
 
-const FILE_CONTENTS: &str = r#"
-some text
-on multiple lines
-that is a file's contents
-"#;
+const FILE_CONTENTS: &str = indoc! {r#"
+    some text
+    on multiple lines
+    that is a file's contents
+"#};
 
 #[rstest]
 #[test_log::test]
@@ -20,7 +22,7 @@ fn should_print_out_file_contents(ctx: DistantManagerCtx) {
         .args([file.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(format!("{}\n", FILE_CONTENTS))
+        .stdout(FILE_CONTENTS)
         .stderr("");
 }
 
@@ -36,5 +38,5 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(FAILURE_LINE.clone());
+        .stderr(predicate::str::contains("No such file or directory"));
 }
