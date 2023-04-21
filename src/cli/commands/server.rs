@@ -101,7 +101,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             current_dir,
             daemon: _,
             key_from_stdin,
-            #[cfg_attr(unix, allow(unused_variables))]
+            #[allow(unused_variables)]
             output_to_local_pipe,
         } => {
             let host = host.into_inner();
