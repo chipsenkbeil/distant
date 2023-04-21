@@ -1,7 +1,7 @@
 use crate::cli::{fixtures::*, utils::ThreadedReader};
 use assert_fs::prelude::*;
 use rstest::*;
-use std::{process::Command, thread, time::Duration};
+use std::{thread, time::Duration};
 
 fn wait_a_bit() {
     wait_millis(250);
@@ -17,14 +17,15 @@ fn wait_millis(millis: u64) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_watching_a_single_file(mut action_std_cmd: CtxCommand<Command>) {
+fn should_support_watching_a_single_file(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
 
-    // distant action watch {path}
-    let mut child = action_std_cmd
-        .args(["watch", file.to_str().unwrap()])
+    // distant fs watch {path}
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .arg(file.to_str().unwrap())
         .spawn()
         .expect("Failed to execute");
 
@@ -68,7 +69,7 @@ fn should_support_watching_a_single_file(mut action_std_cmd: CtxCommand<Command>
 
 #[rstest]
 #[test_log::test]
-fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxCommand<Command>) {
+fn should_support_watching_a_directory_recursively(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -77,9 +78,10 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxComman
     let file = dir.child("file");
     file.touch().unwrap();
 
-    // distant action watch {path}
-    let mut child = action_std_cmd
-        .args(["watch", "--recursive", temp.to_str().unwrap()])
+    // distant fs watch {path}
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .args(["--recursive", temp.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
@@ -123,13 +125,14 @@ fn should_support_watching_a_directory_recursively(mut action_std_cmd: CtxComman
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(mut action_std_cmd: CtxCommand<Command>) {
+fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let invalid_path = temp.to_path_buf().join("missing");
 
-    // distant action watch {path}
-    let child = action_std_cmd
-        .args(["watch", invalid_path.to_str().unwrap()])
+    // distant fs watch {path}
+    let child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .arg(invalid_path.to_str().unwrap())
         .spawn()
         .expect("Failed to execute");
 

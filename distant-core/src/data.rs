@@ -280,7 +280,6 @@ pub enum DistantRequestData {
     },
 
     /// Moves/renames a file or directory on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["mv"]))]
     #[strum_discriminants(strum(message = "Supports renaming files, directories, and symlinks"))]
     Rename {
         /// The path to the file or directory on the remote machine
@@ -299,23 +298,14 @@ pub enum DistantRequestData {
         /// If true, will recursively watch for changes within directories, othewise
         /// will only watch for changes immediately within directories
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         recursive: bool,
 
         /// Filter to only report back specified changes
         #[serde(default)]
-        #[cfg_attr(
-            feature = "clap",
-            clap(long, value_parser = clap::builder::PossibleValuesParser::new(ChangeKind::VARIANTS))
-        )]
         only: Vec<ChangeKind>,
 
         /// Filter to report back changes except these specified changes
         #[serde(default)]
-        #[cfg_attr(
-            feature = "clap", 
-            clap(long, value_parser = clap::builder::PossibleValuesParser::new(ChangeKind::VARIANTS))
-        )]
         except: Vec<ChangeKind>,
     },
 
@@ -345,12 +335,10 @@ pub enum DistantRequestData {
         /// returning the canonical, absolute form of a path with all
         /// intermediate components normalized and symbolic links resolved
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         canonicalize: bool,
 
         /// Whether or not to follow symlinks to determine absolute file type (dir/file)
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         resolve_file_type: bool,
     },
 
@@ -358,7 +346,6 @@ pub enum DistantRequestData {
     #[strum_discriminants(strum(message = "Supports searching filesystem using queries"))]
     Search {
         /// Query to perform against the filesystem
-        #[cfg_attr(feature = "clap", clap(flatten))]
         query: SearchQuery,
     },
 
@@ -372,31 +359,25 @@ pub enum DistantRequestData {
     },
 
     /// Spawns a new process on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
     #[strum_discriminants(strum(message = "Supports spawning a process"))]
     ProcSpawn {
         /// The full command to run including arguments
-        #[cfg_attr(feature = "clap", clap(flatten))]
         cmd: Cmd,
 
         /// Environment to provide to the remote process
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long, default_value_t = Environment::default()))]
         environment: Environment,
 
         /// Alternative current directory for the remote process
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         current_dir: Option<PathBuf>,
 
         /// If provided, will spawn process in a pty, otherwise spawns directly
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         pty: Option<PtySize>,
     },
 
     /// Kills a process running on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["kill"]))]
     #[strum_discriminants(strum(message = "Supports killing a spawned process"))]
     ProcKill {
         /// Id of the actively-running process

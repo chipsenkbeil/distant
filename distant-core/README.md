@@ -35,8 +35,6 @@ distant-core = "0.19"
 
 Currently, the library supports the following features:
 
-- `clap`: generates [`Clap`](https://github.com/clap-rs) bindings for
-  `DistantRequestData` (used by cli to expose request actions)
 - `schemars`: derives the `schemars::JsonSchema` interface on
   `DistantMsg`, `DistantRequestData`, and `DistantResponseData` data types
 

@@ -61,8 +61,8 @@ impl Watcher {
                 DistantRequestData::Watch {
                     path: path.to_path_buf(),
                     recursive,
-                    only: only.into_vec(),
-                    except: except.into_vec(),
+                    only: only.into_sorted_vec(),
+                    except: except.into_sorted_vec(),
                 },
             )))
             .await?;

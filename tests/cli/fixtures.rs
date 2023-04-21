@@ -260,6 +260,7 @@ impl DistantManagerCtx {
             cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
         }
 
+        eprintln!("new_assert_cmd: {cmd:?}");
         cmd
     }
 
@@ -287,6 +288,7 @@ impl DistantManagerCtx {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        eprintln!("new_std_cmd: {cmd:?}");
         cmd
     }
 }

@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
 };
-use strum::{EnumString, EnumVariantNames};
+use strum::{EnumString, EnumVariantNames, VariantNames};
 
 /// Change to one or more paths on the filesystem
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,8 +58,6 @@ impl From<NotifyEvent> for Change {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
-#[cfg_attr(feature = "clap", clap(rename_all = "snake_case"))]
 pub enum ChangeKind {
     /// Something about a file or directory was accessed, but
     /// no specific details were known
@@ -142,6 +140,16 @@ pub enum ChangeKind {
 }
 
 impl ChangeKind {
+    /// Returns a list of all variants as str names
+    pub const fn variants() -> &'static [&'static str] {
+        Self::VARIANTS
+    }
+
+    /// Returns a list of all variants as a vec
+    pub fn all() -> Vec<ChangeKind> {
+        ChangeKindSet::all().into_sorted_vec()
+    }
+
     /// Returns true if the change is a kind of access
     pub fn is_access_kind(&self) -> bool {
         self.is_open_access_kind()
@@ -375,9 +383,11 @@ impl ChangeKindSet {
         ChangeKind::Rename | ChangeKind::RenameBoth | ChangeKind::RenameFrom | ChangeKind::RenameTo
     }
 
-    /// Consumes set and returns a vec of the kinds of changes
-    pub fn into_vec(self) -> Vec<ChangeKind> {
-        self.0.into_iter().collect()
+    /// Consumes set and returns a sorted vec of the kinds of changes
+    pub fn into_sorted_vec(self) -> Vec<ChangeKind> {
+        let mut v = self.0.into_iter().collect::<Vec<_>>();
+        v.sort();
+        v
     }
 }
 

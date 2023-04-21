@@ -5,10 +5,10 @@ use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings};
 use crate::{CliError, CliResult};
 use anyhow::Context;
-use distant_core::data::{FileType, SearchQuery, SystemInfo};
+use distant_core::data::{ChangeKindSet, FileType, SearchQuery, SystemInfo};
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
-use distant_core::{DistantChannel, DistantChannelExt};
+use distant_core::{DistantChannel, DistantChannelExt, Watcher};
 use distant_core::{DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher};
 use log::*;
 use serde_json::json;
@@ -582,6 +582,47 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     format!("Failed to copy {src:?} to {dst:?} using connection {connection_id}")
                 })?;
         }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Exists {
+            cache,
+            connection,
+            network,
+            path,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Checking existence of {path:?}");
+            let exists = channel
+                .into_client()
+                .into_channel()
+                .exists(path.as_path())
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to check existence of {path:?} using connection {connection_id}"
+                    )
+                })?;
+
+            if exists {
+                println!("true");
+            } else {
+                println!("false");
+            }
+        }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::MakeDir {
             cache,
             connection,
@@ -615,6 +656,135 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .with_context(|| {
                     format!("Failed to make directory {path:?} using connection {connection_id}")
                 })?;
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Metadata {
+            cache,
+            connection,
+            network,
+            canonicalize,
+            resolve_file_type,
+            path,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Retrieving metadata of {path:?}");
+            let metadata = channel
+                .into_client()
+                .into_channel()
+                .metadata(path.as_path(), canonicalize, resolve_file_type)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to retrieve metadata of {path:?} using connection {connection_id}"
+                    )
+                })?;
+
+            println!(
+                concat!(
+                    "{}",
+                    "Type: {}\n",
+                    "Len: {}\n",
+                    "Readonly: {}\n",
+                    "Created: {}\n",
+                    "Last Accessed: {}\n",
+                    "Last Modified: {}\n",
+                    "{}",
+                    "{}",
+                    "{}",
+                ),
+                metadata
+                    .canonicalized_path
+                    .map(|p| format!("Canonicalized Path: {p:?}\n"))
+                    .unwrap_or_default(),
+                metadata.file_type.as_ref(),
+                metadata.len,
+                metadata.readonly,
+                metadata.created.unwrap_or_default(),
+                metadata.accessed.unwrap_or_default(),
+                metadata.modified.unwrap_or_default(),
+                metadata
+                    .unix
+                    .map(|u| format!(
+                        concat!(
+                            "Owner Read: {}\n",
+                            "Owner Write: {}\n",
+                            "Owner Exec: {}\n",
+                            "Group Read: {}\n",
+                            "Group Write: {}\n",
+                            "Group Exec: {}\n",
+                            "Other Read: {}\n",
+                            "Other Write: {}\n",
+                            "Other Exec: {}",
+                        ),
+                        u.owner_read,
+                        u.owner_write,
+                        u.owner_exec,
+                        u.group_read,
+                        u.group_write,
+                        u.group_exec,
+                        u.other_read,
+                        u.other_write,
+                        u.other_exec
+                    ))
+                    .unwrap_or_default(),
+                metadata
+                    .windows
+                    .map(|w| format!(
+                        concat!(
+                            "Archive: {}\n",
+                            "Compressed: {}\n",
+                            "Encrypted: {}\n",
+                            "Hidden: {}\n",
+                            "Integrity Stream: {}\n",
+                            "Normal: {}\n",
+                            "Not Content Indexed: {}\n",
+                            "No Scrub Data: {}\n",
+                            "Offline: {}\n",
+                            "Recall on Data Access: {}\n",
+                            "Recall on Open: {}\n",
+                            "Reparse Point: {}\n",
+                            "Sparse File: {}\n",
+                            "System: {}\n",
+                            "Temporary: {}",
+                        ),
+                        w.archive,
+                        w.compressed,
+                        w.encrypted,
+                        w.hidden,
+                        w.integrity_stream,
+                        w.normal,
+                        w.not_content_indexed,
+                        w.no_scrub_data,
+                        w.offline,
+                        w.recall_on_data_access,
+                        w.recall_on_open,
+                        w.reparse_point,
+                        w.sparse_file,
+                        w.system,
+                        w.temporary,
+                    ))
+                    .unwrap_or_default(),
+                if metadata.unix.is_none() && metadata.windows.is_none() {
+                    String::from("\n")
+                } else {
+                    String::new()
+                }
+            )
         }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Read {
             cache,
@@ -837,6 +1007,55 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 );
 
                 formatter.print(res).context("Failed to print match")?;
+            }
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Watch {
+            cache,
+            connection,
+            network,
+            recursive,
+            only,
+            except,
+            path,
+        }) => {
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            debug!("Special request creating watcher for {:?}", path);
+            let mut watcher = Watcher::watch(
+                channel.into_client().into_channel(),
+                path.as_path(),
+                recursive,
+                only.into_iter().collect::<ChangeKindSet>(),
+                except.into_iter().collect::<ChangeKindSet>(),
+            )
+            .await
+            .with_context(|| format!("Failed to watch {path:?}"))?;
+
+            // Continue to receive and process changes
+            let mut formatter = Formatter::shell();
+            while let Some(change) = watcher.next().await {
+                // TODO: Provide a cleaner way to print just a change
+                let res = Response::new(
+                    "".to_string(),
+                    DistantMsg::Single(DistantResponseData::Changed(change)),
+                );
+
+                formatter.print(res).context("Failed to print change")?;
             }
         }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Write {

@@ -302,17 +302,32 @@ impl UntypedClient {
                                 Ok(response) => {
                                     if log_enabled!(Level::Trace) {
                                         trace!(
-                                            "Client receiving {}",
-                                            String::from_utf8_lossy(&response.to_bytes())
-                                                .to_string()
+                                            "Client receiving (id:{} | origin: {}): {}",
+                                            response.id,
+                                            response.origin_id,
+                                            String::from_utf8_lossy(&response.payload).to_string()
                                         );
                                     }
+
+                                    // For trace-level logging, we need to clone the id and
+                                    // origin id before passing the response ownership to
+                                    // be delivered elsewhere
+                                    let (id, origin_id) = if log_enabled!(Level::Trace) {
+                                        (response.id.to_string(), response.origin_id.to_string())
+                                    } else {
+                                        (String::new(), String::new())
+                                    };
+
                                     // Try to send response to appropriate mailbox
                                     // TODO: This will block if full... is that a problem?
-                                    // TODO: How should we handle false response? Did logging in past
-                                    post_office
+                                    if post_office
                                         .deliver_untyped_response(response.into_owned())
-                                        .await;
+                                        .await
+                                    {
+                                        trace!("Client delivered response {id} to {origin_id}");
+                                    } else {
+                                        trace!("Client dropped response {id} to {origin_id}");
+                                    }
                                 }
                                 Err(x) => {
                                     error!("Invalid response: {x}");
