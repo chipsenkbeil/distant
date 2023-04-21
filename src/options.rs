@@ -1071,7 +1071,6 @@ pub enum ServerSubcommand {
         key_from_stdin: bool,
 
         /// If specified, will send output to the specified named pipe (internal usage)
-        #[cfg(windows)]
         #[clap(long, help = None, long_help = None)]
         output_to_local_pipe: Option<std::ffi::OsString>,
     },
@@ -4035,6 +4034,7 @@ mod tests {
                 current_dir: None,
                 daemon: false,
                 key_from_stdin: false,
+                output_to_local_pipe: None,
             }),
         };
 
@@ -4070,7 +4070,8 @@ mod tests {
                     shutdown: Value::Explicit(Shutdown::Lonely(Duration::from_secs(456))),
                     current_dir: Some(PathBuf::from("config-dir")),
                     daemon: false,
-                    key_from_stdin: false
+                    key_from_stdin: false,
+                    output_to_local_pipe: None,
                 }),
             }
         );
@@ -4092,6 +4093,7 @@ mod tests {
                 current_dir: Some(PathBuf::from("cli-dir")),
                 daemon: false,
                 key_from_stdin: false,
+                output_to_local_pipe: None,
             }),
         };
 
@@ -4127,7 +4129,8 @@ mod tests {
                     shutdown: Value::Explicit(Shutdown::After(Duration::from_secs(123))),
                     current_dir: Some(PathBuf::from("cli-dir")),
                     daemon: false,
-                    key_from_stdin: false
+                    key_from_stdin: false,
+                    output_to_local_pipe: None,
                 }),
             }
         );
