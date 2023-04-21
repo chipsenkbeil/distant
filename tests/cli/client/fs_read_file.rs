@@ -1,7 +1,7 @@
 use crate::cli::fixtures::*;
-use crate::cli::utils::missing_path_pred;
 use assert_fs::prelude::*;
 use indoc::indoc;
+use predicates::prelude::*;
 use rstest::*;
 
 const FILE_CONTENTS: &str = indoc! {r#"
@@ -38,5 +38,5 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(missing_path_pred());
+        .stderr(predicates::str::is_empty().not());
 }

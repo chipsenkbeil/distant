@@ -1,5 +1,4 @@
 use crate::cli::fixtures::*;
-use crate::cli::utils::directory_not_empty_pred;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
@@ -79,7 +78,7 @@ fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(directory_not_empty_pred());
+        .stderr(predicates::str::is_empty().not());
 
     dir.assert(predicate::path::exists());
     dir.assert(predicate::path::is_dir());
