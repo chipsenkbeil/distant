@@ -1,44 +1,21 @@
-use crate::{
-    config::{CommonConfig, Config},
-    paths, CliResult,
-};
-use clap::Parser;
-use std::{ffi::OsString, path::PathBuf};
+use crate::options::DistantSubcommand;
+use crate::{CliResult, Options};
+use std::ffi::OsString;
 
-mod cache;
-mod client;
 mod commands;
-mod manager;
-mod spawner;
+mod common;
 
-pub(crate) use cache::Cache;
-pub(crate) use client::Client;
-use commands::DistantSubcommand;
-pub(crate) use manager::Manager;
+pub(crate) use common::Cache;
+pub(crate) use common::Client;
+pub(crate) use common::Manager;
 
 #[cfg_attr(unix, allow(unused_imports))]
-pub(crate) use spawner::Spawner;
+pub(crate) use common::Spawner;
 
 /// Represents the primary CLI entrypoint
+#[derive(Debug)]
 pub struct Cli {
-    common: CommonConfig,
-    command: DistantSubcommand,
-    config: Config,
-}
-
-#[derive(Debug, Parser)]
-#[clap(author, version, about)]
-#[clap(name = "distant")]
-struct Opt {
-    #[clap(flatten)]
-    common: CommonConfig,
-
-    /// Configuration file to load instead of the default paths
-    #[clap(short = 'c', long = "config", global = true, value_parser)]
-    config_path: Option<PathBuf>,
-
-    #[clap(subcommand)]
-    command: DistantSubcommand,
+    options: Options,
 }
 
 impl Cli {
@@ -53,54 +30,8 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        // NOTE: We should NOT provide context here as printing help and version are both
-        //       reported this way and providing context puts them under the "caused by" section
-        let Opt {
-            mut common,
-            config_path,
-            command,
-        } = Opt::try_parse_from(args)?;
-
-        // Try to load a configuration file, defaulting if no config file is found
-        let config = Config::load_multi(config_path)?;
-
-        // Extract the common config from our config file
-        let config_common = match &command {
-            DistantSubcommand::Client(_) => config.client.common.clone(),
-            DistantSubcommand::Generate(_) => config.generate.common.clone(),
-            DistantSubcommand::Manager(_) => config.manager.common.clone(),
-            DistantSubcommand::Server(_) => config.server.common.clone(),
-        };
-
-        // Blend common configs together
-        common.log_file = common.log_file.or(config_common.log_file);
-        common.log_level = common.log_level.or(config_common.log_level);
-
-        // Assign the appropriate log file based on client/manager/server
-        if common.log_file.is_none() {
-            // NOTE: We assume that any of these commands will log to the user-specific path
-            //       and that services that run manager will explicitly override the
-            //       log file path
-            common.log_file = Some(match &command {
-                DistantSubcommand::Client(_) => paths::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
-                DistantSubcommand::Server(_) => paths::user::SERVER_LOG_FILE_PATH.to_path_buf(),
-                DistantSubcommand::Generate(_) => paths::user::GENERATE_LOG_FILE_PATH.to_path_buf(),
-
-                // If we are listening as a manager, then we want to log to a manager-specific file
-                DistantSubcommand::Manager(cmd) if cmd.is_listen() => {
-                    paths::user::MANAGER_LOG_FILE_PATH.to_path_buf()
-                }
-
-                // Otherwise, if we are performing some operation as a client talking to the
-                // manager, then we want to log to the client file
-                DistantSubcommand::Manager(_) => paths::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
-            });
-        }
-
         Ok(Cli {
-            common,
-            command,
-            config,
+            options: Options::load_from(args)?,
         })
     }
 
@@ -117,7 +48,8 @@ impl Cli {
         for module in modules {
             builder.module(
                 module,
-                self.common
+                self.options
+                    .logging
                     .log_level
                     .unwrap_or_default()
                     .to_log_level_filter(),
@@ -130,7 +62,7 @@ impl Cli {
         // Assign our log output to a file
         // NOTE: We can unwrap here as we assign the log file earlier
         let logger = logger.log_to_file(
-            FileSpec::try_from(self.common.log_file.as_ref().unwrap())
+            FileSpec::try_from(self.options.logging.log_file.as_ref().unwrap())
                 .expect("Failed to create log file spec"),
         );
 
@@ -139,7 +71,7 @@ impl Cli {
 
     #[cfg(windows)]
     pub fn is_manager_listen_command(&self) -> bool {
-        match &self.command {
+        match &self.options.command {
             DistantSubcommand::Manager(cmd) => cmd.is_listen(),
             _ => false,
         }
@@ -147,11 +79,11 @@ impl Cli {
 
     /// Runs the CLI
     pub fn run(self) -> CliResult {
-        match self.command {
-            DistantSubcommand::Client(cmd) => cmd.run(self.config.client),
-            DistantSubcommand::Generate(cmd) => cmd.run(self.config.generate),
-            DistantSubcommand::Manager(cmd) => cmd.run(self.config.manager),
-            DistantSubcommand::Server(cmd) => cmd.run(self.config.server),
+        match self.options.command {
+            DistantSubcommand::Client(cmd) => commands::client::run(cmd),
+            DistantSubcommand::Generate(cmd) => commands::generate::run(cmd),
+            DistantSubcommand::Manager(cmd) => commands::manager::run(cmd),
+            DistantSubcommand::Server(cmd) => commands::server::run(cmd),
         }
     }
 }

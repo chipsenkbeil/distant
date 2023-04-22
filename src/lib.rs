@@ -2,15 +2,14 @@ use derive_more::{Display, Error, From};
 use std::process::{ExitCode, Termination};
 
 mod cli;
-pub mod config;
 mod constants;
-mod paths;
+mod options;
 
 #[cfg(windows)]
 pub mod win_service;
 
-pub use self::config::Config;
 pub use cli::Cli;
+pub use options::Options;
 
 /// Wrapper around a [`CliResult`] that provides [`Termination`] support
 pub struct MainResult(CliResult);

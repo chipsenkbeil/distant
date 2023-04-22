@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0-alpha.4]
+## [0.20.0-alpha.5]
+
+### Added
+
+- CLI now offers the following new subcommands
+  - `distant fs copy` is a refactoring of `distant client action copy`
+  - `distant fs exists` is a refactoring of `distant client action exists`
+  - `distant fs read` is a refactoring of `distant client action file-read`,
+    `distant client action file-read-text`, and `distant client action dir-read`
+  - `distant fs rename` is a refactoring of `distant client action rename`
+  - `distant fs write` is a refactoring of `distant client action file-write`,
+    `distant client action file-write-text`, `distant client action file-append`,
+  - `distant fs make-dir` is a refactoring of `distant client action dir-create`
+  - `distant fs metadata` is a refactoring of `distant client action metadata`
+  - `distant fs remove` is a refactoring of `distant client action remove`
+  - `distant fs search` is a refactoring of `distant client action search`
+  - `distant fs watch` is a refactoring of `distant client action watch`
+  - `distant spawn` is a refactoring of `distant client action proc-spawn`
+    with `distant client lsp` merged in using the `--lsp` flag
+  - `distant system-info` is a refactoring of `distant client action system-info`
+
+### Changed
+
+- CLI subcommands refactored
+  - `distant client select` moved to `distant manager select`
+  - `distant client action` moved to `distant action`
+  - `distant client launch` moved to `distant launch`
+  - `distant client connect` moved to `distant connect`
+  - `distant client lsp` moved to `distant lsp`
+  - `distant client repl` moved to `distant api`
+  - `distant client shell` moved to `distant shell`
+
+### Removed
+
+- `distant-core` crate no longer offers the `clap` feature
+
+## [0.20.0-alpha.4] - 2023-03-31
 
 ### Added
 
@@ -20,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated a variety of dependencies to latest versions
 
-## [0.20.0-alpha.3]
+## [0.20.0-alpha.3] - 2022-11-27
 
 ### Added
 
@@ -375,7 +411,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.4...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.5...HEAD
+[0.20.0-alpha.5]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.4...v0.20.0-alpha.5
 [0.20.0-alpha.4]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.3...v0.20.0-alpha.4
 [0.20.0-alpha.3]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.2...v0.20.0-alpha.3
 [0.20.0-alpha.2]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.1...v0.20.0-alpha.2

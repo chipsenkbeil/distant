@@ -1,4 +1,4 @@
-use crate::config::ClientLaunchConfig;
+use crate::options::ClientLaunchConfig;
 use async_trait::async_trait;
 use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::authentication::msg::*;

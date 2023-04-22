@@ -13,8 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod repl;
-pub use repl::Repl;
+mod api;
+pub use api::ApiProcess;
 
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
@@ -173,7 +173,6 @@ impl DistantManagerCtx {
                 // Connect manager to server
                 let mut connect_cmd = StdCommand::new(bin_path());
                 connect_cmd
-                    .arg("client")
                     .arg("connect")
                     .arg("--log-file")
                     .arg(random_log_file("connect"))
@@ -235,6 +234,13 @@ impl DistantManagerCtx {
         }
     }
 
+    /// Produces a new test command configured with a singular subcommand. Useful for root-level
+    /// subcommands.
+    #[inline]
+    pub fn cmd(&self, subcommand: &'static str) -> Command {
+        self.new_assert_cmd(vec![subcommand])
+    }
+
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
@@ -254,6 +260,7 @@ impl DistantManagerCtx {
             cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
         }
 
+        eprintln!("new_assert_cmd: {cmd:?}");
         cmd
     }
 
@@ -281,6 +288,7 @@ impl DistantManagerCtx {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        eprintln!("new_std_cmd: {cmd:?}");
         cmd
     }
 }
@@ -316,40 +324,32 @@ pub fn ctx() -> DistantManagerCtx {
 
 #[fixture]
 pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
-    let cmd = ctx.new_assert_cmd(vec!["client", "lsp"]);
-    CtxCommand { ctx, cmd }
-}
-
-#[fixture]
-pub fn action_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
-    let cmd = ctx.new_assert_cmd(vec!["client", "action"]);
+    let cmd = ctx.new_assert_cmd(vec!["lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
 pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
-    let cmd = ctx.new_std_cmd(vec!["client", "action"]);
+    let cmd = ctx.new_std_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn json_repl(ctx: DistantManagerCtx) -> CtxCommand<Repl> {
+pub fn api_process(ctx: DistantManagerCtx) -> CtxCommand<ApiProcess> {
     let child = ctx
-        .new_std_cmd(vec!["client", "repl"])
-        .arg("--format")
-        .arg("json")
+        .new_std_cmd(vec!["api"])
         .spawn()
-        .expect("Failed to start distant repl with json format");
-    let cmd = Repl::new(child, TIMEOUT);
+        .expect("Failed to start distant api with json format");
+    let cmd = ApiProcess::new(child, TIMEOUT);
 
     CtxCommand { ctx, cmd }
 }
 
-pub async fn validate_authentication(repl: &mut Repl) {
+pub async fn validate_authentication(proc: &mut ApiProcess) {
     // NOTE: We have to handle receiving authentication messages, as we will get
     //       an authentication initialization of with method "none", and then
     //       a finish authentication status before we can do anything else.
-    let json = repl
+    let json = proc
         .read_json_from_stdout()
         .await
         .unwrap()
@@ -359,7 +359,7 @@ pub async fn validate_authentication(repl: &mut Repl) {
         json!({"type": "auth_initialization", "methods": ["none"]})
     );
 
-    let json = repl
+    let json = proc
         .write_and_read_json(json!({
             "type": "auth_initialization_response",
             "methods": ["none"]
@@ -369,7 +369,7 @@ pub async fn validate_authentication(repl: &mut Repl) {
         .expect("Missing authentication method");
     assert_eq!(json, json!({"type": "auth_start_method", "method": "none"}));
 
-    let json = repl
+    let json = proc
         .read_json_from_stdout()
         .await
         .unwrap()

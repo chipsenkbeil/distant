@@ -18,6 +18,13 @@ pub struct Error {
 
 impl std::error::Error for Error {}
 
+impl Error {
+    /// Produces an [`io::Error`] from this error.
+    pub fn to_io_error(&self) -> io::Error {
+        io::Error::new(self.kind.into(), self.description.to_string())
+    }
+}
+
 #[cfg(feature = "schemars")]
 impl Error {
     pub fn root_schema() -> schemars::schema::RootSchema {

@@ -2,6 +2,7 @@ use crate::common::utils::{deserialize_from_str, serialize_to_str};
 use derive_more::{Display, Error, From, IntoIterator};
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 use std::{
+    collections::hash_map::Entry,
     collections::HashMap,
     fmt,
     ops::{Deref, DerefMut},
@@ -20,6 +21,57 @@ impl Map {
 
     pub fn into_map(self) -> HashMap<String, String> {
         self.0
+    }
+
+    /// Merges this map with another map. When there is a conflict
+    /// where both maps have the same key, the other map's key is
+    /// used UNLESS the `keep` flag is set to true, where this
+    /// map's key will be used instead.
+    ///
+    /// ### Examples
+    ///
+    /// Keeping the value will result in `x` retaining the `a` key's original value:
+    ///
+    /// ```rust
+    /// use distant_net::map;
+    ///
+    /// let mut x = map!("a" -> "hello", "b" -> "world");
+    /// let y = map!("a" -> "foo", "c" -> "bar");
+    ///
+    /// x.merge(y, /* keep */ true);
+    ///
+    /// assert_eq!(x, map!("a" -> "hello", "b" -> "world", "c" -> "bar"));
+    /// ```
+    ///
+    /// Not keeping the value will result in `x` replacing the `a` key's value:
+    ///
+    /// ```rust
+    /// use distant_net::map;
+    ///
+    /// let mut x = map!("a" -> "hello", "b" -> "world");
+    /// let y = map!("a" -> "foo", "c" -> "bar");
+    ///
+    /// x.merge(y, /* keep */ false);
+    ///
+    /// assert_eq!(x, map!("a" -> "foo", "b" -> "world", "c" -> "bar"));
+    /// ```
+    pub fn merge(&mut self, other: Map, keep: bool) {
+        for (key, value) in other {
+            match self.0.entry(key) {
+                // If we want to keep the original value, skip replacing it
+                Entry::Occupied(_) if keep => continue,
+
+                // If we want to use the other value, replace it
+                Entry::Occupied(mut x) => {
+                    x.insert(value);
+                }
+
+                // Otherwise, nothing found, so insert it
+                Entry::Vacant(x) => {
+                    x.insert(value);
+                }
+            }
+        }
     }
 }
 

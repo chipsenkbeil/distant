@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
-#[cfg(feature = "clap")]
-use strum::VariantNames;
-
 mod capabilities;
 pub use capabilities::*;
 
@@ -14,9 +11,6 @@ pub use change::*;
 
 mod cmd;
 pub use cmd::*;
-
-#[cfg(feature = "clap")]
-mod clap_impl;
 
 mod error;
 pub use error::*;
@@ -44,17 +38,6 @@ pub type ProcessId = u32;
 
 /// Mapping of environment variables
 pub type Environment = distant_net::common::Map;
-
-/// Type alias for a vec of bytes
-///
-/// NOTE: This only exists to support properly parsing a Vec<u8> from an entire string
-///       with clap rather than trying to parse a string as a singular u8
-pub type ByteVec = Vec<u8>;
-
-#[cfg(feature = "clap")]
-fn parse_byte_vec(src: &str) -> Result<ByteVec, std::convert::Infallible> {
-    Ok(src.as_bytes().to_vec())
-}
 
 /// Represents a wrapper around a distant message, supporting single and batch requests
 #[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,7 +126,6 @@ impl<T: schemars::JsonSchema> DistantMsg<T> {
 /// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, EnumDiscriminants, IsVariant, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "clap", derive(clap::Subcommand))]
 #[strum_discriminants(derive(
     AsRefStr,
     strum::Display,
@@ -164,14 +146,12 @@ impl<T: schemars::JsonSchema> DistantMsg<T> {
 #[strum_discriminants(name(CapabilityKind))]
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
-#[cfg_attr(feature = "clap", clap(rename_all = "kebab-case"))]
 pub enum DistantRequestData {
     /// Retrieve information about the server's capabilities
     #[strum_discriminants(strum(message = "Supports retrieving capabilities"))]
     Capabilities {},
 
     /// Reads a file from the specified path on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["cat"]))]
     #[strum_discriminants(strum(message = "Supports reading binary file"))]
     FileRead {
         /// The path to the file on the remote machine
@@ -194,8 +174,9 @@ pub enum DistantRequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        #[cfg_attr(feature = "clap", clap(value_parser = parse_byte_vec))]
-        data: ByteVec,
+        #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
+        data: Vec<u8>,
     },
 
     /// Writes a file using text instead of bytes, creating it if it does not exist,
@@ -216,8 +197,9 @@ pub enum DistantRequestData {
         path: PathBuf,
 
         /// Data for server-side writing of content
-        #[cfg_attr(feature = "clap", clap(value_parser = parse_byte_vec))]
-        data: ByteVec,
+        #[serde(with = "serde_bytes")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
+        data: Vec<u8>,
     },
 
     /// Appends text to a file, creating it if it does not exist, on the remote machine
@@ -231,7 +213,6 @@ pub enum DistantRequestData {
     },
 
     /// Reads a directory from the specified path on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["ls"]))]
     #[strum_discriminants(strum(message = "Supports reading directory"))]
     DirRead {
         /// The path to the directory on the remote machine
@@ -241,12 +222,10 @@ pub enum DistantRequestData {
         /// depth and 1 indicating the most immediate children within the
         /// directory
         #[serde(default = "one")]
-        #[cfg_attr(feature = "clap", clap(long, default_value = "1"))]
         depth: usize,
 
         /// Whether or not to return absolute or relative paths
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         absolute: bool,
 
         /// Whether or not to canonicalize the resulting paths, meaning
@@ -256,7 +235,6 @@ pub enum DistantRequestData {
         /// Note that the flag absolute must be true to have absolute paths
         /// returned, even if canonicalize is flagged as true
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         canonicalize: bool,
 
         /// Whether or not to include the root directory in the retrieved
@@ -265,12 +243,10 @@ pub enum DistantRequestData {
         /// If included, the root directory will also be a canonicalized,
         /// absolute path and will not follow any of the other flags
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         include_root: bool,
     },
 
     /// Creates a directory on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["mkdir"]))]
     #[strum_discriminants(strum(message = "Supports creating directory"))]
     DirCreate {
         /// The path to the directory on the remote machine
@@ -278,12 +254,10 @@ pub enum DistantRequestData {
 
         /// Whether or not to create all parent directories
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         all: bool,
     },
 
     /// Removes a file or directory on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["rm"]))]
     #[strum_discriminants(strum(message = "Supports removing files, directories, and symlinks"))]
     Remove {
         /// The path to the file or directory on the remote machine
@@ -292,12 +266,10 @@ pub enum DistantRequestData {
         /// Whether or not to remove all contents within directory if is a directory.
         /// Does nothing different for files
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         force: bool,
     },
 
     /// Copies a file or directory on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["cp"]))]
     #[strum_discriminants(strum(message = "Supports copying files, directories, and symlinks"))]
     Copy {
         /// The path to the file or directory on the remote machine
@@ -308,7 +280,6 @@ pub enum DistantRequestData {
     },
 
     /// Moves/renames a file or directory on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["mv"]))]
     #[strum_discriminants(strum(message = "Supports renaming files, directories, and symlinks"))]
     Rename {
         /// The path to the file or directory on the remote machine
@@ -327,23 +298,14 @@ pub enum DistantRequestData {
         /// If true, will recursively watch for changes within directories, othewise
         /// will only watch for changes immediately within directories
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         recursive: bool,
 
         /// Filter to only report back specified changes
         #[serde(default)]
-        #[cfg_attr(
-            feature = "clap",
-            clap(long, value_parser = clap::builder::PossibleValuesParser::new(ChangeKind::VARIANTS))
-        )]
         only: Vec<ChangeKind>,
 
         /// Filter to report back changes except these specified changes
         #[serde(default)]
-        #[cfg_attr(
-            feature = "clap", 
-            clap(long, value_parser = clap::builder::PossibleValuesParser::new(ChangeKind::VARIANTS))
-        )]
         except: Vec<ChangeKind>,
     },
 
@@ -373,12 +335,10 @@ pub enum DistantRequestData {
         /// returning the canonical, absolute form of a path with all
         /// intermediate components normalized and symbolic links resolved
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         canonicalize: bool,
 
         /// Whether or not to follow symlinks to determine absolute file type (dir/file)
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         resolve_file_type: bool,
     },
 
@@ -386,7 +346,6 @@ pub enum DistantRequestData {
     #[strum_discriminants(strum(message = "Supports searching filesystem using queries"))]
     Search {
         /// Query to perform against the filesystem
-        #[cfg_attr(feature = "clap", clap(flatten))]
         query: SearchQuery,
     },
 
@@ -400,31 +359,25 @@ pub enum DistantRequestData {
     },
 
     /// Spawns a new process on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["spawn", "run"]))]
     #[strum_discriminants(strum(message = "Supports spawning a process"))]
     ProcSpawn {
         /// The full command to run including arguments
-        #[cfg_attr(feature = "clap", clap(flatten))]
         cmd: Cmd,
 
         /// Environment to provide to the remote process
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long, default_value_t = Environment::default()))]
         environment: Environment,
 
         /// Alternative current directory for the remote process
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         current_dir: Option<PathBuf>,
 
         /// If provided, will spawn process in a pty, otherwise spawns directly
         #[serde(default)]
-        #[cfg_attr(feature = "clap", clap(long))]
         pty: Option<PtySize>,
     },
 
     /// Kills a process running on the remote machine
-    #[cfg_attr(feature = "clap", clap(visible_aliases = &["kill"]))]
     #[strum_discriminants(strum(message = "Supports killing a spawned process"))]
     ProcKill {
         /// Id of the actively-running process

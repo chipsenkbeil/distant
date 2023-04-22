@@ -7,24 +7,19 @@ pub type SearchId = u32;
 
 /// Represents a query to perform against the filesystem
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::Args))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SearchQuery {
     /// Kind of data to examine using condition
-    #[cfg_attr(feature = "clap", clap(long, value_enum, default_value_t = SearchQueryTarget::Contents))]
     pub target: SearchQueryTarget,
 
     /// Condition to meet to be considered a match
-    #[cfg_attr(feature = "clap", clap(name = "pattern"))]
     pub condition: SearchQueryCondition,
 
     /// Paths in which to perform the query
-    #[cfg_attr(feature = "clap", clap(default_value = "."))]
     pub paths: Vec<PathBuf>,
 
     /// Options to apply to the query
     #[serde(default)]
-    #[cfg_attr(feature = "clap", clap(flatten))]
     pub options: SearchQueryOptions,
 }
 
@@ -46,9 +41,7 @@ impl FromStr for SearchQuery {
 
 /// Kind of data to examine using conditions
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "clap", clap(rename_all = "snake_case"))]
 #[serde(rename_all = "snake_case")]
 pub enum SearchQueryTarget {
     /// Checks path of file, directory, or symlink
@@ -176,32 +169,26 @@ impl FromStr for SearchQueryCondition {
 
 /// Options associated with a search query
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::Args))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SearchQueryOptions {
     /// Restrict search to only these file types (otherwise all are allowed)
-    #[cfg_attr(feature = "clap", clap(skip))]
     #[serde(default)]
     pub allowed_file_types: HashSet<FileType>,
 
     /// Regex to use to filter paths being searched to only those that match the include condition
-    #[cfg_attr(feature = "clap", clap(long))]
     #[serde(default)]
     pub include: Option<SearchQueryCondition>,
 
     /// Regex to use to filter paths being searched to only those that do not match the exclude
     /// condition
-    #[cfg_attr(feature = "clap", clap(long))]
     #[serde(default)]
     pub exclude: Option<SearchQueryCondition>,
 
     /// Search should follow symbolic links
-    #[cfg_attr(feature = "clap", clap(long))]
     #[serde(default)]
     pub follow_symbolic_links: bool,
 
     /// Maximum results to return before stopping the query
-    #[cfg_attr(feature = "clap", clap(long))]
     #[serde(default)]
     pub limit: Option<u64>,
 
@@ -213,13 +200,11 @@ pub struct SearchQueryOptions {
     ///
     /// Note that this will not simply filter the entries of the iterator, but it will actually
     /// avoid descending into directories when the depth is exceeded.
-    #[cfg_attr(feature = "clap", clap(long))]
     #[serde(default)]
     pub max_depth: Option<u64>,
 
     /// Amount of results to batch before sending back excluding final submission that will always
     /// include the remaining results even if less than pagination request
-    #[cfg_attr(feature = "clap", clap(long))]
     #[serde(default)]
     pub pagination: Option<u64>,
 }
