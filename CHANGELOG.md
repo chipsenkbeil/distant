@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `distant-core` crate no longer offers the `clap` feature
 
+### Fixed
+
+- `distant launch manager://localhost` now rejects a bind address of `ssh`
+  as the `SSH_CONNECTION` environment variable isn't available in most cases
+
 ## [0.20.0-alpha.4] - 2023-03-31
 
 ### Added
