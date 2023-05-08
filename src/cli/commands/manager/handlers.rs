@@ -1,4 +1,4 @@
-use crate::options::ClientLaunchConfig;
+use crate::options::{BindAddress, ClientLaunchConfig};
 use async_trait::async_trait;
 use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::authentication::msg::*;
@@ -74,12 +74,14 @@ impl LaunchHandler for ManagerLaunchHandler {
             String::from("server"),
             String::from("listen"),
             String::from("--host"),
+            // Disallow `ssh` from being used as the host
             config
                 .distant
                 .bind_server
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| String::from("any")),
+                .filter(|x| !x.is_ssh())
+                .unwrap_or(&BindAddress::Any)
+                .to_string(),
         ];
 
         if let Some(port) = destination.port {
@@ -108,7 +110,7 @@ impl LaunchHandler for ManagerLaunchHandler {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        debug!("Launching local to manager by spawning command: {command:?}");
+        debug!("Launching local server by spawning command: {command:?}");
         let mut child = command.spawn()?;
 
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
@@ -133,9 +135,17 @@ impl LaunchHandler for ManagerLaunchHandler {
                     // Ensure that the server is terminated
                     child.kill().await?;
 
+                    // Get any remaining output from the server's stderr to use for clues
+                    let output = &child.wait_with_output().await?;
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+
                     break Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
-                        "Missing output destination",
+                        if stderr.trim().is_empty() {
+                            "Missing output destination".to_string()
+                        } else {
+                            format!("Missing output destination due to error: {stderr}")
+                        },
                     ));
                 }
 

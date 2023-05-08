@@ -1,4 +1,5 @@
 use anyhow::Context;
+use derive_more::IsVariant;
 use distant_core::net::common::{Host, HostParseError};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -6,7 +7,7 @@ use std::str::FromStr;
 use std::{env, fmt};
 
 /// Represents options for binding a server to an IP address.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, IsVariant)]
 pub enum BindAddress {
     /// Should read address from `SSH_CONNECTION` environment variable, which contains four
     /// space-separated values:
