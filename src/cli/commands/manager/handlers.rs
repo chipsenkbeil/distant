@@ -91,11 +91,30 @@ impl LaunchHandler for ManagerLaunchHandler {
 
         // Add any options arguments to the command
         if let Some(options_args) = config.distant.args {
+            let mut distant_args = options_args.as_str();
+
+            // Detect if our args are wrapped in quotes, and strip the outer quotes
+            loop {
+                if let Some(args) = distant_args
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                {
+                    distant_args = args;
+                } else if let Some(args) = distant_args
+                    .strip_prefix('\'')
+                    .and_then(|s| s.strip_suffix('\''))
+                {
+                    distant_args = args;
+                } else {
+                    break;
+                }
+            }
+
             // NOTE: Split arguments based on whether we are running on windows or unix
             args.extend(if cfg!(windows) {
-                winsplit::split(&options_args)
+                winsplit::split(distant_args)
             } else {
-                shell_words::split(&options_args)
+                shell_words::split(distant_args)
                     .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?
             });
         }
