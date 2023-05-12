@@ -170,26 +170,33 @@ impl FromStr for SearchQueryCondition {
 /// Options associated with a search query
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(default)]
 pub struct SearchQueryOptions {
-    /// Restrict search to only these file types (otherwise all are allowed)
-    #[serde(default)]
+    /// Restrict search to only these file types (otherwise all are allowed).
     pub allowed_file_types: HashSet<FileType>,
 
-    /// Regex to use to filter paths being searched to only those that match the include condition
-    #[serde(default)]
+    /// Regex to use to filter paths being searched to only those that match the include condition.
     pub include: Option<SearchQueryCondition>,
 
-    /// Regex to use to filter paths being searched to only those that do not match the exclude
+    /// Regex to use to filter paths being searched to only those that do not match the exclude.
     /// condition
-    #[serde(default)]
     pub exclude: Option<SearchQueryCondition>,
 
-    /// Search should follow symbolic links
-    #[serde(default)]
+    /// If true, will search upward through parent directories rather than the traditional downward
+    /// search that recurses through all children directories.
+    ///
+    /// Note that this will use maximum depth to apply to the reverse direction, and will only look
+    /// through each ancestor directory's immediate entries. In other words, this will not result
+    /// in recursing through sibling directories.
+    ///
+    /// An upward search will ALWAYS search the contents of a directory, so this means providing a
+    /// path to a directory will search its entries EVEN if the max_depth is 0.
+    pub upward: bool,
+
+    /// Search should follow symbolic links.
     pub follow_symbolic_links: bool,
 
-    /// Maximum results to return before stopping the query
-    #[serde(default)]
+    /// Maximum results to return before stopping the query.
     pub limit: Option<u64>,
 
     /// Maximum depth (directories) to search
@@ -200,12 +207,10 @@ pub struct SearchQueryOptions {
     ///
     /// Note that this will not simply filter the entries of the iterator, but it will actually
     /// avoid descending into directories when the depth is exceeded.
-    #[serde(default)]
     pub max_depth: Option<u64>,
 
     /// Amount of results to batch before sending back excluding final submission that will always
-    /// include the remaining results even if less than pagination request
-    #[serde(default)]
+    /// include the remaining results even if less than pagination request.
     pub pagination: Option<u64>,
 }
 

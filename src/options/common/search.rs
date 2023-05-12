@@ -21,6 +21,18 @@ pub struct CliSearchQueryOptions {
     #[clap(long)]
     pub exclude: Option<CliSearchQueryCondition>,
 
+    /// Search upward through parent directories rather than the traditional downward search that
+    /// recurses through all children directories.
+    ///
+    /// Note that this will use maximum depth to apply to the reverse direction, and will only look
+    /// through each ancestor directory's immediate entries. In other words, this will not result
+    /// in recursing through sibling directories.
+    ///
+    /// An upward search will ALWAYS search the contents of a directory, so this means providing a
+    /// path to a directory will search its entries EVEN if the max_depth is 0.
+    #[clap(long)]
+    pub upward: bool,
+
     /// Search should follow symbolic links
     #[clap(long)]
     pub follow_symbolic_links: bool,
@@ -52,6 +64,7 @@ impl From<CliSearchQueryOptions> for SearchQueryOptions {
             allowed_file_types: x.allowed_file_types,
             include: x.include,
             exclude: x.exclude,
+            upward: x.upward,
             follow_symbolic_links: x.follow_symbolic_links,
             limit: x.limit,
             max_depth: x.max_depth,

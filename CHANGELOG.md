@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `distant spawn` is a refactoring of `distant client action proc-spawn`
     with `distant client lsp` merged in using the `--lsp` flag
   - `distant system-info` is a refactoring of `distant client action system-info`
+- Search now supports `upward` as a directional setting to traverse upward
+  looking for results rather than recursing downward
 
 ### Changed
 

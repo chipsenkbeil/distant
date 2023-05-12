@@ -297,21 +297,51 @@ impl SearchQueryExecutor {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "missing paths"));
         }
 
-        let mut walker_builder = WalkBuilder::new(&query.paths[0]);
-        for path in &query.paths[1..] {
+        // Build our list of paths so we can ensure we weed out duplicates
+        let mut target_paths = Vec::new();
+        for mut path in query.paths.iter().map(Deref::deref) {
+            // For each explicit path, we will add it directly UNLESS we
+            // are searching upward and have a max depth > 0 to avoid
+            // searching this path twice
+            if !query.options.upward || query.options.max_depth == Some(0) {
+                target_paths.push(path);
+            }
+
+            // For going in the upward direction, we will add ancestor paths as long
+            // as the max depth allows it
+            if query.options.upward {
+                let mut remaining = query.options.max_depth;
+                if query.options.max_depth.is_none() || query.options.max_depth > Some(0) {
+                    while let Some(parent) = path.parent() {
+                        // If we have a maximum depth and it has reached zero, we
+                        // don't want to include any more paths
+                        if remaining == Some(0) {
+                            break;
+                        }
+
+                        path = parent;
+                        target_paths.push(path);
+
+                        if let Some(x) = remaining.as_mut() {
+                            *x -= 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        target_paths.sort_unstable();
+        target_paths.dedup();
+
+        // Construct the walker with our paths
+        let mut walker_builder = WalkBuilder::new(target_paths[0]);
+        for path in &target_paths[1..] {
             walker_builder.add(path);
         }
 
+        // Apply common configuration options to our walker
         walker_builder
             .follow_links(query.options.follow_symbolic_links)
-            .max_depth(
-                query
-                    .options
-                    .max_depth
-                    .as_ref()
-                    .copied()
-                    .map(|d| d as usize),
-            )
             .threads(cmp::min(MAXIMUM_SEARCH_THREADS, num_cpus::get()))
             .types(
                 TypesBuilder::new()
@@ -320,6 +350,24 @@ impl SearchQueryExecutor {
                     .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
             )
             .skip_stdout(true);
+
+        if query.options.upward {
+            // If traversing upward, we need to use max depth to determine how many
+            // path segments to support, break those up, and add them. The max
+            // depth setting itself should be 1 to avoid searching anything but
+            // the immediate children of each path component
+            walker_builder.max_depth(Some(1));
+        } else {
+            // Otherwise, we apply max depth like expected
+            walker_builder.max_depth(
+                query
+                    .options
+                    .max_depth
+                    .as_ref()
+                    .copied()
+                    .map(|d| d as usize),
+            );
+        }
 
         Ok(Self {
             id: rand::random(),
@@ -1894,5 +1942,132 @@ mod tests {
         );
 
         assert_eq!(rx.recv().await, None);
+    }
+
+    #[test(tokio::test)]
+    async fn should_support_searching_upward_with_max_depth_applying_in_reverse() {
+        let root = setup_dir(vec![
+            ("path/to/file1.txt", ""),
+            ("path/to/file2.txt", ""),
+            ("path/to/child/file1.txt", ""),
+            ("path/to/child/file2.txt", ""),
+            ("path/file1.txt", ""),
+            ("path/file2.txt", ""),
+            ("other/file1.txt", ""),
+            ("other/file2.txt", ""),
+            ("file1.txt", ""),
+            ("file2.txt", ""),
+        ]);
+
+        // Make a path within root path
+        let p = |path: &str| root.child(make_path(path)).to_path_buf();
+
+        async fn test_max_depth(
+            path: PathBuf,
+            regex: &str,
+            depth: impl Into<Option<u64>>,
+            expected_paths: Vec<PathBuf>,
+        ) {
+            let state = SearchState::new();
+            let (reply, mut rx) = mpsc::channel(100);
+            let query = SearchQuery {
+                paths: vec![path],
+                target: SearchQueryTarget::Path,
+                condition: SearchQueryCondition::regex(regex),
+                options: SearchQueryOptions {
+                    max_depth: depth.into(),
+                    upward: true,
+                    ..Default::default()
+                },
+            };
+
+            let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+            // If we expect to get no paths, then there won't be results, otherwise check
+            if !expected_paths.is_empty() {
+                let mut paths = get_matches(rx.recv().await.unwrap())
+                    .into_iter()
+                    .filter_map(|m| m.into_path_match())
+                    .map(|m| m.path)
+                    .collect::<Vec<_>>();
+
+                paths.sort_unstable();
+
+                assert_eq!(paths, expected_paths);
+            }
+
+            let data = rx.recv().await;
+            assert_eq!(
+                data,
+                Some(DistantResponseData::SearchDone { id: search_id })
+            );
+
+            assert_eq!(rx.recv().await, None);
+        }
+
+        // Maximum depth of 0 should only include current file if it matches
+        test_max_depth(
+            p("path/to/file1.txt"),
+            "to",
+            0,
+            vec![p("path/to/file1.txt")],
+        )
+        .await;
+        test_max_depth(p("path/to"), "other", 0, vec![]).await;
+
+        // Maximum depth of 0 will still look through an explicit path's entries
+        test_max_depth(
+            p("path/to"),
+            "to",
+            0,
+            vec![
+                p("path/to"),
+                p("path/to/child"),
+                p("path/to/file1.txt"),
+                p("path/to/file2.txt"),
+            ],
+        )
+        .await;
+
+        // Maximum depth of 1 should only include path and its parent directory & entries
+        test_max_depth(
+            p("path/to/file1.txt"),
+            "to",
+            1,
+            vec![
+                p("path/to"),
+                p("path/to/child"),
+                p("path/to/file1.txt"),
+                p("path/to/file2.txt"),
+            ],
+        )
+        .await;
+
+        // Maximum depth of 2 should search path, parent, and grandparent
+        test_max_depth(
+            p("path/to/file1.txt"),
+            "file1",
+            2,
+            vec![p("path/file1.txt"), p("path/to/file1.txt")],
+        )
+        .await;
+
+        // Maximum depth greater than total path elements should just search all of them
+        test_max_depth(
+            p("path/to/file1.txt"),
+            "file1",
+            99,
+            vec![p("file1.txt"), p("path/file1.txt"), p("path/to/file1.txt")],
+        )
+        .await;
+
+        // No max depth will also search all ancestor paths
+        test_max_depth(
+            p("path/to/file1.txt"),
+            "file1",
+            None,
+            vec![p("file1.txt"), p("path/file1.txt"), p("path/to/file1.txt")],
+        )
+        .await;
     }
 }
