@@ -1,6 +1,8 @@
+use std::io;
+use std::path::PathBuf;
+
 use derive_more::{From, IsVariant};
 use serde::{Deserialize, Serialize};
-use std::{io, path::PathBuf};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 mod capabilities;

@@ -1,11 +1,10 @@
+use std::fmt;
+use std::net::{IpAddr, SocketAddr};
+use std::ops::RangeInclusive;
+use std::str::FromStr;
+
 use derive_more::Display;
 use serde::{de, Deserialize, Serialize};
-use std::{
-    fmt,
-    net::{IpAddr, SocketAddr},
-    ops::RangeInclusive,
-    str::FromStr,
-};
 
 /// Represents some range of ports
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
@@ -71,8 +70,8 @@ impl From<RangeInclusive<u16>> for PortRange {
 }
 
 impl<'a> IntoIterator for &'a PortRange {
-    type Item = u16;
     type IntoIter = RangeInclusive<u16>;
+    type Item = u16;
 
     fn into_iter(self) -> Self::IntoIter {
         self.start..=self.end.unwrap_or(self.start)
@@ -80,8 +79,8 @@ impl<'a> IntoIterator for &'a PortRange {
 }
 
 impl IntoIterator for PortRange {
-    type Item = u16;
     type IntoIter = RangeInclusive<u16>;
+    type Item = u16;
 
     fn into_iter(self) -> Self::IntoIter {
         self.start..=self.end.unwrap_or(self.start)

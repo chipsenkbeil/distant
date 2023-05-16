@@ -1,6 +1,11 @@
-use crate::common::{Id, Response};
-use std::{future::Future, io, pin::Pin, sync::Arc};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use tokio::sync::{mpsc, Mutex};
+
+use crate::common::{Id, Response};
 
 /// Interface to send a reply to some request
 pub trait Reply: Send + Sync {

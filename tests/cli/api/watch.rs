@@ -1,9 +1,11 @@
-use crate::cli::fixtures::*;
+use std::time::Duration;
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
-use std::time::Duration;
 use test_log::test;
+
+use crate::cli::fixtures::*;
 
 async fn wait_a_bit() {
     wait_millis(250).await;

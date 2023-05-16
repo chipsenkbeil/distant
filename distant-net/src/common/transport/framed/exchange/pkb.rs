@@ -1,6 +1,8 @@
+use std::convert::TryFrom;
+use std::io;
+
 use p256::{EncodedPoint, PublicKey};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{convert::TryFrom, io};
 
 /// Represents a wrapper around [`EncodedPoint`], and exists to
 /// fix an issue with [`serde`] deserialization failing when

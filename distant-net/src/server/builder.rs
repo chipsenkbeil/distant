@@ -7,9 +7,7 @@ mod unix;
 mod windows;
 
 pub use tcp::*;
-
 #[cfg(unix)]
 pub use unix::*;
-
 #[cfg(windows)]
 pub use windows::*;

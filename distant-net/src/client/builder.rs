@@ -10,14 +10,17 @@ pub use unix::*;
 #[cfg(windows)]
 mod windows;
 
+use std::time::Duration;
+use std::{convert, io};
+
+use async_trait::async_trait;
 #[cfg(windows)]
 pub use windows::*;
 
 use super::ClientConfig;
 use crate::client::{Client, UntypedClient};
-use crate::common::{authentication::AuthHandler, Connection, Transport};
-use async_trait::async_trait;
-use std::{convert, io, time::Duration};
+use crate::common::authentication::AuthHandler;
+use crate::common::{Connection, Transport};
 
 /// Interface that performs the connection to produce a [`Transport`] for use by the [`Client`].
 #[async_trait]

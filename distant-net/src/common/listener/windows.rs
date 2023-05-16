@@ -1,11 +1,11 @@
+use std::ffi::{OsStr, OsString};
+use std::{fmt, io, mem};
+
+use async_trait::async_trait;
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+
 use super::Listener;
 use crate::common::{NamedPipe, WindowsPipeTransport};
-use async_trait::async_trait;
-use std::{
-    ffi::{OsStr, OsString},
-    fmt, io, mem,
-};
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
 /// Represents a [`Listener`] for incoming connections over a named windows pipe
 pub struct WindowsPipeListener {
@@ -66,10 +66,12 @@ impl Listener for WindowsPipeListener {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+
     use super::*;
     use crate::common::TransportExt;
-    use test_log::test;
-    use tokio::{sync::oneshot, task::JoinHandle};
 
     #[test(tokio::test)]
     async fn should_fail_to_bind_if_pipe_already_bound() {

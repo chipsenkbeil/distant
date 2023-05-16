@@ -1,6 +1,8 @@
-use super::{Interest, Ready, Reconnectable, Transport};
-use async_trait::async_trait;
 use std::{fmt, io};
+
+use async_trait::async_trait;
+
+use super::{Interest, Ready, Reconnectable, Transport};
 
 pub type TryReadFn = Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync>;
 pub type TryWriteFn = Box<dyn Fn(&[u8]) -> io::Result<usize> + Send + Sync>;

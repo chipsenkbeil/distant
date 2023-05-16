@@ -1,9 +1,11 @@
-use super::common;
-use crate::constants;
+use std::path::PathBuf;
+
 use anyhow::Context;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+
+use super::common;
+use crate::constants;
 
 mod client;
 mod generate;
@@ -92,14 +94,16 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+
     use common::*;
     use distant_core::net::common::{Host, Map, PortRange};
     use distant_core::net::map;
     use distant_core::net::server::Shutdown;
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
     use test_log::test;
+
+    use super::*;
 
     #[test]
     fn default_should_parse_config_from_internal_toml() {

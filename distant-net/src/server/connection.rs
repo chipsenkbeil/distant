@@ -1,25 +1,22 @@
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::sync::{Arc, Weak};
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+
+use log::*;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
+use tokio::task::JoinHandle;
+
 use super::{
     ConnectionCtx, ConnectionState, ServerCtx, ServerHandler, ServerReply, ServerState,
     ShutdownTimer,
 };
-use crate::common::{
-    authentication::{Keychain, Verifier},
-    Backup, Connection, Frame, Interest, Response, Transport, UntypedRequest,
-};
-use log::*;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    future::Future,
-    io,
-    pin::Pin,
-    sync::{Arc, Weak},
-    task::{Context, Poll},
-    time::{Duration, Instant},
-};
-use tokio::{
-    sync::{broadcast, mpsc, oneshot, RwLock},
-    task::JoinHandle,
-};
+use crate::common::authentication::{Keychain, Verifier};
+use crate::common::{Backup, Connection, Frame, Interest, Response, Transport, UntypedRequest};
 
 pub type ServerKeychain = Keychain<oneshot::Receiver<Backup>>;
 
@@ -591,23 +588,25 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use async_trait::async_trait;
+    use test_log::test;
+
     use super::*;
     use crate::common::authentication::DummyAuthHandler;
     use crate::common::{
         HeapSecretKey, InmemoryTransport, Ready, Reconnectable, Request, Response,
     };
     use crate::server::Shutdown;
-    use async_trait::async_trait;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use test_log::test;
 
     struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
+        type LocalData = ();
         type Request = u16;
         type Response = String;
-        type LocalData = ();
 
         async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
             Ok(())
@@ -734,9 +733,9 @@ mod tests {
 
         #[async_trait]
         impl ServerHandler for BadAcceptServerHandler {
+            type LocalData = ();
             type Request = u16;
             type Response = String;
-            type LocalData = ();
 
             async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
                 Err(io::Error::new(io::ErrorKind::Other, "bad accept"))
@@ -1026,9 +1025,9 @@ mod tests {
 
         #[async_trait]
         impl ServerHandler for HangingAcceptServerHandler {
+            type LocalData = ();
             type Request = ();
             type Response = ();
-            type LocalData = ();
 
             async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
                 // Wait "forever" so we can ensure that we fail at this step
@@ -1082,9 +1081,9 @@ mod tests {
 
         #[async_trait]
         impl ServerHandler for AcceptServerHandler {
+            type LocalData = ();
             type Request = ();
             type Response = ();
-            type LocalData = ();
 
             async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
                 self.tx.send(()).await.unwrap();

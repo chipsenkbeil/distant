@@ -1,5 +1,6 @@
-use super::common::{self, LoggingSettings, NetworkSettings};
 use serde::{Deserialize, Serialize};
+
+use super::common::{self, LoggingSettings, NetworkSettings};
 
 mod api;
 mod connect;

@@ -1,14 +1,14 @@
-use super::CapabilityKind;
+use std::cmp::Ordering;
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+use std::ops::{BitAnd, BitOr, BitXor};
+use std::str::FromStr;
+
 use derive_more::{From, Into, IntoIterator};
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Ordering,
-    collections::HashSet,
-    hash::{Hash, Hasher},
-    ops::{BitAnd, BitOr, BitXor},
-    str::FromStr,
-};
 use strum::{EnumMessage, IntoEnumIterator};
+
+use super::CapabilityKind;
 
 /// Set of supported capabilities for a server
 #[derive(Clone, Debug, From, Into, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]

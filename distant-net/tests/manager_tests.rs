@@ -1,3 +1,5 @@
+use std::io;
+
 use async_trait::async_trait;
 use distant_net::boxed_connect_handler;
 use distant_net::client::Client;
@@ -6,16 +8,15 @@ use distant_net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_net::manager::{Config, ManagerClient, ManagerServer};
 use distant_net::server::{Server, ServerCtx, ServerHandler};
 use log::*;
-use std::io;
 use test_log::test;
 
 struct TestServerHandler;
 
 #[async_trait]
 impl ServerHandler for TestServerHandler {
+    type LocalData = ();
     type Request = String;
     type Response = String;
-    type LocalData = ();
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         ctx.reply

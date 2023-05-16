@@ -1,8 +1,9 @@
-use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::Predicate;
 use rstest::*;
+
+use crate::cli::fixtures::*;
 
 const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 .*?[\\/]file1.txt

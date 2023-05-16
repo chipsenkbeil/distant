@@ -1,15 +1,14 @@
-use crate::{
-    client::{Client, ClientConfig, UntypedClient},
-    common::{ConnectionId, FramedTransport, InmemoryTransport, UntypedRequest},
-    manager::data::{ManagerRequest, ManagerResponse},
-};
+use std::io;
+use std::ops::{Deref, DerefMut};
+
 use log::*;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    io,
-    ops::{Deref, DerefMut},
-};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tokio::task::JoinHandle;
+
+use crate::client::{Client, ClientConfig, UntypedClient};
+use crate::common::{ConnectionId, FramedTransport, InmemoryTransport, UntypedRequest};
+use crate::manager::data::{ManagerRequest, ManagerResponse};
 
 /// Represents a raw channel between a manager client and server. Underneath, this routes incoming
 /// and outgoing data from a proxied server to an inmemory transport.

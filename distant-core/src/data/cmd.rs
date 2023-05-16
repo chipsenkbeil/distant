@@ -1,6 +1,7 @@
+use std::ops::{Deref, DerefMut};
+
 use derive_more::{Display, From, Into};
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut};
 
 /// Represents some command with arguments to execute
 #[derive(Clone, Debug, Display, From, Into, Hash, PartialEq, Eq, Serialize, Deserialize)]

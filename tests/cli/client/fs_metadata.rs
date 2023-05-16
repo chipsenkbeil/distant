@@ -1,7 +1,9 @@
-use crate::cli::{fixtures::*, utils::regex_pred};
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
+
+use crate::cli::fixtures::*;
+use crate::cli::utils::regex_pred;
 
 const FILE_CONTENTS: &str = r#"
 some text

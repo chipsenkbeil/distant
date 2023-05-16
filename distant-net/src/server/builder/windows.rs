@@ -1,10 +1,12 @@
-use crate::common::{authentication::Verifier, WindowsPipeListener};
+use std::ffi::{OsStr, OsString};
+use std::io;
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::common::authentication::Verifier;
+use crate::common::WindowsPipeListener;
 use crate::server::{Server, ServerConfig, ServerHandler, WindowsPipeServerRef};
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    ffi::{OsStr, OsString},
-    io,
-};
 
 pub struct WindowsPipeServerBuilder<T>(Server<T>);
 
@@ -68,20 +70,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::client::Client;
-    use crate::common::{authentication::DummyAuthHandler, Request};
-    use crate::server::ServerCtx;
     use async_trait::async_trait;
     use test_log::test;
+
+    use super::*;
+    use crate::client::Client;
+    use crate::common::authentication::DummyAuthHandler;
+    use crate::common::Request;
+    use crate::server::ServerCtx;
 
     pub struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
+        type LocalData = ();
         type Request = String;
         type Response = String;
-        type LocalData = ();
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received

@@ -1,5 +1,6 @@
-use super::{Frame, OwnedFrame};
 use std::collections::VecDeque;
+
+use super::{Frame, OwnedFrame};
 
 /// Maximum size (in bytes) for saved frames (256MiB)
 const MAX_BACKUP_SIZE: usize = 256 * 1024 * 1024;

@@ -1,5 +1,7 @@
+use std::env;
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
-use std::{env, path::PathBuf};
 
 /// Represents information about a system
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

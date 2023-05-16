@@ -1,5 +1,6 @@
-use async_trait::async_trait;
 use std::io;
+
+use async_trait::async_trait;
 
 mod mapped;
 pub use mapped::*;

@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
+use anyhow::Context;
+use distant_core::data::PtySize;
+use distant_core::{DistantChannel, RemoteLspCommand};
+use terminal_size::{terminal_size, Height, Width};
+
 use super::super::common::RemoteProcessLink;
 use super::{CliError, CliResult};
-use anyhow::Context;
-use distant_core::{data::PtySize, DistantChannel, RemoteLspCommand};
-use std::path::PathBuf;
-use terminal_size::{terminal_size, Height, Width};
 
 #[derive(Clone)]
 pub struct Lsp(DistantChannel);

@@ -1,20 +1,17 @@
-use crate::{
-    client::{
-        DistantChannel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin,
-        RemoteStdout,
-    },
-    data::{Environment, PtySize},
-};
+use std::io::{self, Cursor, Read};
+use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
+
 use futures::stream::{Stream, StreamExt};
-use std::{
-    io::{self, Cursor, Read},
-    ops::{Deref, DerefMut},
-    path::PathBuf,
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::{self};
+use tokio::task::JoinHandle;
+
+use crate::client::{
+    DistantChannel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin,
+    RemoteStdout,
 };
-use tokio::{
-    sync::mpsc::{self, error::TryRecvError},
-    task::JoinHandle,
-};
+use crate::data::{Environment, PtySize};
 
 mod msg;
 pub use msg::*;
@@ -397,14 +394,15 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspMsg>)>
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::time::Duration;
+
+    use distant_net::common::{FramedTransport, InmemoryTransport, Request, Response};
+    use distant_net::Client;
+    use test_log::test;
+
     use super::*;
     use crate::data::{DistantRequestData, DistantResponseData};
-    use distant_net::{
-        common::{FramedTransport, InmemoryTransport, Request, Response},
-        Client,
-    };
-    use std::{future::Future, time::Duration};
-    use test_log::test;
 
     /// Timeout used with timeout function
     const TIMEOUT: Duration = Duration::from_millis(50);

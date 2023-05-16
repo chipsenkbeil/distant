@@ -1,5 +1,6 @@
-use super::ServerRef;
 use std::ffi::{OsStr, OsString};
+
+use super::ServerRef;
 
 /// Reference to a unix socket server instance
 pub struct WindowsPipeServerRef {

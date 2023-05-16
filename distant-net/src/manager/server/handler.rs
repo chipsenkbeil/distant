@@ -1,7 +1,11 @@
-use crate::client::UntypedClient;
-use crate::common::{authentication::Authenticator, Destination, Map};
+use std::future::Future;
+use std::io;
+
 use async_trait::async_trait;
-use std::{future::Future, io};
+
+use crate::client::UntypedClient;
+use crate::common::authentication::Authenticator;
+use crate::common::{Destination, Map};
 
 pub type BoxedLaunchHandler = Box<dyn LaunchHandler>;
 pub type BoxedConnectHandler = Box<dyn ConnectHandler>;
@@ -157,9 +161,10 @@ macro_rules! boxed_connect_handler {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
+
     use super::*;
     use crate::common::FramedTransport;
-    use test_log::test;
 
     #[inline]
     fn test_destination() -> Destination {

@@ -1,4 +1,5 @@
-use tokio::{io, sync::mpsc};
+use tokio::io;
+use tokio::sync::mpsc;
 
 /// Exit status of a remote process
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

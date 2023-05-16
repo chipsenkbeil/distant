@@ -1,13 +1,15 @@
-use crate::common::utils::{deserialize_from_str, serialize_to_str};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::fmt;
+use std::ops::{Deref, DerefMut};
+use std::str::FromStr;
+
 use derive_more::{Display, Error, From, IntoIterator};
-use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
-use std::{
-    collections::hash_map::Entry,
-    collections::HashMap,
-    fmt,
-    ops::{Deref, DerefMut},
-    str::FromStr,
-};
+use serde::de::Deserializer;
+use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
+
+use crate::common::utils::{deserialize_from_str, serialize_to_str};
 
 /// Contains map information for connections and other use cases
 #[derive(Clone, Debug, From, IntoIterator, PartialEq, Eq)]

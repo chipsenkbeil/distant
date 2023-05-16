@@ -1,16 +1,14 @@
+use std::future::Future;
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use std::time::Duration;
+
 use async_compat::CompatExt;
-use distant_core::{
-    data::{DistantResponseData, Environment, ProcessId, PtySize},
-    net::server::Reply,
-};
+use distant_core::data::{DistantResponseData, Environment, ProcessId, PtySize};
+use distant_core::net::server::Reply;
 use log::*;
-use std::{
-    future::Future,
-    io::{self, Read, Write},
-    path::PathBuf,
-    time::Duration,
-};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use wezterm_ssh::{
     Child, ChildKiller, ExecResult, MasterPty, PtySize as PortablePtySize, Session, SshChildProcess,
 };

@@ -1,5 +1,6 @@
-use crate::common::{ConnectionId, Destination, Map};
 use serde::{Deserialize, Serialize};
+
+use crate::common::{ConnectionId, Destination, Map};
 
 /// Information about a specific connection
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,30 +1,26 @@
-use crate::utils::ci_path_to_string;
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use std::{fmt, io, thread};
+
 use anyhow::Context;
-use assert_fs::{prelude::*, TempDir};
+use assert_fs::prelude::*;
+use assert_fs::TempDir;
 use async_trait::async_trait;
-use derive_more::Display;
-use derive_more::{Deref, DerefMut};
+use derive_more::{Deref, DerefMut, Display};
 use distant_core::DistantClient;
 use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use log::*;
 use once_cell::sync::Lazy;
 use rstest::*;
-use std::{
-    collections::HashMap,
-    fmt, io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    path::{Path, PathBuf},
-    process::{Child, Command},
-    sync::{
-        atomic::{AtomicU16, Ordering},
-        Mutex,
-    },
-    thread,
-    time::{Duration, Instant},
-};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use crate::utils::ci_path_to_string;
 
 #[derive(Deref, DerefMut)]
 pub struct Ctx<T> {

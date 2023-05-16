@@ -1,10 +1,10 @@
-use crate::common::{ConnectionId, Destination};
+use std::collections::HashMap;
+use std::ops::{Deref, DerefMut, Index, IndexMut};
+
 use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut, Index, IndexMut},
-};
+
+use crate::common::{ConnectionId, Destination};
 
 /// Represents a list of information about active connections
 #[derive(Clone, Debug, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]

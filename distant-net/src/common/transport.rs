@@ -1,5 +1,7 @@
+use std::time::Duration;
+use std::{fmt, io};
+
 use async_trait::async_trait;
-use std::{fmt, io, time::Duration};
 
 mod framed;
 pub use framed::*;
@@ -25,10 +27,9 @@ pub use unix::*;
 #[cfg(windows)]
 mod windows;
 
+pub use tokio::io::{Interest, Ready};
 #[cfg(windows)]
 pub use windows::*;
-
-pub use tokio::io::{Interest, Ready};
 
 /// Duration to wait after WouldBlock received during looping operations like `read_exact`.
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
@@ -270,8 +271,9 @@ impl<T: Transport> TransportExt for T {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test(tokio::test)]
     async fn read_exact_should_fail_if_try_read_encounters_error_other_than_would_block() {

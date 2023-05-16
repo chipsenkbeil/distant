@@ -1,8 +1,9 @@
-use crate::stress::fixtures::*;
 use assert_fs::prelude::*;
 use distant_core::DistantChannelExt;
 use rstest::*;
 use test_log::test;
+
+use crate::stress::fixtures::*;
 
 // 64KB is maximum TCP packet size
 const MAX_TCP_PACKET_BYTES: usize = 65535;

@@ -1,7 +1,10 @@
+use std::io;
+use std::path::PathBuf;
+
+use async_trait::async_trait;
+
 use super::Connector;
 use crate::common::UnixSocketTransport;
-use async_trait::async_trait;
-use std::{io, path::PathBuf};
 
 /// Implementation of [`Connector`] to support connecting via a Unix socket.
 pub struct UnixSocketConnector {

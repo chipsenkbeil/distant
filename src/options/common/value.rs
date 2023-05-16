@@ -1,7 +1,8 @@
-use derive_more::{Display, IsVariant};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
+
+use derive_more::{Display, IsVariant};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Represents a value for some CLI option or config. This exists to support optional values that
 /// have a default value so we can distinguish if a CLI value was a default or explicitly defined.

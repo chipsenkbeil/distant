@@ -1,7 +1,13 @@
-use crate::serde_str::{deserialize_from_str, serialize_to_str};
+use std::convert::TryFrom;
+use std::str::FromStr;
+use std::{fmt, io};
+
 use distant_net::common::{Destination, Host, SecretKey32};
-use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
-use std::{convert::TryFrom, fmt, io, str::FromStr};
+use serde::de::Deserializer;
+use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
+
+use crate::serde_str::{deserialize_from_str, serialize_to_str};
 
 const SCHEME: &str = "distant";
 const SCHEME_WITH_SEP: &str = "distant://";
@@ -167,10 +173,12 @@ impl TryFrom<DistantSingleKeyCredentials> for Destination {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use once_cell::sync::Lazy;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use once_cell::sync::Lazy;
     use test_log::test;
+
+    use super::*;
 
     const HOST: &str = "testhost";
     const PORT: u16 = 12345;

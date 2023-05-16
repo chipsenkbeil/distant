@@ -1,6 +1,11 @@
-use super::FileType;
+use std::borrow::Cow;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashSet, path::PathBuf, str::FromStr};
+
+use super::FileType;
 
 /// Id associated with a search
 pub type SearchId = u32;
@@ -380,8 +385,9 @@ mod tests {
     use super::*;
 
     mod search_query_condition {
-        use super::*;
         use test_log::test;
+
+        use super::*;
 
         #[test]
         fn to_regex_string_should_convert_to_appropriate_regex_and_escape_as_needed() {

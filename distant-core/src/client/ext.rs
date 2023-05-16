@@ -1,16 +1,20 @@
-use crate::{
-    client::{
-        RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
-        Watcher,
-    },
-    data::{
-        Capabilities, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData,
-        Environment, Error as Failure, Metadata, PtySize, SearchId, SearchQuery, SystemInfo,
-    },
-    DistantMsg,
+use std::future::Future;
+use std::io;
+use std::path::PathBuf;
+use std::pin::Pin;
+
+use distant_net::client::Channel;
+use distant_net::common::Request;
+
+use crate::client::{
+    RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
+    Watcher,
 };
-use distant_net::{client::Channel, common::Request};
-use std::{future::Future, io, path::PathBuf, pin::Pin};
+use crate::data::{
+    Capabilities, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Environment,
+    Error as Failure, Metadata, PtySize, SearchId, SearchQuery, SystemInfo,
+};
+use crate::DistantMsg;
 
 pub type AsyncReturn<'a, T, E = io::Error> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;

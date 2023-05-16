@@ -1,6 +1,8 @@
-use super::Frame;
-use dyn_clone::DynClone;
 use std::io;
+
+use dyn_clone::DynClone;
+
+use super::Frame;
 
 mod chain;
 mod compression;

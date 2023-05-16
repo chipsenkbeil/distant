@@ -1,5 +1,6 @@
-use super::ReconnectStrategy;
 use std::time::Duration;
+
+use super::ReconnectStrategy;
 
 const DEFAULT_SILENCE_DURATION: Duration = Duration::from_secs(20);
 const MAXIMUM_SILENCE_DURATION: Duration = Duration::from_millis(68719476734);

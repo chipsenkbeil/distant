@@ -1,13 +1,13 @@
-use crate::common::AsAny;
-use std::{
-    future::Future,
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
+
 use tokio::sync::broadcast;
 use tokio::task::{JoinError, JoinHandle};
+
+use crate::common::AsAny;
 
 /// Interface to engage with a server instance.
 pub trait ServerRef: AsAny + Send {

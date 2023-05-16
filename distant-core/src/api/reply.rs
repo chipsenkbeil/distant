@@ -1,6 +1,11 @@
-use crate::{api::DistantMsg, data::DistantResponseData};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+
 use distant_net::server::Reply;
-use std::{future::Future, io, pin::Pin};
+
+use crate::api::DistantMsg;
+use crate::data::DistantResponseData;
 
 /// Wrapper around a reply that can be batch or single, converting
 /// a single data into the wrapped type

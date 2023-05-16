@@ -1,7 +1,9 @@
+use std::io;
+
+use async_trait::async_trait;
+
 use super::{AuthenticationMethod, Authenticator, Challenge, Error, Question};
 use crate::common::HeapSecretKey;
-use async_trait::async_trait;
-use std::io;
 
 /// Authenticaton method for a static secret key
 #[derive(Clone, Debug)]
@@ -53,12 +55,11 @@ impl AuthenticationMethod for StaticKeyAuthenticationMethod {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::{
-        authentication::msg::{AuthenticationResponse, ChallengeResponse},
-        FramedTransport,
-    };
     use test_log::test;
+
+    use super::*;
+    use crate::common::authentication::msg::{AuthenticationResponse, ChallengeResponse};
+    use crate::common::FramedTransport;
 
     #[test(tokio::test)]
     async fn authenticate_should_fail_if_key_challenge_fails() {

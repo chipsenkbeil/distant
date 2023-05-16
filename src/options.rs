@@ -1,5 +1,6 @@
-use crate::constants;
-use crate::constants::user::CACHE_FILE_PATH_STR;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
 use clap::builder::TypedValueParser as _;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
@@ -8,14 +9,16 @@ use distant_core::data::{ChangeKind, Environment};
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
 use distant_core::net::server::Shutdown;
 use service_manager::ServiceManagerKind;
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+
+use crate::constants;
+use crate::constants::user::CACHE_FILE_PATH_STR;
 
 mod common;
 mod config;
 
-pub use self::config::*;
 pub use common::*;
+
+pub use self::config::*;
 
 /// Primary entrypoint into options & subcommands for the CLI.
 #[derive(Debug, PartialEq, Parser)]
@@ -1103,10 +1106,12 @@ impl Default for Format {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Duration;
+
     use distant_core::net::common::Host;
     use distant_core::net::map;
-    use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn distant_api_should_support_merging_with_config() {

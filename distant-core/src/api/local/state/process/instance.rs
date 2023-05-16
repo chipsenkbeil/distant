@@ -1,13 +1,15 @@
-use crate::{
-    api::local::process::{
-        InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
-    },
-    data::{DistantResponseData, Environment, ProcessId, PtySize},
-};
+use std::future::Future;
+use std::io;
+use std::path::PathBuf;
+
 use distant_net::server::Reply;
 use log::*;
-use std::{future::Future, io, path::PathBuf};
 use tokio::task::JoinHandle;
+
+use crate::api::local::process::{
+    InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
+};
+use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
 
 /// Holds information related to a spawned process on the server
 pub struct ProcessInstance {

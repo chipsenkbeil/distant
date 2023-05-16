@@ -1,10 +1,12 @@
+use std::io;
+
+use async_trait::async_trait;
+use log::*;
+
 use super::{
     AuthMethodHandler, Challenge, ChallengeResponse, Error, Info, Verification, VerificationKind,
     VerificationResponse,
 };
-use async_trait::async_trait;
-use log::*;
-use std::io;
 
 /// Blocking implementation of [`AuthMethodHandler`] that uses prompts to communicate challenge &
 /// verification requests, receiving responses to relay back.

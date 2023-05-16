@@ -1,23 +1,19 @@
-use super::Cli;
+use std::ffi::{OsStr, OsString};
+use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
 use anyhow::Context;
 use derive_more::From;
 use log::*;
-use std::{
-    ffi::{OsStr, OsString},
-    path::Path,
-    sync::mpsc,
-    thread,
-    time::Duration,
+use windows_service::service::{
+    ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
-use windows_service::{
-    define_windows_service,
-    service::{
-        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
-        ServiceType,
-    },
-    service_control_handler::{self, ServiceControlHandlerResult},
-    service_dispatcher,
-};
+use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+use windows_service::{define_windows_service, service_dispatcher};
+
+use super::Cli;
 
 const SERVICE_NAME: &str = "distant_manager";
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;

@@ -1,8 +1,10 @@
+use std::io;
+
+use async_trait::async_trait;
+
 use super::{
     Challenge, ChallengeResponse, Error, Info, Verification, VerificationKind, VerificationResponse,
 };
-use async_trait::async_trait;
-use std::io;
 
 /// Interface for a handler of authentication requests for a specific authentication method.
 #[async_trait]

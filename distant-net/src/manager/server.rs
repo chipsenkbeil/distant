@@ -1,15 +1,18 @@
-use crate::{
-    common::{authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map},
-    manager::{
-        ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities,
-        ManagerChannelId, ManagerRequest, ManagerResponse,
-    },
-    server::{Server, ServerCtx, ServerHandler},
-};
+use std::collections::HashMap;
+use std::io;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use log::*;
-use std::{collections::HashMap, io, sync::Arc};
 use tokio::sync::{oneshot, RwLock};
+
+use crate::common::authentication::msg::AuthenticationResponse;
+use crate::common::{ConnectionId, Destination, Map};
+use crate::manager::{
+    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
+    ManagerRequest, ManagerResponse,
+};
+use crate::server::{Server, ServerCtx, ServerHandler};
 
 mod authentication;
 pub use authentication::*;
@@ -183,9 +186,9 @@ pub struct DistantManagerServerConnection {
 
 #[async_trait]
 impl ServerHandler for ManagerServer {
+    type LocalData = DistantManagerServerConnection;
     type Request = ManagerRequest;
     type Response = ManagerResponse;
-    type LocalData = DistantManagerServerConnection;
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         let ServerCtx {
@@ -315,12 +318,13 @@ impl ServerHandler for ManagerServer {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc;
+
     use super::*;
     use crate::client::UntypedClient;
     use crate::common::FramedTransport;
     use crate::server::ServerReply;
     use crate::{boxed_connect_handler, boxed_launch_handler};
-    use tokio::sync::mpsc;
 
     fn test_config() -> Config {
         Config {

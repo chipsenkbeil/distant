@@ -1,10 +1,9 @@
+use std::convert::TryFrom;
+use std::fmt;
+use std::ops::{Deref, DerefMut};
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{
-    convert::TryFrom,
-    fmt,
-    ops::{Deref, DerefMut},
-    str::FromStr,
-};
 
 /// NOTE: This type only exists due to a bug with toml-rs where a u64 cannot be stored if its
 ///       value is greater than i64's max as it gets written as a negative number and then

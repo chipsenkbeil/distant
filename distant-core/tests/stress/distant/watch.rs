@@ -1,8 +1,10 @@
-use crate::stress::fixtures::*;
 use assert_fs::prelude::*;
-use distant_core::{data::ChangeKindSet, DistantChannelExt};
+use distant_core::data::ChangeKindSet;
+use distant_core::DistantChannelExt;
 use rstest::*;
 use test_log::test;
+
+use crate::stress::fixtures::*;
 
 const MAX_FILES: usize = 500;
 

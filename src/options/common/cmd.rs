@@ -1,6 +1,7 @@
-use clap::Args;
 use std::fmt;
 use std::str::FromStr;
+
+use clap::Args;
 
 /// Represents some command with arguments to execute.
 ///

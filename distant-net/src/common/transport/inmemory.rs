@@ -1,13 +1,11 @@
-use super::{Interest, Ready, Reconnectable, Transport};
+use std::io;
+use std::sync::{Mutex, MutexGuard};
+
 use async_trait::async_trait;
-use std::{
-    io,
-    sync::{Mutex, MutexGuard},
-};
-use tokio::sync::mpsc::{
-    self,
-    error::{TryRecvError, TrySendError},
-};
+use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
+use tokio::sync::mpsc::{self};
+
+use super::{Interest, Ready, Reconnectable, Transport};
 
 /// Represents a [`Transport`] comprised of two inmemory channels
 #[derive(Debug)]
@@ -202,9 +200,10 @@ fn copy_and_store(
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
+
     use super::*;
     use crate::common::TransportExt;
-    use test_log::test;
 
     #[test]
     fn is_rx_closed_should_properly_reflect_if_internal_rx_channel_is_closed() {

@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use super::ServerReply;
 use crate::common::{ConnectionId, Request};
-use std::sync::Arc;
 
 /// Represents contextual information for working with an inbound request
 pub struct ServerCtx<T, U, D> {

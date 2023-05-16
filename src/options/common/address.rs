@@ -1,10 +1,11 @@
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
+use std::{env, fmt};
+
 use anyhow::Context;
 use derive_more::IsVariant;
 use distant_core::net::common::{Host, HostParseError};
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::str::FromStr;
-use std::{env, fmt};
 
 /// Represents options for binding a server to an IP address.
 #[derive(Clone, Debug, PartialEq, Eq, IsVariant)]
@@ -118,8 +119,9 @@ impl BindAddress {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test]
     fn to_string_should_properly_print_bind_address() {

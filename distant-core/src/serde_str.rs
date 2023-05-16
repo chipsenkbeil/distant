@@ -1,8 +1,9 @@
-use serde::{
-    de::{Deserializer, Error as SerdeError, Visitor},
-    ser::Serializer,
-};
-use std::{fmt, marker::PhantomData, str::FromStr};
+use std::fmt;
+use std::marker::PhantomData;
+use std::str::FromStr;
+
+use serde::de::{Deserializer, Error as SerdeError, Visitor};
+use serde::ser::Serializer;
 
 /// From https://docs.rs/serde_with/1.14.0/src/serde_with/rust.rs.html#90-118
 pub fn deserialize_from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>

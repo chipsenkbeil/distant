@@ -1,7 +1,9 @@
-use crate::cli::{fixtures::*, scripts::*};
 use rstest::*;
 use serde_json::json;
 use test_log::test;
+
+use crate::cli::fixtures::*;
+use crate::cli::scripts::*;
 
 fn make_cmd(args: Vec<&str>) -> String {
     format!(

@@ -1,7 +1,8 @@
-use crate::sshd::*;
 use distant_ssh2::{Ssh, SshFamily};
 use rstest::*;
 use test_log::test;
+
+use crate::sshd::*;
 
 #[rstest]
 #[test(tokio::test)]

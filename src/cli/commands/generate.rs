@@ -1,11 +1,13 @@
-use crate::options::{Config, GenerateSubcommand};
-use crate::{CliResult, Options};
+use std::{fs, io};
+
 use anyhow::Context;
 use clap::CommandFactory;
 use clap_complete::generate as clap_generate;
 use distant_core::net::common::{Request, Response};
 use distant_core::{DistantMsg, DistantRequestData, DistantResponseData};
-use std::{fs, io};
+
+use crate::options::{Config, GenerateSubcommand};
+use crate::{CliResult, Options};
 
 pub fn run(cmd: GenerateSubcommand) -> CliResult {
     let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;

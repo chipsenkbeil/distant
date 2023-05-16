@@ -1,14 +1,16 @@
-use crate::sshd::*;
-use assert_fs::{prelude::*, TempDir};
-use distant_core::{
-    data::{ChangeKindSet, Environment, FileType, Metadata},
-    DistantChannelExt, DistantClient,
-};
+use std::path::Path;
+use std::time::Duration;
+
+use assert_fs::prelude::*;
+use assert_fs::TempDir;
+use distant_core::data::{ChangeKindSet, Environment, FileType, Metadata};
+use distant_core::{DistantChannelExt, DistantClient};
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use rstest::*;
-use std::{path::Path, time::Duration};
 use test_log::test;
+
+use crate::sshd::*;
 
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));

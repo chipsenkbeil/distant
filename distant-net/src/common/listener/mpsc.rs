@@ -1,8 +1,10 @@
-use super::Listener;
+use std::io;
+
 use async_trait::async_trait;
 use derive_more::From;
-use std::io;
 use tokio::sync::mpsc;
+
+use super::Listener;
 
 /// Represents a [`Listener`] that uses an [`mpsc::Receiver`] to
 /// accept new connections

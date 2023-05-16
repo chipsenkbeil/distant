@@ -1,11 +1,11 @@
-use super::{deserialize_u128_option, serialize_u128_option, FileType};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
-use std::{
-    io,
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+
+use super::{deserialize_u128_option, serialize_u128_option, FileType};
 
 /// Represents metadata about some path on a remote machine
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

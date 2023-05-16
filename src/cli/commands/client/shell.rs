@@ -1,19 +1,17 @@
-use super::super::common::RemoteProcessLink;
-use super::{CliError, CliResult};
-use anyhow::Context;
-use distant_core::{
-    data::{Environment, PtySize},
-    DistantChannel, DistantChannelExt, RemoteCommand,
-};
-use log::*;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use anyhow::Context;
+use distant_core::data::{Environment, PtySize};
+use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand};
+use log::*;
 use terminal_size::{terminal_size, Height, Width};
-use termwiz::{
-    caps::Capabilities,
-    input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding},
-    terminal::{new_terminal, Terminal},
-};
+use termwiz::caps::Capabilities;
+use termwiz::input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding};
+use termwiz::terminal::{new_terminal, Terminal};
+
+use super::super::common::RemoteProcessLink;
+use super::{CliError, CliResult};
 
 #[derive(Clone)]
 pub struct Shell(DistantChannel);

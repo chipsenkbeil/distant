@@ -1,10 +1,10 @@
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use std::{fmt, io};
+
 use async_compat::CompatExt;
-use std::{
-    fmt, io,
-    path::{Path, PathBuf},
-    time::Duration,
-};
-use typed_path::{windows::WindowsComponent, Components, WindowsPath, WindowsPathBuf};
+use typed_path::windows::WindowsComponent;
+use typed_path::{Components, WindowsPath, WindowsPathBuf};
 use wezterm_ssh::{ExecResult, Session, Sftp};
 
 const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(1));

@@ -1,16 +1,14 @@
+use std::ffi::OsString;
+
 use crate::options::DistantSubcommand;
 use crate::{CliResult, Options};
-use std::ffi::OsString;
 
 mod commands;
 mod common;
 
-pub(crate) use common::Cache;
-pub(crate) use common::Client;
-pub(crate) use common::Manager;
-
 #[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use common::Spawner;
+pub(crate) use common::{Cache, Client, Manager};
 
 /// Represents the primary CLI entrypoint
 #[derive(Debug)]

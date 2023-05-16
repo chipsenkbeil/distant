@@ -1,10 +1,12 @@
-use super::Reconnectable;
-use log::*;
 use std::io;
 use std::time::Duration;
+
+use log::*;
 use strum::Display;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+use super::Reconnectable;
 
 /// Represents a watcher over a [`ConnectionState`].
 #[derive(Clone)]

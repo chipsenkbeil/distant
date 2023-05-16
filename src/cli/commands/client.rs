@@ -1,28 +1,37 @@
+use std::io;
+use std::io::Write;
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::Context;
+use distant_core::data::{ChangeKindSet, FileType, SearchQuery, SystemInfo};
+use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
+use distant_core::net::manager::ManagerClient;
+use distant_core::{
+    DistantChannel, DistantChannelExt, DistantMsg, DistantRequestData, DistantResponseData,
+    RemoteCommand, Searcher, Watcher,
+};
+use log::*;
+use serde_json::json;
+use tabled::object::Rows;
+use tabled::style::Style;
+use tabled::{Alignment, Disable, Modify, Table, Tabled};
+use tokio::sync::mpsc;
+
 use crate::cli::common::{
     Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings};
 use crate::{CliError, CliResult};
-use anyhow::Context;
-use distant_core::data::{ChangeKindSet, FileType, SearchQuery, SystemInfo};
-use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
-use distant_core::net::manager::ManagerClient;
-use distant_core::{DistantChannel, DistantChannelExt, Watcher};
-use distant_core::{DistantMsg, DistantRequestData, DistantResponseData, RemoteCommand, Searcher};
-use log::*;
-use serde_json::json;
-use std::io::Write;
-use std::{io, path::Path, time::Duration};
-use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
-use tokio::sync::mpsc;
 
 mod lsp;
 mod shell;
 
-use super::common::{Formatter, RemoteProcessLink};
 use lsp::Lsp;
 use shell::Shell;
+
+use super::common::{Formatter, RemoteProcessLink};
 
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 

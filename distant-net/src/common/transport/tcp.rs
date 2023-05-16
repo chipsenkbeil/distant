@@ -1,7 +1,10 @@
-use super::{Interest, Ready, Reconnectable, Transport};
+use std::net::IpAddr;
+use std::{fmt, io};
+
 use async_trait::async_trait;
-use std::{fmt, io, net::IpAddr};
 use tokio::net::{TcpStream, ToSocketAddrs};
+
+use super::{Interest, Ready, Reconnectable, Transport};
 
 /// Represents a [`Transport`] that leverages a TCP stream
 pub struct TcpTransport {
@@ -68,11 +71,15 @@ impl Transport for TcpTransport {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv6Addr, SocketAddr};
+
+    use test_log::test;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+
     use super::*;
     use crate::common::TransportExt;
-    use std::net::{Ipv6Addr, SocketAddr};
-    use test_log::test;
-    use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
     async fn find_ephemeral_addr() -> SocketAddr {
         // Start a listener on a distinct port, get its port, and kill it

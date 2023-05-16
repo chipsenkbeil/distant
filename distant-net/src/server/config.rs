@@ -1,6 +1,9 @@
+use std::num::ParseFloatError;
+use std::str::FromStr;
+use std::time::Duration;
+
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
-use std::{num::ParseFloatError, str::FromStr, time::Duration};
 
 const DEFAULT_CONNECTION_SLEEP: Duration = Duration::from_millis(1);
 const DEFAULT_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);

@@ -1,6 +1,7 @@
+use std::path::PathBuf;
+
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Contains settings are associated with logging.
 #[derive(Args, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

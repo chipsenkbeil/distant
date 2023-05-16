@@ -1,5 +1,6 @@
-use super::{Codec, Frame};
 use std::io;
+
+use super::{Codec, Frame};
 
 /// Represents a codec that chains together other codecs such that encoding will call the encode
 /// methods of the underlying, chained codecs from left-to-right and decoding will call the decode
@@ -59,8 +60,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[derive(Copy, Clone)]
     struct TestCodec<'a> {

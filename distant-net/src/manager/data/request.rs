@@ -1,10 +1,10 @@
-use super::{ManagerAuthenticationId, ManagerChannelId};
-use crate::common::{
-    authentication::msg::AuthenticationResponse, ConnectionId, Destination, Map, UntypedRequest,
-};
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
+
+use super::{ManagerAuthenticationId, ManagerChannelId};
+use crate::common::authentication::msg::AuthenticationResponse;
+use crate::common::{ConnectionId, Destination, Map, UntypedRequest};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, EnumDiscriminants, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
-use super::{BoxedConnectHandler, BoxedLaunchHandler};
 use std::collections::HashMap;
+
+use super::{BoxedConnectHandler, BoxedLaunchHandler};
 
 /// Configuration settings for a manager.
 pub struct Config {

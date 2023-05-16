@@ -1,12 +1,11 @@
-use crate::{
-    constants::{global as global_paths, user as user_paths},
-    options::{AccessControl, NetworkSettings},
-};
 use anyhow::Context;
 use distant_core::net::common::authentication::Verifier;
 use distant_core::net::manager::{Config as ManagerConfig, ManagerServer};
 use distant_core::net::server::ServerRef;
 use log::*;
+
+use crate::constants::{global as global_paths, user as user_paths};
+use crate::options::{AccessControl, NetworkSettings};
 
 pub struct Manager {
     pub access: AccessControl,

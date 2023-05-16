@@ -1,6 +1,8 @@
-use super::{AuthenticationMethod, Authenticator};
-use async_trait::async_trait;
 use std::io;
+
+use async_trait::async_trait;
+
+use super::{AuthenticationMethod, Authenticator};
 
 /// Authenticaton method for a static secret key
 #[derive(Clone, Debug)]

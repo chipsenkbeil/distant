@@ -1,8 +1,11 @@
-use super::{msg::*, AuthHandler};
-use crate::common::{utils, FramedTransport, Transport};
+use std::io;
+
 use async_trait::async_trait;
 use log::*;
-use std::io;
+
+use super::msg::*;
+use super::AuthHandler;
+use crate::common::{utils, FramedTransport, Transport};
 
 /// Represents an interface for authenticating with a server.
 #[async_trait]
@@ -200,10 +203,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::authentication::AuthMethodHandler;
     use test_log::test;
     use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::common::authentication::AuthMethodHandler;
 
     #[async_trait]
     trait TestAuthHandler {

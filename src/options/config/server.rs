@@ -1,5 +1,6 @@
-use super::common::LoggingSettings;
 use serde::{Deserialize, Serialize};
+
+use super::common::LoggingSettings;
 
 mod listen;
 pub use listen::*;

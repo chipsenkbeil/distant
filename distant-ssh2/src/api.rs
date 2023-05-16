@@ -1,28 +1,24 @@
-use crate::{
-    process::{spawn_pty, spawn_simple, SpawnResult},
-    utils::{self, to_other_error},
-};
+use std::collections::{HashMap, HashSet};
+use std::io;
+use std::path::PathBuf;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
+
 use async_compat::CompatExt;
 use async_once_cell::OnceCell;
 use async_trait::async_trait;
-use distant_core::{
-    data::{
-        Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, ProcessId,
-        PtySize, SystemInfo, UnixMetadata,
-    },
-    net::server::ConnectionCtx,
-    DistantApi, DistantCtx,
+use distant_core::data::{
+    Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize,
+    SystemInfo, UnixMetadata,
 };
+use distant_core::net::server::ConnectionCtx;
+use distant_core::{DistantApi, DistantCtx};
 use log::*;
-use std::{
-    collections::{HashMap, HashSet},
-    io,
-    path::PathBuf,
-    sync::{Arc, Weak},
-    time::Duration,
-};
 use tokio::sync::{mpsc, RwLock};
 use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
+
+use crate::process::{spawn_pty, spawn_simple, SpawnResult};
+use crate::utils::{self, to_other_error};
 
 /// Time after copy completes to wait for stdout/stderr to close
 const COPY_COMPLETE_TIMEOUT: Duration = Duration::from_secs(1);

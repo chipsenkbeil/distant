@@ -1,10 +1,15 @@
-use super::{InmemoryTransport, Interest, Ready, Reconnectable, Transport};
-use crate::common::utils;
+use std::future::Future;
+use std::time::Duration;
+use std::{fmt, io};
+
 use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use log::*;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt, future::Future, io, time::Duration};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
+use super::{InmemoryTransport, Interest, Ready, Reconnectable, Transport};
+use crate::common::utils;
 
 mod backup;
 mod codec;
@@ -585,6 +590,7 @@ impl<T: Transport> FramedTransport<T> {
     pub async fn client_handshake(&mut self) -> io::Result<()> {
         self.handshake(Handshake::client()).await
     }
+
     /// Shorthand for creating a [`FramedTransport`] with a [`PlainCodec`] and then immediately
     /// performing a [`server_handshake`], returning the updated [`FramedTransport`] on success.
     ///
@@ -905,10 +911,11 @@ impl FramedTransport<InmemoryTransport> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::TestTransport;
     use bytes::BufMut;
     use test_log::test;
+
+    use super::*;
+    use crate::common::TestTransport;
 
     /// Codec that always succeeds without altering the frame
     #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,8 +1,10 @@
-use super::Connector;
-use crate::common::WindowsPipeTransport;
-use async_trait::async_trait;
 use std::ffi::OsString;
 use std::io;
+
+use async_trait::async_trait;
+
+use super::Connector;
+use crate::common::WindowsPipeTransport;
 
 /// Implementation of [`Connector`] to support connecting via a Windows named pipe.
 pub struct WindowsPipeConnector {

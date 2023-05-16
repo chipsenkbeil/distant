@@ -1,5 +1,6 @@
-use super::{Codec, Frame};
 use std::io;
+
+use super::{Codec, Frame};
 
 /// Represents a codec that does not alter the frame (synonymous with "plain text")
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

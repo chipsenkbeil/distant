@@ -1,10 +1,9 @@
+use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
 use anyhow::Context;
 use log::*;
-use std::{
-    ffi::{OsStr, OsString},
-    path::PathBuf,
-    process::{Command, Stdio},
-};
 
 /// Utility functions to spawn a process in the background
 #[allow(dead_code)]
@@ -102,10 +101,8 @@ impl Spawner {
     /// Spawns a process on Windows that runs in the background without a console and does not get
     /// terminated when the parent or other ancestors terminate (such as openssh session)
     pub fn spawn_background(cmd: impl AsRef<OsStr>) -> anyhow::Result<u32> {
-        use std::{
-            io::{BufRead, Cursor},
-            os::windows::process::CommandExt,
-        };
+        use std::io::{BufRead, Cursor};
+        use std::os::windows::process::CommandExt;
 
         // Get absolute path to powershell
         let powershell = which::which("powershell.exe").context("Failed to find powershell.exe")?;

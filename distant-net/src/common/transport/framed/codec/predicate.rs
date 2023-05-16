@@ -1,5 +1,7 @@
+use std::io;
+use std::sync::Arc;
+
 use super::{Codec, Frame};
-use std::{io, sync::Arc};
 
 /// Represents a codec that invokes one of two codecs based on the given predicate
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -85,8 +87,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[derive(Copy, Clone)]
     struct TestCodec<'a> {

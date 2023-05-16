@@ -1,8 +1,10 @@
-use super::Listener;
+use std::io;
+
 use async_trait::async_trait;
 use derive_more::From;
-use std::io;
 use tokio::sync::oneshot;
+
+use super::Listener;
 
 /// Represents a [`Listener`] that only has a single connection
 #[derive(From)]
@@ -47,9 +49,10 @@ impl<T: Send> Listener for OneshotListener<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
     use tokio::task::JoinHandle;
+
+    use super::*;
 
     #[test(tokio::test)]
     async fn from_value_should_return_value_on_first_call_to_accept() {

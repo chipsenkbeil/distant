@@ -1,8 +1,12 @@
+use std::borrow::Cow;
+use std::io;
+
+use derive_more::{Display, Error};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
 use super::{parse_msg_pack_str, write_str_msg_pack, Id};
 use crate::common::utils;
-use derive_more::{Display, Error};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{borrow::Cow, io};
 
 /// Represents a response received related to some response
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -233,8 +237,9 @@ impl<'a> UntypedResponse<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     const TRUE_BYTE: u8 = 0xc3;
     const NEVER_USED_BYTE: u8 = 0xc1;

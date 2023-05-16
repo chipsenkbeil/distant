@@ -1,5 +1,7 @@
+use distant_net::client::Channel;
+use distant_net::Client;
+
 use crate::{DistantMsg, DistantRequestData, DistantResponseData};
-use distant_net::{client::Channel, Client};
 
 mod ext;
 mod lsp;

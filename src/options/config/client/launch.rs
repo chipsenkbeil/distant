@@ -1,6 +1,7 @@
-use super::common::BindAddress;
 use distant_core::net::common::Map;
 use serde::{Deserialize, Serialize};
+
+use super::common::BindAddress;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLaunchConfig {

@@ -1,11 +1,11 @@
-use crate::constants::user::CACHE_FILE_PATH;
+use std::io;
+use std::path::{Path, PathBuf};
+
 use anyhow::Context;
 use distant_core::net::common::ConnectionId;
 use serde::{Deserialize, Serialize};
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
+
+use crate::constants::user::CACHE_FILE_PATH;
 
 mod id;
 pub use id::CacheId;

@@ -1,7 +1,12 @@
-use crate::common::{authentication::Verifier, PortRange, TcpListener};
+use std::io;
+use std::net::IpAddr;
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::common::authentication::Verifier;
+use crate::common::{PortRange, TcpListener};
 use crate::server::{Server, ServerConfig, ServerHandler, TcpServerRef};
-use serde::{de::DeserializeOwned, Serialize};
-use std::{io, net::IpAddr};
 
 pub struct TcpServerBuilder<T>(Server<T>);
 
@@ -52,21 +57,24 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv6Addr, SocketAddr};
+
+    use async_trait::async_trait;
+    use test_log::test;
+
     use super::*;
     use crate::client::Client;
-    use crate::common::{authentication::DummyAuthHandler, Request};
+    use crate::common::authentication::DummyAuthHandler;
+    use crate::common::Request;
     use crate::server::ServerCtx;
-    use async_trait::async_trait;
-    use std::net::{Ipv6Addr, SocketAddr};
-    use test_log::test;
 
     pub struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
+        type LocalData = ();
         type Request = String;
         type Response = String;
-        type LocalData = ();
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received

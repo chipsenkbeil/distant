@@ -1,7 +1,8 @@
+use std::io;
+
 use derive_more::Display;
 use notify::ErrorKind as NotifyErrorKind;
 use serde::{Deserialize, Serialize};
-use std::io;
 
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]

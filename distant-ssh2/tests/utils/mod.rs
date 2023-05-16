@@ -1,5 +1,6 @@
-use once_cell::sync::Lazy;
 use std::path::{Component, Path, Prefix};
+
+use once_cell::sync::Lazy;
 
 // Returns true if running test in Github CI
 pub static IS_CI: Lazy<bool> = Lazy::new(|| std::env::var("CI").as_deref() == Ok("true"));

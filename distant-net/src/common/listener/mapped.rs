@@ -1,6 +1,8 @@
-use super::Listener;
-use async_trait::async_trait;
 use std::io;
+
+use async_trait::async_trait;
+
+use super::Listener;
 
 /// Represents a [`Listener`] that wraps a different [`Listener`],
 /// mapping the received connection to something else using the map function

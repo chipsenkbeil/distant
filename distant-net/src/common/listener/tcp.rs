@@ -1,8 +1,11 @@
+use std::net::IpAddr;
+use std::{fmt, io};
+
+use async_trait::async_trait;
+use tokio::net::TcpListener as TokioTcpListener;
+
 use super::Listener;
 use crate::common::{PortRange, TcpTransport};
-use async_trait::async_trait;
-use std::{fmt, io, net::IpAddr};
-use tokio::net::TcpListener as TokioTcpListener;
 
 /// Represents a [`Listener`] for incoming connections over TCP
 pub struct TcpListener {
@@ -64,11 +67,14 @@ impl Listener for TcpListener {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv6Addr, SocketAddr};
+
+    use test_log::test;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+
     use super::*;
     use crate::common::TransportExt;
-    use std::net::{Ipv6Addr, SocketAddr};
-    use test_log::test;
-    use tokio::{sync::oneshot, task::JoinHandle};
 
     #[test(tokio::test)]
     async fn should_fail_to_bind_if_port_already_bound() {

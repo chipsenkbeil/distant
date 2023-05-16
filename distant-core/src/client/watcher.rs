@@ -1,16 +1,15 @@
-use crate::{
-    client::{DistantChannel, DistantChannelExt},
-    constants::CLIENT_WATCHER_CAPACITY,
-    data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData},
-    DistantMsg,
-};
+use std::path::{Path, PathBuf};
+use std::{fmt, io};
+
 use distant_net::common::Request;
 use log::*;
-use std::{
-    fmt, io,
-    path::{Path, PathBuf},
-};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use crate::client::{DistantChannel, DistantChannelExt};
+use crate::constants::CLIENT_WATCHER_CAPACITY;
+use crate::data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData};
+use crate::DistantMsg;
 
 /// Represents a watcher of some path on a remote machine
 pub struct Watcher {
@@ -181,16 +180,16 @@ impl Watcher {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use distant_net::common::{FramedTransport, InmemoryTransport, Response};
+    use distant_net::Client;
+    use test_log::test;
+    use tokio::sync::Mutex;
+
     use super::*;
     use crate::data::ChangeKind;
     use crate::DistantClient;
-    use distant_net::{
-        common::{FramedTransport, InmemoryTransport, Response},
-        Client,
-    };
-    use std::sync::Arc;
-    use test_log::test;
-    use tokio::sync::Mutex;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);

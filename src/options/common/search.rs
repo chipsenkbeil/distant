@@ -1,9 +1,8 @@
-use clap::{Args, ValueEnum};
-use distant_core::data::FileType;
-use distant_core::data::{SearchQueryOptions, SearchQueryTarget};
 use std::collections::HashSet;
 
+use clap::{Args, ValueEnum};
 pub use distant_core::data::SearchQueryCondition as CliSearchQueryCondition;
+use distant_core::data::{FileType, SearchQueryOptions, SearchQueryTarget};
 
 /// Options to customize the search results.
 #[derive(Args, Clone, Debug, Default, PartialEq, Eq)]

@@ -1,10 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use super::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
 };
-use crate::common::{
-    authentication::msg::Authentication, ConnectionId, Destination, UntypedResponse,
-};
-use serde::{Deserialize, Serialize};
+use crate::common::authentication::msg::Authentication;
+use crate::common::{ConnectionId, Destination, UntypedResponse};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]

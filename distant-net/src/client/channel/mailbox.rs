@@ -1,15 +1,12 @@
-use crate::common::{Id, Response, UntypedResponse};
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
+
 use async_trait::async_trait;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-    time::Duration,
-};
-use tokio::{
-    io,
-    sync::{mpsc, Mutex, RwLock},
-    time,
-};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::{io, time};
+
+use crate::common::{Id, Response, UntypedResponse};
 
 #[derive(Clone, Debug)]
 pub struct PostOffice<T> {

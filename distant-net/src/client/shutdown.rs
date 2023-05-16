@@ -1,6 +1,7 @@
+use std::io;
+
 use async_trait::async_trait;
 use dyn_clone::DynClone;
-use std::io;
 use tokio::sync::{mpsc, oneshot};
 
 /// Interface representing functionality to shut down an active client.

@@ -1,11 +1,13 @@
+use std::io;
+
+use async_trait::async_trait;
+use log::*;
+
 use super::{
     AuthMethodHandler, Challenge, ChallengeResponse, Error, Info, Verification,
     VerificationResponse,
 };
 use crate::common::HeapSecretKey;
-use async_trait::async_trait;
-use log::*;
-use std::io;
 
 /// Implementation of [`AuthMethodHandler`] that answers challenge requests using a static
 /// [`HeapSecretKey`]. All other portions of method authentication are handled by another
@@ -98,9 +100,10 @@ impl AuthMethodHandler for StaticKeyAuthMethodHandler {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
+
     use super::*;
     use crate::common::authentication::msg::{ErrorKind, Question, VerificationKind};
-    use test_log::test;
 
     #[test(tokio::test)]
     async fn on_challenge_should_fail_if_non_key_question_received() {

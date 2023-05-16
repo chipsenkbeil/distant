@@ -1,6 +1,12 @@
+use std::fmt;
+use std::hash::Hash;
+use std::str::FromStr;
+
+use serde::de::Deserializer;
+use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
+
 use super::utils::{deserialize_from_str, serialize_to_str};
-use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
-use std::{fmt, hash::Hash, str::FromStr};
 
 mod host;
 mod parser;

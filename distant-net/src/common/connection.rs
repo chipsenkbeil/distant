@@ -1,16 +1,15 @@
-use super::{
-    authentication::{AuthHandler, Authenticate, Keychain, KeychainResult, Verifier},
-    Backup, FramedTransport, HeapSecretKey, Reconnectable, Transport,
-};
+use std::io;
+use std::ops::{Deref, DerefMut};
+
 use async_trait::async_trait;
 use log::*;
 use serde::{Deserialize, Serialize};
-use std::io;
-use std::ops::{Deref, DerefMut};
 use tokio::sync::oneshot;
 
+use super::authentication::{AuthHandler, Authenticate, Keychain, KeychainResult, Verifier};
 #[cfg(test)]
 use super::InmemoryTransport;
+use super::{Backup, FramedTransport, HeapSecretKey, Reconnectable, Transport};
 
 /// Id of the connection
 pub type ConnectionId = u32;
@@ -454,13 +453,14 @@ impl<T: Transport> Connection<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::{
-        authentication::{msg::Challenge, Authenticator, DummyAuthHandler},
-        Frame,
-    };
     use std::sync::Arc;
+
     use test_log::test;
+
+    use super::*;
+    use crate::common::authentication::msg::Challenge;
+    use crate::common::authentication::{Authenticator, DummyAuthHandler};
+    use crate::common::Frame;
 
     #[test(tokio::test)]
     async fn client_should_fail_if_codec_handshake_fails() {

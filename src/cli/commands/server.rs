@@ -1,12 +1,14 @@
-use crate::options::ServerSubcommand;
-use crate::{CliError, CliResult};
+use std::io::{self, Read, Write};
+
 use anyhow::Context;
 use distant_core::net::common::authentication::Verifier;
 use distant_core::net::common::{Host, SecretKey32};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig, ServerRef};
 use distant_core::{DistantApiServerHandler, DistantSingleKeyCredentials};
 use log::*;
-use std::io::{self, Read, Write};
+
+use crate::options::ServerSubcommand;
+use crate::{CliError, CliResult};
 
 pub fn run(cmd: ServerSubcommand) -> CliResult {
     match &cmd {
@@ -20,9 +22,11 @@ pub fn run(cmd: ServerSubcommand) -> CliResult {
 
 #[cfg(windows)]
 fn run_daemon(_cmd: ServerSubcommand) -> CliResult {
-    use crate::cli::Spawner;
-    use distant_core::net::common::{Listener, TransportExt, WindowsPipeListener};
     use std::ffi::OsString;
+
+    use distant_core::net::common::{Listener, TransportExt, WindowsPipeListener};
+
+    use crate::cli::Spawner;
     let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
     rt.block_on(async {
         let name = format!("distant_{}_{}", std::process::id(), rand::random::<u16>());

@@ -1,6 +1,7 @@
+use std::path::PathBuf;
+
 use directories::ProjectDirs;
 use once_cell::sync::Lazy;
-use std::path::PathBuf;
 
 /// Represents the maximum size (in bytes) that data will be read from pipes
 /// per individual `read` call

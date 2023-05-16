@@ -1,8 +1,7 @@
+use std::io::{self, BufReader, Read};
+use std::thread;
+
 use log::error;
-use std::{
-    io::{self, BufReader, Read},
-    thread,
-};
 use tokio::sync::mpsc;
 
 /// Creates a new thread that performs stdin reads in a blocking fashion, returning

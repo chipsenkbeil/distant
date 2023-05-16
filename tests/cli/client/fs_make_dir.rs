@@ -1,7 +1,8 @@
-use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
+
+use crate::cli::fixtures::*;
 
 #[rstest]
 #[test_log::test]

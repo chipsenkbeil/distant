@@ -1,26 +1,19 @@
-use crate::{
-    client::DistantChannel,
-    constants::CLIENT_PIPE_CAPACITY,
-    data::{Cmd, DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize},
-    DistantMsg,
-};
-use distant_net::{
-    client::Mailbox,
-    common::{Request, Response},
-};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use distant_net::client::Mailbox;
+use distant_net::common::{Request, Response};
 use log::*;
-use std::{path::PathBuf, sync::Arc};
-use tokio::{
-    io,
-    sync::{
-        mpsc::{
-            self,
-            error::{TryRecvError, TrySendError},
-        },
-        RwLock,
-    },
-    task::JoinHandle,
-};
+use tokio::io;
+use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
+use tokio::sync::mpsc::{self};
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+
+use crate::client::DistantChannel;
+use crate::constants::CLIENT_PIPE_CAPACITY;
+use crate::data::{Cmd, DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize};
+use crate::DistantMsg;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteOutput {
@@ -595,17 +588,15 @@ mod errors {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        client::DistantClient,
-        data::{Error, ErrorKind},
-    };
-    use distant_net::{
-        common::{FramedTransport, InmemoryTransport, Response},
-        Client,
-    };
     use std::time::Duration;
+
+    use distant_net::common::{FramedTransport, InmemoryTransport, Response};
+    use distant_net::Client;
     use test_log::test;
+
+    use super::*;
+    use crate::client::DistantClient;
+    use crate::data::{Error, ErrorKind};
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);

@@ -1,5 +1,6 @@
-use bytes::{Buf, BufMut, BytesMut};
 use std::borrow::Cow;
+
+use bytes::{Buf, BufMut, BytesMut};
 
 /// Represents a frame whose lifetime is static
 pub type OwnedFrame = Frame<'static>;
@@ -226,8 +227,9 @@ impl<'a, const N: usize> PartialEq<&'a [u8; N]> for Frame<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test]
     fn write_should_succeed_when_item_is_zero_bytes() {

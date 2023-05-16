@@ -1,15 +1,15 @@
+use std::collections::HashSet;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::iter::FromIterator;
+use std::ops::{BitOr, Sub};
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use derive_more::{Deref, DerefMut, IntoIterator};
-use notify::{event::Event as NotifyEvent, EventKind as NotifyEventKind};
+use notify::event::Event as NotifyEvent;
+use notify::EventKind as NotifyEventKind;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    fmt,
-    hash::{Hash, Hasher},
-    iter::FromIterator,
-    ops::{BitOr, Sub},
-    path::PathBuf,
-    str::FromStr,
-};
 use strum::{EnumString, EnumVariantNames, VariantNames};
 
 /// Change to one or more paths on the filesystem

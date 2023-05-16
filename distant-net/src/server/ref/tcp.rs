@@ -1,5 +1,6 @@
-use super::ServerRef;
 use std::net::IpAddr;
+
+use super::ServerRef;
 
 /// Reference to a TCP server instance
 pub struct TcpServerRef {

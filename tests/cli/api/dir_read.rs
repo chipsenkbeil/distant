@@ -1,9 +1,11 @@
-use crate::cli::fixtures::*;
+use std::path::PathBuf;
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
-use std::path::PathBuf;
 use test_log::test;
+
+use crate::cli::fixtures::*;
 
 /// Creates a directory in the form
 ///

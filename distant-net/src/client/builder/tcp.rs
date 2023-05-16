@@ -1,8 +1,10 @@
+use std::io;
+
+use async_trait::async_trait;
+use tokio::net::ToSocketAddrs;
+
 use super::Connector;
 use crate::common::TcpTransport;
-use async_trait::async_trait;
-use std::io;
-use tokio::net::ToSocketAddrs;
 
 /// Implementation of [`Connector`] to support connecting via TCP.
 pub struct TcpConnector<T> {

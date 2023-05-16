@@ -1,10 +1,10 @@
-use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
 use std::io;
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::mpsc,
-    task::JoinHandle,
-};
+
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
 
 pub fn spawn_read_task<R>(
     reader: R,

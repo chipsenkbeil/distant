@@ -1,23 +1,22 @@
+use std::collections::HashMap;
+use std::ops::Deref;
+use std::path::Path;
+use std::{cmp, io};
+
+use distant_net::server::Reply;
+use grep::matcher::Matcher;
+use grep::regex::{RegexMatcher, RegexMatcherBuilder};
+use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
+use ignore::types::TypesBuilder;
+use ignore::{DirEntry, ParallelVisitor, ParallelVisitorBuilder, WalkBuilder, WalkParallel};
+use log::*;
+use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::task::JoinHandle;
+
 use crate::data::{
     DistantResponseData, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
     SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
     SearchQueryTarget,
-};
-use distant_net::server::Reply;
-use grep::{
-    matcher::Matcher,
-    regex::{RegexMatcher, RegexMatcherBuilder},
-    searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch},
-};
-use ignore::{
-    types::TypesBuilder, DirEntry, ParallelVisitor, ParallelVisitorBuilder, WalkBuilder,
-    WalkParallel,
-};
-use log::*;
-use std::{cmp, collections::HashMap, io, ops::Deref, path::Path};
-use tokio::{
-    sync::{broadcast, mpsc, oneshot},
-    task::JoinHandle,
 };
 
 const MAXIMUM_SEARCH_THREADS: usize = 12;
@@ -808,11 +807,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use assert_fs::prelude::*;
+    use test_log::test;
+
     use super::*;
     use crate::data::{FileType, SearchQueryCondition, SearchQueryMatchData};
-    use assert_fs::prelude::*;
-    use std::path::PathBuf;
-    use test_log::test;
 
     fn make_path(path: &str) -> PathBuf {
         use std::path::MAIN_SEPARATOR;

@@ -1,7 +1,11 @@
-use crate::cli::{fixtures::*, utils::ThreadedReader};
+use std::thread;
+use std::time::Duration;
+
 use assert_fs::prelude::*;
 use rstest::*;
-use std::{thread, time::Duration};
+
+use crate::cli::fixtures::*;
+use crate::cli::utils::ThreadedReader;
 
 fn wait_a_bit() {
     wait_millis(250);

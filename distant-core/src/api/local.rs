@@ -1,18 +1,16 @@
-use crate::{
-    data::{
-        Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
-        ProcessId, PtySize, SearchId, SearchQuery, SystemInfo,
-    },
-    DistantApi, DistantCtx,
-};
+use std::io;
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
 use log::*;
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
+
+use crate::data::{
+    Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, ProcessId,
+    PtySize, SearchId, SearchQuery, SystemInfo,
+};
+use crate::{DistantApi, DistantCtx};
 
 mod process;
 
@@ -493,16 +491,19 @@ impl DistantApi for LocalDistantApi {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::api::ConnectionCtx;
-    use crate::data::DistantResponseData;
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use assert_fs::prelude::*;
     use distant_net::server::Reply;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
-    use std::{sync::Arc, time::Duration};
     use test_log::test;
     use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::api::ConnectionCtx;
+    use crate::data::DistantResponseData;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
         Lazy::new(|| assert_fs::TempDir::new().unwrap());

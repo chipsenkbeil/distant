@@ -1,8 +1,11 @@
-use crate::cli::{fixtures::*, utils::regex_pred};
+use std::path::Path;
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
-use std::path::Path;
+
+use crate::cli::fixtures::*;
+use crate::cli::utils::regex_pred;
 
 /// Creates a directory in the form
 ///

@@ -1,5 +1,8 @@
+use std::ffi::OsStr;
+use std::io;
+use std::time::Duration;
+
 use derive_more::{From, TryInto};
-use std::{ffi::OsStr, io, time::Duration};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer};
 
 // Equivalent to winapi::shared::winerror::ERROR_PIPE_BUSY

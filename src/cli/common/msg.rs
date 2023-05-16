@@ -1,10 +1,10 @@
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 use log::*;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    io::{self, Write},
-    sync::{Arc, Mutex},
-    thread,
-};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 type SendFn = Arc<Mutex<Box<dyn FnMut(&[u8]) -> io::Result<()> + Send>>>;

@@ -1,8 +1,10 @@
-use crate::cli::fixtures::*;
+use std::env;
+
 use rstest::*;
 use serde_json::json;
-use std::env;
 use test_log::test;
+
+use crate::cli::fixtures::*;
 
 #[rstest]
 #[test(tokio::test)]

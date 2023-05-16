@@ -1,11 +1,13 @@
-use super::{deserialize_from_str, serialize_to_str};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
+
 use derive_more::{Display, Error, From};
-use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
-use std::{
-    fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    str::FromStr,
-};
+use serde::de::Deserializer;
+use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
+
+use super::{deserialize_from_str, serialize_to_str};
 
 /// Represents the host of a destination
 #[derive(Clone, Debug, From, Display, Hash, PartialEq, Eq)]

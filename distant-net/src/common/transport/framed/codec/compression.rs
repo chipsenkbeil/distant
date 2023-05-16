@@ -1,10 +1,12 @@
-use super::{Codec, Frame};
-use flate2::{
-    bufread::{DeflateDecoder, DeflateEncoder, GzDecoder, GzEncoder, ZlibDecoder, ZlibEncoder},
-    Compression,
-};
-use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
+
+use flate2::bufread::{
+    DeflateDecoder, DeflateEncoder, GzDecoder, GzEncoder, ZlibDecoder, ZlibEncoder,
+};
+use flate2::Compression;
+use serde::{Deserialize, Serialize};
+
+use super::{Codec, Frame};
 
 /// Represents the level of compression to apply to data
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -28,14 +30,12 @@ pub enum CompressionLevel {
 }
 
 impl CompressionLevel {
-    /// Applies no compression
-    pub const NONE: Self = Self::Zero;
-
-    /// Applies fastest compression
-    pub const FAST: Self = Self::One;
-
     /// Applies best compression to reduce size (slowest)
     pub const BEST: Self = Self::Nine;
+    /// Applies fastest compression
+    pub const FAST: Self = Self::One;
+    /// Applies no compression
+    pub const NONE: Self = Self::Zero;
 }
 
 impl Default for CompressionLevel {
@@ -186,8 +186,9 @@ impl Codec for CompressionCodec {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test]
     fn encode_should_apply_appropriate_compression_algorithm() {

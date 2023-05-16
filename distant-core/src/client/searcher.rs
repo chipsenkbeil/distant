@@ -1,13 +1,16 @@
-use crate::{
-    client::{DistantChannel, DistantChannelExt},
-    constants::CLIENT_SEARCHER_CAPACITY,
-    data::{DistantRequestData, DistantResponseData, SearchId, SearchQuery, SearchQueryMatch},
-    DistantMsg,
-};
+use std::{fmt, io};
+
 use distant_net::common::Request;
 use log::*;
-use std::{fmt, io};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use crate::client::{DistantChannel, DistantChannelExt};
+use crate::constants::CLIENT_SEARCHER_CAPACITY;
+use crate::data::{
+    DistantRequestData, DistantResponseData, SearchId, SearchQuery, SearchQueryMatch,
+};
+use crate::DistantMsg;
 
 /// Represents a searcher for files, directories, and symlinks on the filesystem
 pub struct Searcher {
@@ -190,19 +193,20 @@ impl Searcher {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use distant_net::common::{FramedTransport, InmemoryTransport, Response};
+    use distant_net::Client;
+    use test_log::test;
+    use tokio::sync::Mutex;
+
     use super::*;
     use crate::data::{
         SearchQueryCondition, SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch,
         SearchQuerySubmatch, SearchQueryTarget,
     };
     use crate::DistantClient;
-    use distant_net::{
-        common::{FramedTransport, InmemoryTransport, Response},
-        Client,
-    };
-    use std::{path::PathBuf, sync::Arc};
-    use test_log::test;
-    use tokio::sync::Mutex;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);

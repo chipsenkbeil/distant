@@ -1,7 +1,12 @@
-use crate::common::{authentication::Verifier, UnixSocketListener};
+use std::io;
+use std::path::Path;
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::common::authentication::Verifier;
+use crate::common::UnixSocketListener;
 use crate::server::{Server, ServerConfig, ServerHandler, UnixSocketServerRef};
-use serde::{de::DeserializeOwned, Serialize};
-use std::{io, path::Path};
 
 pub struct UnixSocketServerBuilder<T>(Server<T>);
 
@@ -53,21 +58,23 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::client::Client;
-    use crate::common::{authentication::DummyAuthHandler, Request};
-    use crate::server::ServerCtx;
     use async_trait::async_trait;
     use tempfile::NamedTempFile;
     use test_log::test;
+
+    use super::*;
+    use crate::client::Client;
+    use crate::common::authentication::DummyAuthHandler;
+    use crate::common::Request;
+    use crate::server::ServerCtx;
 
     pub struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
+        type LocalData = ();
         type Request = String;
         type Response = String;
-        type LocalData = ();
 
         async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
             // Echo back what we received

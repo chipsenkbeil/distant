@@ -1,10 +1,14 @@
-use serde::{
-    de::{DeserializeOwned, Deserializer, Error as SerdeError, Visitor},
-    ser::Serializer,
-    Serialize,
-};
-use std::{fmt, future::Future, io, marker::PhantomData, str::FromStr, time::Duration};
-use tokio::{sync::mpsc, task::JoinHandle};
+use std::future::Future;
+use std::marker::PhantomData;
+use std::str::FromStr;
+use std::time::Duration;
+use std::{fmt, io};
+
+use serde::de::{DeserializeOwned, Deserializer, Error as SerdeError, Visitor};
+use serde::ser::Serializer;
+use serde::Serialize;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 pub fn serialize_to_vec<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
     rmp_serde::encode::to_vec_named(value)
@@ -142,8 +146,9 @@ mod tests {
     use super::*;
 
     mod timer {
-        use super::*;
         use test_log::test;
+
+        use super::*;
 
         #[test(tokio::test)]
         async fn should_not_invoke_callback_regardless_of_time_if_not_started() {

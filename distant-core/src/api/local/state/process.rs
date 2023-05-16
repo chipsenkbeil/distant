@@ -1,10 +1,13 @@
-use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
+use std::collections::HashMap;
+use std::io;
+use std::ops::Deref;
+use std::path::PathBuf;
+
 use distant_net::server::Reply;
-use std::{collections::HashMap, io, ops::Deref, path::PathBuf};
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+
+use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
 
 mod instance;
 pub use instance::*;

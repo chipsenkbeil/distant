@@ -1,12 +1,12 @@
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::{fmt, io};
+
+use async_trait::async_trait;
+use tokio::net::{UnixListener, UnixStream};
+
 use super::Listener;
 use crate::common::UnixSocketTransport;
-use async_trait::async_trait;
-use std::{
-    fmt, io,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
-use tokio::net::{UnixListener, UnixStream};
 
 /// Represents a [`Listener`] for incoming connections over a Unix socket
 pub struct UnixSocketListener {
@@ -94,11 +94,13 @@ impl Listener for UnixSocketListener {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::TransportExt;
     use tempfile::NamedTempFile;
     use test_log::test;
-    use tokio::{sync::oneshot, task::JoinHandle};
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+
+    use super::*;
+    use crate::common::TransportExt;
 
     #[test(tokio::test)]
     async fn should_succeed_to_bind_if_file_exists_at_path_but_nothing_listening() {

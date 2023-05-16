@@ -1,8 +1,10 @@
-use crate::options::BindAddress;
+use std::path::PathBuf;
+
 use distant_core::net::common::{Map, PortRange};
 use distant_core::net::server::Shutdown;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+
+use crate::options::BindAddress;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerListenConfig {

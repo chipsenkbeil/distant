@@ -1,6 +1,7 @@
+use std::collections::HashMap;
+
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Represents messages from an authenticator that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error

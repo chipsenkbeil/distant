@@ -1,6 +1,10 @@
+use std::future::Future;
+use std::pin::Pin;
+
+use tokio::io;
+use tokio::sync::mpsc;
+
 use crate::data::{ProcessId, PtySize};
-use std::{future::Future, pin::Pin};
-use tokio::{io, sync::mpsc};
 
 mod pty;
 pub use pty::*;

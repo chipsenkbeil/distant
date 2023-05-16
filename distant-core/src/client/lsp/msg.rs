@@ -1,13 +1,12 @@
+use std::fmt;
+use std::io::{self, BufRead};
+use std::ops::{Deref, DerefMut};
+use std::str::FromStr;
+use std::string::FromUtf8Error;
+
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{
-    fmt,
-    io::{self, BufRead},
-    ops::{Deref, DerefMut},
-    str::FromStr,
-    string::FromUtf8Error,
-};
 
 /// Represents some data being communicated to/from an LSP consisting of a header and content part
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +60,7 @@ impl LspMsg {
     pub fn header(&self) -> &LspHeader {
         &self.header
     }
+
     /// Returns a mutable reference to the header part
     pub fn mut_header(&mut self) -> &mut LspHeader {
         &mut self.header
@@ -395,8 +395,9 @@ impl FromStr for LspContent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     macro_rules! make_obj {
         ($($tail:tt)*) => {

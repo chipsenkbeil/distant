@@ -1,23 +1,21 @@
-use crate::{constants::SERVER_WATCHER_CAPACITY, data::ChangeKind};
+use std::collections::HashMap;
+use std::io;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
+
 use distant_net::common::ConnectionId;
 use log::*;
 use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
     Event as WatcherEvent, PollWatcher, RecursiveMode, Watcher,
 };
-use std::{
-    collections::HashMap,
-    io,
-    ops::Deref,
-    path::{Path, PathBuf},
-};
-use tokio::{
-    sync::{
-        mpsc::{self, error::TrySendError},
-        oneshot,
-    },
-    task::JoinHandle,
-};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{self};
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+
+use crate::constants::SERVER_WATCHER_CAPACITY;
+use crate::data::ChangeKind;
 
 mod path;
 pub use path::*;

@@ -1,9 +1,15 @@
-use crate::common::{authentication::Verifier, Listener, Response, Transport};
+use std::io;
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use log::*;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{io, sync::Arc, time::Duration};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tokio::sync::{broadcast, RwLock};
+
+use crate::common::authentication::Verifier;
+use crate::common::{Listener, Response, Transport};
 
 mod builder;
 pub use builder::*;
@@ -237,23 +243,25 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::{
-        authentication::{AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod},
-        Connection, InmemoryTransport, MpscListener, Request, Response,
-    };
-    use async_trait::async_trait;
     use std::time::Duration;
+
+    use async_trait::async_trait;
     use test_log::test;
     use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::common::authentication::{
+        AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod,
+    };
+    use crate::common::{Connection, InmemoryTransport, MpscListener, Request, Response};
 
     pub struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
+        type LocalData = ();
         type Request = u16;
         type Response = String;
-        type LocalData = ();
 
         async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
             Ok(())

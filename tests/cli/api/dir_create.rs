@@ -1,9 +1,10 @@
-use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
 use test_log::test;
+
+use crate::cli::fixtures::*;
 
 #[rstest]
 #[test(tokio::test)]

@@ -1,6 +1,8 @@
+use std::fs::FileType as StdFileType;
+use std::path::PathBuf;
+
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
-use std::{fs::FileType as StdFileType, path::PathBuf};
 use strum::AsRefStr;
 
 /// Represents information about a single entry within a directory

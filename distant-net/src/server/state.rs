@@ -1,7 +1,10 @@
-use crate::common::{authentication::Keychain, Backup, ConnectionId};
 use std::collections::HashMap;
+
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
+
+use crate::common::authentication::Keychain;
+use crate::common::{Backup, ConnectionId};
 
 /// Contains all top-level state for the server
 pub struct ServerState<T> {

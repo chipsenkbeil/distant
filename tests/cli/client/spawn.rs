@@ -1,5 +1,8 @@
-use crate::cli::{fixtures::*, scripts::*, utils::regex_pred};
 use rstest::*;
+
+use crate::cli::fixtures::*;
+use crate::cli::scripts::*;
+use crate::cli::utils::regex_pred;
 
 #[rstest]
 #[test_log::test]

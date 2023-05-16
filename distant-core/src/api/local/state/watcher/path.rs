@@ -1,12 +1,11 @@
-use crate::data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error};
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::{fmt, io};
+
 use distant_net::common::ConnectionId;
 use distant_net::server::Reply;
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    io,
-    path::{Path, PathBuf},
-};
+
+use crate::data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error};
 
 /// Represents a path registered with a watcher that includes relevant state including
 /// the ability to reply with

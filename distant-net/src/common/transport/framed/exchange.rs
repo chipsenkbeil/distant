@@ -1,8 +1,12 @@
-use super::SecretKey32;
-use p256::{ecdh::EphemeralSecret, PublicKey};
+use std::convert::TryFrom;
+use std::io;
+
+use p256::ecdh::EphemeralSecret;
+use p256::PublicKey;
 use rand::rngs::OsRng;
 use sha2::Sha256;
-use std::{convert::TryFrom, io};
+
+use super::SecretKey32;
 
 mod pkb;
 pub use pkb::PublicKeyBytes;

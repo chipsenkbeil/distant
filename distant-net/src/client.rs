@@ -1,18 +1,17 @@
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use std::{fmt, io};
+
+use log::*;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinHandle;
+
 use crate::common::{
     Connection, FramedTransport, HeapSecretKey, InmemoryTransport, Interest, Reconnectable,
     Transport, UntypedRequest, UntypedResponse,
-};
-use log::*;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    fmt, io,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::{
-    sync::{mpsc, oneshot, watch},
-    task::JoinHandle,
 };
 
 mod builder;
@@ -644,8 +643,9 @@ mod tests {
     use crate::common::{Ready, Request, Response, TestTransport};
 
     mod typed {
-        use super::*;
         use test_log::test;
+
+        use super::*;
         type TestClient = Client<u8, u8>;
 
         fn spawn_test_client<T>(
@@ -962,8 +962,9 @@ mod tests {
     }
 
     mod untyped {
-        use super::*;
         use test_log::test;
+
+        use super::*;
         type TestClient = UntypedClient;
 
         /// Creates a new test transport whose operations do not panic, but do nothing.

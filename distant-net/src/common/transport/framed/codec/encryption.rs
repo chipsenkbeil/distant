@@ -1,6 +1,8 @@
-use super::{Codec, Frame};
-use derive_more::Display;
 use std::{fmt, io};
+
+use derive_more::Display;
+
+use super::{Codec, Frame};
 
 mod key;
 pub use key::*;
@@ -134,7 +136,8 @@ impl Codec for EncryptionCodec {
 
         Ok(match self {
             Self::XChaCha20Poly1305 { cipher } => {
-                use chacha20poly1305::{aead::Aead, XNonce};
+                use chacha20poly1305::aead::Aead;
+                use chacha20poly1305::XNonce;
                 let item = frame.into_item();
                 let nonce = XNonce::from_slice(&nonce_bytes);
 
@@ -165,7 +168,8 @@ impl Codec for EncryptionCodec {
         // of the frame to tease out the decrypted frame item
         let item = match self {
             Self::XChaCha20Poly1305 { cipher } => {
-                use chacha20poly1305::{aead::Aead, XNonce};
+                use chacha20poly1305::aead::Aead;
+                use chacha20poly1305::XNonce;
                 let nonce = XNonce::from_slice(&frame.as_item()[..nonce_size]);
                 cipher
                     .decrypt(nonce, &frame.as_item()[nonce_size..])
@@ -179,8 +183,9 @@ impl Codec for EncryptionCodec {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test]
     fn encode_should_build_a_frame_containing_a_length_nonce_and_ciphertext() {
@@ -198,7 +203,8 @@ mod tests {
         // Manually build our key & cipher so we can decrypt the frame manually to ensure it is
         // correct
         let item = {
-            use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
+            use chacha20poly1305::aead::Aead;
+            use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
             let cipher = XChaCha20Poly1305::new_from_slice(&key).unwrap();
             cipher
                 .decrypt(XNonce::from_slice(nonce), ciphertext)

@@ -1,8 +1,10 @@
+use std::time::Duration;
+
+use log::*;
+use tokio::sync::watch;
+
 use super::Shutdown;
 use crate::common::utils::Timer;
-use log::*;
-use std::time::Duration;
-use tokio::sync::watch;
 
 /// Cloneable notification for when a [`ShutdownTimer`] has completed.
 #[derive(Clone)]

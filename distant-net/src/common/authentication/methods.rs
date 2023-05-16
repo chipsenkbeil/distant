@@ -1,8 +1,12 @@
-use super::{super::HeapSecretKey, msg::*, Authenticator};
-use async_trait::async_trait;
-use log::*;
 use std::collections::HashMap;
 use std::io;
+
+use async_trait::async_trait;
+use log::*;
+
+use super::super::HeapSecretKey;
+use super::msg::*;
+use super::Authenticator;
 
 mod none;
 mod static_key;
@@ -113,9 +117,10 @@ pub trait AuthenticationMethod: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
+
     use super::*;
     use crate::common::FramedTransport;
-    use test_log::test;
 
     struct SuccessAuthenticationMethod;
 

@@ -1,12 +1,14 @@
-use crate::{
-    client::{Mailbox, UntypedClient},
-    common::{ConnectionId, Destination, Map, UntypedRequest, UntypedResponse},
-    manager::data::{ManagerChannelId, ManagerResponse},
-    server::ServerReply,
-};
+use std::collections::HashMap;
+use std::io;
+
 use log::*;
-use std::{collections::HashMap, io};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use crate::client::{Mailbox, UntypedClient};
+use crate::common::{ConnectionId, Destination, Map, UntypedRequest, UntypedResponse};
+use crate::manager::data::{ManagerChannelId, ManagerResponse};
+use crate::server::ServerReply;
 
 /// Represents a connection a distant manager has with some distant-compatible server
 pub struct ManagerConnection {

@@ -1,8 +1,14 @@
-use crate::common::{Request, Response, UntypedRequest, UntypedResponse};
+use std::marker::PhantomData;
+use std::sync::Weak;
+use std::{convert, fmt, io};
+
 use log::*;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{convert, fmt, io, marker::PhantomData, sync::Weak};
-use tokio::{sync::mpsc, time::Duration};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tokio::sync::mpsc;
+use tokio::time::Duration;
+
+use crate::common::{Request, Response, UntypedRequest, UntypedResponse};
 
 mod mailbox;
 pub use mailbox::*;
@@ -336,10 +342,12 @@ mod tests {
     use super::*;
 
     mod typed {
-        use super::*;
         use std::sync::Arc;
         use std::time::Duration;
+
         use test_log::test;
+
+        use super::*;
 
         type TestChannel = Channel<u8, u8>;
         type Setup = (
@@ -446,10 +454,12 @@ mod tests {
     }
 
     mod untyped {
-        use super::*;
         use std::sync::Arc;
         use std::time::Duration;
+
         use test_log::test;
+
+        use super::*;
 
         type TestChannel = UntypedChannel;
         type Setup = (

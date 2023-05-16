@@ -1,10 +1,9 @@
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::process::Child;
+use std::thread;
+use std::time::Duration;
+
 use serde_json::Value;
-use std::{
-    io::{self, BufRead, BufReader, BufWriter, Write},
-    process::Child,
-    thread,
-    time::Duration,
-};
 use tokio::sync::mpsc;
 
 const CHANNEL_BUFFER: usize = 100;

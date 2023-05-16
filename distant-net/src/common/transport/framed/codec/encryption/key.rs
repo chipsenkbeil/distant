@@ -1,6 +1,9 @@
+use std::fmt;
+use std::str::FromStr;
+
 use derive_more::{Display, Error};
-use rand::{rngs::OsRng, RngCore};
-use std::{fmt, str::FromStr};
+use rand::rngs::OsRng;
+use rand::RngCore;
 
 #[derive(Debug, Display, Error)]
 pub struct SecretKeyError;
@@ -287,8 +290,9 @@ impl PartialEq<HeapSecretKey> for &str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test]
     fn secret_key_should_be_able_to_be_generated() {

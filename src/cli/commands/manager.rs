@@ -1,9 +1,11 @@
-use crate::cli::common::{MsgReceiver, MsgSender};
-use crate::cli::{Cache, Client, Manager};
-use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand, NetworkSettings};
-use crate::{CliError, CliResult};
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::path::PathBuf;
+
 use anyhow::Context;
-use dialoguer::{console::Term, theme::ColorfulTheme, Select};
+use dialoguer::console::Term;
+use dialoguer::theme::ColorfulTheme;
+use dialoguer::Select;
 use distant_core::net::common::ConnectionId;
 use distant_core::net::manager::{
     Config as NetManagerConfig, ConnectHandler, LaunchHandler, ManagerClient,
@@ -15,8 +17,12 @@ use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx, ServiceStopCtx,
     ServiceUninstallCtx,
 };
-use std::{collections::HashMap, ffi::OsString, path::PathBuf};
 use tabled::{Table, Tabled};
+
+use crate::cli::common::{MsgReceiver, MsgSender};
+use crate::cli::{Cache, Client, Manager};
+use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand, NetworkSettings};
+use crate::{CliError, CliResult};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
 static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {

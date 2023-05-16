@@ -1,5 +1,6 @@
-use super::ServerRef;
 use std::path::{Path, PathBuf};
+
+use super::ServerRef;
 
 /// Reference to a unix socket server instance
 pub struct UnixSocketServerRef {

@@ -1,18 +1,18 @@
-use crate::options::Format;
-use distant_core::{
-    data::{
-        ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
-        SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SystemInfo,
-    },
-    net::common::Response,
+use std::collections::HashMap;
+use std::io::{self, Write};
+use std::path::PathBuf;
+
+use distant_core::data::{
+    ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
+    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SystemInfo,
 };
+use distant_core::net::common::Response;
 use log::*;
-use std::{
-    collections::HashMap,
-    io::{self, Write},
-    path::PathBuf,
-};
-use tabled::{object::Rows, style::Style, Alignment, Disable, Modify, Table, Tabled};
+use tabled::object::Rows;
+use tabled::style::Style;
+use tabled::{Alignment, Disable, Modify, Table, Tabled};
+
+use crate::options::Format;
 
 #[derive(Default)]
 struct FormatterState {

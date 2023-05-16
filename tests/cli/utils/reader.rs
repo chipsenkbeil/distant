@@ -1,10 +1,7 @@
-use std::{
-    io,
-    io::{BufRead, BufReader, Read},
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::io::{BufRead, BufReader, Read};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+use std::{io, thread};
 
 pub struct ThreadedReader {
     #[allow(dead_code)]

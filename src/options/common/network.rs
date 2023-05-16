@@ -1,6 +1,7 @@
-use crate::constants;
 use clap::Args;
 use serde::{Deserialize, Serialize};
+
+use crate::constants;
 
 /// Level of access control to the unix socket or windows pipe
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]

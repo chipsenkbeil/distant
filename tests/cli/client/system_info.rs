@@ -1,6 +1,8 @@
-use crate::cli::fixtures::*;
-use rstest::*;
 use std::env;
+
+use rstest::*;
+
+use crate::cli::fixtures::*;
 
 #[rstest]
 #[test_log::test]

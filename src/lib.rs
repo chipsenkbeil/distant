@@ -1,5 +1,6 @@
-use derive_more::{Display, Error, From};
 use std::process::{ExitCode, Termination};
+
+use derive_more::{Display, Error, From};
 
 mod cli;
 mod constants;

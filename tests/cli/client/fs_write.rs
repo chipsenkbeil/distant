@@ -1,8 +1,9 @@
-use crate::cli::fixtures::*;
 use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::prelude::*;
 use rstest::*;
+
+use crate::cli::fixtures::*;
 
 const FILE_CONTENTS: &str = indoc! {r#"
     some text

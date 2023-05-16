@@ -1,13 +1,13 @@
-use super::stdin;
+use std::io::{self, Write};
+use std::thread;
+
 use distant_core::{
     RemoteLspStderr, RemoteLspStdin, RemoteLspStdout, RemoteStderr, RemoteStdin, RemoteStdout,
 };
 use log::*;
-use std::{
-    io::{self, Write},
-    thread,
-};
 use tokio::task::{JoinError, JoinHandle};
+
+use super::stdin;
 
 /// Represents a link between a remote process' stdin/stdout/stderr and this process'
 /// stdin/stdout/stderr

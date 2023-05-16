@@ -1,11 +1,11 @@
-use rand::{rngs::OsRng, RngCore};
+use std::convert::{TryFrom, TryInto};
+use std::ops::BitXor;
+use std::str::FromStr;
+use std::{fmt, io};
+
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    convert::{TryFrom, TryInto},
-    fmt, io,
-    ops::BitXor,
-    str::FromStr,
-};
 
 /// Friendly wrapper around a 32-byte array representing a salt
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

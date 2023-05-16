@@ -1,17 +1,17 @@
+use std::io::{BufReader, Read};
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::path::PathBuf;
+use std::process::{Child, Command as StdCommand, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
-use distant_core::{net::common::Host, DistantSingleKeyCredentials};
+use distant_core::net::common::Host;
+use distant_core::DistantSingleKeyCredentials;
 use once_cell::sync::Lazy;
 use rstest::*;
 use serde_json::json;
-use std::{
-    io::{BufReader, Read},
-    net::{Ipv4Addr, Ipv6Addr},
-    path::PathBuf,
-    process::{Child, Command as StdCommand, Stdio},
-    thread,
-    time::{Duration, Instant},
-};
 
 mod api;
 pub use api::ApiProcess;

@@ -342,8 +342,9 @@ mod tests {
         }
 
         mod parse_host {
-            use super::*;
             use std::net::{Ipv4Addr, Ipv6Addr};
+
+            use super::*;
 
             #[test]
             fn should_fail_if_domain_name_is_invalid() {

@@ -1,10 +1,10 @@
-use super::{Interest, Ready, Reconnectable, Transport};
+use std::path::{Path, PathBuf};
+use std::{fmt, io};
+
 use async_trait::async_trait;
-use std::{
-    fmt, io,
-    path::{Path, PathBuf},
-};
 use tokio::net::UnixStream;
+
+use super::{Interest, Ready, Reconnectable, Transport};
 
 /// Represents a [`Transport`] that leverages a Unix socket
 pub struct UnixSocketTransport {
@@ -61,16 +61,15 @@ impl Transport for UnixSocketTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::common::TransportExt;
     use tempfile::NamedTempFile;
     use test_log::test;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::UnixListener,
-        sync::oneshot,
-        task::JoinHandle,
-    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixListener;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+
+    use super::*;
+    use crate::common::TransportExt;
 
     async fn start_and_run_server(tx: oneshot::Sender<PathBuf>) -> io::Result<()> {
         // Generate a socket path and delete the file after so there is nothing there

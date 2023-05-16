@@ -1,18 +1,14 @@
-use crate::{
-    client::Client,
-    common::{
-        authentication::{
-            msg::{Authentication, AuthenticationResponse},
-            AuthHandler,
-        },
-        ConnectionId, Destination, Map, Request,
-    },
-    manager::data::{
-        ConnectionInfo, ConnectionList, ManagerCapabilities, ManagerRequest, ManagerResponse,
-    },
-};
-use log::*;
 use std::io;
+
+use log::*;
+
+use crate::client::Client;
+use crate::common::authentication::msg::{Authentication, AuthenticationResponse};
+use crate::common::authentication::AuthHandler;
+use crate::common::{ConnectionId, Destination, Map, Request};
+use crate::manager::data::{
+    ConnectionInfo, ConnectionList, ManagerCapabilities, ManagerRequest, ManagerResponse,
+};
 
 mod channel;
 pub use channel::*;

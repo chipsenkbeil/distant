@@ -10,9 +10,9 @@ struct TestServerHandler;
 
 #[async_trait]
 impl ServerHandler for TestServerHandler {
+    type LocalData = ();
     type Request = (u8, String);
     type Response = String;
-    type LocalData = ();
 
     async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
         let (cnt, msg) = ctx.request.payload;

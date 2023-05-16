@@ -1,11 +1,14 @@
-use crate::{
-    common::authentication::{msg::*, Authenticator},
-    manager::data::{ManagerAuthenticationId, ManagerResponse},
-    server::ServerReply,
-};
+use std::collections::HashMap;
+use std::io;
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use std::{collections::HashMap, io, sync::Arc};
 use tokio::sync::{oneshot, RwLock};
+
+use crate::common::authentication::msg::*;
+use crate::common::authentication::Authenticator;
+use crate::manager::data::{ManagerAuthenticationId, ManagerResponse};
+use crate::server::ServerReply;
 
 /// Implementation of [`Authenticator`] used by a manger to perform authentication with
 /// remote servers it is managing.

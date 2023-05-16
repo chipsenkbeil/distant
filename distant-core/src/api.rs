@@ -1,15 +1,17 @@
-use crate::{
-    data::{
-        Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize,
-        SearchId, SearchQuery, SystemInfo,
-    },
-    DistantMsg, DistantRequestData, DistantResponseData,
-};
+use std::io;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use distant_net::common::ConnectionId;
 use distant_net::server::{ConnectionCtx, Reply, ServerCtx, ServerHandler};
 use log::*;
-use std::{io, path::PathBuf, sync::Arc};
+
+use crate::data::{
+    Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize, SearchId,
+    SearchQuery, SystemInfo,
+};
+use crate::{DistantMsg, DistantRequestData, DistantResponseData};
 
 mod local;
 pub use local::LocalDistantApi;
@@ -420,9 +422,9 @@ where
     T: DistantApi<LocalData = D> + Send + Sync,
     D: Send + Sync,
 {
+    type LocalData = D;
     type Request = DistantMsg<DistantRequestData>;
     type Response = DistantMsg<DistantResponseData>;
-    type LocalData = D;
 
     /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
     async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {

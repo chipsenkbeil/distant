@@ -1,7 +1,10 @@
+use std::fmt;
+use std::num::ParseIntError;
+use std::str::FromStr;
+
 use derive_more::{Display, Error};
 use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
-use std::{fmt, num::ParseIntError, str::FromStr};
 
 /// Represents the size associated with a remote PTY
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
