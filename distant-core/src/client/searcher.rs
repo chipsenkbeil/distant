@@ -7,10 +7,7 @@ use tokio::task::JoinHandle;
 
 use crate::client::{DistantChannel, DistantChannelExt};
 use crate::constants::CLIENT_SEARCHER_CAPACITY;
-use crate::data::{
-    DistantRequestData, DistantResponseData, SearchId, SearchQuery, SearchQueryMatch,
-};
-use crate::DistantMsg;
+use crate::protocol::{self, SearchId, SearchQuery, SearchQueryMatch};
 
 /// Represents a searcher for files, directories, and symlinks on the filesystem
 pub struct Searcher {
@@ -37,8 +34,8 @@ impl Searcher {
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(DistantMsg::Single(
-                DistantRequestData::Search {
+            .mail(Request::new(protocol::Msg::Single(
+                protocol::Request::Search {
                     query: query.clone(),
                 },
             )))
@@ -53,18 +50,18 @@ impl Searcher {
             for data in res.payload.into_vec() {
                 match data {
                     // If we get results before the started indicator, queue them up
-                    DistantResponseData::SearchResults { matches, .. } => {
+                    protocol::Response::SearchResults { matches, .. } => {
                         queue.extend(matches);
                     }
 
                     // Once we get the started indicator, mark as ready to go
-                    DistantResponseData::SearchStarted { id } => {
+                    protocol::Response::SearchStarted { id } => {
                         trace!("[Query {id}] Searcher has started");
                         search_id = Some(id);
                     }
 
                     // If we get an explicit error, convert and return it
-                    DistantResponseData::Error(x) => return Err(io::Error::from(x)),
+                    protocol::Response::Error(x) => return Err(io::Error::from(x)),
 
                     // Otherwise, we got something unexpected, and report as such
                     x => {
@@ -118,7 +115,7 @@ impl Searcher {
 
                     for data in res.payload.into_vec() {
                         match data {
-                            DistantResponseData::SearchResults { matches, .. } => {
+                            protocol::Response::SearchResults { matches, .. } => {
                                 // If we can't queue up a match anymore, we've
                                 // been closed and therefore want to quit
                                 if tx.is_closed() {
@@ -138,7 +135,7 @@ impl Searcher {
                             }
 
                             // Received completion indicator, so close out
-                            DistantResponseData::SearchDone { .. } => {
+                            protocol::Response::SearchDone { .. } => {
                                 trace!("[Query {search_id}] Searcher has finished");
                                 done = true;
                                 break;
@@ -202,7 +199,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::data::{
+    use crate::protocol::{
         SearchQueryCondition, SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch,
         SearchQuerySubmatch, SearchQueryTarget,
     };
@@ -233,13 +230,13 @@ mod tests {
         };
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a search was started
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantResponseData::SearchStarted { id: rand::random() },
+                protocol::Response::SearchStarted { id: rand::random() },
             ))
             .await
             .unwrap();
@@ -269,14 +266,14 @@ mod tests {
             );
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a searcher was created
         let id = rand::random::<SearchId>();
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantResponseData::SearchStarted { id },
+                protocol::Response::SearchStarted { id },
             ))
             .await
             .unwrap();
@@ -289,7 +286,7 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id,
                 vec![
-                    DistantResponseData::SearchResults {
+                    protocol::Response::SearchResults {
                         id,
                         matches: vec![
                             SearchQueryMatch::Path(SearchQueryPathMatch {
@@ -310,7 +307,7 @@ mod tests {
                             }),
                         ],
                     },
-                    DistantResponseData::SearchResults {
+                    protocol::Response::SearchResults {
                         id,
                         matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
                             path: PathBuf::from("/some/path/3"),
@@ -388,14 +385,14 @@ mod tests {
             );
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a searcher was created
         let id = rand::random();
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantResponseData::SearchStarted { id },
+                protocol::Response::SearchStarted { id },
             ))
             .await
             .unwrap();
@@ -407,7 +404,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantResponseData::SearchResults {
+                protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
                         path: PathBuf::from("/some/path/1"),
@@ -426,7 +423,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone() + "1",
-                DistantResponseData::SearchResults {
+                protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
                         path: PathBuf::from("/some/path/2"),
@@ -445,7 +442,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantResponseData::SearchResults {
+                protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
                         path: PathBuf::from("/some/path/3"),
@@ -509,14 +506,14 @@ mod tests {
             );
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         let id = rand::random::<SearchId>();
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantResponseData::SearchStarted { id },
+                protocol::Response::SearchStarted { id },
             ))
             .await
             .unwrap();
@@ -525,7 +522,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantResponseData::SearchResults {
+                protocol::Response::SearchResults {
                     id,
                     matches: vec![
                         SearchQueryMatch::Path(SearchQueryPathMatch {
@@ -580,10 +577,10 @@ mod tests {
         let searcher_2 = Arc::clone(&searcher);
         let cancel_task = tokio::spawn(async move { searcher_2.lock().await.cancel().await });
 
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         transport
-            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), protocol::Response::Ok))
             .await
             .unwrap();
 
@@ -594,7 +591,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantResponseData::SearchResults {
+                protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
                         path: PathBuf::from("/some/path/3"),

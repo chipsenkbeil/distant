@@ -10,11 +10,10 @@ use crate::client::{
     RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
     Watcher,
 };
-use crate::data::{
-    Capabilities, ChangeKindSet, DirEntry, DistantRequestData, DistantResponseData, Environment,
-    Error as Failure, Metadata, PtySize, SearchId, SearchQuery, SystemInfo,
+use crate::protocol::{
+    self, Capabilities, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, PtySize,
+    SearchId, SearchQuery, SystemInfo,
 };
-use crate::DistantMsg;
 
 pub type AsyncReturn<'a, T, E = io::Error> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
@@ -148,21 +147,21 @@ macro_rules! make_body {
     ($self:expr, $data:expr, @ok) => {
         make_body!($self, $data, |data| {
             match data {
-                DistantResponseData::Ok => Ok(()),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::Ok => Ok(()),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         })
     };
 
     ($self:expr, $data:expr, $and_then:expr) => {{
-        let req = Request::new(DistantMsg::Single($data));
+        let req = Request::new(protocol::Msg::Single($data));
         Box::pin(async move {
             $self
                 .send(req)
                 .await
                 .and_then(|res| match res.payload {
-                    DistantMsg::Single(x) => Ok(x),
+                    protocol::Msg::Single(x) => Ok(x),
                     _ => Err(mismatched_response()),
                 })
                 .and_then($and_then)
@@ -171,7 +170,7 @@ macro_rules! make_body {
 }
 
 impl DistantChannelExt
-    for Channel<DistantMsg<DistantRequestData>, DistantMsg<DistantResponseData>>
+    for Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>>
 {
     fn append_file(
         &mut self,
@@ -180,7 +179,7 @@ impl DistantChannelExt
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::FileAppend { path: path.into(), data: data.into() },
+            protocol::Request::FileAppend { path: path.into(), data: data.into() },
             @ok
         )
     }
@@ -192,7 +191,7 @@ impl DistantChannelExt
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::FileAppendText { path: path.into(), text: data.into() },
+            protocol::Request::FileAppendText { path: path.into(), text: data.into() },
             @ok
         )
     }
@@ -200,10 +199,10 @@ impl DistantChannelExt
     fn capabilities(&mut self) -> AsyncReturn<'_, Capabilities> {
         make_body!(
             self,
-            DistantRequestData::Capabilities {},
+            protocol::Request::Capabilities {},
             |data| match data {
-                DistantResponseData::Capabilities { supported } => Ok(supported),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::Capabilities { supported } => Ok(supported),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         )
@@ -212,7 +211,7 @@ impl DistantChannelExt
     fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::Copy { src: src.into(), dst: dst.into() },
+            protocol::Request::Copy { src: src.into(), dst: dst.into() },
             @ok
         )
     }
@@ -220,7 +219,7 @@ impl DistantChannelExt
     fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::DirCreate { path: path.into(), all },
+            protocol::Request::DirCreate { path: path.into(), all },
             @ok
         )
     }
@@ -228,10 +227,10 @@ impl DistantChannelExt
     fn exists(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, bool> {
         make_body!(
             self,
-            DistantRequestData::Exists { path: path.into() },
+            protocol::Request::Exists { path: path.into() },
             |data| match data {
-                DistantResponseData::Exists { value } => Ok(value),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::Exists { value } => Ok(value),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         )
@@ -245,14 +244,14 @@ impl DistantChannelExt
     ) -> AsyncReturn<'_, Metadata> {
         make_body!(
             self,
-            DistantRequestData::Metadata {
+            protocol::Request::Metadata {
                 path: path.into(),
                 canonicalize,
                 resolve_file_type
             },
             |data| match data {
-                DistantResponseData::Metadata(x) => Ok(x),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::Metadata(x) => Ok(x),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         )
@@ -266,7 +265,7 @@ impl DistantChannelExt
     fn cancel_search(&mut self, id: SearchId) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::CancelSearch { id },
+            protocol::Request::CancelSearch { id },
             @ok
         )
     }
@@ -281,7 +280,7 @@ impl DistantChannelExt
     ) -> AsyncReturn<'_, (Vec<DirEntry>, Vec<Failure>)> {
         make_body!(
             self,
-            DistantRequestData::DirRead {
+            protocol::Request::DirRead {
                 path: path.into(),
                 depth,
                 absolute,
@@ -289,8 +288,8 @@ impl DistantChannelExt
                 include_root
             },
             |data| match data {
-                DistantResponseData::DirEntries { entries, errors } => Ok((entries, errors)),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::DirEntries { entries, errors } => Ok((entries, errors)),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         )
@@ -299,10 +298,10 @@ impl DistantChannelExt
     fn read_file(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, Vec<u8>> {
         make_body!(
             self,
-            DistantRequestData::FileRead { path: path.into() },
+            protocol::Request::FileRead { path: path.into() },
             |data| match data {
-                DistantResponseData::Blob { data } => Ok(data),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::Blob { data } => Ok(data),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         )
@@ -311,10 +310,10 @@ impl DistantChannelExt
     fn read_file_text(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, String> {
         make_body!(
             self,
-            DistantRequestData::FileReadText { path: path.into() },
+            protocol::Request::FileReadText { path: path.into() },
             |data| match data {
-                DistantResponseData::Text { data } => Ok(data),
-                DistantResponseData::Error(x) => Err(io::Error::from(x)),
+                protocol::Response::Text { data } => Ok(data),
+                protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
         )
@@ -323,7 +322,7 @@ impl DistantChannelExt
     fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::Remove { path: path.into(), force },
+            protocol::Request::Remove { path: path.into(), force },
             @ok
         )
     }
@@ -331,7 +330,7 @@ impl DistantChannelExt
     fn rename(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::Rename { src: src.into(), dst: dst.into() },
+            protocol::Request::Rename { src: src.into(), dst: dst.into() },
             @ok
         )
     }
@@ -351,12 +350,15 @@ impl DistantChannelExt
 
     fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
         fn inner_unwatch(
-            channel: &mut Channel<DistantMsg<DistantRequestData>, DistantMsg<DistantResponseData>>,
+            channel: &mut Channel<
+                protocol::Msg<protocol::Request>,
+                protocol::Msg<protocol::Response>,
+            >,
             path: impl Into<PathBuf>,
         ) -> AsyncReturn<'_, ()> {
             make_body!(
                 channel,
-                DistantRequestData::Unwatch { path: path.into() },
+                protocol::Request::Unwatch { path: path.into() },
                 @ok
             )
         }
@@ -423,9 +425,9 @@ impl DistantChannelExt
     }
 
     fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo> {
-        make_body!(self, DistantRequestData::SystemInfo {}, |data| match data {
-            DistantResponseData::SystemInfo(x) => Ok(x),
-            DistantResponseData::Error(x) => Err(io::Error::from(x)),
+        make_body!(self, protocol::Request::SystemInfo {}, |data| match data {
+            protocol::Response::SystemInfo(x) => Ok(x),
+            protocol::Response::Error(x) => Err(io::Error::from(x)),
             _ => Err(mismatched_response()),
         })
     }
@@ -437,7 +439,7 @@ impl DistantChannelExt
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::FileWrite { path: path.into(), data: data.into() },
+            protocol::Request::FileWrite { path: path.into(), data: data.into() },
             @ok
         )
     }
@@ -449,7 +451,7 @@ impl DistantChannelExt
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            DistantRequestData::FileWriteText { path: path.into(), text: data.into() },
+            protocol::Request::FileWriteText { path: path.into(), text: data.into() },
             @ok
         )
     }

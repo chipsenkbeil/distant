@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap::CommandFactory;
 use clap_complete::generate as clap_generate;
 use distant_core::net::common::{Request, Response};
-use distant_core::{DistantMsg, DistantRequestData, DistantResponseData};
+use distant_core::protocol;
 
 use crate::options::{Config, GenerateSubcommand};
 use crate::{CliResult, Options};
@@ -22,10 +22,10 @@ async fn async_run(cmd: GenerateSubcommand) -> CliResult {
 
         GenerateSubcommand::Schema { file } => {
             let request_schema =
-                serde_json::to_value(&Request::<DistantMsg<DistantRequestData>>::root_schema())
+                serde_json::to_value(&Request::<protocol::Msg<protocol::Request>>::root_schema())
                     .context("Failed to serialize request schema")?;
             let response_schema =
-                serde_json::to_value(&Response::<DistantMsg<DistantResponseData>>::root_schema())
+                serde_json::to_value(&Response::<protocol::Msg<protocol::Response>>::root_schema())
                     .context("Failed to serialize response schema")?;
 
             let schema = serde_json::json!({

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use distant_core::data::{Environment, PtySize};
+use distant_core::protocol::{Environment, PtySize};
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand};
 use log::*;
 use terminal_size::{terminal_size, Height, Width};

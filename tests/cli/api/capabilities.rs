@@ -1,4 +1,4 @@
-use distant_core::data::{Capabilities, Capability};
+use distant_core::protocol::{Capabilities, Capability};
 use rstest::*;
 use serde_json::json;
 use test_log::test;

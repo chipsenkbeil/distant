@@ -1,5 +1,5 @@
 use assert_fs::prelude::*;
-use distant_core::data::ChangeKindSet;
+use distant_core::protocol::ChangeKindSet;
 use distant_core::DistantChannelExt;
 use rstest::*;
 use test_log::test;

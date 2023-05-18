@@ -4,28 +4,27 @@ use std::pin::Pin;
 
 use distant_net::server::Reply;
 
-use crate::api::DistantMsg;
-use crate::data::DistantResponseData;
+use crate::protocol;
 
 /// Wrapper around a reply that can be batch or single, converting
 /// a single data into the wrapped type
-pub struct DistantSingleReply(Box<dyn Reply<Data = DistantMsg<DistantResponseData>>>);
+pub struct DistantSingleReply(Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>);
 
-impl From<Box<dyn Reply<Data = DistantMsg<DistantResponseData>>>> for DistantSingleReply {
-    fn from(reply: Box<dyn Reply<Data = DistantMsg<DistantResponseData>>>) -> Self {
+impl From<Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>> for DistantSingleReply {
+    fn from(reply: Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>) -> Self {
         Self(reply)
     }
 }
 
 impl Reply for DistantSingleReply {
-    type Data = DistantResponseData;
+    type Data = protocol::Response;
 
     fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
-        self.0.send(DistantMsg::Single(data))
+        self.0.send(protocol::Msg::Single(data))
     }
 
     fn blocking_send(&self, data: Self::Data) -> io::Result<()> {
-        self.0.blocking_send(DistantMsg::Single(data))
+        self.0.blocking_send(protocol::Msg::Single(data))
     }
 
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {

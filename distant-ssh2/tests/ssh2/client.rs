@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use assert_fs::prelude::*;
 use assert_fs::TempDir;
-use distant_core::data::{ChangeKindSet, Environment, FileType, Metadata};
+use distant_core::protocol::{ChangeKindSet, Environment, FileType, Metadata};
 use distant_core::{DistantChannelExt, DistantClient};
 use once_cell::sync::Lazy;
 use predicates::prelude::*;

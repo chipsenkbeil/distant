@@ -7,7 +7,7 @@ use distant_net::server::Reply;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
+use crate::protocol::{Environment, ProcessId, PtySize, Response};
 
 mod instance;
 pub use instance::*;
@@ -71,7 +71,7 @@ impl ProcessChannel {
         environment: Environment,
         current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
-        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        reply: Box<dyn Reply<Data = Response>>,
     ) -> io::Result<ProcessId> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -131,7 +131,7 @@ enum InnerProcessMsg {
         environment: Environment,
         current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
-        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        reply: Box<dyn Reply<Data = Response>>,
         cb: oneshot::Sender<io::Result<ProcessId>>,
     },
     Resize {

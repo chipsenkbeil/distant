@@ -13,8 +13,8 @@ use log::*;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::data::{
-    DistantResponseData, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
+use crate::protocol::{
+    Response, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
     SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
     SearchQueryTarget,
 };
@@ -82,7 +82,7 @@ impl SearchChannel {
     pub async fn start(
         &self,
         query: SearchQuery,
-        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        reply: Box<dyn Reply<Data = Response>>,
     ) -> io::Result<SearchId> {
         let (cb, rx) = oneshot::channel();
         self.tx
@@ -113,7 +113,7 @@ impl SearchChannel {
 enum InnerSearchMsg {
     Start {
         query: Box<SearchQuery>,
-        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        reply: Box<dyn Reply<Data = Response>>,
         cb: oneshot::Sender<io::Result<SearchId>>,
     },
     Cancel {
@@ -187,7 +187,7 @@ struct SearchQueryReporter {
     id: SearchId,
     options: SearchQueryOptions,
     rx: mpsc::UnboundedReceiver<SearchQueryMatch>,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 }
 
 impl SearchQueryReporter {
@@ -226,7 +226,7 @@ impl SearchQueryReporter {
                 if matches.len() as u64 >= len {
                     trace!("[Query {id}] Reached {len} paginated matches");
                     if let Err(x) = reply
-                        .send(DistantResponseData::SearchResults {
+                        .send(Response::SearchResults {
                             id,
                             matches: std::mem::take(&mut matches),
                         })
@@ -241,17 +241,14 @@ impl SearchQueryReporter {
         // Send any remaining matches
         if !matches.is_empty() {
             trace!("[Query {id}] Sending {} remaining matches", matches.len());
-            if let Err(x) = reply
-                .send(DistantResponseData::SearchResults { id, matches })
-                .await
-            {
+            if let Err(x) = reply.send(Response::SearchResults { id, matches }).await {
                 error!("[Query {id}] Failed to send final matches: {x}");
             }
         }
 
         // Report that we are done
         trace!("[Query {id}] Reporting as done");
-        if let Err(x) = reply.send(DistantResponseData::SearchDone { id }).await {
+        if let Err(x) = reply.send(Response::SearchDone { id }).await {
             error!("[Query {id}] Failed to send done status: {x}");
         }
     }
@@ -813,7 +810,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::data::{FileType, SearchQueryCondition, SearchQueryMatchData};
+    use crate::protocol::{FileType, SearchQueryCondition, SearchQueryMatchData};
 
     fn make_path(path: &str) -> PathBuf {
         use std::path::MAIN_SEPARATOR;
@@ -834,9 +831,9 @@ mod tests {
         root
     }
 
-    fn get_matches(data: DistantResponseData) -> Vec<SearchQueryMatch> {
+    fn get_matches(data: Response) -> Vec<SearchQueryMatch> {
         match data {
-            DistantResponseData::SearchResults { matches, .. } => matches,
+            Response::SearchResults { matches, .. } => matches,
             x => panic!("Did not get search results: {x:?}"),
         }
     }
@@ -858,10 +855,7 @@ mod tests {
         let search_id = state.start(query, Box::new(reply)).await.unwrap();
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -937,7 +931,7 @@ mod tests {
 
         assert_eq!(
             rx.recv().await,
-            Some(DistantResponseData::SearchDone { id: search_id })
+            Some(Response::SearchDone { id: search_id })
         );
 
         assert_eq!(rx.recv().await, None);
@@ -1013,10 +1007,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1089,10 +1080,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1181,10 +1169,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1277,10 +1262,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1314,10 +1296,7 @@ mod tests {
         assert_eq!(matches.len(), 2);
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1355,10 +1334,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1402,10 +1378,7 @@ mod tests {
             assert_eq!(paths, expected_paths);
 
             let data = rx.recv().await;
-            assert_eq!(
-                data,
-                Some(DistantResponseData::SearchDone { id: search_id })
-            );
+            assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
             assert_eq!(rx.recv().await, None);
         }
@@ -1506,10 +1479,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1574,10 +1544,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1629,10 +1596,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1663,10 +1627,7 @@ mod tests {
 
         // Get done indicator next as there were no matches
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1715,10 +1676,7 @@ mod tests {
             );
 
             let data = rx.recv().await;
-            assert_eq!(
-                data,
-                Some(DistantResponseData::SearchDone { id: search_id })
-            );
+            assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
             assert_eq!(rx.recv().await, None);
         }
@@ -1808,10 +1766,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1867,10 +1822,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1937,10 +1889,7 @@ mod tests {
         );
 
         let data = rx.recv().await;
-        assert_eq!(
-            data,
-            Some(DistantResponseData::SearchDone { id: search_id })
-        );
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
         assert_eq!(rx.recv().await, None);
     }
@@ -1998,10 +1947,7 @@ mod tests {
             }
 
             let data = rx.recv().await;
-            assert_eq!(
-                data,
-                Some(DistantResponseData::SearchDone { id: search_id })
-            );
+            assert_eq!(data, Some(Response::SearchDone { id: search_id }));
 
             assert_eq!(rx.recv().await, None);
         }

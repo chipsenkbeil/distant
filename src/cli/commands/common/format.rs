@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use distant_core::data::{
-    ChangeKind, DistantMsg, DistantResponseData, Error, FileType, Metadata,
-    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SystemInfo,
-};
 use distant_core::net::common::Response;
+use distant_core::protocol::{
+    self, ChangeKind, Error, FileType, Metadata, SearchQueryContentsMatch, SearchQueryMatch,
+    SearchQueryPathMatch, SystemInfo,
+};
 use log::*;
 use tabled::object::Rows;
 use tabled::style::Style;
@@ -40,7 +40,7 @@ impl Formatter {
     }
 
     /// Consumes the output message, printing it based on its configuration
-    pub fn print(&mut self, res: Response<DistantMsg<DistantResponseData>>) -> io::Result<()> {
+    pub fn print(&mut self, res: Response<protocol::Msg<protocol::Response>>) -> io::Result<()> {
         let output = match self.format {
             Format::Json => Output::StdoutLine(
                 serde_json::to_vec(&res)
@@ -120,15 +120,15 @@ enum Output {
     None,
 }
 
-fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output {
+fn format_shell(state: &mut FormatterState, data: protocol::Response) -> Output {
     match data {
-        DistantResponseData::Ok => Output::None,
-        DistantResponseData::Error(Error { description, .. }) => {
+        protocol::Response::Ok => Output::None,
+        protocol::Response::Error(Error { description, .. }) => {
             Output::StderrLine(description.into_bytes())
         }
-        DistantResponseData::Blob { data } => Output::StdoutLine(data),
-        DistantResponseData::Text { data } => Output::StdoutLine(data.into_bytes()),
-        DistantResponseData::DirEntries { entries, .. } => {
+        protocol::Response::Blob { data } => Output::StdoutLine(data),
+        protocol::Response::Text { data } => Output::StdoutLine(data.into_bytes()),
+        protocol::Response::DirEntries { entries, .. } => {
             #[derive(Tabled)]
             struct EntryRow {
                 ty: String,
@@ -151,7 +151,7 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
 
             Output::Stdout(table)
         }
-        DistantResponseData::Changed(change) => Output::StdoutLine(
+        protocol::Response::Changed(change) => Output::StdoutLine(
             format!(
                 "{}{}",
                 match change.kind {
@@ -171,14 +171,14 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
             )
             .into_bytes(),
         ),
-        DistantResponseData::Exists { value: exists } => {
+        protocol::Response::Exists { value: exists } => {
             if exists {
                 Output::StdoutLine(b"true".to_vec())
             } else {
                 Output::StdoutLine(b"false".to_vec())
             }
         }
-        DistantResponseData::Metadata(Metadata {
+        protocol::Response::Metadata(Metadata {
             canonicalized_path,
             file_type,
             len,
@@ -278,11 +278,11 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
             )
             .into_bytes(),
         ),
-        DistantResponseData::SearchStarted { id } => {
+        protocol::Response::SearchStarted { id } => {
             Output::StdoutLine(format!("Query {id} started").into_bytes())
         }
-        DistantResponseData::SearchDone { .. } => Output::None,
-        DistantResponseData::SearchResults { matches, .. } => {
+        protocol::Response::SearchDone { .. } => Output::None,
+        protocol::Response::SearchResults { matches, .. } => {
             let mut files: HashMap<_, Vec<String>> = HashMap::new();
             let mut is_targeting_paths = false;
 
@@ -340,10 +340,10 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
                 Output::None
             }
         }
-        DistantResponseData::ProcSpawned { .. } => Output::None,
-        DistantResponseData::ProcStdout { data, .. } => Output::Stdout(data),
-        DistantResponseData::ProcStderr { data, .. } => Output::Stderr(data),
-        DistantResponseData::ProcDone { id, success, code } => {
+        protocol::Response::ProcSpawned { .. } => Output::None,
+        protocol::Response::ProcStdout { data, .. } => Output::Stdout(data),
+        protocol::Response::ProcStderr { data, .. } => Output::Stderr(data),
+        protocol::Response::ProcDone { id, success, code } => {
             if success {
                 Output::None
             } else if let Some(code) = code {
@@ -352,7 +352,7 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
                 Output::StderrLine(format!("Proc {id} failed").into_bytes())
             }
         }
-        DistantResponseData::SystemInfo(SystemInfo {
+        protocol::Response::SystemInfo(SystemInfo {
             family,
             os,
             arch,
@@ -375,7 +375,7 @@ fn format_shell(state: &mut FormatterState, data: DistantResponseData) -> Output
             )
             .into_bytes(),
         ),
-        DistantResponseData::Capabilities { supported } => {
+        protocol::Response::Capabilities { supported } => {
             #[derive(Tabled)]
             struct EntryRow {
                 kind: String,

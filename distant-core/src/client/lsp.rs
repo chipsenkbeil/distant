@@ -3,15 +3,15 @@ use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 
 use futures::stream::{Stream, StreamExt};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::mpsc::{self};
 use tokio::task::JoinHandle;
 
 use crate::client::{
     DistantChannel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin,
     RemoteStdout,
 };
-use crate::data::{Environment, PtySize};
+use crate::protocol::{Environment, PtySize};
 
 mod msg;
 pub use msg::*;
@@ -402,7 +402,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::data::{DistantRequestData, DistantResponseData};
+    use crate::protocol;
 
     /// Timeout used with timeout function
     const TIMEOUT: Duration = Duration::from_millis(50);
@@ -421,12 +421,12 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = t1.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = t1.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         t1.write_frame_for(&Response::new(
             req.id,
-            DistantResponseData::ProcSpawned { id: rand::random() },
+            protocol::Response::ProcSpawned { id: rand::random() },
         ))
         .await
         .unwrap();
@@ -473,9 +473,9 @@ mod tests {
             .unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantRequestData::ProcStdin { data, .. } => {
+            protocol::Request::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     make_lsp_msg(serde_json::json!({
@@ -507,7 +507,7 @@ mod tests {
         tokio::task::yield_now().await;
         let result = timeout(
             TIMEOUT,
-            transport.read_frame_as::<Request<DistantRequestData>>(),
+            transport.read_frame_as::<Request<protocol::Request>>(),
         )
         .await;
         assert!(result.is_err(), "Unexpectedly got data: {:?}", result);
@@ -516,9 +516,9 @@ mod tests {
         proc.stdin.as_mut().unwrap().write(msg_b).await.unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantRequestData::ProcStdin { data, .. } => {
+            protocol::Request::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     make_lsp_msg(serde_json::json!({
@@ -551,9 +551,9 @@ mod tests {
             .unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantRequestData::ProcStdin { data, .. } => {
+            protocol::Request::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     make_lsp_msg(serde_json::json!({
@@ -600,9 +600,9 @@ mod tests {
             .unwrap();
 
         // Validate that the first outgoing req is a complete LSP message matching first
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantRequestData::ProcStdin { data, .. } => {
+            protocol::Request::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     make_lsp_msg(serde_json::json!({
@@ -615,9 +615,9 @@ mod tests {
         }
 
         // Validate that the second outgoing req is a complete LSP message matching second
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantRequestData::ProcStdin { data, .. } => {
+            protocol::Request::ProcStdin { data, .. } => {
                 assert_eq!(
                     data,
                     make_lsp_msg(serde_json::json!({
@@ -645,9 +645,9 @@ mod tests {
             .unwrap();
 
         // Validate that the outgoing req is a complete LSP message
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantRequestData::ProcStdin { data, .. } => {
+            protocol::Request::ProcStdin { data, .. } => {
                 // Verify the contents AND headers are as expected; in this case,
                 // this will also ensure that the Content-Length is adjusted
                 // when the distant scheme was changed to file
@@ -671,7 +671,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStdout {
+                protocol::Response::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "a",
@@ -707,7 +707,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStdout {
+                protocol::Response::ProcStdout {
                     id: proc.id(),
                     data: msg_a.to_vec(),
                 },
@@ -725,7 +725,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStdout {
+                protocol::Response::ProcStdout {
                     id: proc.id(),
                     data: msg_b.to_vec(),
                 },
@@ -759,7 +759,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStdout {
+                protocol::Response::ProcStdout {
                     id: proc.id(),
                     data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
                 },
@@ -802,7 +802,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStdout {
+                protocol::Response::ProcStdout {
                     id: proc.id(),
                     data: format!(
                         "{}{}",
@@ -844,7 +844,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStdout {
+                protocol::Response::ProcStdout {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "distant://some/path",
@@ -874,7 +874,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStderr {
+                protocol::Response::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "a",
@@ -910,7 +910,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStderr {
+                protocol::Response::ProcStderr {
                     id: proc.id(),
                     data: msg_a.to_vec(),
                 },
@@ -928,7 +928,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStderr {
+                protocol::Response::ProcStderr {
                     id: proc.id(),
                     data: msg_b.to_vec(),
                 },
@@ -962,7 +962,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStderr {
+                protocol::Response::ProcStderr {
                     id: proc.id(),
                     data: format!("{}{}", String::from_utf8(msg).unwrap(), extra).into_bytes(),
                 },
@@ -1005,7 +1005,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStderr {
+                protocol::Response::ProcStderr {
                     id: proc.id(),
                     data: format!(
                         "{}{}",
@@ -1047,7 +1047,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 proc.origin_id().to_string(),
-                DistantResponseData::ProcStderr {
+                protocol::Response::ProcStderr {
                     id: proc.id(),
                     data: make_lsp_msg(serde_json::json!({
                         "field1": "distant://some/path",

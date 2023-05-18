@@ -6,7 +6,7 @@ use log::*;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
-use crate::data::{
+use crate::protocol::{
     Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, ProcessId,
     PtySize, SearchId, SearchQuery, SystemInfo,
 };
@@ -503,7 +503,7 @@ mod tests {
 
     use super::*;
     use crate::api::ConnectionCtx;
-    use crate::data::DistantResponseData;
+    use crate::protocol::Response;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
         Lazy::new(|| assert_fs::TempDir::new().unwrap());
@@ -564,13 +564,7 @@ mod tests {
     static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
         Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
-    async fn setup(
-        buffer: usize,
-    ) -> (
-        LocalDistantApi,
-        DistantCtx<()>,
-        mpsc::Receiver<DistantResponseData>,
-    ) {
+    async fn setup(buffer: usize) -> (LocalDistantApi, DistantCtx<()>, mpsc::Receiver<Response>) {
         let api = LocalDistantApi::initialize().unwrap();
         let (reply, rx) = make_reply(buffer);
         let connection_id = rand::random();
@@ -592,12 +586,7 @@ mod tests {
         (api, ctx, rx)
     }
 
-    fn make_reply(
-        buffer: usize,
-    ) -> (
-        Box<dyn Reply<Data = DistantResponseData>>,
-        mpsc::Receiver<DistantResponseData>,
-    ) {
+    fn make_reply(buffer: usize) -> (Box<dyn Reply<Data = Response>>, mpsc::Receiver<Response>) {
         let (tx, rx) = mpsc::channel(buffer);
         (Box::new(tx), rx)
     }
@@ -1344,12 +1333,12 @@ mod tests {
 
     /// Validates a response as being a series of changes that include the provided paths
     fn validate_changed_paths(
-        data: &DistantResponseData,
+        data: &Response,
         expected_paths: &[PathBuf],
         should_panic: bool,
     ) -> bool {
         match data {
-            DistantResponseData::Changed(change) if should_panic => {
+            Response::Changed(change) if should_panic => {
                 let paths: Vec<PathBuf> = change
                     .paths
                     .iter()
@@ -1359,7 +1348,7 @@ mod tests {
 
                 true
             }
-            DistantResponseData::Changed(change) => {
+            Response::Changed(change) => {
                 let paths: Vec<PathBuf> = change
                     .paths
                     .iter()
@@ -1901,8 +1890,8 @@ mod tests {
         let mut got_stdout = false;
         let mut got_done = false;
 
-        let mut check_data = |data: &DistantResponseData| match data {
-            DistantResponseData::ProcStdout { id, data } => {
+        let mut check_data = |data: &Response| match data {
+            Response::ProcStdout { id, data } => {
                 assert_eq!(
                     *id, proc_id,
                     "Got {}, but expected {} as process id",
@@ -1911,7 +1900,7 @@ mod tests {
                 assert_eq!(data, b"some stdout", "Got wrong stdout");
                 got_stdout = true;
             }
-            DistantResponseData::ProcDone { id, success, .. } => {
+            Response::ProcDone { id, success, .. } => {
                 assert_eq!(
                     *id, proc_id,
                     "Got {}, but expected {} as process id",
@@ -1965,8 +1954,8 @@ mod tests {
         let mut got_stderr = false;
         let mut got_done = false;
 
-        let mut check_data = |data: &DistantResponseData| match data {
-            DistantResponseData::ProcStderr { id, data } => {
+        let mut check_data = |data: &Response| match data {
+            Response::ProcStderr { id, data } => {
                 assert_eq!(
                     *id, proc_id,
                     "Got {}, but expected {} as process id",
@@ -1975,7 +1964,7 @@ mod tests {
                 assert_eq!(data, b"some stderr", "Got wrong stderr");
                 got_stderr = true;
             }
-            DistantResponseData::ProcDone { id, success, .. } => {
+            Response::ProcDone { id, success, .. } => {
                 assert_eq!(
                     *id, proc_id,
                     "Got {}, but expected {} as process id",
@@ -2014,7 +2003,7 @@ mod tests {
 
         // Wait for process to finish
         match rx.recv().await.unwrap() {
-            DistantResponseData::ProcDone { id, .. } => assert_eq!(
+            Response::ProcDone { id, .. } => assert_eq!(
                 id, proc_id,
                 "Got {}, but expected {} as process id",
                 id, proc_id
@@ -2056,7 +2045,7 @@ mod tests {
 
         // Wait for the completion response to come in
         match rx.recv().await.unwrap() {
-            DistantResponseData::ProcDone { id, .. } => assert_eq!(
+            Response::ProcDone { id, .. } => assert_eq!(
                 id, proc_id,
                 "Got {}, but expected {} as process id",
                 id, proc_id
@@ -2124,7 +2113,7 @@ mod tests {
 
         // Third, check the async response of stdout to verify we got stdin
         match rx.recv().await.unwrap() {
-            DistantResponseData::ProcStdout { data, .. } => {
+            Response::ProcStdout { data, .. } => {
                 assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
             }
             x => panic!("Unexpected response: {:?}", x),

@@ -5,7 +5,7 @@ use std::{fmt, io};
 use distant_net::common::ConnectionId;
 use distant_net::server::Reply;
 
-use crate::data::{Change, ChangeKind, ChangeKindSet, DistantResponseData, Error};
+use crate::protocol::{Change, ChangeKind, ChangeKindSet, Error, Response};
 
 /// Represents a path registered with a watcher that includes relevant state including
 /// the ability to reply with
@@ -29,7 +29,7 @@ pub struct RegisteredPath {
     allowed: ChangeKindSet,
 
     /// Used to send a reply through the connection watching this path
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 }
 
 impl fmt::Debug for RegisteredPath {
@@ -69,7 +69,7 @@ impl RegisteredPath {
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
-        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        reply: Box<dyn Reply<Data = Response>>,
     ) -> io::Result<Self> {
         let raw_path = path.into();
         let path = tokio::fs::canonicalize(raw_path.as_path()).await?;
@@ -140,7 +140,7 @@ impl RegisteredPath {
 
         if !paths.is_empty() {
             self.reply
-                .send(DistantResponseData::Changed(Change { kind, paths }))
+                .send(Response::Changed(Change { kind, paths }))
                 .await
                 .map(|_| true)
         } else {
@@ -171,9 +171,9 @@ impl RegisteredPath {
         if !paths.is_empty() || !skip_if_no_paths {
             self.reply
                 .send(if paths.is_empty() {
-                    DistantResponseData::Error(Error::from(msg))
+                    Response::Error(Error::from(msg))
                 } else {
-                    DistantResponseData::Error(Error::from(format!("{msg} about {paths:?}")))
+                    Response::Error(Error::from(format!("{msg} about {paths:?}")))
                 })
                 .await
                 .map(|_| true)

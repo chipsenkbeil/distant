@@ -45,12 +45,12 @@ pub type Environment = distant_net::common::Map;
 #[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(untagged)]
-pub enum DistantMsg<T> {
+pub enum Msg<T> {
     Single(T),
     Batch(Vec<T>),
 }
 
-impl<T> DistantMsg<T> {
+impl<T> Msg<T> {
     /// Returns true if msg has a single payload
     pub fn is_single(&self) -> bool {
         matches!(self, Self::Single(_))
@@ -119,9 +119,9 @@ impl<T> DistantMsg<T> {
 }
 
 #[cfg(feature = "schemars")]
-impl<T: schemars::JsonSchema> DistantMsg<T> {
+impl<T: schemars::JsonSchema> Msg<T> {
     pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(DistantMsg<T>)
+        schemars::schema_for!(Msg<T>)
     }
 }
 
@@ -148,7 +148,7 @@ impl<T: schemars::JsonSchema> DistantMsg<T> {
 #[strum_discriminants(name(CapabilityKind))]
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
-pub enum DistantRequestData {
+pub enum Request {
     /// Retrieve information about the server's capabilities
     #[strum_discriminants(strum(message = "Supports retrieving capabilities"))]
     Capabilities {},
@@ -414,9 +414,9 @@ pub enum DistantRequestData {
 }
 
 #[cfg(feature = "schemars")]
-impl DistantRequestData {
+impl Request {
     pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(DistantRequestData)
+        schemars::schema_for!(Request)
     }
 }
 
@@ -425,7 +425,7 @@ impl DistantRequestData {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 #[strum(serialize_all = "snake_case")]
-pub enum DistantResponseData {
+pub enum Response {
     /// General okay with no extra data, returned in cases like
     /// creating or removing a directory, copying a file, or renaming
     /// a file
@@ -535,13 +535,13 @@ pub enum DistantResponseData {
 }
 
 #[cfg(feature = "schemars")]
-impl DistantResponseData {
+impl Response {
     pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(DistantResponseData)
+        schemars::schema_for!(Response)
     }
 }
 
-impl From<io::Error> for DistantResponseData {
+impl From<io::Error> for Response {
     fn from(x: io::Error) -> Self {
         Self::Error(Error::from(x))
     }

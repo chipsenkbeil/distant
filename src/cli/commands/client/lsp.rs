@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use distant_core::data::PtySize;
+use distant_core::protocol::PtySize;
 use distant_core::{DistantChannel, RemoteLspCommand};
 use terminal_size::{terminal_size, Height, Width};
 

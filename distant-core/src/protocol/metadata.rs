@@ -101,7 +101,7 @@ impl Metadata {
             unix: Some({
                 use std::os::unix::prelude::*;
                 let mode = metadata.mode();
-                crate::data::UnixMetadata::from(mode)
+                crate::protocol::UnixMetadata::from(mode)
             }),
             #[cfg(not(unix))]
             unix: None,
@@ -110,7 +110,7 @@ impl Metadata {
             windows: Some({
                 use std::os::windows::prelude::*;
                 let attributes = metadata.file_attributes();
-                crate::data::WindowsMetadata::from(attributes)
+                crate::protocol::WindowsMetadata::from(attributes)
             }),
             #[cfg(not(windows))]
             windows: None,

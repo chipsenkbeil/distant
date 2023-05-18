@@ -15,7 +15,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::constants::SERVER_WATCHER_CAPACITY;
-use crate::data::ChangeKind;
+use crate::protocol::ChangeKind;
 
 mod path;
 pub use path::*;

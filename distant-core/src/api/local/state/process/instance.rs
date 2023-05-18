@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::api::local::process::{
     InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
 };
-use crate::data::{DistantResponseData, Environment, ProcessId, PtySize};
+use crate::protocol::{Environment, ProcessId, PtySize, Response};
 
 /// Holds information related to a spawned process on the server
 pub struct ProcessInstance {
@@ -65,7 +65,7 @@ impl ProcessInstance {
         environment: Environment,
         current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
-        reply: Box<dyn Reply<Data = DistantResponseData>>,
+        reply: Box<dyn Reply<Data = Response>>,
     ) -> io::Result<Self> {
         // Build out the command and args from our string
         let mut cmd_and_args = if cfg!(windows) {
@@ -168,14 +168,12 @@ impl ProcessInstance {
 async fn stdout_task(
     id: ProcessId,
     mut stdout: Box<dyn OutputChannel>,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 ) -> io::Result<()> {
     loop {
         match stdout.recv().await {
             Ok(Some(data)) => {
-                reply
-                    .send(DistantResponseData::ProcStdout { id, data })
-                    .await?;
+                reply.send(Response::ProcStdout { id, data }).await?;
             }
             Ok(None) => return Ok(()),
             Err(x) => return Err(x),
@@ -186,14 +184,12 @@ async fn stdout_task(
 async fn stderr_task(
     id: ProcessId,
     mut stderr: Box<dyn OutputChannel>,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 ) -> io::Result<()> {
     loop {
         match stderr.recv().await {
             Ok(Some(data)) => {
-                reply
-                    .send(DistantResponseData::ProcStderr { id, data })
-                    .await?;
+                reply.send(Response::ProcStderr { id, data }).await?;
             }
             Ok(None) => return Ok(()),
             Err(x) => return Err(x),
@@ -204,20 +200,20 @@ async fn stderr_task(
 async fn wait_task(
     id: ProcessId,
     mut child: Box<dyn Process>,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 ) -> io::Result<()> {
     let status = child.wait().await;
 
     match status {
         Ok(status) => {
             reply
-                .send(DistantResponseData::ProcDone {
+                .send(Response::ProcDone {
                     id,
                     success: status.success,
                     code: status.code,
                 })
                 .await
         }
-        Err(x) => reply.send(DistantResponseData::from(x)).await,
+        Err(x) => reply.send(Response::from(x)).await,
     }
 }

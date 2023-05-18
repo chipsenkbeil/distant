@@ -4,13 +4,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context;
-use distant_core::data::{ChangeKindSet, FileType, SearchQuery, SystemInfo};
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
-use distant_core::{
-    DistantChannel, DistantChannelExt, DistantMsg, DistantRequestData, DistantResponseData,
-    RemoteCommand, Searcher, Watcher,
-};
+use distant_core::protocol::{self, ChangeKindSet, FileType, SearchQuery, SystemInfo};
+use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
 use serde_json::json;
 use tabled::object::Rows;
@@ -281,8 +278,8 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             debug!("Starting api tasks");
             let (msg_tx, mut msg_rx) = mpsc::channel(1);
             let request_task = tokio::spawn(async move {
-                let mut rx =
-                    MsgReceiver::from_stdin().into_rx::<Request<DistantMsg<DistantRequestData>>>();
+                let mut rx = MsgReceiver::from_stdin()
+                    .into_rx::<Request<protocol::Msg<protocol::Request>>>();
                 loop {
                     match rx.recv().await {
                         Some(Ok(request)) => {
@@ -312,7 +309,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
                     if ready.is_readable() {
                         match channel
-                            .try_read_frame_as::<Response<DistantMsg<DistantResponseData>>>()
+                            .try_read_frame_as::<Response<protocol::Msg<protocol::Response>>>()
                         {
                             Ok(Some(msg)) => tx.send_blocking(&msg)?,
                             Ok(None) => break,
@@ -823,11 +820,11 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 depth, absolute, canonicalize, include_root
             );
             let results = channel
-                .send(DistantMsg::Batch(vec![
-                    DistantRequestData::FileRead {
+                .send(protocol::Msg::Batch(vec![
+                    protocol::Request::FileRead {
                         path: path.to_path_buf(),
                     },
-                    DistantRequestData::DirRead {
+                    protocol::Request::DirRead {
                         path: path.to_path_buf(),
                         depth,
                         absolute,
@@ -847,7 +844,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .context("Got single response to batch request")?
             {
                 match response {
-                    DistantResponseData::DirEntries { entries, .. } => {
+                    protocol::Response::DirEntries { entries, .. } => {
                         #[derive(Tabled)]
                         struct EntryRow {
                             ty: String,
@@ -874,14 +871,14 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                         out.flush().context("Failed to flush stdout")?;
                         return Ok(());
                     }
-                    DistantResponseData::Blob { data } => {
+                    protocol::Response::Blob { data } => {
                         let mut out = std::io::stdout();
                         out.write_all(&data)
                             .context("Failed to write file contents to stdout")?;
                         out.flush().context("Failed to flush stdout")?;
                         return Ok(());
                     }
-                    DistantResponseData::Error(x) => errors.push(x),
+                    protocol::Response::Error(x) => errors.push(x),
                     _ => continue,
                 }
             }
@@ -1001,7 +998,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 // TODO: Provide a cleaner way to print just a match
                 let res = Response::new(
                     "".to_string(),
-                    DistantMsg::Single(DistantResponseData::SearchResults {
+                    protocol::Msg::Single(protocol::Response::SearchResults {
                         id: 0,
                         matches: vec![m],
                     }),
@@ -1053,7 +1050,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 // TODO: Provide a cleaner way to print just a change
                 let res = Response::new(
                     "".to_string(),
-                    DistantMsg::Single(DistantResponseData::Changed(change)),
+                    protocol::Msg::Single(protocol::Response::Changed(change)),
                 );
 
                 formatter.print(res).context("Failed to print change")?;

@@ -5,15 +5,14 @@ use distant_net::client::Mailbox;
 use distant_net::common::{Request, Response};
 use log::*;
 use tokio::io;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
-use tokio::sync::mpsc::{self};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use crate::client::DistantChannel;
 use crate::constants::CLIENT_PIPE_CAPACITY;
-use crate::data::{Cmd, DistantRequestData, DistantResponseData, Environment, ProcessId, PtySize};
-use crate::DistantMsg;
+use crate::protocol::{self, Cmd, Environment, ProcessId, PtySize};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteOutput {
@@ -89,8 +88,8 @@ impl RemoteCommand {
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(DistantMsg::Single(
-                DistantRequestData::ProcSpawn {
+            .mail(Request::new(protocol::Msg::Single(
+                protocol::Request::ProcSpawn {
                     cmd: Cmd::from(cmd),
                     pty: self.pty,
                     environment: self.environment.clone(),
@@ -104,15 +103,17 @@ impl RemoteCommand {
             Some(res) => {
                 let origin_id = res.origin_id;
                 match res.payload {
-                    DistantMsg::Single(DistantResponseData::ProcSpawned { id }) => (id, origin_id),
-                    DistantMsg::Single(DistantResponseData::Error(x)) => return Err(x.into()),
-                    DistantMsg::Single(x) => {
+                    protocol::Msg::Single(protocol::Response::ProcSpawned { id }) => {
+                        (id, origin_id)
+                    }
+                    protocol::Msg::Single(protocol::Response::Error(x)) => return Err(x.into()),
+                    protocol::Msg::Single(x) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!("Got response type of {}", x.as_ref()),
                         ))
                     }
-                    DistantMsg::Batch(_) => {
+                    protocol::Msg::Batch(_) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             "Got batch instead of single response",
@@ -492,7 +493,7 @@ async fn process_outgoing_requests(
                 match data {
                     Some(data) => channel.fire(
                         Request::new(
-                            DistantMsg::Single(DistantRequestData::ProcStdin { id, data })
+                            protocol::Msg::Single(protocol::Request::ProcStdin { id, data })
                         )
                     ).await?,
                     None => break Err(errors::dead_channel()),
@@ -502,7 +503,7 @@ async fn process_outgoing_requests(
                 match size {
                     Some(size) => channel.fire(
                         Request::new(
-                            DistantMsg::Single(DistantRequestData::ProcResizePty { id, size })
+                            protocol::Msg::Single(protocol::Request::ProcResizePty { id, size })
                         )
                     ).await?,
                     None => break Err(errors::dead_channel()),
@@ -511,7 +512,7 @@ async fn process_outgoing_requests(
             msg = kill_rx.recv() => {
                 if msg.is_some() {
                     channel.fire(Request::new(
-                        DistantMsg::Single(DistantRequestData::ProcKill { id })
+                        protocol::Msg::Single(protocol::Request::ProcKill { id })
                     )).await?;
                     break Ok(());
                 } else {
@@ -528,7 +529,7 @@ async fn process_outgoing_requests(
 /// Helper function that loops, processing incoming stdout & stderr requests from a remote process
 async fn process_incoming_responses(
     proc_id: ProcessId,
-    mut mailbox: Mailbox<Response<DistantMsg<DistantResponseData>>>,
+    mut mailbox: Mailbox<Response<protocol::Msg<protocol::Response>>>,
     stdout_tx: mpsc::Sender<Vec<u8>>,
     stderr_tx: mpsc::Sender<Vec<u8>>,
     kill_tx: mpsc::Sender<()>,
@@ -538,7 +539,7 @@ async fn process_incoming_responses(
 
         // Check if any of the payload data is the termination
         let exit_status = payload.iter().find_map(|data| match data {
-            DistantResponseData::ProcDone { id, success, code } if *id == proc_id => {
+            protocol::Response::ProcDone { id, success, code } if *id == proc_id => {
                 Some((*success, *code))
             }
             _ => None,
@@ -548,10 +549,10 @@ async fn process_incoming_responses(
         // TODO: What should we do about unexpected data? For now, just ignore
         for data in payload {
             match data {
-                DistantResponseData::ProcStdout { id, data } if id == proc_id => {
+                protocol::Response::ProcStdout { id, data } if id == proc_id => {
                     let _ = stdout_tx.send(data).await;
                 }
-                DistantResponseData::ProcStderr { id, data } if id == proc_id => {
+                protocol::Response::ProcStderr { id, data } if id == proc_id => {
                     let _ = stderr_tx.send(data).await;
                 }
                 _ => {}
@@ -596,7 +597,7 @@ mod tests {
 
     use super::*;
     use crate::client::DistantClient;
-    use crate::data::{Error, ErrorKind};
+    use crate::protocol::{Error, ErrorKind};
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
         let (t1, t2) = FramedTransport::pair(100);
@@ -616,14 +617,14 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Batch(vec![DistantResponseData::ProcSpawned { id: 1 }]),
+                protocol::Msg::Batch(vec![protocol::Response::ProcSpawned { id: 1 }]),
             ))
             .await
             .unwrap();
@@ -648,14 +649,14 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::Error(Error {
+                protocol::Msg::Single(protocol::Response::Error(Error {
                     kind: ErrorKind::BrokenPipe,
                     description: String::from("some error"),
                 })),
@@ -683,7 +684,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -691,7 +692,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -722,7 +723,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -730,7 +731,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -740,10 +741,10 @@ mod tests {
         assert!(proc.kill().await.is_ok(), "Failed to send kill request");
 
         // Verify the kill request was sent
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantMsg::Single(DistantRequestData::ProcKill { id: proc_id }) => {
+            protocol::Msg::Single(protocol::Request::ProcKill { id: proc_id }) => {
                 assert_eq!(proc_id, id)
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -775,7 +776,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -783,7 +784,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -798,10 +799,10 @@ mod tests {
             .unwrap();
 
         // Verify that a request is made through the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            DistantMsg::Single(DistantRequestData::ProcStdin { id, data }) => {
+            protocol::Msg::Single(protocol::Request::ProcStdin { id, data }) => {
                 assert_eq!(id, 12345);
                 assert_eq!(data, b"some input");
             }
@@ -822,7 +823,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -830,7 +831,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -841,7 +842,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcStdout {
+                protocol::Msg::Single(protocol::Response::ProcStdout {
                     id,
                     data: b"some out".to_vec(),
                 }),
@@ -866,7 +867,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -874,7 +875,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -885,7 +886,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcStderr {
+                protocol::Msg::Single(protocol::Response::ProcStderr {
                     id,
                     data: b"some err".to_vec(),
                 }),
@@ -910,7 +911,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -918,7 +919,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -943,7 +944,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -951,7 +952,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -990,7 +991,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -998,7 +999,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1010,7 +1011,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcDone {
+                protocol::Msg::Single(protocol::Response::ProcDone {
                     id,
                     success: true,
                     code: Some(123),
@@ -1045,7 +1046,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -1053,7 +1054,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1081,7 +1082,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -1089,7 +1090,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1124,7 +1125,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -1132,7 +1133,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1145,7 +1146,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcDone {
+                protocol::Msg::Single(protocol::Response::ProcDone {
                     id,
                     success: false,
                     code: Some(123),
@@ -1177,7 +1178,7 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantMsg<DistantRequestData>> =
+        let req: Request<protocol::Msg<protocol::Request>> =
             transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back a response through the session
@@ -1185,7 +1186,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcSpawned { id }),
+                protocol::Msg::Single(protocol::Response::ProcSpawned { id }),
             ))
             .await
             .unwrap();
@@ -1198,7 +1199,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcStdout {
+                protocol::Msg::Single(protocol::Response::ProcStdout {
                     id,
                     data: b"some out".to_vec(),
                 }),
@@ -1210,7 +1211,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantMsg::Single(DistantResponseData::ProcStderr {
+                protocol::Msg::Single(protocol::Response::ProcStderr {
                     id,
                     data: b"some err".to_vec(),
                 }),
@@ -1222,7 +1223,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantMsg::Single(DistantResponseData::ProcDone {
+                protocol::Msg::Single(protocol::Response::ProcDone {
                     id,
                     success: false,
                     code: Some(123),

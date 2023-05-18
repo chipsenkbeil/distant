@@ -8,8 +8,7 @@ use tokio::task::JoinHandle;
 
 use crate::client::{DistantChannel, DistantChannelExt};
 use crate::constants::CLIENT_WATCHER_CAPACITY;
-use crate::data::{Change, ChangeKindSet, DistantRequestData, DistantResponseData};
-use crate::DistantMsg;
+use crate::protocol::{self, Change, ChangeKindSet};
 
 /// Represents a watcher of some path on a remote machine
 pub struct Watcher {
@@ -56,8 +55,8 @@ impl Watcher {
 
         // Submit our run request and get back a mailbox for responses
         let mut mailbox = channel
-            .mail(Request::new(DistantMsg::Single(
-                DistantRequestData::Watch {
+            .mail(Request::new(protocol::Msg::Single(
+                protocol::Request::Watch {
                     path: path.to_path_buf(),
                     recursive,
                     only: only.into_sorted_vec(),
@@ -74,11 +73,11 @@ impl Watcher {
         while let Some(res) = mailbox.next().await {
             for data in res.payload.into_vec() {
                 match data {
-                    DistantResponseData::Changed(change) => queue.push(change),
-                    DistantResponseData::Ok => {
+                    protocol::Response::Changed(change) => queue.push(change),
+                    protocol::Response::Ok => {
                         confirmed = true;
                     }
-                    DistantResponseData::Error(x) => return Err(io::Error::from(x)),
+                    protocol::Response::Error(x) => return Err(io::Error::from(x)),
                     x => {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
@@ -118,7 +117,7 @@ impl Watcher {
                 while let Some(res) = mailbox.next().await {
                     for data in res.payload.into_vec() {
                         match data {
-                            DistantResponseData::Changed(change) => {
+                            protocol::Response::Changed(change) => {
                                 // If we can't queue up a change anymore, we've
                                 // been closed and therefore want to quit
                                 if tx.is_closed() {
@@ -188,7 +187,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::data::ChangeKind;
+    use crate::protocol::ChangeKind;
     use crate::DistantClient;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
@@ -215,11 +214,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write_frame_for(&Response::new(req.id, DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
             .await
             .unwrap();
 
@@ -247,11 +246,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), protocol::Response::Ok))
             .await
             .unwrap();
 
@@ -263,11 +262,11 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id,
                 vec![
-                    DistantResponseData::Changed(Change {
+                    protocol::Response::Changed(Change {
                         kind: ChangeKind::Access,
                         paths: vec![test_path.to_path_buf()],
                     }),
-                    DistantResponseData::Changed(Change {
+                    protocol::Response::Changed(Change {
                         kind: ChangeKind::Content,
                         paths: vec![test_path.to_path_buf()],
                     }),
@@ -315,11 +314,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), protocol::Response::Ok))
             .await
             .unwrap();
 
@@ -330,7 +329,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone(),
-                DistantResponseData::Changed(Change {
+                protocol::Response::Changed(Change {
                     kind: ChangeKind::Access,
                     paths: vec![test_path.to_path_buf()],
                 }),
@@ -342,7 +341,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id.clone() + "1",
-                DistantResponseData::Changed(Change {
+                protocol::Response::Changed(Change {
                     kind: ChangeKind::Content,
                     paths: vec![test_path.to_path_buf()],
                 }),
@@ -354,7 +353,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantResponseData::Changed(Change {
+                protocol::Response::Changed(Change {
                     kind: ChangeKind::Remove,
                     paths: vec![test_path.to_path_buf()],
                 }),
@@ -401,11 +400,11 @@ mod tests {
         });
 
         // Wait until we get the request from the session
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         // Send back an acknowledgement that a watcher was created
         transport
-            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), protocol::Response::Ok))
             .await
             .unwrap();
 
@@ -414,15 +413,15 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id,
                 vec![
-                    DistantResponseData::Changed(Change {
+                    protocol::Response::Changed(Change {
                         kind: ChangeKind::Access,
                         paths: vec![test_path.to_path_buf()],
                     }),
-                    DistantResponseData::Changed(Change {
+                    protocol::Response::Changed(Change {
                         kind: ChangeKind::Content,
                         paths: vec![test_path.to_path_buf()],
                     }),
-                    DistantResponseData::Changed(Change {
+                    protocol::Response::Changed(Change {
                         kind: ChangeKind::Remove,
                         paths: vec![test_path.to_path_buf()],
                     }),
@@ -457,10 +456,10 @@ mod tests {
         let watcher_2 = Arc::clone(&watcher);
         let unwatch_task = tokio::spawn(async move { watcher_2.lock().await.unwatch().await });
 
-        let req: Request<DistantRequestData> = transport.read_frame_as().await.unwrap().unwrap();
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
 
         transport
-            .write_frame_for(&Response::new(req.id.clone(), DistantResponseData::Ok))
+            .write_frame_for(&Response::new(req.id.clone(), protocol::Response::Ok))
             .await
             .unwrap();
 
@@ -470,7 +469,7 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                DistantResponseData::Changed(Change {
+                protocol::Response::Changed(Change {
                     kind: ChangeKind::Unknown,
                     paths: vec![test_path.to_path_buf()],
                 }),

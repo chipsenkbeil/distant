@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed `distant_core::data` to `distant_core::protocol`
+
 ## [0.20.0-alpha.5]
 
 ### Added

@@ -5,9 +5,9 @@ use clap::builder::TypedValueParser as _;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
 use derive_more::IsVariant;
-use distant_core::data::{ChangeKind, Environment};
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
 use distant_core::net::server::Shutdown;
+use distant_core::protocol::{ChangeKind, Environment};
 use service_manager::ServiceManagerKind;
 
 use crate::constants;

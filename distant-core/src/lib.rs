@@ -7,8 +7,7 @@ pub use client::*;
 mod credentials;
 pub use credentials::*;
 
-pub mod data;
-pub use data::{DistantMsg, DistantRequestData, DistantResponseData};
+pub mod protocol;
 
 mod constants;
 mod serde_str;

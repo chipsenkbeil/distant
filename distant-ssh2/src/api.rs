@@ -7,11 +7,11 @@ use std::time::Duration;
 use async_compat::CompatExt;
 use async_once_cell::OnceCell;
 use async_trait::async_trait;
-use distant_core::data::{
+use distant_core::net::server::ConnectionCtx;
+use distant_core::protocol::{
     Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize,
     SystemInfo, UnixMetadata,
 };
-use distant_core::net::server::ConnectionCtx;
 use distant_core::{DistantApi, DistantCtx};
 use log::*;
 use tokio::sync::{mpsc, RwLock};

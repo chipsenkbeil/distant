@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_compat::CompatExt;
-use distant_core::data::{DistantResponseData, Environment, ProcessId, PtySize};
 use distant_core::net::server::Reply;
+use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
 use log::*;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -32,7 +32,7 @@ pub async fn spawn_simple<F, R>(
     cmd: &str,
     environment: Environment,
     current_dir: Option<PathBuf>,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
 where
@@ -117,7 +117,7 @@ pub async fn spawn_pty<F, R>(
     environment: Environment,
     current_dir: Option<PathBuf>,
     size: PtySize,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
 where
@@ -205,14 +205,14 @@ where
 fn spawn_blocking_stdout_task(
     id: ProcessId,
     mut reader: impl Read + Send + 'static,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    let payload = DistantResponseData::ProcStdout {
+                    let payload = Response::ProcStdout {
                         id,
                         data: buf[..n].to_vec(),
                     };
@@ -236,14 +236,14 @@ fn spawn_blocking_stdout_task(
 fn spawn_nonblocking_stdout_task(
     id: ProcessId,
     mut reader: impl Read + Send + 'static,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    let payload = DistantResponseData::ProcStdout {
+                    let payload = Response::ProcStdout {
                         id,
                         data: buf[..n].to_vec(),
                     };
@@ -270,14 +270,14 @@ fn spawn_nonblocking_stdout_task(
 fn spawn_nonblocking_stderr_task(
     id: ProcessId,
     mut reader: impl Read + Send + 'static,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
         loop {
             match reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
-                    let payload = DistantResponseData::ProcStderr {
+                    let payload = Response::ProcStderr {
                         id,
                         data: buf[..n].to_vec(),
                     };
@@ -348,7 +348,7 @@ fn spawn_cleanup_task<F, R>(
     stdin_task: JoinHandle<()>,
     stdout_task: JoinHandle<()>,
     stderr_task: Option<JoinHandle<()>>,
-    reply: Box<dyn Reply<Data = DistantResponseData>>,
+    reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
 ) -> JoinHandle<()>
 where
@@ -417,7 +417,7 @@ where
 
         cleanup(id).await;
 
-        let payload = DistantResponseData::ProcDone {
+        let payload = Response::ProcDone {
             id,
             success: !should_kill && success,
             code: if success { Some(0) } else { None },

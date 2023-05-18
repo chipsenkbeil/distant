@@ -13,7 +13,7 @@ use super::{
     ProcessPty, PtySize, WaitRx,
 };
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
-use crate::data::Environment;
+use crate::protocol::Environment;
 
 /// Represents a process that is associated with a pty
 pub struct PtyProcess {
