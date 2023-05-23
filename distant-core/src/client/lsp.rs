@@ -22,6 +22,7 @@ pub struct RemoteLspCommand {
     pty: Option<PtySize>,
     environment: Environment,
     current_dir: Option<PathBuf>,
+    scheme: Option<String>,
 }
 
 impl Default for RemoteLspCommand {
@@ -37,6 +38,7 @@ impl RemoteLspCommand {
             pty: None,
             environment: Environment::new(),
             current_dir: None,
+            scheme: None,
         }
     }
 
@@ -58,6 +60,12 @@ impl RemoteLspCommand {
         self
     }
 
+    /// Configures the process with a specific scheme to convert rather than `distant://`
+    pub fn scheme(&mut self, scheme: Option<String>) -> &mut Self {
+        self.scheme = scheme;
+        self
+    }
+
     /// Spawns the specified process on the remote machine using the given session, treating
     /// the process like an LSP server
     pub async fn spawn(
@@ -71,9 +79,18 @@ impl RemoteLspCommand {
         command.pty(self.pty);
 
         let mut inner = command.spawn(channel, cmd).await?;
-        let stdin = inner.stdin.take().map(RemoteLspStdin::new);
-        let stdout = inner.stdout.take().map(RemoteLspStdout::new);
-        let stderr = inner.stderr.take().map(RemoteLspStderr::new);
+        let stdin = inner
+            .stdin
+            .take()
+            .map(|x| RemoteLspStdin::new(x, self.scheme.clone()));
+        let stdout = inner
+            .stdout
+            .take()
+            .map(|x| RemoteLspStdout::new(x, self.scheme.clone()));
+        let stderr = inner
+            .stderr
+            .take()
+            .map(|x| RemoteLspStderr::new(x, self.scheme.clone()));
 
         Ok(RemoteLspProcess {
             inner,
@@ -119,11 +136,16 @@ impl DerefMut for RemoteLspProcess {
 pub struct RemoteLspStdin {
     inner: RemoteStdin,
     buf: Option<Vec<u8>>,
+    scheme: Option<String>,
 }
 
 impl RemoteLspStdin {
-    pub fn new(inner: RemoteStdin) -> Self {
-        Self { inner, buf: None }
+    pub fn new(inner: RemoteStdin, scheme: impl Into<Option<String>>) -> Self {
+        Self {
+            inner,
+            buf: None,
+            scheme: scheme.into(),
+        }
     }
 
     /// Tries to write data to the stdin of a specific remote process
@@ -133,7 +155,10 @@ impl RemoteLspStdin {
         // Process and then send out each LSP message in our queue
         for mut data in queue {
             // Convert distant:// to file://
-            data.mut_content().convert_distant_scheme_to_local();
+            match self.scheme.as_mut() {
+                Some(scheme) => data.mut_content().convert_scheme_to_local(scheme),
+                None => data.mut_content().convert_distant_scheme_to_local(),
+            }
             data.refresh_content_length();
             self.inner.try_write_str(data.to_string())?;
         }
@@ -152,7 +177,10 @@ impl RemoteLspStdin {
         // Process and then send out each LSP message in our queue
         for mut data in queue {
             // Convert distant:// to file://
-            data.mut_content().convert_distant_scheme_to_local();
+            match self.scheme.as_mut() {
+                Some(scheme) => data.mut_content().convert_scheme_to_local(scheme),
+                None => data.mut_content().convert_distant_scheme_to_local(),
+            }
             data.refresh_content_length();
             self.inner.write_str(data.to_string()).await?;
         }
@@ -197,16 +225,16 @@ pub struct RemoteLspStdout {
 }
 
 impl RemoteLspStdout {
-    pub fn new(inner: RemoteStdout) -> Self {
-        let (read_task, rx) = spawn_read_task(Box::pin(futures::stream::unfold(
-            inner,
-            |mut inner| async move {
+    pub fn new(inner: RemoteStdout, scheme: impl Into<Option<String>>) -> Self {
+        let (read_task, rx) = spawn_read_task(
+            Box::pin(futures::stream::unfold(inner, |mut inner| async move {
                 match inner.read().await {
                     Ok(res) => Some((res, inner)),
                     Err(_) => None,
                 }
-            },
-        )));
+            })),
+            scheme,
+        );
 
         Self { read_task, rx }
     }
@@ -263,16 +291,16 @@ pub struct RemoteLspStderr {
 }
 
 impl RemoteLspStderr {
-    pub fn new(inner: RemoteStderr) -> Self {
-        let (read_task, rx) = spawn_read_task(Box::pin(futures::stream::unfold(
-            inner,
-            |mut inner| async move {
+    pub fn new(inner: RemoteStderr, scheme: impl Into<Option<String>>) -> Self {
+        let (read_task, rx) = spawn_read_task(
+            Box::pin(futures::stream::unfold(inner, |mut inner| async move {
                 match inner.read().await {
                     Ok(res) => Some((res, inner)),
                     Err(_) => None,
                 }
-            },
-        )));
+            })),
+            scheme,
+        );
 
         Self { read_task, rx }
     }
@@ -321,10 +349,14 @@ impl Drop for RemoteLspStderr {
     }
 }
 
-fn spawn_read_task<S>(mut stream: S) -> (JoinHandle<()>, mpsc::Receiver<io::Result<Vec<u8>>>)
+fn spawn_read_task<S>(
+    mut stream: S,
+    scheme: impl Into<Option<String>>,
+) -> (JoinHandle<()>, mpsc::Receiver<io::Result<Vec<u8>>>)
 where
     S: Stream<Item = Vec<u8>> + Send + Unpin + 'static,
 {
+    let mut scheme = scheme.into();
     let (tx, rx) = mpsc::channel::<io::Result<Vec<u8>>>(1);
     let read_task = tokio::spawn(async move {
         let mut task_buf: Option<Vec<u8>> = None;
@@ -352,7 +384,10 @@ where
                 let mut out = Vec::new();
                 for mut data in queue {
                     // Convert file:// to distant://
-                    data.mut_content().convert_local_scheme_to_distant();
+                    match scheme.as_mut() {
+                        Some(scheme) => data.mut_content().convert_local_scheme_to(scheme),
+                        None => data.mut_content().convert_local_scheme_to_distant(),
+                    }
                     data.refresh_content_length();
                     out.extend(data.to_bytes());
                 }

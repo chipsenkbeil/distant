@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Renamed `distant_core::data` to `distant_core::protocol`
+- CLI `--lsp` now accepts an optional `scheme` to be used instead of
+  `distant://`, which is the default
+- `RemoteLspProcess` now takes a second argument, `scheme`, which dictates
+  whether to translate `distant://` or something else
 
 ## [0.20.0-alpha.5]
 

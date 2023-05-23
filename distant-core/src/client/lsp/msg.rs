@@ -335,12 +335,22 @@ fn swap_prefix(obj: &mut Map<String, Value>, old: &str, new: &str) {
 impl LspContent {
     /// Converts all URIs with `file://` as the scheme to `distant://` instead
     pub fn convert_local_scheme_to_distant(&mut self) {
-        swap_prefix(&mut self.0, "file:", "distant:");
+        self.convert_local_scheme_to("distant://")
+    }
+
+    /// Converts all URIs with `file://` as the scheme to `scheme` instead
+    pub fn convert_local_scheme_to(&mut self, scheme: &str) {
+        swap_prefix(&mut self.0, "file://", scheme);
     }
 
     /// Converts all URIs with `distant://` as the scheme to `file://` instead
     pub fn convert_distant_scheme_to_local(&mut self) {
-        swap_prefix(&mut self.0, "distant:", "file:");
+        self.convert_scheme_to_local("distant://")
+    }
+
+    /// Converts all URIs with `scheme` as the scheme to `file://` instead
+    pub fn convert_scheme_to_local(&mut self, scheme: &str) {
+        swap_prefix(&mut self.0, scheme, "file://");
     }
 }
 
@@ -689,6 +699,51 @@ mod tests {
     }
 
     #[test]
+    fn content_convert_local_scheme_to_should_convert_keys_and_values() {
+        let mut content = LspContent(make_obj!({
+            "distant://key1": "file://value1",
+            "file://key2": "distant://value2",
+            "key3": ["file://value3", "distant://value4"],
+            "key4": {
+                "distant://key5": "file://value5",
+                "file://key6": "distant://value6",
+                "key7": [
+                    {
+                        "distant://key8": "file://value8",
+                        "file://key9": "distant://value9",
+                    }
+                ]
+            },
+            "key10": null,
+            "key11": 123,
+            "key12": true,
+        }));
+
+        content.convert_local_scheme_to("custom://");
+        assert_eq!(
+            content.0,
+            make_obj!({
+                "distant://key1": "custom://value1",
+                "custom://key2": "distant://value2",
+                "key3": ["custom://value3", "distant://value4"],
+                "key4": {
+                    "distant://key5": "custom://value5",
+                    "custom://key6": "distant://value6",
+                    "key7": [
+                        {
+                            "distant://key8": "custom://value8",
+                            "custom://key9": "distant://value9",
+                        }
+                    ]
+                },
+                "key10": null,
+                "key11": 123,
+                "key12": true,
+            })
+        );
+    }
+
+    #[test]
     fn content_convert_distant_scheme_to_local_should_convert_keys_and_values() {
         let mut content = LspContent(make_obj!({
             "distant://key1": "file://value1",
@@ -710,6 +765,51 @@ mod tests {
         }));
 
         content.convert_distant_scheme_to_local();
+        assert_eq!(
+            content.0,
+            make_obj!({
+                "file://key1": "file://value1",
+                "file://key2": "file://value2",
+                "key3": ["file://value3", "file://value4"],
+                "key4": {
+                    "file://key5": "file://value5",
+                    "file://key6": "file://value6",
+                    "key7": [
+                        {
+                            "file://key8": "file://value8",
+                            "file://key9": "file://value9",
+                        }
+                    ]
+                },
+                "key10": null,
+                "key11": 123,
+                "key12": true,
+            })
+        );
+    }
+
+    #[test]
+    fn content_convert_scheme_to_local_should_convert_keys_and_values() {
+        let mut content = LspContent(make_obj!({
+            "custom://key1": "file://value1",
+            "file://key2": "custom://value2",
+            "key3": ["file://value3", "custom://value4"],
+            "key4": {
+                "custom://key5": "file://value5",
+                "file://key6": "custom://value6",
+                "key7": [
+                    {
+                        "custom://key8": "file://value8",
+                        "file://key9": "custom://value9",
+                    }
+                ]
+            },
+            "key10": null,
+            "key11": 123,
+            "key12": true,
+        }));
+
+        content.convert_scheme_to_local("custom://");
         assert_eq!(
             content.0,
             make_obj!({

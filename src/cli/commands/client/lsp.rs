@@ -20,6 +20,7 @@ impl Lsp {
         self,
         cmd: impl Into<String>,
         current_dir: Option<PathBuf>,
+        scheme: Option<String>,
         pty: bool,
         max_chunk_size: usize,
     ) -> CliResult {
@@ -33,6 +34,7 @@ impl Lsp {
                 None
             })
             .current_dir(current_dir)
+            .scheme(scheme)
             .spawn(self.0, &cmd)
             .await
             .with_context(|| format!("Failed to spawn {cmd}"))?;

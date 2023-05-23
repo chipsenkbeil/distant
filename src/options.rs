@@ -417,9 +417,12 @@ pub enum ClientSubcommand {
         network: NetworkSettings,
 
         /// If specified, will assume the remote process is a LSP server
-        /// and will translate paths that are local into distant:// and vice versa
+        /// and will translate paths that are local into distant:// and vice versa.
+        ///
+        /// If a scheme is provided, will translate local paths into that scheme!
+        /// Note that the scheme must be the exact prefix like `distant://`.
         #[clap(long)]
-        lsp: bool,
+        lsp: Option<Option<String>>,
 
         /// If specified, will spawn process using a pseudo tty
         #[clap(long)]
@@ -1746,7 +1749,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: map!(),
-                lsp: true,
+                lsp: Some(None),
                 pty: true,
                 cmd: vec![String::from("cmd")],
             }),
@@ -1784,7 +1787,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: map!(),
-                    lsp: true,
+                    lsp: Some(None),
                     pty: true,
                     cmd: vec![String::from("cmd")],
                 }),
@@ -1809,7 +1812,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: map!(),
-                lsp: true,
+                lsp: Some(None),
                 pty: true,
                 cmd: vec![String::from("cmd")],
             }),
@@ -1847,7 +1850,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: map!(),
-                    lsp: true,
+                    lsp: Some(None),
                     pty: true,
                     cmd: vec![String::from("cmd")],
                 }),

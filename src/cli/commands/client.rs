@@ -433,13 +433,13 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             // Convert cmd into string
             let cmd = cmd.join(" ");
 
-            if lsp {
+            if let Some(scheme) = lsp {
                 debug!(
                     "Spawning LSP server (pty = {}, cwd = {:?}): {}",
                     pty, current_dir, cmd
                 );
                 Lsp::new(channel.into_client().into_channel())
-                    .spawn(cmd, current_dir, pty, MAX_PIPE_CHUNK_SIZE)
+                    .spawn(cmd, current_dir, scheme, pty, MAX_PIPE_CHUNK_SIZE)
                     .await?;
             } else if pty {
                 debug!(
