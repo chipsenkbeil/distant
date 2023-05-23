@@ -220,6 +220,7 @@ jobs:
           override: true
       - name: Install musl tools
         run: |
+          sudo apt update
           sudo apt install -y musl-tools
       - uses: Swatinem/rust-cache@v2
       - name: Build binary (MUSL x86_64)
@@ -259,6 +260,7 @@ jobs:
           override: true
       - name: Install musl tools
         run: |
+          sudo apt update
           sudo apt install -y musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
       - name: Install cross
         env:
