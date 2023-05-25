@@ -1033,11 +1033,19 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     readonly,
                     unix: {
                         if readonly.is_none() {
-                            let mut new_mode = file_mode::Mode::empty();
-                            new_mode
-                                .set_str(&mode)
-                                .context("Failed to parse mode string")?;
-                            Some(UnixPermissions::from(new_mode.mode()))
+                            // Attempt to parse an octal number (chmod absolute), falling back to
+                            // parsing the mode string similar to chmod's symbolic mode
+                            let mode = match u32::from_str_radix(&mode, 8) {
+                                Ok(absolute) => file_mode::Mode::from(absolute),
+                                Err(_) => {
+                                    let mut new_mode = file_mode::Mode::empty();
+                                    new_mode
+                                        .set_str(&mode)
+                                        .context("Failed to parse mode string")?;
+                                    new_mode
+                                }
+                            };
+                            Some(UnixPermissions::from(mode.mode()))
                         } else {
                             None
                         }
@@ -1066,7 +1074,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 recursive,
                 resolve_symlink: follow_symlinks,
             };
-            debug!("Setting permissions for {path:?} as (mode = {mode}, options = {options:?})");
+            debug!("Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})");
             channel
                 .into_client()
                 .into_channel()

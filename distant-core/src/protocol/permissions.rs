@@ -5,6 +5,7 @@ use std::path::Path;
 use bitflags::bitflags;
 use ignore::types::TypesBuilder;
 use ignore::WalkBuilder;
+use log::*;
 use serde::{Deserialize, Serialize};
 
 const MAXIMUM_THREADS: usize = 12;
@@ -93,6 +94,23 @@ impl Permissions {
                     std_permissions.set_mode(current.into());
                 }
 
+                if log_enabled!(Level::Trace) {
+                    let mut output = String::new();
+                    output.push_str("readonly = ");
+                    output.push_str(if std_permissions.readonly() {
+                        "true"
+                    } else {
+                        "false"
+                    });
+
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::prelude::*;
+                        output.push_str(&format!(", mode = {:#o}", std_permissions.mode()));
+                    }
+
+                    trace!("Setting {:?} permissions to ({})", $path, output);
+                }
                 tokio::fs::set_permissions($path, std_permissions).await?;
             }};
         }
