@@ -34,6 +34,7 @@ derive_more = { version = "0.99.17", default-features = false, features = ["disp
 dialoguer = { version = "0.10.3", default-features = false }
 distant-core = { version = "=0.20.0-alpha.7", path = "distant-core", features = ["schemars"] }
 directories = "5.0.0"
+file-mode = "0.1.2"
 flexi_logger = "0.25.3"
 indoc = "2.0.1"
 log = "0.4.17"

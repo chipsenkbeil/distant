@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
@@ -9,13 +9,15 @@ use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::net::server::ConnectionCtx;
 use distant_core::protocol::{
-    Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, ProcessId, PtySize,
-    SystemInfo, UnixMetadata,
+    Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, Permissions,
+    ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata, UnixPermissions,
 };
 use distant_core::{DistantApi, DistantCtx};
 use log::*;
 use tokio::sync::{mpsc, RwLock};
-use wezterm_ssh::{FilePermissions, OpenFileType, OpenOptions, Session as WezSession, WriteMode};
+use wezterm_ssh::{
+    FilePermissions, OpenFileType, OpenOptions, Session as WezSession, Utf8PathBuf, WriteMode,
+};
 
 use crate::process::{spawn_pty, spawn_simple, SpawnResult};
 use crate::utils::{self, to_other_error};
@@ -682,6 +684,102 @@ impl DistantApi for SshDistantApi {
             }),
             windows: None,
         })
+    }
+
+    async fn set_permissions(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        permissions: Permissions,
+        options: SetPermissionsOptions,
+    ) -> io::Result<()> {
+        debug!(
+            "[Conn {}] Setting permissions for {:?} {{permissions: {:?}, options: {:?}}}",
+            ctx.connection_id, path, permissions, options
+        );
+        let sftp = self.session.sftp();
+
+        macro_rules! set_permissions {
+            ($path:expr) => {{
+                let filename = if options.resolve_symlink {
+                    sftp.read_link($path)
+                        .compat()
+                        .await
+                        .map_err(to_other_error)?
+                } else {
+                    Utf8PathBuf::try_from($path).map_err(to_other_error)?
+                };
+
+                let mut metadata = sftp
+                    .symlink_metadata(&filename)
+                    .compat()
+                    .await
+                    .map_err(to_other_error)?;
+
+                // As is with Rust using `set_readonly`, this will make world-writable if true!
+                if let Some(readonly) = permissions.readonly {
+                    let mut current = UnixPermissions::from(
+                        metadata
+                            .permissions
+                            .ok_or_else(|| to_other_error("Unable to read file permissions"))?
+                            .to_unix_mode(),
+                    );
+
+                    current.owner_write = Some(!readonly);
+                    current.group_write = Some(!readonly);
+                    current.other_write = Some(!readonly);
+
+                    metadata.permissions = Some(FilePermissions::from_unix_mode(current.into()));
+                }
+
+                if let Some(new_permissions) = permissions.unix.as_ref() {
+                    let mut current = UnixPermissions::from(
+                        metadata
+                            .permissions
+                            .ok_or_else(|| to_other_error("Unable to read file permissions"))?
+                            .to_unix_mode(),
+                    );
+
+                    current.merge(new_permissions);
+
+                    metadata.permissions = Some(FilePermissions::from_unix_mode(current.into()));
+                }
+
+                sftp.set_metadata(filename.as_path(), metadata)
+                    .compat()
+                    .await
+                    .map_err(to_other_error)?;
+
+                if metadata.is_dir() {
+                    Some(filename)
+                } else {
+                    None
+                }
+            }};
+        }
+
+        if options.recursive {
+            let mut paths = VecDeque::new();
+
+            // Queue up our path if it is a directory
+            if let Some(path) = set_permissions!(path) {
+                paths.push_back(path);
+            }
+
+            while let Some(path) = paths.pop_front() {
+                let paths_and_metadata =
+                    sftp.read_dir(path).compat().await.map_err(to_other_error)?;
+                for (path, _) in paths_and_metadata {
+                    if let Some(path) = set_permissions!(path) {
+                        paths.push_back(path);
+                    }
+                }
+            }
+        } else {
+            let _ = set_permissions!(path);
+        }
+
+        Ok(())
     }
 
     async fn proc_spawn(

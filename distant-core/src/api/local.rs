@@ -7,8 +7,8 @@ use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 use crate::protocol::{
-    Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, ProcessId,
-    PtySize, SearchId, SearchQuery, SystemInfo,
+    Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
+    Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
 };
 use crate::{DistantApi, DistantCtx};
 
@@ -409,6 +409,16 @@ impl DistantApi for LocalDistantApi {
             ctx.connection_id, path, canonicalize, resolve_file_type
         );
         Metadata::read(path, canonicalize, resolve_file_type).await
+    }
+
+    async fn set_permissions(
+        &self,
+        _ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        permissions: Permissions,
+        options: SetPermissionsOptions,
+    ) -> io::Result<()> {
+        permissions.write(path, options).await
     }
 
     async fn search(
