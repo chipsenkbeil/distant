@@ -4,6 +4,7 @@ use std::path::Path;
 
 use bitflags::bitflags;
 use ignore::types::TypesBuilder;
+use ignore::DirEntry;
 use ignore::WalkBuilder;
 use log::*;
 use serde::{Deserialize, Serialize};
@@ -51,10 +52,7 @@ impl Permissions {
         Ok(Self {
             readonly: Some(std_permissions.readonly()),
             #[cfg(unix)]
-            unix: Some({
-                use std::os::unix::prelude::*;
-                crate::protocol::UnixPermissions::from(std_permissions.mode())
-            }),
+            unix: Some(UnixPermissions::from(std_permissions)),
             #[cfg(not(unix))]
             unix: None,
         })
@@ -74,69 +72,106 @@ impl Permissions {
         path: impl AsRef<Path>,
         options: SetPermissionsOptions,
     ) -> io::Result<()> {
-        macro_rules! set_permissions {
-            ($path:expr) => {{
-                let mut std_permissions =
-                    Self::read_std_permissions($path, options.resolve_symlink).await?;
+        async fn set_permissions(this: &Permissions, entry: &DirEntry) -> io::Result<()> {
+            // If we are on a Unix platform and we have a full permission set, we do not need to
+            // retrieve the permissions to modify them and can instead produce a new permission set
+            // purely from the Unix permissions
+            let permissions = if cfg!(unix) && this.has_complete_unix_permissions() {
+                this.unix.unwrap().into()
+            } else {
+                let mut std_permissions = entry
+                    .metadata()
+                    .map_err(|x| match x.io_error() {
+                        Some(x) => {
+                            io::Error::new(x.kind(), format!("(Read permissions failed) {x}"))
+                        }
+                        None => io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("(Read permissions failed) {x}"),
+                        ),
+                    })?
+                    .permissions();
 
                 // Apply the readonly flag if we are provided it
-                if let Some(readonly) = self.readonly {
+                if let Some(readonly) = this.readonly {
                     std_permissions.set_readonly(readonly);
                 }
 
                 // Update our unix permissions if we were given new permissions by loading
                 // in the current permissions and applying any changes on top of those
                 #[cfg(unix)]
-                if let Some(permissions) = self.unix {
+                if let Some(permissions) = this.unix {
                     use std::os::unix::prelude::*;
-                    let mut current = UnixPermissions::from(std_permissions.mode());
-                    current.merge(&permissions);
-                    std_permissions.set_mode(current.into());
+                    let mut current = UnixPermissions::from_unix_mode(std_permissions.mode());
+                    current.apply_from(&permissions);
+                    std_permissions.set_mode(current.to_unix_mode());
                 }
 
-                if log_enabled!(Level::Trace) {
-                    let mut output = String::new();
-                    output.push_str("readonly = ");
-                    output.push_str(if std_permissions.readonly() {
-                        "true"
-                    } else {
-                        "false"
-                    });
+                std_permissions
+            };
 
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::prelude::*;
-                        output.push_str(&format!(", mode = {:#o}", std_permissions.mode()));
-                    }
+            if log_enabled!(Level::Trace) {
+                let mut output = String::new();
+                output.push_str("readonly = ");
+                output.push_str(if permissions.readonly() {
+                    "true"
+                } else {
+                    "false"
+                });
 
-                    trace!("Setting {:?} permissions to ({})", $path, output);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::prelude::*;
+                    output.push_str(&format!(", mode = {:#o}", permissions.mode()));
                 }
-                tokio::fs::set_permissions($path, std_permissions).await?;
-            }};
-        }
 
-        if !options.recursive {
-            set_permissions!(path.as_ref());
-            Ok(())
-        } else {
-            let walk = WalkBuilder::new(path)
-                .follow_links(options.resolve_symlink)
-                .threads(cmp::min(MAXIMUM_THREADS, num_cpus::get()))
-                .types(
-                    TypesBuilder::new()
-                        .add_defaults()
-                        .build()
-                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
-                )
-                .skip_stdout(true)
-                .build();
-
-            for result in walk {
-                let entry = result.map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-                set_permissions!(entry.path());
+                trace!("Setting {:?} permissions to ({})", entry.path(), output);
             }
 
+            tokio::fs::set_permissions(entry.path(), permissions)
+                .await
+                .map_err(|x| io::Error::new(x.kind(), format!("(Set permissions failed) {x}")))
+        }
+
+        let walk = WalkBuilder::new(path)
+            .follow_links(options.resolve_symlink)
+            .max_depth(if options.recursive { None } else { Some(0) })
+            .threads(cmp::min(MAXIMUM_THREADS, num_cpus::get()))
+            .types(
+                TypesBuilder::new()
+                    .add_defaults()
+                    .build()
+                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
+            )
+            .skip_stdout(true)
+            .build();
+
+        // Process as much as possible and then fail with an error
+        let mut errors = Vec::new();
+        for entry in walk {
+            match entry {
+                Ok(entry) => {
+                    if let Err(x) = set_permissions(self, &entry).await {
+                        errors.push(format!("{:?}: {x}", entry.path()));
+                    }
+                }
+                Err(x) => {
+                    errors.push(x.to_string());
+                }
+            }
+        }
+
+        if errors.is_empty() {
             Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                errors
+                    .into_iter()
+                    .map(|x| format!("* {x}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ))
         }
     }
 
@@ -156,12 +191,34 @@ impl Permissions {
                 .permissions()
         })
     }
+
+    /// Returns true if `unix` is populated with a complete permission set as defined by
+    /// [`UnixPermissions::is_complete`], otherwise returns false.
+    pub fn has_complete_unix_permissions(&self) -> bool {
+        if let Some(permissions) = self.unix.as_ref() {
+            permissions.is_complete()
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(feature = "schemars")]
 impl Permissions {
     pub fn root_schema() -> schemars::schema::RootSchema {
         schemars::schema_for!(Permissions)
+    }
+}
+
+impl From<std::fs::Permissions> for Permissions {
+    fn from(permissions: std::fs::Permissions) -> Self {
+        Self {
+            readonly: Some(permissions.readonly()),
+            #[cfg(unix)]
+            unix: Some(UnixPermissions::from(permissions)),
+            #[cfg(not(unix))]
+            unix: None,
+        }
     }
 }
 
@@ -198,8 +255,23 @@ pub struct UnixPermissions {
 }
 
 impl UnixPermissions {
-    /// Merges `other` with `self`, overwriting any of the permissions in `self` with `other`.
-    pub fn merge(&mut self, other: &Self) {
+    /// Returns true if the permission set has a value specified for each permission (no `None`
+    /// settings).
+    pub fn is_complete(&self) -> bool {
+        self.owner_read.is_some()
+            && self.owner_write.is_some()
+            && self.owner_exec.is_some()
+            && self.group_read.is_some()
+            && self.group_write.is_some()
+            && self.group_exec.is_some()
+            && self.other_read.is_some()
+            && self.other_write.is_some()
+            && self.other_exec.is_some()
+    }
+
+    /// Applies `other` settings to `self`, overwriting any of the permissions in `self` with `other`.
+    #[inline]
+    pub fn apply_from(&mut self, other: &Self) {
         macro_rules! apply {
             ($key:ident) => {{
                 if let Some(value) = other.$key {
@@ -218,18 +290,16 @@ impl UnixPermissions {
         apply!(other_write);
         apply!(other_exec);
     }
-}
 
-#[cfg(feature = "schemars")]
-impl UnixPermissions {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(UnixPermissions)
+    /// Applies `self` settings to `other`, overwriting any of the permissions in `other` with
+    /// `self`.
+    #[inline]
+    pub fn apply_to(&self, other: &mut Self) {
+        Self::apply_from(other, self)
     }
-}
 
-impl From<u32> for UnixPermissions {
-    /// Create from a unix mode bitset
-    fn from(mode: u32) -> Self {
+    /// Converts a Unix `mode` into the permission set.
+    pub fn from_unix_mode(mode: u32) -> Self {
         let flags = UnixFilePermissionFlags::from_bits_truncate(mode);
         Self {
             owner_read: Some(flags.contains(UnixFilePermissionFlags::OWNER_READ)),
@@ -243,11 +313,9 @@ impl From<u32> for UnixPermissions {
             other_exec: Some(flags.contains(UnixFilePermissionFlags::OTHER_EXEC)),
         }
     }
-}
 
-impl From<UnixPermissions> for u32 {
-    /// Convert to a unix mode bitset
-    fn from(metadata: UnixPermissions) -> Self {
+    /// Converts to a Unix `mode` from a permission set. For any missing setting, a 0 bit is used.
+    pub fn to_unix_mode(&self) -> u32 {
         let mut flags = UnixFilePermissionFlags::empty();
 
         macro_rules! is_true {
@@ -256,33 +324,33 @@ impl From<UnixPermissions> for u32 {
             }};
         }
 
-        if is_true!(metadata.owner_read) {
+        if is_true!(self.owner_read) {
             flags.insert(UnixFilePermissionFlags::OWNER_READ);
         }
-        if is_true!(metadata.owner_write) {
+        if is_true!(self.owner_write) {
             flags.insert(UnixFilePermissionFlags::OWNER_WRITE);
         }
-        if is_true!(metadata.owner_exec) {
+        if is_true!(self.owner_exec) {
             flags.insert(UnixFilePermissionFlags::OWNER_EXEC);
         }
 
-        if is_true!(metadata.group_read) {
+        if is_true!(self.group_read) {
             flags.insert(UnixFilePermissionFlags::GROUP_READ);
         }
-        if is_true!(metadata.group_write) {
+        if is_true!(self.group_write) {
             flags.insert(UnixFilePermissionFlags::GROUP_WRITE);
         }
-        if is_true!(metadata.group_exec) {
+        if is_true!(self.group_exec) {
             flags.insert(UnixFilePermissionFlags::GROUP_EXEC);
         }
 
-        if is_true!(metadata.other_read) {
+        if is_true!(self.other_read) {
             flags.insert(UnixFilePermissionFlags::OTHER_READ);
         }
-        if is_true!(metadata.other_write) {
+        if is_true!(self.other_write) {
             flags.insert(UnixFilePermissionFlags::OTHER_WRITE);
         }
-        if is_true!(metadata.other_exec) {
+        if is_true!(self.other_exec) {
             flags.insert(UnixFilePermissionFlags::OTHER_EXEC);
         }
 
@@ -290,15 +358,28 @@ impl From<UnixPermissions> for u32 {
     }
 }
 
+#[cfg(feature = "schemars")]
 impl UnixPermissions {
-    pub fn is_readonly(self) -> bool {
-        macro_rules! is_true {
-            ($opt:expr) => {{
-                $opt.is_some() && $opt.unwrap()
-            }};
-        }
+    pub fn root_schema() -> schemars::schema::RootSchema {
+        schemars::schema_for!(UnixPermissions)
+    }
+}
 
-        !(is_true!(self.owner_read) || is_true!(self.group_read) || is_true!(self.other_read))
+#[cfg(unix)]
+impl From<std::fs::Permissions> for UnixPermissions {
+    /// Converts [`std::fs::Permissions`] into [`UnixPermissions`] using the `mode`.
+    fn from(permissions: std::fs::Permissions) -> Self {
+        use std::os::unix::prelude::*;
+        Self::from_unix_mode(permissions.mode())
+    }
+}
+
+#[cfg(unix)]
+impl From<UnixPermissions> for std::fs::Permissions {
+    /// Converts [`UnixPermissions`] into [`std::fs::Permissions`] using the `mode`.
+    fn from(permissions: UnixPermissions) -> Self {
+        use std::os::unix::prelude::*;
+        std::fs::Permissions::from_mode(permissions.to_unix_mode())
     }
 }
 

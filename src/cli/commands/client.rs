@@ -1045,7 +1045,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                                     new_mode
                                 }
                             };
-                            Some(UnixPermissions::from(mode.mode()))
+                            Some(UnixPermissions::from_unix_mode(mode.mode()))
                         } else {
                             None
                         }

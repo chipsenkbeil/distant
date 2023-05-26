@@ -666,7 +666,7 @@ impl DistantApi for SshDistantApi {
             // Check that owner, group, or other has write permission (if not, then readonly)
             readonly: metadata
                 .permissions
-                .map(FilePermissions::is_readonly)
+                .map(|x| !x.owner_write && !x.group_write && !x.other_write)
                 .unwrap_or(true),
             accessed: metadata.accessed.map(u128::from),
             modified: metadata.modified.map(u128::from),
@@ -718,7 +718,7 @@ impl DistantApi for SshDistantApi {
 
                 // As is with Rust using `set_readonly`, this will make world-writable if true!
                 if let Some(readonly) = permissions.readonly {
-                    let mut current = UnixPermissions::from(
+                    let mut current = UnixPermissions::from_unix_mode(
                         metadata
                             .permissions
                             .ok_or_else(|| to_other_error("Unable to read file permissions"))?
@@ -729,20 +729,22 @@ impl DistantApi for SshDistantApi {
                     current.group_write = Some(!readonly);
                     current.other_write = Some(!readonly);
 
-                    metadata.permissions = Some(FilePermissions::from_unix_mode(current.into()));
+                    metadata.permissions =
+                        Some(FilePermissions::from_unix_mode(current.to_unix_mode()));
                 }
 
                 if let Some(new_permissions) = permissions.unix.as_ref() {
-                    let mut current = UnixPermissions::from(
+                    let mut current = UnixPermissions::from_unix_mode(
                         metadata
                             .permissions
                             .ok_or_else(|| to_other_error("Unable to read file permissions"))?
                             .to_unix_mode(),
                     );
 
-                    current.merge(new_permissions);
+                    current.apply_from(new_permissions);
 
-                    metadata.permissions = Some(FilePermissions::from_unix_mode(current.into()));
+                    metadata.permissions =
+                        Some(FilePermissions::from_unix_mode(current.to_unix_mode()));
                 }
 
                 sftp.set_metadata(filename.as_path(), metadata)
