@@ -1253,7 +1253,7 @@ async fn set_permissions_should_set_readonly_flag_if_specified(
 async fn set_permissions_should_set_unix_permissions_if_on_unix_platform(
     #[future] client: Ctx<DistantClient>,
 ) {
-    #[allow(unused_variables)]
+    #[allow(unused_mut, unused_variables)]
     let mut client = client.await;
 
     #[cfg(unix)]
