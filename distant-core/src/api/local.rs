@@ -436,9 +436,6 @@ impl DistantApi for LocalDistantApi {
                 })?
                 .permissions();
 
-            // Create current permissions from std permissions
-            let mut current = Permissions::from(std_permissions.clone());
-
             // Apply the readonly flag for all platforms
             if let Some(readonly) = permissions.is_readonly() {
                 std_permissions.set_readonly(readonly);
@@ -448,6 +445,7 @@ impl DistantApi for LocalDistantApi {
             #[cfg(unix)]
             {
                 use std::os::unix::prelude::*;
+                let mut current = Permissions::from(std_permissions.clone());
                 current.apply_from(permissions);
                 std_permissions.set_mode(current.to_unix_mode());
             }
