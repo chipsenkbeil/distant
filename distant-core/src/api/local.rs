@@ -492,6 +492,18 @@ impl DistantApi for LocalDistantApi {
                 .map_err(|x| io::Error::new(x.kind(), format!("(Set permissions failed) {x}")))
         }
 
+        // NOTE: On Unix platforms, setting permissions would automatically resolve the symlink,
+        // but on Windows this is not the case. So, on Windows, we need to resolve our path by
+        // following the symlink prior to feeding it to the walk builder because it does not appear
+        // to resolve the symlink itself.
+        //
+        // We do this by canonicalizing the path if following symlinks is enabled.
+        let path = if options.follow_symlinks {
+            tokio::fs::canonicalize(path).await?
+        } else {
+            path
+        };
+
         let walk = WalkBuilder::new(path)
             .follow_links(options.follow_symlinks)
             .max_depth(if options.recursive { None } else { Some(0) })
@@ -2305,6 +2317,63 @@ mod tests {
             .unwrap()
             .permissions();
         assert!(permissions.readonly(), "File not set to readonly");
+    }
+
+    #[test(tokio::test)]
+    async fn set_permissions_should_support_following_explicit_symlink_if_option_specified() {
+        let (api, ctx, _rx) = setup(1).await;
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        let symlink = temp.child("link");
+        symlink.symlink_to_file(file.path()).unwrap();
+
+        // Verify that file is not readonly by default
+        let permissions = tokio::fs::symlink_metadata(file.path())
+            .await
+            .unwrap()
+            .permissions();
+        assert!(!permissions.readonly(), "File is already set to readonly");
+
+        // Verify that symlink is not readonly by default
+        let permissions = tokio::fs::symlink_metadata(symlink.path())
+            .await
+            .unwrap()
+            .permissions();
+        assert!(
+            !permissions.readonly(),
+            "Symlink is already set to readonly"
+        );
+
+        // Change the permissions of the file pointed to by the symlink
+        api.set_permissions(
+            ctx,
+            symlink.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                follow_symlinks: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        // Retrieve permissions of the file and symlink to verify set
+        let permissions = tokio::fs::symlink_metadata(file.path())
+            .await
+            .unwrap()
+            .permissions();
+        assert!(permissions.readonly(), "File not set to readonly");
+
+        let permissions = tokio::fs::symlink_metadata(symlink.path())
+            .await
+            .unwrap()
+            .permissions();
+        assert!(
+            !permissions.readonly(),
+            "Symlink unexpectedly set to readonly"
+        );
     }
 
     // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
