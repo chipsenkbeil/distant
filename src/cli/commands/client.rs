@@ -1061,6 +1061,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             let options = SetPermissionsOptions {
                 recursive,
                 follow_symlinks,
+                exclude_symlinks: false,
             };
             debug!("Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})");
             channel
