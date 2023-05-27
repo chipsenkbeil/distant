@@ -1253,11 +1253,13 @@ async fn set_permissions_should_set_readonly_flag_if_specified(
 async fn set_permissions_should_set_unix_permissions_if_on_unix_platform(
     #[future] client: Ctx<DistantClient>,
 ) {
+    #[allow(unused_variables)]
+    let mut client = client.await;
+
     #[cfg(unix)]
     {
         use std::os::unix::prelude::*;
 
-        let mut client = client.await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
