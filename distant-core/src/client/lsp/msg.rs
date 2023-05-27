@@ -333,24 +333,24 @@ fn swap_prefix(obj: &mut Map<String, Value>, old: &str, new: &str) {
 }
 
 impl LspContent {
-    /// Converts all URIs with `file://` as the scheme to `distant://` instead
+    /// Converts all URIs with `file` as the scheme to `distant` instead
     pub fn convert_local_scheme_to_distant(&mut self) {
-        self.convert_local_scheme_to("distant://")
+        self.convert_local_scheme_to("distant")
     }
 
-    /// Converts all URIs with `file://` as the scheme to `scheme` instead
+    /// Converts all URIs with `file` as the scheme to `scheme` instead
     pub fn convert_local_scheme_to(&mut self, scheme: &str) {
-        swap_prefix(&mut self.0, "file://", scheme);
+        swap_prefix(&mut self.0, "file:", &format!("{scheme}:"));
     }
 
-    /// Converts all URIs with `distant://` as the scheme to `file://` instead
+    /// Converts all URIs with `distant` as the scheme to `file` instead
     pub fn convert_distant_scheme_to_local(&mut self) {
-        self.convert_scheme_to_local("distant://")
+        self.convert_scheme_to_local("distant")
     }
 
-    /// Converts all URIs with `scheme` as the scheme to `file://` instead
+    /// Converts all URIs with `scheme` as the scheme to `file` instead
     pub fn convert_scheme_to_local(&mut self, scheme: &str) {
-        swap_prefix(&mut self.0, scheme, "file://");
+        swap_prefix(&mut self.0, &format!("{scheme}:"), "file:");
     }
 }
 
@@ -719,7 +719,7 @@ mod tests {
             "key12": true,
         }));
 
-        content.convert_local_scheme_to("custom://");
+        content.convert_local_scheme_to("custom");
         assert_eq!(
             content.0,
             make_obj!({
@@ -809,7 +809,7 @@ mod tests {
             "key12": true,
         }));
 
-        content.convert_scheme_to_local("custom://");
+        content.convert_scheme_to_local("custom");
         assert_eq!(
             content.0,
             make_obj!({

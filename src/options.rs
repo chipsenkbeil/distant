@@ -418,11 +418,10 @@ pub enum ClientSubcommand {
         network: NetworkSettings,
 
         /// If specified, will assume the remote process is a LSP server
-        /// and will translate paths that are local into distant:// and vice versa.
+        /// and will translate paths that are local into `distant` and vice versa.
         ///
         /// If a scheme is provided, will translate local paths into that scheme!
-        /// Note that the scheme must be the exact prefix like `distant://`.
-        #[clap(long)]
+        #[clap(long, name = "SCHEME")]
         lsp: Option<Option<String>>,
 
         /// If specified, will spawn process using a pseudo tty
