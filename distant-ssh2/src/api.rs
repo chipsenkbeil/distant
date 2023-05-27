@@ -89,6 +89,9 @@ impl DistantApi for SshDistantApi {
         capabilities.take(CapabilityKind::Search);
         capabilities.take(CapabilityKind::CancelSearch);
 
+        // Broken via wezterm-ssh, so not supported right now
+        capabilities.take(CapabilityKind::SetPermissions);
+
         Ok(capabilities)
     }
 
@@ -686,6 +689,7 @@ impl DistantApi for SshDistantApi {
         })
     }
 
+    #[allow(unreachable_code)]
     async fn set_permissions(
         &self,
         ctx: DistantCtx<Self::LocalData>,
@@ -697,27 +701,19 @@ impl DistantApi for SshDistantApi {
             "[Conn {}] Setting permissions for {:?} {{permissions: {:?}, options: {:?}}}",
             ctx.connection_id, path, permissions, options
         );
+
+        // Unsupported until issue resolved: https://github.com/wez/wezterm/issues/3784
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Unsupported until issue resolved: https://github.com/wez/wezterm/issues/3784",
+        ));
+
         let sftp = self.session.sftp();
 
         macro_rules! set_permissions {
-            ($path:expr) => {{
-                let filename = if options.follow_symlinks {
-                    sftp.read_link($path)
-                        .compat()
-                        .await
-                        .map_err(to_other_error)?
-                } else {
-                    Utf8PathBuf::try_from($path).map_err(to_other_error)?
-                };
-
-                let mut metadata = sftp
-                    .symlink_metadata(&filename)
-                    .compat()
-                    .await
-                    .map_err(to_other_error)?;
-
+            ($path:ident, $metadata:ident) => {{
                 let mut current = Permissions::from_unix_mode(
-                    metadata
+                    $metadata
                         .permissions
                         .ok_or_else(|| to_other_error("Unable to read file permissions"))?
                         .to_unix_mode(),
@@ -725,41 +721,99 @@ impl DistantApi for SshDistantApi {
 
                 current.apply_from(&permissions);
 
-                metadata.permissions =
+                $metadata.permissions =
                     Some(FilePermissions::from_unix_mode(current.to_unix_mode()));
 
-                sftp.set_metadata(filename.as_path(), metadata)
+                println!("set_metadata for {:?}", $path.as_path());
+                sftp.set_metadata($path.as_path(), $metadata)
                     .compat()
                     .await
                     .map_err(to_other_error)?;
 
-                if metadata.is_dir() {
-                    Some(filename)
+                if $metadata.is_dir() {
+                    Some($path)
                 } else {
                     None
                 }
             }};
+            ($path:ident) => {{
+                let mut path = Utf8PathBuf::try_from($path).map_err(to_other_error)?;
+
+                // Query metadata to determine if we are working with a symlink
+                println!("symlink_metadata for {:?}", path);
+                let mut metadata = sftp
+                    .symlink_metadata(&path)
+                    .compat()
+                    .await
+                    .map_err(to_other_error)?;
+
+                // If we are excluding symlinks and this is a symlink, then we're done
+                if options.exclude_symlinks && metadata.is_symlink() {
+                    None
+                } else {
+                    // If we are following symlinks and this is a symlink, then get the real path
+                    // and destination metadata
+                    if options.follow_symlinks && metadata.is_symlink() {
+                        println!("read_link for {:?}", path);
+                        path = sftp
+                            .read_link(path)
+                            .compat()
+                            .await
+                            .map_err(to_other_error)?;
+
+                        println!("metadata for {:?}", path);
+                        metadata = sftp
+                            .metadata(&path)
+                            .compat()
+                            .await
+                            .map_err(to_other_error)?;
+                    }
+
+                    set_permissions!(path, metadata)
+                }
+            }};
+        }
+
+        let mut paths = VecDeque::new();
+
+        // Queue up our path if it is a directory
+        if let Some(path) = set_permissions!(path) {
+            paths.push_back(path);
         }
 
         if options.recursive {
-            let mut paths = VecDeque::new();
-
-            // Queue up our path if it is a directory
-            if let Some(path) = set_permissions!(path) {
-                paths.push_back(path);
-            }
-
             while let Some(path) = paths.pop_front() {
+                println!("read_dir for {:?}", path);
                 let paths_and_metadata =
                     sftp.read_dir(path).compat().await.map_err(to_other_error)?;
-                for (path, _) in paths_and_metadata {
-                    if let Some(path) = set_permissions!(path) {
+                for (mut path, mut metadata) in paths_and_metadata {
+                    if options.exclude_symlinks && metadata.is_symlink() {
+                        println!("skipping symlink for {:?}", path);
+                        continue;
+                    }
+
+                    // If we are following symlinks, then adjust our path and metadata
+                    if options.follow_symlinks && metadata.is_symlink() {
+                        println!("read_link for {:?}", path);
+                        path = sftp
+                            .read_link(path)
+                            .compat()
+                            .await
+                            .map_err(to_other_error)?;
+
+                        println!("metadata for {:?}", path);
+                        metadata = sftp
+                            .metadata(&path)
+                            .compat()
+                            .await
+                            .map_err(to_other_error)?;
+                    }
+
+                    if let Some(path) = set_permissions!(path, metadata) {
                         paths.push_back(path);
                     }
                 }
             }
-        } else {
-            let _ = set_permissions!(path);
         }
 
         Ok(())
