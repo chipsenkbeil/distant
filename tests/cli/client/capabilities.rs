@@ -47,6 +47,8 @@ const EXPECTED_TABLE: &str = indoc! {"
 +------------------+------------------------------------------------------------------+
 | search           | Supports searching filesystem using queries                      |
 +------------------+------------------------------------------------------------------+
+| set_permissions  | Supports setting permissions on a file, directory, or symlink    |
++------------------+------------------------------------------------------------------+
 | system_info      | Supports retrieving system information                           |
 +------------------+------------------------------------------------------------------+
 | unwatch          | Supports unwatching filesystem for changes                       |

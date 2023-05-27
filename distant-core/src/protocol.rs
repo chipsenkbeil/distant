@@ -23,6 +23,9 @@ pub use filesystem::*;
 mod metadata;
 pub use metadata::*;
 
+mod permissions;
+pub use permissions::*;
+
 mod pty;
 pub use pty::*;
 
@@ -342,6 +345,22 @@ pub enum Request {
         /// Whether or not to follow symlinks to determine absolute file type (dir/file)
         #[serde(default)]
         resolve_file_type: bool,
+    },
+
+    /// Sets permissions on a file, directory, or symlink on the remote machine
+    #[strum_discriminants(strum(
+        message = "Supports setting permissions on a file, directory, or symlink"
+    ))]
+    SetPermissions {
+        /// The path to the file, directory, or symlink on the remote machine
+        path: PathBuf,
+
+        /// New permissions to apply to the file, directory, or symlink
+        permissions: Permissions,
+
+        /// Additional options to supply when setting permissions
+        #[serde(default)]
+        options: SetPermissionsOptions,
     },
 
     /// Searches filesystem using the provided query

@@ -11,8 +11,8 @@ use crate::client::{
     Watcher,
 };
 use crate::protocol::{
-    self, Capabilities, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, PtySize,
-    SearchId, SearchQuery, SystemInfo,
+    self, Capabilities, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata,
+    Permissions, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
 };
 
 pub type AsyncReturn<'a, T, E = io::Error> =
@@ -56,6 +56,14 @@ pub trait DistantChannelExt {
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> AsyncReturn<'_, Metadata>;
+
+    /// Sets permissions for a path on a remote machine
+    fn set_permissions(
+        &mut self,
+        path: impl Into<PathBuf>,
+        permissions: Permissions,
+        options: SetPermissionsOptions,
+    ) -> AsyncReturn<'_, ()>;
 
     /// Perform a search
     fn search(&mut self, query: impl Into<SearchQuery>) -> AsyncReturn<'_, Searcher>;
@@ -254,6 +262,23 @@ impl DistantChannelExt
                 protocol::Response::Error(x) => Err(io::Error::from(x)),
                 _ => Err(mismatched_response()),
             }
+        )
+    }
+
+    fn set_permissions(
+        &mut self,
+        path: impl Into<PathBuf>,
+        permissions: Permissions,
+        options: SetPermissionsOptions,
+    ) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            protocol::Request::SetPermissions {
+                path: path.into(),
+                permissions,
+                options,
+            },
+            @ok
         )
     }
 

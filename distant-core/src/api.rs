@@ -8,8 +8,8 @@ use distant_net::server::{ConnectionCtx, Reply, ServerCtx, ServerHandler};
 use log::*;
 
 use crate::protocol::{
-    self, Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, ProcessId, PtySize,
-    SearchId, SearchQuery, SystemInfo,
+    self, Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId,
+    PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
 };
 
 mod local;
@@ -314,6 +314,24 @@ pub trait DistantApi {
         resolve_file_type: bool,
     ) -> io::Result<Metadata> {
         unsupported("metadata")
+    }
+
+    /// Sets permissions for a file, directory, or symlink.
+    ///
+    /// * `path` - the path to the file, directory, or symlink
+    /// * `resolve_symlink` - if true, will resolve the path to the underlying file/directory
+    /// * `permissions` - the new permissions to apply
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    async fn set_permissions(
+        &self,
+        ctx: DistantCtx<Self::LocalData>,
+        path: PathBuf,
+        permissions: Permissions,
+        options: SetPermissionsOptions,
+    ) -> io::Result<()> {
+        unsupported("set_permissions")
     }
 
     /// Searches files for matches based on a query.
@@ -631,6 +649,16 @@ where
             .metadata(ctx, path, canonicalize, resolve_file_type)
             .await
             .map(protocol::Response::Metadata)
+            .unwrap_or_else(protocol::Response::from),
+        protocol::Request::SetPermissions {
+            path,
+            permissions,
+            options,
+        } => server
+            .api
+            .set_permissions(ctx, path, permissions, options)
+            .await
+            .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
         protocol::Request::Search { query } => server
             .api

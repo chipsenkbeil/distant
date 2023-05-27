@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `SetPermissions` enum variant on protocol request
+- New `set_permissions` method available `DistantApi` and implemented by local
+  server (ssh unavailable due to https://github.com/wez/wezterm/issues/3784)
+- Implementation of `DistantChannelExt::set_permissions`
+
 ## [0.20.0-alpha.6]
 
 ### Changed

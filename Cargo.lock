@@ -822,6 +822,7 @@ dependencies = [
  "distant-core",
  "distant-ssh2",
  "env_logger",
+ "file-mode",
  "flexi_logger",
  "fork",
  "indoc",
@@ -1096,6 +1097,15 @@ checksum = "ded41244b729663b1e574f1b4fb731469f69f79c17667b5d776b16cda0479449"
 dependencies = [
  "rand_core",
  "subtle",
+]
+
+[[package]]
+name = "file-mode"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773ea145485772b8d354624b32adbe20e776353d3e48c7b03ef44e3455e9815c"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

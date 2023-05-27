@@ -6,7 +6,9 @@ use std::time::Duration;
 use anyhow::Context;
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
-use distant_core::protocol::{self, ChangeKindSet, FileType, SearchQuery, SystemInfo};
+use distant_core::protocol::{
+    self, ChangeKindSet, FileType, Permissions, SearchQuery, SetPermissionsOptions, SystemInfo,
+};
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
 use serde_json::json;
@@ -1006,6 +1008,72 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
                 formatter.print(res).context("Failed to print match")?;
             }
+        }
+        ClientSubcommand::FileSystem(ClientFileSystemSubcommand::SetPermissions {
+            cache,
+            connection,
+            network,
+            follow_symlinks,
+            recursive,
+            mode,
+            path,
+        }) => {
+            debug!("Parsing {mode:?} into a proper set of permissions");
+            let permissions = {
+                if mode.trim().eq_ignore_ascii_case("readonly") {
+                    Permissions::readonly()
+                } else if mode.trim().eq_ignore_ascii_case("notreadonly") {
+                    Permissions::writable()
+                } else {
+                    // Attempt to parse an octal number (chmod absolute), falling back to
+                    // parsing the mode string similar to chmod's symbolic mode
+                    let mode = match u32::from_str_radix(&mode, 8) {
+                        Ok(absolute) => file_mode::Mode::from(absolute),
+                        Err(_) => {
+                            let mut new_mode = file_mode::Mode::empty();
+                            new_mode
+                                .set_str(&mode)
+                                .context("Failed to parse mode string")?;
+                            new_mode
+                        }
+                    };
+                    Permissions::from_unix_mode(mode.mode())
+                }
+            };
+
+            debug!("Connecting to manager");
+            let mut client = Client::new(network)
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+                .context("Failed to connect to manager")?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            let options = SetPermissionsOptions {
+                recursive,
+                follow_symlinks,
+                exclude_symlinks: false,
+            };
+            debug!("Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})");
+            channel
+                .into_client()
+                .into_channel()
+                .set_permissions(path.as_path(), permissions, options)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to set permissions for {path:?} using connection {connection_id}"
+                    )
+                })?;
         }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Watch {
             cache,

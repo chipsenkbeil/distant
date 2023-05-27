@@ -121,6 +121,7 @@ impl Options {
                         | ClientFileSystemSubcommand::Remove { network, .. }
                         | ClientFileSystemSubcommand::Rename { network, .. }
                         | ClientFileSystemSubcommand::Search { network, .. }
+                        | ClientFileSystemSubcommand::SetPermissions { network, .. }
                         | ClientFileSystemSubcommand::Watch { network, .. }
                         | ClientFileSystemSubcommand::Write { network, .. },
                     ) => {
@@ -740,6 +741,40 @@ pub enum ClientFileSystemSubcommand {
         paths: Vec<PathBuf>,
     },
 
+    /// Sets permissions for the specified path on the remote machine
+    SetPermissions {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Recursively set permissions of files/directories/symlinks
+        #[clap(short = 'R', long)]
+        recursive: bool,
+
+        /// Follow symlinks, which means that they will be unaffected
+        #[clap(short = 'L', long)]
+        follow_symlinks: bool,
+
+        /// Mode string following `chmod` format (or set readonly flag if `readonly` or
+        /// `notreadonly` is specified)
+        mode: String,
+
+        /// The path to the file, directory, or symlink on the remote machine
+        path: PathBuf,
+    },
+
     /// Watch a path for changes on the remote machine
     Watch {
         /// Location to store cached data
@@ -828,6 +863,7 @@ impl ClientFileSystemSubcommand {
             Self::Remove { cache, .. } => cache.as_path(),
             Self::Rename { cache, .. } => cache.as_path(),
             Self::Search { cache, .. } => cache.as_path(),
+            Self::SetPermissions { cache, .. } => cache.as_path(),
             Self::Watch { cache, .. } => cache.as_path(),
             Self::Write { cache, .. } => cache.as_path(),
         }
@@ -843,6 +879,7 @@ impl ClientFileSystemSubcommand {
             Self::Remove { network, .. } => network,
             Self::Rename { network, .. } => network,
             Self::Search { network, .. } => network,
+            Self::SetPermissions { network, .. } => network,
             Self::Watch { network, .. } => network,
             Self::Write { network, .. } => network,
         }

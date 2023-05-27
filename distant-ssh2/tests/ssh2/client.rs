@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use assert_fs::prelude::*;
 use assert_fs::TempDir;
-use distant_core::protocol::{ChangeKindSet, Environment, FileType, Metadata};
+use distant_core::protocol::{
+    ChangeKindSet, Environment, FileType, Metadata, Permissions, SetPermissionsOptions,
+};
 use distant_core::{DistantChannelExt, DistantClient};
 use once_cell::sync::Lazy;
 use predicates::prelude::*;
@@ -1204,6 +1206,478 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
         ),
         "{:?}",
         metadata
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_set_readonly_flag_if_specified(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    // Verify that not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File is already set to readonly");
+
+    // Change the file permissions
+    client
+        .set_permissions(
+            file.path().to_path_buf(),
+            Permissions::readonly(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions to verify set
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(permissions.readonly(), "File not set to readonly");
+}
+
+#[allow(unused_attributes)]
+#[rstest]
+#[test(tokio::test)]
+#[cfg_attr(not(unix), ignore)]
+#[ignore]
+async fn set_permissions_should_set_unix_permissions_if_on_unix_platform(
+    #[future] client: Ctx<DistantClient>,
+) {
+    #[allow(unused_mut, unused_variables)]
+    let mut client = client.await;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::prelude::*;
+
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("file");
+        file.write_str("some text").unwrap();
+
+        // Verify that permissions do not match our readonly state
+        let permissions = tokio::fs::symlink_metadata(file.path())
+            .await
+            .unwrap()
+            .permissions();
+        let mode = permissions.mode() & 0o777;
+        assert_ne!(mode, 0o400, "File is already set to 0o400");
+
+        // Change the file permissions
+        client
+            .set_permissions(
+                file.path().to_path_buf(),
+                Permissions::from_unix_mode(0o400),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        // Retrieve file permissions to verify set
+        let permissions = tokio::fs::symlink_metadata(file.path())
+            .await
+            .unwrap()
+            .permissions();
+
+        // Drop the upper bits that mode can have (only care about read/write/exec)
+        let mode = permissions.mode() & 0o777;
+
+        assert_eq!(mode, 0o400, "Wrong permissions on file: {:o}", mode);
+    }
+    #[cfg(not(unix))]
+    {
+        unreachable!();
+    }
+}
+
+#[allow(unused_attributes)]
+#[rstest]
+#[test(tokio::test)]
+#[cfg_attr(unix, ignore)]
+#[ignore]
+async fn set_permissions_should_set_readonly_flag_if_not_on_unix_platform(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    // Verify that not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File is already set to readonly");
+
+    // Change the file permissions to be readonly (in general)
+    client
+        .set_permissions(
+            file.path().to_path_buf(),
+            Permissions::from_unix_mode(0o400),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+    #[cfg(not(unix))]
+    {
+        // Retrieve file permissions to verify set
+        let permissions = tokio::fs::symlink_metadata(file.path())
+            .await
+            .unwrap()
+            .permissions();
+
+        assert!(permissions.readonly(), "File not marked as readonly");
+    }
+    #[cfg(unix)]
+    {
+        unreachable!();
+    }
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    let symlink = temp.child("link");
+    symlink.symlink_to_file(file.path()).unwrap();
+
+    // Verify that dir is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(temp.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Temp dir is already set to readonly"
+    );
+
+    // Verify that file is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File is already set to readonly");
+
+    // Verify that symlink is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(symlink.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Symlink is already set to readonly"
+    );
+
+    // Change the permissions of the directory and not the contents underneath
+    client
+        .set_permissions(
+            temp.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                recursive: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions of the file, symlink, and directory to verify set
+    let permissions = tokio::fs::symlink_metadata(temp.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(permissions.readonly(), "Temp directory not set to readonly");
+
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File unexpectedly set to readonly");
+
+    let permissions = tokio::fs::symlink_metadata(symlink.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Symlink unexpectedly set to readonly"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    let temp2 = assert_fs::TempDir::new().unwrap();
+    let file2 = temp2.child("file");
+    file2.write_str("some text").unwrap();
+
+    let symlink = temp.child("link");
+    symlink.symlink_to_dir(temp2.path()).unwrap();
+
+    // Verify that symlink is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file2.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File2 is already set to readonly");
+
+    // Change the main directory permissions
+    client
+        .set_permissions(
+            temp.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                follow_symlinks: true,
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions referenced by another directory
+    let permissions = tokio::fs::symlink_metadata(file2.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(permissions.readonly(), "File2 not set to readonly");
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    let temp2 = assert_fs::TempDir::new().unwrap();
+    let file2 = temp2.child("file");
+    file2.write_str("some text").unwrap();
+
+    let symlink = temp.child("link");
+    symlink.symlink_to_dir(temp2.path()).unwrap();
+
+    // Verify that symlink is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file2.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File2 is already set to readonly");
+
+    // Change the main directory permissions
+    client
+        .set_permissions(
+            temp.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                follow_symlinks: false,
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions referenced by another directory
+    let permissions = tokio::fs::symlink_metadata(file2.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "File2 unexpectedly set to readonly"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    let symlink = temp.child("link");
+    symlink.symlink_to_file(file.path()).unwrap();
+
+    // Verify that symlink is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(symlink.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Symlink is already set to readonly"
+    );
+
+    // Change the symlink permissions
+    client
+        .set_permissions(
+            symlink.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                exclude_symlinks: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions to verify not set
+    let permissions = tokio::fs::symlink_metadata(symlink.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Symlink (or file underneath) set to readonly"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_support_recursive_if_option_specified(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    // Verify that dir is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(temp.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Temp dir is already set to readonly"
+    );
+
+    // Verify that file is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File is already set to readonly");
+
+    // Change the permissions of the file pointed to by the symlink
+    client
+        .set_permissions(
+            temp.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions of the file, symlink, and directory to verify set
+    let permissions = tokio::fs::symlink_metadata(temp.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(permissions.readonly(), "Temp directory not set to readonly");
+
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(permissions.readonly(), "File not set to readonly");
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[ignore]
+async fn set_permissions_should_support_following_symlinks_if_option_specified(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("some text").unwrap();
+
+    let symlink = temp.child("link");
+    symlink.symlink_to_file(file.path()).unwrap();
+
+    // Verify that file is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(!permissions.readonly(), "File is already set to readonly");
+
+    // Verify that symlink is not readonly by default
+    let permissions = tokio::fs::symlink_metadata(symlink.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Symlink is already set to readonly"
+    );
+
+    // Change the permissions of the file pointed to by the symlink
+    client
+        .set_permissions(
+            symlink.path().to_path_buf(),
+            Permissions::readonly(),
+            SetPermissionsOptions {
+                follow_symlinks: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Retrieve permissions of the file and symlink to verify set
+    let permissions = tokio::fs::symlink_metadata(file.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(permissions.readonly(), "File not set to readonly");
+
+    let permissions = tokio::fs::symlink_metadata(symlink.path())
+        .await
+        .unwrap()
+        .permissions();
+    assert!(
+        !permissions.readonly(),
+        "Symlink unexpectedly set to readonly"
     );
 }
 
