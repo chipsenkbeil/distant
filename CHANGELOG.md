@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server (ssh unavailable due to https://github.com/wez/wezterm/issues/3784)
 - Implementation of `DistantChannelExt::set_permissions`
 
+### Changed
+
+- CLI `--lsp [<SCHEME>]` scheme now expects just the scheme and not `://`
+
 ## [0.20.0-alpha.6]
 
 ### Changed
