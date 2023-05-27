@@ -1,27 +1,23 @@
-use std::cmp;
-use std::io;
-use std::path::Path;
-
 use bitflags::bitflags;
-use ignore::types::TypesBuilder;
-use ignore::DirEntry;
-use ignore::WalkBuilder;
-use log::*;
 use serde::{Deserialize, Serialize};
-
-const MAXIMUM_THREADS: usize = 12;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct SetPermissionsOptions {
-    /// Whether or not to set the permissions of the file hierarchies rooted in the paths, instead
-    /// of just the paths themselves
-    pub recursive: bool,
+    /// Whether or not to exclude symlinks from traversal entirely, meaning that permissions will
+    /// not be set on symlinks (usually resolving the symlink and setting the permission of the
+    /// referenced file or directory) that are explicitly provided or show up during recursion.
+    pub exclude_symlinks: bool,
 
-    /// Whether or not to resolve the pathes to the underlying file/directory prior to setting the
-    /// permissions
-    pub resolve_symlink: bool,
+    /// Whether or not to traverse symlinks when recursively setting permissions. Note that this
+    /// does NOT influence setting permissions when encountering a symlink as most platforms will
+    /// resolve the symlink before setting permissions.
+    pub follow_symlinks: bool,
+
+    /// Whether or not to set the permissions of the file hierarchies rooted in the paths, instead
+    /// of just the paths themselves.
+    pub recursive: bool,
 }
 
 #[cfg(feature = "schemars")]
@@ -35,197 +31,13 @@ impl SetPermissionsOptions {
 ///
 /// When used to set permissions on a file, directory, or symlink,
 /// only fields that are set (not `None`) will be applied.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub struct Permissions {
-    /// Whether or not the file/directory/symlink is marked as unwriteable
-    pub readonly: Option<bool>,
-
-    /// Represents permissions that are specific to a unix remote machine
-    pub unix: Option<UnixPermissions>,
-}
-
-impl Permissions {
-    pub async fn read(path: impl AsRef<Path>, resolve_symlink: bool) -> io::Result<Self> {
-        let std_permissions = Self::read_std_permissions(path, resolve_symlink).await?;
-
-        Ok(Self {
-            readonly: Some(std_permissions.readonly()),
-            #[cfg(unix)]
-            unix: Some(UnixPermissions::from(std_permissions)),
-            #[cfg(not(unix))]
-            unix: None,
-        })
-    }
-
-    /// Sets the permissions for the specified `path`.
-    ///
-    /// If `resolve_symlink` is true, will resolve the path to the underlying file/directory prior
-    /// to attempting to set the permissions.
-    ///
-    /// If `recursive` is true, will apply permissions to all
-    ///
-    /// When used to set permissions on a file, directory, or symlink, only fields that are set
-    /// (not `None`) will be applied.
-    pub async fn write(
-        &self,
-        path: impl AsRef<Path>,
-        options: SetPermissionsOptions,
-    ) -> io::Result<()> {
-        async fn set_permissions(this: &Permissions, entry: &DirEntry) -> io::Result<()> {
-            // If we are on a Unix platform and we have a full permission set, we do not need to
-            // retrieve the permissions to modify them and can instead produce a new permission set
-            // purely from the Unix permissions
-            let permissions = if cfg!(unix) && this.has_complete_unix_permissions() {
-                this.unix.unwrap().into()
-            } else {
-                let mut std_permissions = entry
-                    .metadata()
-                    .map_err(|x| match x.io_error() {
-                        Some(x) => {
-                            io::Error::new(x.kind(), format!("(Read permissions failed) {x}"))
-                        }
-                        None => io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("(Read permissions failed) {x}"),
-                        ),
-                    })?
-                    .permissions();
-
-                // Apply the readonly flag if we are provided it
-                if let Some(readonly) = this.readonly {
-                    std_permissions.set_readonly(readonly);
-                }
-
-                // Update our unix permissions if we were given new permissions by loading
-                // in the current permissions and applying any changes on top of those
-                #[cfg(unix)]
-                if let Some(permissions) = this.unix {
-                    use std::os::unix::prelude::*;
-                    let mut current = UnixPermissions::from_unix_mode(std_permissions.mode());
-                    current.apply_from(&permissions);
-                    std_permissions.set_mode(current.to_unix_mode());
-                }
-
-                std_permissions
-            };
-
-            if log_enabled!(Level::Trace) {
-                let mut output = String::new();
-                output.push_str("readonly = ");
-                output.push_str(if permissions.readonly() {
-                    "true"
-                } else {
-                    "false"
-                });
-
-                #[cfg(unix)]
-                {
-                    use std::os::unix::prelude::*;
-                    output.push_str(&format!(", mode = {:#o}", permissions.mode()));
-                }
-
-                trace!("Setting {:?} permissions to ({})", entry.path(), output);
-            }
-
-            tokio::fs::set_permissions(entry.path(), permissions)
-                .await
-                .map_err(|x| io::Error::new(x.kind(), format!("(Set permissions failed) {x}")))
-        }
-
-        let walk = WalkBuilder::new(path)
-            .follow_links(options.resolve_symlink)
-            .max_depth(if options.recursive { None } else { Some(0) })
-            .threads(cmp::min(MAXIMUM_THREADS, num_cpus::get()))
-            .types(
-                TypesBuilder::new()
-                    .add_defaults()
-                    .build()
-                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
-            )
-            .skip_stdout(true)
-            .build();
-
-        // Process as much as possible and then fail with an error
-        let mut errors = Vec::new();
-        for entry in walk {
-            match entry {
-                Ok(entry) => {
-                    if let Err(x) = set_permissions(self, &entry).await {
-                        errors.push(format!("{:?}: {x}", entry.path()));
-                    }
-                }
-                Err(x) => {
-                    errors.push(x.to_string());
-                }
-            }
-        }
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                errors
-                    .into_iter()
-                    .map(|x| format!("* {x}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ))
-        }
-    }
-
-    /// Reads [`std::fs::Permissions`] from `path`.
-    ///
-    /// If `resolve_symlink` is true, will resolve the path to the underlying file/directory prior
-    /// to attempting to read the permissions.
-    async fn read_std_permissions(
-        path: impl AsRef<Path>,
-        resolve_symlink: bool,
-    ) -> io::Result<std::fs::Permissions> {
-        Ok(if resolve_symlink {
-            tokio::fs::metadata(path.as_ref()).await?.permissions()
-        } else {
-            tokio::fs::symlink_metadata(path.as_ref())
-                .await?
-                .permissions()
-        })
-    }
-
-    /// Returns true if `unix` is populated with a complete permission set as defined by
-    /// [`UnixPermissions::is_complete`], otherwise returns false.
-    pub fn has_complete_unix_permissions(&self) -> bool {
-        if let Some(permissions) = self.unix.as_ref() {
-            permissions.is_complete()
-        } else {
-            false
-        }
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl Permissions {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Permissions)
-    }
-}
-
-impl From<std::fs::Permissions> for Permissions {
-    fn from(permissions: std::fs::Permissions) -> Self {
-        Self {
-            readonly: Some(permissions.readonly()),
-            #[cfg(unix)]
-            unix: Some(UnixPermissions::from(permissions)),
-            #[cfg(not(unix))]
-            unix: None,
-        }
-    }
-}
-
-/// Represents unix-specific permissions about some path on a remote machine
+///
+/// On `Unix` platforms, this translates directly into the mode that
+/// you would find with `chmod`. On all other platforms, this uses the
+/// write flags to determine whether or not to set the readonly status.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub struct UnixPermissions {
+pub struct Permissions {
     /// Represents whether or not owner can read from the file
     pub owner_read: Option<bool>,
 
@@ -254,7 +66,56 @@ pub struct UnixPermissions {
     pub other_exec: Option<bool>,
 }
 
-impl UnixPermissions {
+impl Permissions {
+    /// Creates a set of [`Permissions`] that indicate readonly status.
+    ///
+    /// ```
+    /// use distant_core::protocol::Permissions;
+    ///
+    /// let permissions = Permissions::readonly();
+    /// assert_eq!(permissions.is_readonly(), Some(true));
+    /// assert_eq!(permissions.is_writable(), Some(false));
+    /// ```
+    pub fn readonly() -> Self {
+        Self {
+            owner_write: Some(false),
+            group_write: Some(false),
+            other_write: Some(false),
+
+            owner_read: Some(true),
+            group_read: Some(true),
+            other_read: Some(true),
+
+            owner_exec: None,
+            group_exec: None,
+            other_exec: None,
+        }
+    }
+    /// Creates a set of [`Permissions`] that indicate globally writable status.
+    ///
+    /// ```
+    /// use distant_core::protocol::Permissions;
+    ///
+    /// let permissions = Permissions::writable();
+    /// assert_eq!(permissions.is_readonly(), Some(false));
+    /// assert_eq!(permissions.is_writable(), Some(true));
+    /// ```
+    pub fn writable() -> Self {
+        Self {
+            owner_write: Some(true),
+            group_write: Some(true),
+            other_write: Some(true),
+
+            owner_read: Some(true),
+            group_read: Some(true),
+            other_read: Some(true),
+
+            owner_exec: None,
+            group_exec: None,
+            other_exec: None,
+        }
+    }
+
     /// Returns true if the permission set has a value specified for each permission (no `None`
     /// settings).
     pub fn is_complete(&self) -> bool {
@@ -267,6 +128,24 @@ impl UnixPermissions {
             && self.other_read.is_some()
             && self.other_write.is_some()
             && self.other_exec.is_some()
+    }
+
+    /// Returns `true` if permissions represent readonly, `false` if permissions represent
+    /// writable, and `None` if no permissions have been set to indicate either status.
+    #[inline]
+    pub fn is_readonly(&self) -> Option<bool> {
+        // Negate the writable status to indicate whether or not readonly
+        self.is_writable().map(|x| !x)
+    }
+
+    /// Returns `true` if permissions represent ability to write, `false` if permissions represent
+    /// inability to write, and `None` if no permissions have been set to indicate either status.
+    #[inline]
+    pub fn is_writable(&self) -> Option<bool> {
+        self.owner_write
+            .zip(self.group_write)
+            .zip(self.other_write)
+            .map(|((owner, group), other)| owner || group || other)
     }
 
     /// Applies `other` settings to `self`, overwriting any of the permissions in `self` with `other`.
@@ -359,25 +238,42 @@ impl UnixPermissions {
 }
 
 #[cfg(feature = "schemars")]
-impl UnixPermissions {
+impl Permissions {
     pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(UnixPermissions)
+        schemars::schema_for!(Permissions)
     }
 }
 
 #[cfg(unix)]
-impl From<std::fs::Permissions> for UnixPermissions {
-    /// Converts [`std::fs::Permissions`] into [`UnixPermissions`] using the `mode`.
+impl From<std::fs::Permissions> for Permissions {
+    /// Converts [`std::fs::Permissions`] into [`Permissions`] using
+    /// [`std::os::unix::fs::PermissionsExt::mode`] to supply the bitset.
     fn from(permissions: std::fs::Permissions) -> Self {
         use std::os::unix::prelude::*;
         Self::from_unix_mode(permissions.mode())
     }
 }
 
+#[cfg(not(unix))]
+impl From<std::fs::Permissions> for Permissions {
+    /// Converts [`std::fs::Permissions`] into [`Permissions`] using the `readonly` flag.
+    ///
+    /// This will not set executable flags, but will set all read and write flags with write flags
+    /// being `false` if `readonly`, otherwise set to `true`.
+    fn from(permissions: std::fs::Permissions) -> Self {
+        if permissions.readonly() {
+            Self::readonly()
+        } else {
+            Self::writable()
+        }
+    }
+}
+
 #[cfg(unix)]
-impl From<UnixPermissions> for std::fs::Permissions {
-    /// Converts [`UnixPermissions`] into [`std::fs::Permissions`] using the `mode`.
-    fn from(permissions: UnixPermissions) -> Self {
+impl From<Permissions> for std::fs::Permissions {
+    /// Converts [`Permissions`] into [`std::fs::Permissions`] using
+    /// [`std::os::unix::fs::PermissionsExt::from_mode`].
+    fn from(permissions: Permissions) -> Self {
         use std::os::unix::prelude::*;
         std::fs::Permissions::from_mode(permissions.to_unix_mode())
     }

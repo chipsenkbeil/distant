@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use distant_core::net::server::ConnectionCtx;
 use distant_core::protocol::{
     Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, Permissions,
-    ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata, UnixPermissions,
+    ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata,
 };
 use distant_core::{DistantApi, DistantCtx};
 use log::*;
@@ -701,7 +701,7 @@ impl DistantApi for SshDistantApi {
 
         macro_rules! set_permissions {
             ($path:expr) => {{
-                let filename = if options.resolve_symlink {
+                let filename = if options.follow_symlinks {
                     sftp.read_link($path)
                         .compat()
                         .await
@@ -716,36 +716,17 @@ impl DistantApi for SshDistantApi {
                     .await
                     .map_err(to_other_error)?;
 
-                // As is with Rust using `set_readonly`, this will make world-writable if true!
-                if let Some(readonly) = permissions.readonly {
-                    let mut current = UnixPermissions::from_unix_mode(
-                        metadata
-                            .permissions
-                            .ok_or_else(|| to_other_error("Unable to read file permissions"))?
-                            .to_unix_mode(),
-                    );
+                let mut current = Permissions::from_unix_mode(
+                    metadata
+                        .permissions
+                        .ok_or_else(|| to_other_error("Unable to read file permissions"))?
+                        .to_unix_mode(),
+                );
 
-                    current.owner_write = Some(!readonly);
-                    current.group_write = Some(!readonly);
-                    current.other_write = Some(!readonly);
+                current.apply_from(&permissions);
 
-                    metadata.permissions =
-                        Some(FilePermissions::from_unix_mode(current.to_unix_mode()));
-                }
-
-                if let Some(new_permissions) = permissions.unix.as_ref() {
-                    let mut current = UnixPermissions::from_unix_mode(
-                        metadata
-                            .permissions
-                            .ok_or_else(|| to_other_error("Unable to read file permissions"))?
-                            .to_unix_mode(),
-                    );
-
-                    current.apply_from(new_permissions);
-
-                    metadata.permissions =
-                        Some(FilePermissions::from_unix_mode(current.to_unix_mode()));
-                }
+                metadata.permissions =
+                    Some(FilePermissions::from_unix_mode(current.to_unix_mode()));
 
                 sftp.set_metadata(filename.as_path(), metadata)
                     .compat()

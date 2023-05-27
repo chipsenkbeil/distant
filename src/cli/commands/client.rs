@@ -8,7 +8,6 @@ use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
     self, ChangeKindSet, FileType, Permissions, SearchQuery, SetPermissionsOptions, SystemInfo,
-    UnixPermissions,
 };
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
@@ -1021,35 +1020,24 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
         }) => {
             debug!("Parsing {mode:?} into a proper set of permissions");
             let permissions = {
-                let readonly = if mode.trim().eq_ignore_ascii_case("readonly") {
-                    Some(true)
+                if mode.trim().eq_ignore_ascii_case("readonly") {
+                    Permissions::readonly()
                 } else if mode.trim().eq_ignore_ascii_case("notreadonly") {
-                    Some(false)
+                    Permissions::writable()
                 } else {
-                    None
-                };
-
-                Permissions {
-                    readonly,
-                    unix: {
-                        if readonly.is_none() {
-                            // Attempt to parse an octal number (chmod absolute), falling back to
-                            // parsing the mode string similar to chmod's symbolic mode
-                            let mode = match u32::from_str_radix(&mode, 8) {
-                                Ok(absolute) => file_mode::Mode::from(absolute),
-                                Err(_) => {
-                                    let mut new_mode = file_mode::Mode::empty();
-                                    new_mode
-                                        .set_str(&mode)
-                                        .context("Failed to parse mode string")?;
-                                    new_mode
-                                }
-                            };
-                            Some(UnixPermissions::from_unix_mode(mode.mode()))
-                        } else {
-                            None
+                    // Attempt to parse an octal number (chmod absolute), falling back to
+                    // parsing the mode string similar to chmod's symbolic mode
+                    let mode = match u32::from_str_radix(&mode, 8) {
+                        Ok(absolute) => file_mode::Mode::from(absolute),
+                        Err(_) => {
+                            let mut new_mode = file_mode::Mode::empty();
+                            new_mode
+                                .set_str(&mode)
+                                .context("Failed to parse mode string")?;
+                            new_mode
                         }
-                    },
+                    };
+                    Permissions::from_unix_mode(mode.mode())
                 }
             };
 
@@ -1072,7 +1060,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             let options = SetPermissionsOptions {
                 recursive,
-                resolve_symlink: follow_symlinks,
+                follow_symlinks,
             };
             debug!("Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})");
             channel
