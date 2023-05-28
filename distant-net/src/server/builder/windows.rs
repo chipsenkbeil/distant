@@ -1,10 +1,10 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
 
+use distant_auth::Verifier;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::common::authentication::Verifier;
 use crate::common::WindowsPipeListener;
 use crate::server::{Server, ServerConfig, ServerHandler, WindowsPipeServerRef};
 
@@ -71,11 +71,11 @@ where
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
+    use distant_auth::DummyAuthHandler;
     use test_log::test;
 
     use super::*;
     use crate::client::Client;
-    use crate::common::authentication::DummyAuthHandler;
     use crate::common::Request;
     use crate::server::ServerCtx;
 
