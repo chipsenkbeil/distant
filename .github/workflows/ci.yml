@@ -161,7 +161,7 @@ jobs:
         run: echo "NEXTEST_RETRIES=9" >> $GITHUB_ENV
         shell: bash
       - name: Run auth tests (all features)
-        run: cargo nextest run --profile ci --release --all-features -p distant-net
+        run: cargo nextest run --profile ci --release --all-features -p distant-auth
       - name: Run net tests (default features)
         run: cargo nextest run --profile ci --release -p distant-net
       - name: Build core (default features)
