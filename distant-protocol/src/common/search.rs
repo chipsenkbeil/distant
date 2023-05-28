@@ -5,14 +5,13 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::FileType;
+use crate::common::FileType;
 
 /// Id associated with a search
 pub type SearchId = u32;
 
 /// Represents a query to perform against the filesystem
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SearchQuery {
     /// Kind of data to examine using condition
     pub target: SearchQueryTarget,
@@ -28,25 +27,8 @@ pub struct SearchQuery {
     pub options: SearchQueryOptions,
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQuery {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQuery)
-    }
-}
-
-impl FromStr for SearchQuery {
-    type Err = serde_json::error::Error;
-
-    /// Parses search query from a JSON string
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str(s)
-    }
-}
-
 /// Kind of data to examine using conditions
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SearchQueryTarget {
     /// Checks path of file, directory, or symlink
@@ -56,16 +38,8 @@ pub enum SearchQueryTarget {
     Contents,
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryTarget {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryTarget)
-    }
-}
-
 /// Condition used to find a match in a search query
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum SearchQueryCondition {
     /// Text is found anywhere (all regex patterns are escaped)
@@ -156,13 +130,6 @@ impl SearchQueryCondition {
     }
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryCondition {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryCondition)
-    }
-}
-
 impl FromStr for SearchQueryCondition {
     type Err = std::convert::Infallible;
 
@@ -174,7 +141,6 @@ impl FromStr for SearchQueryCondition {
 
 /// Options associated with a search query
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct SearchQueryOptions {
     /// Restrict search to only these file types (otherwise all are allowed).
@@ -219,16 +185,8 @@ pub struct SearchQueryOptions {
     pub pagination: Option<u64>,
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryOptions {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryOptions)
-    }
-}
-
 /// Represents a match for a search query
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum SearchQueryMatch {
     /// Matches part of a file's path
@@ -254,16 +212,8 @@ impl SearchQueryMatch {
     }
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryMatch {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryMatch)
-    }
-}
-
 /// Represents details for a match on a path
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SearchQueryPathMatch {
     /// Path associated with the match
     pub path: PathBuf,
@@ -273,16 +223,8 @@ pub struct SearchQueryPathMatch {
     pub submatches: Vec<SearchQuerySubmatch>,
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryPathMatch {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryPathMatch)
-    }
-}
-
 /// Represents details for a match on a file's contents
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SearchQueryContentsMatch {
     /// Path to file whose contents match
     pub path: PathBuf,
@@ -301,15 +243,7 @@ pub struct SearchQueryContentsMatch {
     pub submatches: Vec<SearchQuerySubmatch>,
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryContentsMatch {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryContentsMatch)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SearchQuerySubmatch {
     /// Content matched by query
     pub r#match: SearchQueryMatchData,
@@ -321,15 +255,7 @@ pub struct SearchQuerySubmatch {
     pub end: u64,
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQuerySubmatch {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQuerySubmatch)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(
     rename_all = "snake_case",
     deny_unknown_fields,
@@ -373,20 +299,11 @@ impl SearchQueryMatchData {
     }
 }
 
-#[cfg(feature = "schemars")]
-impl SearchQueryMatchData {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SearchQueryMatchData)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     mod search_query_condition {
-        use test_log::test;
-
         use super::*;
 
         #[test]

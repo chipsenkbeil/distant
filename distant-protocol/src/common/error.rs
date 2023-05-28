@@ -1,12 +1,10 @@
 use std::io;
 
 use derive_more::Display;
-use notify::ErrorKind as NotifyErrorKind;
 use serde::{Deserialize, Serialize};
 
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[display(fmt = "{kind}: {description}")]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
@@ -23,13 +21,6 @@ impl Error {
     /// Produces an [`io::Error`] from this error.
     pub fn to_io_error(&self) -> io::Error {
         io::Error::new(self.kind.into(), self.description.to_string())
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl Error {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Error)
     }
 }
 
@@ -63,76 +54,8 @@ impl From<Error> for io::Error {
     }
 }
 
-impl From<notify::Error> for Error {
-    fn from(x: notify::Error) -> Self {
-        let err = match x.kind {
-            NotifyErrorKind::Generic(x) => Self {
-                kind: ErrorKind::Other,
-                description: x,
-            },
-            NotifyErrorKind::Io(x) => Self::from(x),
-            NotifyErrorKind::PathNotFound => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Path not found"),
-            },
-            NotifyErrorKind::WatchNotFound => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Watch not found"),
-            },
-            NotifyErrorKind::InvalidConfig(_) => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Invalid config"),
-            },
-            NotifyErrorKind::MaxFilesWatch => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Max files watched"),
-            },
-        };
-
-        Self {
-            kind: err.kind,
-            description: format!(
-                "{}\n\nPaths: {}",
-                err.description,
-                x.paths
-                    .into_iter()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
-        }
-    }
-}
-
-impl From<walkdir::Error> for Error {
-    fn from(x: walkdir::Error) -> Self {
-        if x.io_error().is_some() {
-            x.into_io_error().map(Self::from).unwrap()
-        } else {
-            Self {
-                kind: ErrorKind::Loop,
-                description: format!("{x}"),
-            }
-        }
-    }
-}
-
-impl From<tokio::task::JoinError> for Error {
-    fn from(x: tokio::task::JoinError) -> Self {
-        Self {
-            kind: if x.is_cancelled() {
-                ErrorKind::TaskCancelled
-            } else {
-                ErrorKind::TaskPanicked
-            },
-            description: format!("{x}"),
-        }
-    }
-}
-
 /// All possible kinds of errors that can be returned
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ErrorKind {
     /// An entity was not found, often a file
@@ -209,13 +132,6 @@ pub enum ErrorKind {
 
     /// Catchall for an error that has no specific type
     Unknown,
-}
-
-#[cfg(feature = "schemars")]
-impl ErrorKind {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(ErrorKind)
-    }
 }
 
 impl From<io::ErrorKind> for ErrorKind {

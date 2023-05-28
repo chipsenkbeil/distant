@@ -1,15 +1,13 @@
-use std::io;
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::path::PathBuf;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use super::{deserialize_u128_option, serialize_u128_option, FileType};
+use crate::common::FileType;
+use crate::utils::{deserialize_u128_option, serialize_u128_option};
 
 /// Represents metadata about some path on a remote machine
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Metadata {
     /// Canonicalized path to the file or directory, resolving symlinks, only included
     /// if flagged during the request
@@ -49,85 +47,8 @@ pub struct Metadata {
     pub windows: Option<WindowsMetadata>,
 }
 
-impl Metadata {
-    pub async fn read(
-        path: impl AsRef<Path>,
-        canonicalize: bool,
-        resolve_file_type: bool,
-    ) -> io::Result<Self> {
-        let metadata = tokio::fs::symlink_metadata(path.as_ref()).await?;
-        let canonicalized_path = if canonicalize {
-            Some(tokio::fs::canonicalize(path.as_ref()).await?)
-        } else {
-            None
-        };
-
-        // If asking for resolved file type and current type is symlink, then we want to refresh
-        // our metadata to get the filetype for the resolved link
-        let file_type = if resolve_file_type && metadata.file_type().is_symlink() {
-            tokio::fs::metadata(path).await?.file_type()
-        } else {
-            metadata.file_type()
-        };
-
-        Ok(Self {
-            canonicalized_path,
-            accessed: metadata
-                .accessed()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
-            created: metadata
-                .created()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
-            modified: metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
-            len: metadata.len(),
-            readonly: metadata.permissions().readonly(),
-            file_type: if file_type.is_dir() {
-                FileType::Dir
-            } else if file_type.is_file() {
-                FileType::File
-            } else {
-                FileType::Symlink
-            },
-
-            #[cfg(unix)]
-            unix: Some({
-                use std::os::unix::prelude::*;
-                let mode = metadata.mode();
-                crate::protocol::UnixMetadata::from(mode)
-            }),
-            #[cfg(not(unix))]
-            unix: None,
-
-            #[cfg(windows)]
-            windows: Some({
-                use std::os::windows::prelude::*;
-                let attributes = metadata.file_attributes();
-                crate::protocol::WindowsMetadata::from(attributes)
-            }),
-            #[cfg(not(windows))]
-            windows: None,
-        })
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl Metadata {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Metadata)
-    }
-}
-
 /// Represents unix-specific metadata about some path on a remote machine
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct UnixMetadata {
     /// Represents whether or not owner can read from the file
     pub owner_read: bool,
@@ -155,13 +76,6 @@ pub struct UnixMetadata {
 
     /// Represents whether or not other can execute the file
     pub other_exec: bool,
-}
-
-#[cfg(feature = "schemars")]
-impl UnixMetadata {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(UnixMetadata)
-    }
 }
 
 impl From<u32> for UnixMetadata {
@@ -243,7 +157,6 @@ bitflags! {
 
 /// Represents windows-specific metadata about some path on a remote machine
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct WindowsMetadata {
     /// Represents whether or not a file or directory is an archive
     pub archive: bool,
@@ -294,13 +207,6 @@ pub struct WindowsMetadata {
 
     /// Represents whether or not a file is being used for temporary storage
     pub temporary: bool,
-}
-
-#[cfg(feature = "schemars")]
-impl WindowsMetadata {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(WindowsMetadata)
-    }
 }
 
 impl From<u32> for WindowsMetadata {

@@ -1,0 +1,29 @@
+[package]
+name = "distant-protocol"
+description = "Protocol library for distant, providing data structures used between the client and server"
+categories = ["data-structures"]
+keywords = ["protocol"]
+version = "0.20.0-alpha.7"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2021"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+tests = []
+
+[dependencies]
+bitflags = "2.0.2"
+derive_more = { version = "0.99.17", default-features = false, features = ["deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant"] }
+regex = "1.7.3"
+serde = { version = "1.0.159", features = ["derive"] }
+serde_bytes = "0.11.9"
+strum = { version = "0.24.1", features = ["derive"] }
+
+[dev-dependencies]
+rmp = "0.8.11"
+rmp-serde = "1.1.1"
+serde_json = "1.0.96"

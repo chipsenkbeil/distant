@@ -2,7 +2,6 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct SetPermissionsOptions {
     /// Whether or not to exclude symlinks from traversal entirely, meaning that permissions will
@@ -20,13 +19,6 @@ pub struct SetPermissionsOptions {
     pub recursive: bool,
 }
 
-#[cfg(feature = "schemars")]
-impl SetPermissionsOptions {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SetPermissionsOptions)
-    }
-}
-
 /// Represents permissions to apply to some path on a remote machine
 ///
 /// When used to set permissions on a file, directory, or symlink,
@@ -36,7 +28,6 @@ impl SetPermissionsOptions {
 /// you would find with `chmod`. On all other platforms, this uses the
 /// write flags to determine whether or not to set the readonly status.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Permissions {
     /// Represents whether or not owner can read from the file
     pub owner_read: Option<bool>,
@@ -70,7 +61,7 @@ impl Permissions {
     /// Creates a set of [`Permissions`] that indicate readonly status.
     ///
     /// ```
-    /// use distant_core::protocol::Permissions;
+    /// use distant_protocol::Permissions;
     ///
     /// let permissions = Permissions::readonly();
     /// assert_eq!(permissions.is_readonly(), Some(true));
@@ -94,7 +85,7 @@ impl Permissions {
     /// Creates a set of [`Permissions`] that indicate globally writable status.
     ///
     /// ```
-    /// use distant_core::protocol::Permissions;
+    /// use distant_protocol::Permissions;
     ///
     /// let permissions = Permissions::writable();
     /// assert_eq!(permissions.is_readonly(), Some(false));
@@ -234,13 +225,6 @@ impl Permissions {
         }
 
         flags.bits()
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl Permissions {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Permissions)
     }
 }
 

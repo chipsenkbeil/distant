@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub(crate) fn deserialize_u128_option<'de, D>(deserializer: D) -> Result<Option<u128>, D::Error>
+pub fn deserialize_u128_option<'de, D>(deserializer: D) -> Result<Option<u128>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -15,7 +15,7 @@ where
     }
 }
 
-pub(crate) fn serialize_u128_option<S: serde::Serializer>(
+pub fn serialize_u128_option<S: serde::Serializer>(
     val: &Option<u128>,
     s: S,
 ) -> Result<S::Ok, S::Error> {

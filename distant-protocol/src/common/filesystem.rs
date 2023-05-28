@@ -7,7 +7,6 @@ use strum::AsRefStr;
 
 /// Represents information about a single entry within a directory
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct DirEntry {
     /// Represents the full path to the entry
@@ -21,16 +20,8 @@ pub struct DirEntry {
     pub depth: usize,
 }
 
-#[cfg(feature = "schemars")]
-impl DirEntry {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(DirEntry)
-    }
-}
-
 /// Represents the type associated with a dir entry
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
 pub enum FileType {
@@ -48,12 +39,5 @@ impl From<StdFileType> for FileType {
         } else {
             Self::File
         }
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl FileType {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(FileType)
     }
 }

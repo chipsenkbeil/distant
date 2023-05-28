@@ -3,12 +3,10 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 
 use derive_more::{Display, Error};
-use portable_pty::PtySize as PortablePtySize;
 use serde::{Deserialize, Serialize};
 
 /// Represents the size associated with a remote PTY
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct PtySize {
     /// Number of lines of text
     pub rows: u16,
@@ -32,35 +30,6 @@ impl PtySize {
             rows,
             cols,
             ..Default::default()
-        }
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl PtySize {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(PtySize)
-    }
-}
-
-impl From<PortablePtySize> for PtySize {
-    fn from(size: PortablePtySize) -> Self {
-        Self {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: size.pixel_width,
-            pixel_height: size.pixel_height,
-        }
-    }
-}
-
-impl From<PtySize> for PortablePtySize {
-    fn from(size: PtySize) -> Self {
-        Self {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: size.pixel_width,
-            pixel_height: size.pixel_height,
         }
     }
 }

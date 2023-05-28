@@ -1,136 +1,24 @@
-use std::io;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use derive_more::{From, IsVariant};
+use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
-mod capabilities;
-pub use capabilities::*;
-
-mod change;
-pub use change::*;
-
-mod cmd;
-pub use cmd::*;
-
-mod error;
-pub use error::*;
-
-mod filesystem;
-pub use filesystem::*;
-
-mod metadata;
-pub use metadata::*;
-
-mod permissions;
-pub use permissions::*;
-
-mod pty;
-pub use pty::*;
-
-mod search;
-pub use search::*;
-
-mod system;
-pub use system::*;
-
-mod utils;
-pub(crate) use utils::*;
-
-/// Id for a remote process
-pub type ProcessId = u32;
+use crate::common::{
+    ChangeKind, Cmd, Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions,
+};
 
 /// Mapping of environment variables
-pub type Environment = distant_net::common::Map;
+pub type Environment = HashMap<String, String>;
 
-/// Represents a wrapper around a distant message, supporting single and batch requests
-#[derive(Clone, Debug, From, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(untagged)]
-pub enum Msg<T> {
-    Single(T),
-    Batch(Vec<T>),
-}
-
-impl<T> Msg<T> {
-    /// Returns true if msg has a single payload
-    pub fn is_single(&self) -> bool {
-        matches!(self, Self::Single(_))
-    }
-
-    /// Returns reference to single value if msg is single variant
-    pub fn as_single(&self) -> Option<&T> {
-        match self {
-            Self::Single(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns mutable reference to single value if msg is single variant
-    pub fn as_mut_single(&mut self) -> Option<&T> {
-        match self {
-            Self::Single(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns the single value if msg is single variant
-    pub fn into_single(self) -> Option<T> {
-        match self {
-            Self::Single(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns true if msg has a batch of payloads
-    pub fn is_batch(&self) -> bool {
-        matches!(self, Self::Batch(_))
-    }
-
-    /// Returns reference to batch value if msg is batch variant
-    pub fn as_batch(&self) -> Option<&[T]> {
-        match self {
-            Self::Batch(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns mutable reference to batch value if msg is batch variant
-    pub fn as_mut_batch(&mut self) -> Option<&mut [T]> {
-        match self {
-            Self::Batch(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns the batch value if msg is batch variant
-    pub fn into_batch(self) -> Option<Vec<T>> {
-        match self {
-            Self::Batch(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Convert into a collection of payload data
-    pub fn into_vec(self) -> Vec<T> {
-        match self {
-            Self::Single(x) => vec![x],
-            Self::Batch(x) => x,
-        }
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl<T: schemars::JsonSchema> Msg<T> {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Msg<T>)
-    }
+/// Used to provide a default serde value of 1
+const fn one() -> usize {
+    1
 }
 
 /// Represents the payload of a request to be performed on the remote machine
 #[derive(Clone, Debug, PartialEq, Eq, EnumDiscriminants, IsVariant, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[strum_discriminants(derive(
     AsRefStr,
     strum::Display,
@@ -144,11 +32,7 @@ impl<T: schemars::JsonSchema> Msg<T> {
     Serialize,
     Deserialize
 ))]
-#[cfg_attr(
-    feature = "schemars",
-    strum_discriminants(derive(schemars::JsonSchema))
-)]
-#[strum_discriminants(name(CapabilityKind))]
+#[strum_discriminants(name(RequestKind))]
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum Request {
@@ -180,7 +64,6 @@ pub enum Request {
 
         /// Data for server-side writing of content
         #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -203,7 +86,6 @@ pub enum Request {
 
         /// Data for server-side writing of content
         #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -413,7 +295,6 @@ pub enum Request {
 
         /// Data to send to a process's stdin pipe
         #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
         data: Vec<u8>,
     },
 
@@ -430,143 +311,4 @@ pub enum Request {
     /// Retrieve information about the server and the system it is on
     #[strum_discriminants(strum(message = "Supports retrieving system information"))]
     SystemInfo {},
-}
-
-#[cfg(feature = "schemars")]
-impl Request {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Request)
-    }
-}
-
-/// Represents the payload of a successful response
-#[derive(Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
-#[strum(serialize_all = "snake_case")]
-pub enum Response {
-    /// General okay with no extra data, returned in cases like
-    /// creating or removing a directory, copying a file, or renaming
-    /// a file
-    Ok,
-
-    /// General-purpose failure that occurred from some request
-    Error(Error),
-
-    /// Response containing some arbitrary, binary data
-    Blob {
-        /// Binary data associated with the response
-        #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
-        data: Vec<u8>,
-    },
-
-    /// Response containing some arbitrary, text data
-    Text {
-        /// Text data associated with the response
-        data: String,
-    },
-
-    /// Response to reading a directory
-    DirEntries {
-        /// Entries contained within the requested directory
-        entries: Vec<DirEntry>,
-
-        /// Errors encountered while scanning for entries
-        errors: Vec<Error>,
-    },
-
-    /// Response to a filesystem change for some watched file, directory, or symlink
-    Changed(Change),
-
-    /// Response to checking if a path exists
-    Exists { value: bool },
-
-    /// Represents metadata about some filesystem object (file, directory, symlink) on remote machine
-    Metadata(Metadata),
-
-    /// Represents a search being started
-    SearchStarted {
-        /// Arbitrary id associated with search
-        id: SearchId,
-    },
-
-    /// Represents some subset of results for a search query (may not be all of them)
-    SearchResults {
-        /// Arbitrary id associated with search
-        id: SearchId,
-
-        /// Collection of matches from performing a query
-        matches: Vec<SearchQueryMatch>,
-    },
-
-    /// Represents a search being completed
-    SearchDone {
-        /// Arbitrary id associated with search
-        id: SearchId,
-    },
-
-    /// Response to starting a new process
-    ProcSpawned {
-        /// Arbitrary id associated with running process
-        id: ProcessId,
-    },
-
-    /// Actively-transmitted stdout as part of running process
-    ProcStdout {
-        /// Arbitrary id associated with running process
-        id: ProcessId,
-
-        /// Data read from a process' stdout pipe
-        #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
-        data: Vec<u8>,
-    },
-
-    /// Actively-transmitted stderr as part of running process
-    ProcStderr {
-        /// Arbitrary id associated with running process
-        id: ProcessId,
-
-        /// Data read from a process' stderr pipe
-        #[serde(with = "serde_bytes")]
-        #[cfg_attr(feature = "schemars", schemars(with = "Vec<u8>"))]
-        data: Vec<u8>,
-    },
-
-    /// Response to a process finishing
-    ProcDone {
-        /// Arbitrary id associated with running process
-        id: ProcessId,
-
-        /// Whether or not termination was successful
-        success: bool,
-
-        /// Exit code associated with termination, will be missing if terminated by signal
-        code: Option<i32>,
-    },
-
-    /// Response to retrieving information about the server and the system it is on
-    SystemInfo(SystemInfo),
-
-    /// Response to retrieving information about the server's capabilities
-    Capabilities { supported: Capabilities },
-}
-
-#[cfg(feature = "schemars")]
-impl Response {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Response)
-    }
-}
-
-impl From<io::Error> for Response {
-    fn from(x: io::Error) -> Self {
-        Self::Error(Error::from(x))
-    }
-}
-
-/// Used to provide a default serde value of 1
-const fn one() -> usize {
-    1
 }

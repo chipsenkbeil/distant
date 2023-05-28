@@ -1,11 +1,9 @@
-use std::env;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 /// Represents information about a system
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct SystemInfo {
     /// Family of the operating system as described in
     /// https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html
@@ -31,29 +29,4 @@ pub struct SystemInfo {
 
     /// Default shell tied to user running the server process
     pub shell: String,
-}
-
-#[cfg(feature = "schemars")]
-impl SystemInfo {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(SystemInfo)
-    }
-}
-
-impl Default for SystemInfo {
-    fn default() -> Self {
-        Self {
-            family: env::consts::FAMILY.to_string(),
-            os: env::consts::OS.to_string(),
-            arch: env::consts::ARCH.to_string(),
-            current_dir: env::current_dir().unwrap_or_default(),
-            main_separator: std::path::MAIN_SEPARATOR,
-            username: whoami::username(),
-            shell: if cfg!(windows) {
-                env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
-            } else {
-                env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
-            },
-        }
-    }
 }
