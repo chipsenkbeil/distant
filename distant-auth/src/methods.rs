@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::io;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use log::*;
 
-use super::super::HeapSecretKey;
-use super::msg::*;
-use super::Authenticator;
+use crate::authenticator::Authenticator;
+use crate::msg::*;
 
 mod none;
 mod static_key;
@@ -48,7 +48,10 @@ impl Verifier {
     }
 
     /// Creates a verifier that uses the [`StaticKeyAuthenticationMethod`] exclusively.
-    pub fn static_key(key: impl Into<HeapSecretKey>) -> Self {
+    pub fn static_key<K>(key: K) -> Self
+    where
+        K: FromStr + PartialEq + Send + Sync + 'static,
+    {
         Self::new(vec![
             Box::new(StaticKeyAuthenticationMethod::new(key)) as Box<dyn AuthenticationMethod>
         ])
@@ -117,10 +120,12 @@ pub trait AuthenticationMethod: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
     use test_log::test;
 
     use super::*;
-    use crate::common::FramedTransport;
+
+    use crate::authenticator::TestAuthenticator;
 
     struct SuccessAuthenticationMethod;
 
@@ -150,147 +155,131 @@ mod tests {
 
     #[test(tokio::test)]
     async fn verifier_should_fail_to_verify_if_initialization_fails() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame(b"invalid initialization response")
-            .await
-            .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| Err(io::Error::from(io::ErrorKind::Other))),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> =
             vec![Box::new(SuccessAuthenticationMethod)];
         let verifier = Verifier::from(methods);
-        verifier.verify(&mut t1).await.unwrap_err();
+        verifier.verify(&mut authenticator).await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn verifier_should_fail_to_verify_if_fails_to_send_finished_indicator_after_success() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![SuccessAuthenticationMethod.id().to_string()]
-                    .into_iter()
-                    .collect(),
-            },
-        ))
-        .await
-        .unwrap();
-
-        // Then drop the transport so it cannot receive anything else
-        drop(t2);
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![SuccessAuthenticationMethod.id().to_string()]
+                        .into_iter()
+                        .collect(),
+                })
+            }),
+            finished: Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "test error"))),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> =
             vec![Box::new(SuccessAuthenticationMethod)];
         let verifier = Verifier::from(methods);
-        assert_eq!(
-            verifier.verify(&mut t1).await.unwrap_err().kind(),
-            io::ErrorKind::WriteZero
-        );
+
+        let err = verifier.verify(&mut authenticator).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "test error");
     }
 
     #[test(tokio::test)]
     async fn verifier_should_fail_to_verify_if_has_no_authentication_methods() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![SuccessAuthenticationMethod.id().to_string()]
-                    .into_iter()
-                    .collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![SuccessAuthenticationMethod.id().to_string()]
+                        .into_iter()
+                        .collect(),
+                })
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> = vec![];
         let verifier = Verifier::from(methods);
-        verifier.verify(&mut t1).await.unwrap_err();
+        verifier.verify(&mut authenticator).await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn verifier_should_fail_to_verify_if_initialization_yields_no_valid_authentication_methods(
     ) {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec!["other".to_string()].into_iter().collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec!["other".to_string()].into_iter().collect(),
+                })
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> =
             vec![Box::new(SuccessAuthenticationMethod)];
         let verifier = Verifier::from(methods);
-        verifier.verify(&mut t1).await.unwrap_err();
+        verifier.verify(&mut authenticator).await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn verifier_should_fail_to_verify_if_no_authentication_method_succeeds() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![FailAuthenticationMethod.id().to_string()]
-                    .into_iter()
-                    .collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![FailAuthenticationMethod.id().to_string()]
+                        .into_iter()
+                        .collect(),
+                })
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> = vec![Box::new(FailAuthenticationMethod)];
         let verifier = Verifier::from(methods);
-        verifier.verify(&mut t1).await.unwrap_err();
+        verifier.verify(&mut authenticator).await.unwrap_err();
     }
 
     #[test(tokio::test)]
     async fn verifier_should_return_id_of_authentication_method_upon_success() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![SuccessAuthenticationMethod.id().to_string()]
-                    .into_iter()
-                    .collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![SuccessAuthenticationMethod.id().to_string()]
+                        .into_iter()
+                        .collect(),
+                })
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> =
             vec![Box::new(SuccessAuthenticationMethod)];
         let verifier = Verifier::from(methods);
         assert_eq!(
-            verifier.verify(&mut t1).await.unwrap(),
+            verifier.verify(&mut authenticator).await.unwrap(),
             SuccessAuthenticationMethod.id()
         );
     }
 
     #[test(tokio::test)]
     async fn verifier_should_try_authentication_methods_in_order_until_one_succeeds() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
-
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![
-                    FailAuthenticationMethod.id().to_string(),
-                    SuccessAuthenticationMethod.id().to_string(),
-                ]
-                .into_iter()
-                .collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![
+                        FailAuthenticationMethod.id().to_string(),
+                        SuccessAuthenticationMethod.id().to_string(),
+                    ]
+                    .into_iter()
+                    .collect(),
+                })
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> = vec![
             Box::new(FailAuthenticationMethod),
@@ -298,84 +287,79 @@ mod tests {
         ];
         let verifier = Verifier::from(methods);
         assert_eq!(
-            verifier.verify(&mut t1).await.unwrap(),
+            verifier.verify(&mut authenticator).await.unwrap(),
             SuccessAuthenticationMethod.id()
         );
     }
 
     #[test(tokio::test)]
     async fn verifier_should_send_start_method_before_attempting_each_method() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, rx) = mpsc::channel();
 
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![
-                    FailAuthenticationMethod.id().to_string(),
-                    SuccessAuthenticationMethod.id().to_string(),
-                ]
-                .into_iter()
-                .collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![
+                        FailAuthenticationMethod.id().to_string(),
+                        SuccessAuthenticationMethod.id().to_string(),
+                    ]
+                    .into_iter()
+                    .collect(),
+                })
+            }),
+            start_method: Box::new(move |method| {
+                tx.send(method.method).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> = vec![
             Box::new(FailAuthenticationMethod),
             Box::new(SuccessAuthenticationMethod),
         ];
-        Verifier::from(methods).verify(&mut t1).await.unwrap();
+        Verifier::from(methods)
+            .verify(&mut authenticator)
+            .await
+            .unwrap();
 
-        // Check that we get a start method for each of the attempted methods
-        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
-            Authentication::Initialization(_) => (),
-            x => panic!("Unexpected response: {x:?}"),
-        }
-        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
-            Authentication::StartMethod(x) => assert_eq!(x.method, FailAuthenticationMethod.id()),
-            x => panic!("Unexpected response: {x:?}"),
-        }
-        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
-            Authentication::StartMethod(x) => {
-                assert_eq!(x.method, SuccessAuthenticationMethod.id())
-            }
-            x => panic!("Unexpected response: {x:?}"),
-        }
+        assert_eq!(rx.try_recv().unwrap(), FailAuthenticationMethod.id());
+        assert_eq!(rx.try_recv().unwrap(), SuccessAuthenticationMethod.id());
+        assert_eq!(rx.try_recv().unwrap_err(), mpsc::TryRecvError::Empty);
     }
 
     #[test(tokio::test)]
     async fn verifier_should_send_finished_when_a_method_succeeds() {
-        let (mut t1, mut t2) = FramedTransport::test_pair(100);
+        let (tx, rx) = mpsc::channel();
 
-        // Queue up a response to the initialization request
-        t2.write_frame_for(&AuthenticationResponse::Initialization(
-            InitializationResponse {
-                methods: vec![
-                    FailAuthenticationMethod.id().to_string(),
-                    SuccessAuthenticationMethod.id().to_string(),
-                ]
-                .into_iter()
-                .collect(),
-            },
-        ))
-        .await
-        .unwrap();
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec![
+                        FailAuthenticationMethod.id().to_string(),
+                        SuccessAuthenticationMethod.id().to_string(),
+                    ]
+                    .into_iter()
+                    .collect(),
+                })
+            }),
+            finished: Box::new(move || {
+                tx.send(()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
 
         let methods: Vec<Box<dyn AuthenticationMethod>> = vec![
             Box::new(FailAuthenticationMethod),
             Box::new(SuccessAuthenticationMethod),
         ];
-        Verifier::from(methods).verify(&mut t1).await.unwrap();
+        Verifier::from(methods)
+            .verify(&mut authenticator)
+            .await
+            .unwrap();
 
-        // Clear out the initialization and start methods
-        t2.read_frame_as::<Authentication>().await.unwrap().unwrap();
-        t2.read_frame_as::<Authentication>().await.unwrap().unwrap();
-        t2.read_frame_as::<Authentication>().await.unwrap().unwrap();
-
-        match t2.read_frame_as::<Authentication>().await.unwrap().unwrap() {
-            Authentication::Finished => (),
-            x => panic!("Unexpected response: {x:?}"),
-        }
+        rx.try_recv().unwrap();
+        assert_eq!(rx.try_recv().unwrap_err(), mpsc::TryRecvError::Empty);
     }
 }

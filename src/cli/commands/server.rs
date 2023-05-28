@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
 
 use anyhow::Context;
-use distant_core::net::common::authentication::Verifier;
+use distant_core::net::auth::Verifier;
 use distant_core::net::common::{Host, SecretKey32};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig, ServerRef};
 use distant_core::{DistantApiServerHandler, DistantSingleKeyCredentials};

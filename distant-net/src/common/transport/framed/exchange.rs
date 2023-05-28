@@ -6,7 +6,7 @@ use p256::PublicKey;
 use rand::rngs::OsRng;
 use sha2::Sha256;
 
-use super::SecretKey32;
+use crate::common::SecretKey32;
 
 mod pkb;
 pub use pkb::PublicKeyBytes;

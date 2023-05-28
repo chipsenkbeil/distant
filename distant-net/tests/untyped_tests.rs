@@ -1,6 +1,6 @@
 use async_trait::async_trait;
+use distant_auth::{DummyAuthHandler, Verifier};
 use distant_net::client::Client;
-use distant_net::common::authentication::{DummyAuthHandler, Verifier};
 use distant_net::common::{InmemoryTransport, OneshotListener, Request};
 use distant_net::server::{Server, ServerCtx, ServerHandler};
 use log::*;

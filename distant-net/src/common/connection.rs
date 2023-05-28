@@ -2,14 +2,16 @@ use std::io;
 use std::ops::{Deref, DerefMut};
 
 use async_trait::async_trait;
+use distant_auth::{AuthHandler, Authenticate, Verifier};
 use log::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-use super::authentication::{AuthHandler, Authenticate, Keychain, KeychainResult, Verifier};
 #[cfg(test)]
-use super::InmemoryTransport;
-use super::{Backup, FramedTransport, HeapSecretKey, Reconnectable, Transport};
+use crate::common::InmemoryTransport;
+use crate::common::{
+    Backup, FramedTransport, HeapSecretKey, Keychain, KeychainResult, Reconnectable, Transport,
+};
 
 /// Id of the connection
 pub type ConnectionId = u32;
@@ -455,11 +457,11 @@ impl<T: Transport> Connection<T> {
 mod tests {
     use std::sync::Arc;
 
+    use distant_auth::msg::Challenge;
+    use distant_auth::{Authenticator, DummyAuthHandler};
     use test_log::test;
 
     use super::*;
-    use crate::common::authentication::msg::Challenge;
-    use crate::common::authentication::{Authenticator, DummyAuthHandler};
     use crate::common::Frame;
 
     #[test(tokio::test)]

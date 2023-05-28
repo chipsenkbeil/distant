@@ -1,11 +1,11 @@
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::io;
 
 use async_trait::async_trait;
 
-use super::msg::*;
-use crate::common::authentication::Authenticator;
-use crate::common::HeapSecretKey;
+use crate::authenticator::Authenticator;
+use crate::msg::*;
 
 mod methods;
 pub use methods::*;
@@ -176,7 +176,10 @@ impl AuthHandlerMap {
 
 impl AuthHandlerMap {
     /// Consumes the map, returning a new map that supports the `static_key` method.
-    pub fn with_static_key(mut self, key: impl Into<HeapSecretKey>) -> Self {
+    pub fn with_static_key<K>(mut self, key: K) -> Self
+    where
+        K: Display + Send + 'static,
+    {
         self.insert_method_handler("static_key", StaticKeyAuthMethodHandler::simple(key));
         self
     }
@@ -341,5 +344,79 @@ impl<'a> AuthMethodHandler for DynAuthHandler<'a> {
 
     async fn on_error(&mut self, error: Error) -> io::Result<()> {
         self.0.on_error(error).await
+    }
+}
+
+/// Represents an implementator of [`AuthHandler`] used purely for testing purposes.
+#[cfg(any(test, feature = "tests"))]
+pub struct TestAuthHandler {
+    pub on_initialization:
+        Box<dyn FnMut(Initialization) -> io::Result<InitializationResponse> + Send>,
+    pub on_challenge: Box<dyn FnMut(Challenge) -> io::Result<ChallengeResponse> + Send>,
+    pub on_verification: Box<dyn FnMut(Verification) -> io::Result<VerificationResponse> + Send>,
+    pub on_info: Box<dyn FnMut(Info) -> io::Result<()> + Send>,
+    pub on_error: Box<dyn FnMut(Error) -> io::Result<()> + Send>,
+    pub on_start_method: Box<dyn FnMut(StartMethod) -> io::Result<()> + Send>,
+    pub on_finished: Box<dyn FnMut() -> io::Result<()> + Send>,
+}
+
+#[cfg(any(test, feature = "tests"))]
+impl Default for TestAuthHandler {
+    fn default() -> Self {
+        Self {
+            on_initialization: Box::new(|x| Ok(InitializationResponse { methods: x.methods })),
+            on_challenge: Box::new(|x| {
+                Ok(ChallengeResponse {
+                    answers: x.questions.into_iter().map(|x| x.text).collect(),
+                })
+            }),
+            on_verification: Box::new(|_| Ok(VerificationResponse { valid: true })),
+            on_info: Box::new(|_| Ok(())),
+            on_error: Box::new(|_| Ok(())),
+            on_start_method: Box::new(|_| Ok(())),
+            on_finished: Box::new(|| Ok(())),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "tests"))]
+#[async_trait]
+impl AuthHandler for TestAuthHandler {
+    async fn on_initialization(
+        &mut self,
+        initialization: Initialization,
+    ) -> io::Result<InitializationResponse> {
+        (self.on_initialization)(initialization)
+    }
+
+    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+        (self.on_start_method)(start_method)
+    }
+
+    async fn on_finished(&mut self) -> io::Result<()> {
+        (self.on_finished)()
+    }
+}
+
+#[cfg(any(test, feature = "tests"))]
+#[async_trait]
+impl AuthMethodHandler for TestAuthHandler {
+    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+        (self.on_challenge)(challenge)
+    }
+
+    async fn on_verification(
+        &mut self,
+        verification: Verification,
+    ) -> io::Result<VerificationResponse> {
+        (self.on_verification)(verification)
+    }
+
+    async fn on_info(&mut self, info: Info) -> io::Result<()> {
+        (self.on_info)(info)
+    }
+
+    async fn on_error(&mut self, error: Error) -> io::Result<()> {
+        (self.on_error)(error)
     }
 }

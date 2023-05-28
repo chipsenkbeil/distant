@@ -3,12 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use distant_auth::Verifier;
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::{broadcast, RwLock};
 
-use crate::common::authentication::Verifier;
 use crate::common::{Listener, Response, Transport};
 
 mod builder;
@@ -246,13 +246,11 @@ mod tests {
     use std::time::Duration;
 
     use async_trait::async_trait;
+    use distant_auth::{AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod};
     use test_log::test;
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::common::authentication::{
-        AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod,
-    };
     use crate::common::{Connection, InmemoryTransport, MpscListener, Request, Response};
 
     pub struct TestServerHandler;

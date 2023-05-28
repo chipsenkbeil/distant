@@ -1,9 +1,9 @@
+use distant_auth::msg::Authentication;
 use serde::{Deserialize, Serialize};
 
 use super::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
 };
-use crate::common::authentication::msg::Authentication;
 use crate::common::{ConnectionId, Destination, UntypedResponse};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

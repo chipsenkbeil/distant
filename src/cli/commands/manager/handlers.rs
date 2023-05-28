@@ -5,12 +5,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
-use distant_core::net::common::authentication::msg::*;
-use distant_core::net::common::authentication::{
+use distant_core::net::auth::msg::*;
+use distant_core::net::auth::{
     AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
     StaticKeyAuthMethodHandler,
 };
+use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::{Destination, Map, SecretKey32};
 use distant_core::net::manager::{ConnectHandler, LaunchHandler};
 use log::*;

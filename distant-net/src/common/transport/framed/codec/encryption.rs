@@ -3,9 +3,7 @@ use std::{fmt, io};
 use derive_more::Display;
 
 use super::{Codec, Frame};
-
-mod key;
-pub use key::*;
+use crate::common::{SecretKey, SecretKey32};
 
 /// Represents the type of encryption for a [`EncryptionCodec`]
 #[derive(

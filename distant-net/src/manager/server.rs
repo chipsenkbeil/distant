@@ -3,10 +3,10 @@ use std::io;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use distant_auth::msg::AuthenticationResponse;
 use log::*;
 use tokio::sync::{oneshot, RwLock};
 
-use crate::common::authentication::msg::AuthenticationResponse;
 use crate::common::{ConnectionId, Destination, Map};
 use crate::manager::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,

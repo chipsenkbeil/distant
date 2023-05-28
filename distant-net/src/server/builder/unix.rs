@@ -1,10 +1,10 @@
 use std::io;
 use std::path::Path;
 
+use distant_auth::Verifier;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::common::authentication::Verifier;
 use crate::common::UnixSocketListener;
 use crate::server::{Server, ServerConfig, ServerHandler, UnixSocketServerRef};
 
@@ -59,12 +59,12 @@ where
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
+    use distant_auth::DummyAuthHandler;
     use tempfile::NamedTempFile;
     use test_log::test;
 
     use super::*;
     use crate::client::Client;
-    use crate::common::authentication::DummyAuthHandler;
     use crate::common::Request;
     use crate::server::ServerCtx;
 

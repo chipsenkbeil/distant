@@ -1,5 +1,5 @@
 use anyhow::Context;
-use distant_core::net::common::authentication::Verifier;
+use distant_core::net::auth::Verifier;
 use distant_core::net::manager::{Config as ManagerConfig, ManagerServer};
 use distant_core::net::server::ServerRef;
 use log::*;

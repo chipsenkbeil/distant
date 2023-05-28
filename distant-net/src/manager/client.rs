@@ -1,10 +1,10 @@
 use std::io;
 
+use distant_auth::msg::{Authentication, AuthenticationResponse};
+use distant_auth::AuthHandler;
 use log::*;
 
 use crate::client::Client;
-use crate::common::authentication::msg::{Authentication, AuthenticationResponse};
-use crate::common::authentication::AuthHandler;
 use crate::common::{ConnectionId, Destination, Map, Request};
 use crate::manager::data::{
     ConnectionInfo, ConnectionList, ManagerCapabilities, ManagerRequest, ManagerResponse,
@@ -298,9 +298,10 @@ impl ManagerClient {
 
 #[cfg(test)]
 mod tests {
+    use distant_auth::DummyAuthHandler;
+
     use super::*;
     use crate::client::UntypedClient;
-    use crate::common::authentication::DummyAuthHandler;
     use crate::common::{Connection, InmemoryTransport, Request, Response};
 
     fn setup() -> (ManagerClient, Connection<InmemoryTransport>) {

@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
 
-use crate::common::authentication::Keychain;
-use crate::common::{Backup, ConnectionId};
+use crate::common::{Backup, ConnectionId, Keychain};
 
 /// Contains all top-level state for the server
 pub struct ServerState<T> {

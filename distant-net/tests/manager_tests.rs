@@ -1,9 +1,9 @@
 use std::io;
 
 use async_trait::async_trait;
+use distant_net::auth::{DummyAuthHandler, Verifier};
 use distant_net::boxed_connect_handler;
 use distant_net::client::Client;
-use distant_net::common::authentication::{DummyAuthHandler, Verifier};
 use distant_net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_net::manager::{Config, ManagerClient, ManagerServer};
 use distant_net::server::{Server, ServerCtx, ServerHandler};

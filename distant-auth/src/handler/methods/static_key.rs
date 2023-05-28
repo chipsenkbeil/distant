@@ -1,28 +1,26 @@
+use std::fmt::Display;
 use std::io;
 
 use async_trait::async_trait;
 use log::*;
 
-use super::{
-    AuthMethodHandler, Challenge, ChallengeResponse, Error, Info, Verification,
-    VerificationResponse,
-};
-use crate::common::HeapSecretKey;
+use crate::handler::AuthMethodHandler;
+use crate::msg::{Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse};
 
 /// Implementation of [`AuthMethodHandler`] that answers challenge requests using a static
 /// [`HeapSecretKey`]. All other portions of method authentication are handled by another
 /// [`AuthMethodHandler`].
-pub struct StaticKeyAuthMethodHandler {
-    key: HeapSecretKey,
+pub struct StaticKeyAuthMethodHandler<K> {
+    key: K,
     handler: Box<dyn AuthMethodHandler>,
 }
 
-impl StaticKeyAuthMethodHandler {
+impl<K> StaticKeyAuthMethodHandler<K> {
     /// Creates a new [`StaticKeyAuthMethodHandler`] that responds to challenges using a static
     /// `key`. All other requests are passed to the `handler`.
-    pub fn new<T: AuthMethodHandler + 'static>(key: impl Into<HeapSecretKey>, handler: T) -> Self {
+    pub fn new<T: AuthMethodHandler + 'static>(key: K, handler: T) -> Self {
         Self {
-            key: key.into(),
+            key,
             handler: Box::new(handler),
         }
     }
@@ -30,7 +28,7 @@ impl StaticKeyAuthMethodHandler {
     /// Creates a new [`StaticKeyAuthMethodHandler`] that responds to challenges using a static
     /// `key`. All other requests are passed automatically, meaning that verification is always
     /// approvide and info/errors are ignored.
-    pub fn simple(key: impl Into<HeapSecretKey>) -> Self {
+    pub fn simple(key: K) -> Self {
         Self::new(key, {
             struct __AuthMethodHandler;
 
@@ -62,7 +60,10 @@ impl StaticKeyAuthMethodHandler {
 }
 
 #[async_trait]
-impl AuthMethodHandler for StaticKeyAuthMethodHandler {
+impl<K> AuthMethodHandler for StaticKeyAuthMethodHandler<K>
+where
+    K: Display + Send,
+{
     async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
         trace!("on_challenge({challenge:?})");
         let mut answers = Vec::new();
@@ -103,11 +104,11 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::common::authentication::msg::{ErrorKind, Question, VerificationKind};
+    use crate::msg::{ErrorKind, Question, VerificationKind};
 
     #[test(tokio::test)]
     async fn on_challenge_should_fail_if_non_key_question_received() {
-        let mut handler = StaticKeyAuthMethodHandler::simple(HeapSecretKey::generate(32).unwrap());
+        let mut handler = StaticKeyAuthMethodHandler::simple(String::from("secret-key"));
 
         handler
             .on_challenge(Challenge {
@@ -120,7 +121,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn on_challenge_should_answer_with_stringified_key_for_key_questions() {
-        let mut handler = StaticKeyAuthMethodHandler::simple(HeapSecretKey::generate(32).unwrap());
+        let mut handler = StaticKeyAuthMethodHandler::simple(String::from("secret-key"));
 
         let response = handler
             .on_challenge(Challenge {
@@ -135,7 +136,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn on_verification_should_leverage_fallback_handler() {
-        let mut handler = StaticKeyAuthMethodHandler::simple(HeapSecretKey::generate(32).unwrap());
+        let mut handler = StaticKeyAuthMethodHandler::simple(String::from("secret-key"));
 
         let response = handler
             .on_verification(Verification {
@@ -149,7 +150,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn on_info_should_leverage_fallback_handler() {
-        let mut handler = StaticKeyAuthMethodHandler::simple(HeapSecretKey::generate(32).unwrap());
+        let mut handler = StaticKeyAuthMethodHandler::simple(String::from("secret-key"));
 
         handler
             .on_info(Info {
@@ -161,7 +162,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn on_error_should_leverage_fallback_handler() {
-        let mut handler = StaticKeyAuthMethodHandler::simple(HeapSecretKey::generate(32).unwrap());
+        let mut handler = StaticKeyAuthMethodHandler::simple(String::from("secret-key"));
 
         handler
             .on_error(Error {

@@ -5,6 +5,7 @@ use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use distant_auth::Verifier;
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -15,8 +16,9 @@ use super::{
     ConnectionCtx, ConnectionState, ServerCtx, ServerHandler, ServerReply, ServerState,
     ShutdownTimer,
 };
-use crate::common::authentication::{Keychain, Verifier};
-use crate::common::{Backup, Connection, Frame, Interest, Response, Transport, UntypedRequest};
+use crate::common::{
+    Backup, Connection, Frame, Interest, Keychain, Response, Transport, UntypedRequest,
+};
 
 pub type ServerKeychain = Keychain<oneshot::Receiver<Backup>>;
 
@@ -591,10 +593,10 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use async_trait::async_trait;
+    use distant_auth::DummyAuthHandler;
     use test_log::test;
 
     use super::*;
-    use crate::common::authentication::DummyAuthHandler;
     use crate::common::{
         HeapSecretKey, InmemoryTransport, Ready, Reconnectable, Request, Response,
     };

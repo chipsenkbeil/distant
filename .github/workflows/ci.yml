@@ -40,6 +40,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check Cargo availability
         run: cargo --version
+      - name: distant-auth (all features)
+        run: cargo clippy -p distant-auth --all-targets --verbose --all-features
       - name: distant-net (all features)
         run: cargo clippy -p distant-net --all-targets --verbose --all-features
       - name: distant-core (all features)
@@ -158,6 +160,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: echo "NEXTEST_RETRIES=9" >> $GITHUB_ENV
         shell: bash
+      - name: Run auth tests (all features)
+        run: cargo nextest run --profile ci --release --all-features -p distant-net
       - name: Run net tests (default features)
         run: cargo nextest run --profile ci --release -p distant-net
       - name: Build core (default features)

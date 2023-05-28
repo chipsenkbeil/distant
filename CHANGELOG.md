@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - CLI `--lsp [<SCHEME>]` scheme now expects just the scheme and not `://`
+- Moved `distant_net::common::authentication` to separate crate `distant-auth`
+- Moved `distant_net::common::authentication::Keychain` to
+  `distant_net::common::Keychain`
+- Moved `distant_net::common::transport::framed::codec::encryption::SecretKey`
+  and similar to `distant_net::common::SecretKey`
 
 ## [0.20.0-alpha.6]
 

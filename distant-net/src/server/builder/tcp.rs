@@ -1,10 +1,10 @@
 use std::io;
 use std::net::IpAddr;
 
+use distant_auth::Verifier;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::common::authentication::Verifier;
 use crate::common::{PortRange, TcpListener};
 use crate::server::{Server, ServerConfig, ServerHandler, TcpServerRef};
 
@@ -60,11 +60,11 @@ mod tests {
     use std::net::{Ipv6Addr, SocketAddr};
 
     use async_trait::async_trait;
+    use distant_auth::DummyAuthHandler;
     use test_log::test;
 
     use super::*;
     use crate::client::Client;
-    use crate::common::authentication::DummyAuthHandler;
     use crate::common::Request;
     use crate::server::ServerCtx;
 

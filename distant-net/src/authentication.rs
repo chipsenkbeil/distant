@@ -1,49 +1,10 @@
-use std::io;
-
+use crate::common::utils;
+use crate::common::{FramedTransport, Transport};
 use async_trait::async_trait;
+use distant_auth::msg::*;
+use distant_auth::{AuthHandler, Authenticate, Authenticator};
 use log::*;
-
-use super::msg::*;
-use super::AuthHandler;
-use crate::common::{utils, FramedTransport, Transport};
-
-/// Represents an interface for authenticating with a server.
-#[async_trait]
-pub trait Authenticate {
-    /// Performs authentication by leveraging the `handler` for any received challenge.
-    async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()>;
-}
-
-/// Represents an interface for submitting challenges for authentication.
-#[async_trait]
-pub trait Authenticator: Send {
-    /// Issues an initialization notice and returns the response indicating which authentication
-    /// methods to pursue
-    async fn initialize(
-        &mut self,
-        initialization: Initialization,
-    ) -> io::Result<InitializationResponse>;
-
-    /// Issues a challenge and returns the answers to the `questions` asked.
-    async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse>;
-
-    /// Requests verification of some `kind` and `text`, returning true if passed verification.
-    async fn verify(&mut self, verification: Verification) -> io::Result<VerificationResponse>;
-
-    /// Reports information with no response expected.
-    async fn info(&mut self, info: Info) -> io::Result<()>;
-
-    /// Reports an error occurred during authentication, consuming the authenticator since no more
-    /// challenges should be issued.
-    async fn error(&mut self, error: Error) -> io::Result<()>;
-
-    /// Reports that the authentication has started for a specific method.
-    async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()>;
-
-    /// Reports that the authentication has finished successfully, consuming the authenticator
-    /// since no more challenges should be issued.
-    async fn finished(&mut self) -> io::Result<()>;
-}
+use std::io;
 
 macro_rules! write_frame {
     ($transport:expr, $data:expr) => {{
@@ -203,161 +164,20 @@ where
 
 #[cfg(test)]
 mod tests {
+    use distant_auth::tests::TestAuthHandler;
     use test_log::test;
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::common::authentication::AuthMethodHandler;
-
-    #[async_trait]
-    trait TestAuthHandler {
-        async fn on_initialization(
-            &mut self,
-            _: Initialization,
-        ) -> io::Result<InitializationResponse> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        async fn on_start_method(&mut self, _: StartMethod) -> io::Result<()> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        async fn on_finished(&mut self) -> io::Result<()> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        async fn on_info(&mut self, _: Info) -> io::Result<()> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        async fn on_error(&mut self, _: Error) -> io::Result<()> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-    }
-
-    #[async_trait]
-    impl<T: TestAuthHandler + Send> AuthHandler for T {
-        async fn on_initialization(
-            &mut self,
-            x: Initialization,
-        ) -> io::Result<InitializationResponse> {
-            TestAuthHandler::on_initialization(self, x).await
-        }
-
-        async fn on_start_method(&mut self, x: StartMethod) -> io::Result<()> {
-            TestAuthHandler::on_start_method(self, x).await
-        }
-
-        async fn on_finished(&mut self) -> io::Result<()> {
-            TestAuthHandler::on_finished(self).await
-        }
-    }
-
-    #[async_trait]
-    impl<T: TestAuthHandler + Send> AuthMethodHandler for T {
-        async fn on_challenge(&mut self, x: Challenge) -> io::Result<ChallengeResponse> {
-            TestAuthHandler::on_challenge(self, x).await
-        }
-
-        async fn on_verification(&mut self, x: Verification) -> io::Result<VerificationResponse> {
-            TestAuthHandler::on_verification(self, x).await
-        }
-
-        async fn on_info(&mut self, x: Info) -> io::Result<()> {
-            TestAuthHandler::on_info(self, x).await
-        }
-
-        async fn on_error(&mut self, x: Error) -> io::Result<()> {
-            TestAuthHandler::on_error(self, x).await
-        }
-    }
-
-    macro_rules! auth_handler {
-        (@no_challenge @no_verification @tx($tx:ident, $ty:ty) $($methods:item)*) => {
-            auth_handler! {
-                @tx($tx, $ty)
-
-                async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-                    Err(io::Error::from(io::ErrorKind::Unsupported))
-                }
-
-                async fn on_verification(
-                    &mut self,
-                    _: Verification,
-                ) -> io::Result<VerificationResponse> {
-                    Err(io::Error::from(io::ErrorKind::Unsupported))
-                }
-
-                $($methods)*
-            }
-        };
-        (@no_challenge @tx($tx:ident, $ty:ty) $($methods:item)*) => {
-            auth_handler! {
-                @tx($tx, $ty)
-
-                async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-                    Err(io::Error::from(io::ErrorKind::Unsupported))
-                }
-
-                $($methods)*
-            }
-        };
-        (@no_verification @tx($tx:ident, $ty:ty) $($methods:item)*) => {
-            auth_handler! {
-                @tx($tx, $ty)
-
-                async fn on_verification(
-                    &mut self,
-                    _: Verification,
-                ) -> io::Result<VerificationResponse> {
-                    Err(io::Error::from(io::ErrorKind::Unsupported))
-                }
-
-                $($methods)*
-            }
-        };
-        (@tx($tx:ident, $ty:ty) $($methods:item)*) => {{
-            #[allow(dead_code)]
-            struct __InlineAuthHandler {
-                tx: mpsc::Sender<$ty>,
-            }
-
-            #[async_trait]
-            impl TestAuthHandler for __InlineAuthHandler {
-                $($methods)*
-            }
-
-            __InlineAuthHandler { tx: $tx }
-        }};
-    }
 
     #[test(tokio::test)]
     async fn authenticator_initialization_should_be_able_to_successfully_complete_round_trip() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
-        let (tx, _) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @no_verification
-                @tx(tx, ())
-
-                async fn on_initialization(
-                    &mut self,
-                    initialization: Initialization,
-                ) -> io::Result<InitializationResponse> {
-                    Ok(InitializationResponse {
-                        methods: initialization.methods,
-                    })
-                }
+            t2.authenticate(TestAuthHandler {
+                on_initialization: Box::new(|x| Ok(InitializationResponse { methods: x.methods })),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -386,29 +206,34 @@ mod tests {
     #[test(tokio::test)]
     async fn authenticator_challenge_should_be_able_to_successfully_complete_round_trip() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
-        let (tx, _) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_verification
-                @tx(tx, ())
-
-                async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-                    assert_eq!(challenge.questions, vec![Question {
-                        label: "label".to_string(),
-                        text: "text".to_string(),
-                        options: vec![("question_key".to_string(), "question_value".to_string())]
+            t2.authenticate(TestAuthHandler {
+                on_challenge: Box::new(|challenge| {
+                    assert_eq!(
+                        challenge.questions,
+                        vec![Question {
+                            label: "label".to_string(),
+                            text: "text".to_string(),
+                            options: vec![(
+                                "question_key".to_string(),
+                                "question_value".to_string()
+                            )]
                             .into_iter()
                             .collect(),
-                    }]);
+                        }]
+                    );
                     assert_eq!(
                         challenge.options,
-                        vec![("key".to_string(), "value".to_string())].into_iter().collect(),
+                        vec![("key".to_string(), "value".to_string())]
+                            .into_iter()
+                            .collect(),
                     );
                     Ok(ChallengeResponse {
                         answers: vec!["some answer".to_string()].into_iter().collect(),
                     })
-                }
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -446,23 +271,15 @@ mod tests {
     #[test(tokio::test)]
     async fn authenticator_verification_should_be_able_to_successfully_complete_round_trip() {
         let (mut t1, mut t2) = FramedTransport::test_pair(100);
-        let (tx, _) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @tx(tx, ())
-
-                async fn on_verification(
-                    &mut self,
-                    verification: Verification,
-                ) -> io::Result<VerificationResponse> {
+            t2.authenticate(TestAuthHandler {
+                on_verification: Box::new(|verification| {
                     assert_eq!(verification.kind, VerificationKind::Host);
                     assert_eq!(verification.text, "some text");
-                    Ok(VerificationResponse {
-                        valid: true,
-                    })
-                }
+                    Ok(VerificationResponse { valid: true })
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -490,18 +307,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @no_verification
-                @tx(tx, Info)
-
-                async fn on_info(
-                    &mut self,
-                    info: Info,
-                ) -> io::Result<()> {
-                    self.tx.send(info).await.unwrap();
+            t2.authenticate(TestAuthHandler {
+                on_info: Box::new(move |info| {
+                    tx.try_send(info).unwrap();
                     Ok(())
-                }
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -532,15 +343,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @no_verification
-                @tx(tx, Error)
-
-                async fn on_error(&mut self, error: Error) -> io::Result<()> {
-                    self.tx.send(error).await.unwrap();
+            t2.authenticate(TestAuthHandler {
+                on_error: Box::new(move |error| {
+                    tx.try_send(error).unwrap();
                     Ok(())
-                }
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -573,15 +381,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @no_verification
-                @tx(tx, Error)
-
-                async fn on_error(&mut self, error: Error) -> io::Result<()> {
-                    self.tx.send(error).await.unwrap();
+            t2.authenticate(TestAuthHandler {
+                on_error: Box::new(move |error| {
+                    tx.try_send(error).unwrap();
                     Ok(())
-                }
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -612,15 +417,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @no_verification
-                @tx(tx, StartMethod)
-
-                async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-                    self.tx.send(start_method).await.unwrap();
+            t2.authenticate(TestAuthHandler {
+                on_start_method: Box::new(move |start_method| {
+                    tx.try_send(start_method).unwrap();
                     Ok(())
-                }
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()
@@ -651,15 +453,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         let task = tokio::spawn(async move {
-            t2.authenticate(auth_handler! {
-                @no_challenge
-                @no_verification
-                @tx(tx, ())
-
-                async fn on_finished(&mut self) -> io::Result<()> {
-                    self.tx.send(()).await.unwrap();
+            t2.authenticate(TestAuthHandler {
+                on_finished: Box::new(move || {
+                    tx.try_send(()).unwrap();
                     Ok(())
-                }
+                }),
+                ..Default::default()
             })
             .await
             .unwrap()

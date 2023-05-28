@@ -2,7 +2,8 @@ use std::io;
 
 use async_trait::async_trait;
 
-use super::{AuthenticationMethod, Authenticator};
+use crate::authenticator::Authenticator;
+use crate::methods::AuthenticationMethod;
 
 /// Authenticaton method for a static secret key
 #[derive(Clone, Debug)]

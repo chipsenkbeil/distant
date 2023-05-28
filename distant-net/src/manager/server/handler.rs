@@ -2,9 +2,9 @@ use std::future::Future;
 use std::io;
 
 use async_trait::async_trait;
+use distant_auth::Authenticator;
 
 use crate::client::UntypedClient;
-use crate::common::authentication::Authenticator;
 use crate::common::{Destination, Map};
 
 pub type BoxedLaunchHandler = Box<dyn LaunchHandler>;
@@ -67,19 +67,15 @@ macro_rules! boxed_launch_handler {
         let x: $crate::manager::BoxedLaunchHandler = Box::new(
             |$destination: &$crate::common::Destination,
              $options: &$crate::common::Map,
-             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async {
-                $body
-            },
+             $authenticator: &mut dyn $crate::auth::Authenticator| async { $body },
         );
         x
     }};
     (move |$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
         let x: $crate::manager::BoxedLaunchHandler = Box::new(
             move |$destination: &$crate::common::Destination,
-             $options: &$crate::common::Map,
-             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async move {
-                $body
-            },
+                  $options: &$crate::common::Map,
+                  $authenticator: &mut dyn $crate::auth::Authenticator| async move { $body },
         );
         x
     }};
@@ -141,19 +137,15 @@ macro_rules! boxed_connect_handler {
         let x: $crate::manager::BoxedConnectHandler = Box::new(
             |$destination: &$crate::common::Destination,
              $options: &$crate::common::Map,
-             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async {
-                $body
-            },
+             $authenticator: &mut dyn $crate::auth::Authenticator| async { $body },
         );
         x
     }};
     (move |$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
         let x: $crate::manager::BoxedConnectHandler = Box::new(
             move |$destination: &$crate::common::Destination,
-             $options: &$crate::common::Map,
-             $authenticator: &mut dyn $crate::common::authentication::Authenticator| async move {
-                $body
-            },
+                  $options: &$crate::common::Map,
+                  $authenticator: &mut dyn $crate::auth::Authenticator| async move { $body },
         );
         x
     }};

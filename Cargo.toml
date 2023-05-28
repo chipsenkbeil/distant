@@ -12,7 +12,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["distant-core", "distant-net", "distant-ssh2"]
+members = ["distant-auth", "distant-core", "distant-net", "distant-ssh2"]
 
 [profile.release]
 opt-level = 'z'

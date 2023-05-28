@@ -1,0 +1,27 @@
+[package]
+name = "distant-auth"
+description = "Authentication library for distant, providing various implementations"
+categories = ["authentication"]
+keywords = ["auth", "authentication", "async"]
+version = "0.20.0-alpha.7"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2021"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+tests = []
+
+[dependencies]
+async-trait = "0.1.68"
+derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error"] }
+log = "0.4.17"
+serde = { version = "1.0.159", features = ["derive"] }
+
+[dev-dependencies]
+env_logger = "0.10.0"
+test-log = "0.2.11"
+tokio = { version = "1.27.0", features = ["full"] }

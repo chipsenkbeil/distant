@@ -3,9 +3,9 @@ use std::io;
 use async_trait::async_trait;
 use log::*;
 
-use super::{
-    AuthMethodHandler, Challenge, ChallengeResponse, Error, Info, Verification, VerificationKind,
-    VerificationResponse,
+use crate::handler::AuthMethodHandler;
+use crate::msg::{
+    Challenge, ChallengeResponse, Error, Info, Verification, VerificationKind, VerificationResponse,
 };
 
 /// Blocking implementation of [`AuthMethodHandler`] that uses prompts to communicate challenge &

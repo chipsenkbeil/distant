@@ -14,12 +14,12 @@ use std::time::Duration;
 use std::{convert, io};
 
 use async_trait::async_trait;
+use distant_auth::AuthHandler;
 #[cfg(windows)]
 pub use windows::*;
 
 use super::ClientConfig;
 use crate::client::{Client, UntypedClient};
-use crate::common::authentication::AuthHandler;
 use crate::common::{Connection, Transport};
 
 /// Interface that performs the connection to produce a [`Transport`] for use by the [`Client`].

@@ -2,11 +2,11 @@ use std::io;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
-use distant_core::net::common::authentication::msg::*;
-use distant_core::net::common::authentication::{
+use distant_core::net::auth::msg::*;
+use distant_core::net::auth::{
     AuthHandler, AuthMethodHandler, PromptAuthMethodHandler, SingleAuthHandler,
 };
+use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
 use distant_core::net::manager::ManagerClient;
 use log::*;
 
