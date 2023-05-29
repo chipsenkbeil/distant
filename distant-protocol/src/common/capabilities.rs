@@ -189,7 +189,6 @@ mod tests {
     use super::*;
 
     mod capabilities {
-
         use super::*;
 
         #[test]
@@ -247,7 +246,7 @@ mod tests {
             // and could change as we change how serialization is done. This is merely to verify
             // that we can serialize since there are times when serde fails to serialize at
             // runtime.
-            let _ = rmp_serde::to_vec(&capabilities).unwrap();
+            let _ = rmp_serde::encode::to_vec_named(&capabilities).unwrap();
         }
 
         #[test]
@@ -256,7 +255,7 @@ mod tests {
             // verify that we are not corrupting or preventing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::to_vec(
+            let buf = rmp_serde::encode::to_vec_named(
                 &[Capability {
                     kind: "some kind".to_string(),
                     description: "some description".to_string(),
@@ -266,7 +265,7 @@ mod tests {
             )
             .unwrap();
 
-            let capabilities: Capabilities = rmp_serde::from_slice(&buf).unwrap();
+            let capabilities: Capabilities = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(
                 capabilities,
                 [Capability {
@@ -327,22 +326,22 @@ mod tests {
             // and could change as we change how serialization is done. This is merely to verify
             // that we can serialize since there are times when serde fails to serialize at
             // runtime.
-            let _ = rmp_serde::to_vec(&capability).unwrap();
+            let _ = rmp_serde::encode::to_vec_named(&capability).unwrap();
         }
 
         #[test]
         fn should_be_able_to_deserialize_from_msgpack() {
             // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
-            // verify that we are not corrupting or preventing issues when serializing on a
+            // verify that we are not corrupting or causing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::to_vec(&Capability {
+            let buf = rmp_serde::encode::to_vec_named(&Capability {
                 kind: "some kind".to_string(),
                 description: "some description".to_string(),
             })
             .unwrap();
 
-            let capability: Capability = rmp_serde::from_slice(&buf).unwrap();
+            let capability: Capability = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(
                 capability,
                 Capability {

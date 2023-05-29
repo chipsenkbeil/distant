@@ -191,3 +191,125 @@ impl From<ErrorKind> for io::ErrorKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod error {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let error = Error {
+                kind: ErrorKind::AddrInUse,
+                description: "some description".to_string(),
+            };
+
+            let value = serde_json::to_value(error).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "kind": "addr_in_use",
+                    "description": "some description",
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "kind": "addr_in_use",
+                "description": "some description",
+            });
+
+            let error: Error = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                error,
+                Error {
+                    kind: ErrorKind::AddrInUse,
+                    description: "some description".to_string(),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let error = Error {
+                kind: ErrorKind::AddrInUse,
+                description: "some description".to_string(),
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&error).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or preventing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Error {
+                kind: ErrorKind::AddrInUse,
+                description: "some description".to_string(),
+            })
+            .unwrap();
+
+            let error: Error = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                error,
+                Error {
+                    kind: ErrorKind::AddrInUse,
+                    description: "some description".to_string(),
+                }
+            );
+        }
+    }
+
+    mod error_kind {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let kind = ErrorKind::AddrInUse;
+
+            let value = serde_json::to_value(kind).unwrap();
+            assert_eq!(value, serde_json::json!("addr_in_use"));
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!("addr_in_use");
+
+            let kind: ErrorKind = serde_json::from_value(value).unwrap();
+            assert_eq!(kind, ErrorKind::AddrInUse);
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let kind = ErrorKind::AddrInUse;
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&kind).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&ErrorKind::AddrInUse).unwrap();
+
+            let kind: ErrorKind = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(kind, ErrorKind::AddrInUse);
+        }
+    }
+}

@@ -27,33 +27,51 @@ pub struct SetPermissionsOptions {
 /// On `Unix` platforms, this translates directly into the mode that
 /// you would find with `chmod`. On all other platforms, this uses the
 /// write flags to determine whether or not to set the readonly status.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permissions {
     /// Represents whether or not owner can read from the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owner_read: Option<bool>,
 
     /// Represents whether or not owner can write to the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owner_write: Option<bool>,
 
     /// Represents whether or not owner can execute the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owner_exec: Option<bool>,
 
     /// Represents whether or not associated group can read from the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub group_read: Option<bool>,
 
     /// Represents whether or not associated group can write to the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub group_write: Option<bool>,
 
     /// Represents whether or not associated group can execute the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub group_exec: Option<bool>,
 
     /// Represents whether or not other can read from the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub other_read: Option<bool>,
 
     /// Represents whether or not other can write to the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub other_write: Option<bool>,
 
     /// Represents whether or not other can execute the file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub other_exec: Option<bool>,
 }
 
@@ -109,6 +127,23 @@ impl Permissions {
 
     /// Returns true if the permission set has a value specified for each permission (no `None`
     /// settings).
+    ///
+    /// ```
+    /// use distant_protocol::Permissions;
+    ///
+    /// let permissions = Permissions {
+    ///     owner_write: Some(true),
+    ///     group_write: Some(false),
+    ///     other_write: Some(true),
+    ///     owner_read: Some(false),
+    ///     group_read: Some(true),
+    ///     other_read: Some(false),
+    ///     owner_exec: Some(true),
+    ///     group_exec: Some(false),
+    ///     other_exec: Some(true),
+    /// };
+    /// assert!(permissions.is_complete());
+    /// ```
     pub fn is_complete(&self) -> bool {
         self.owner_read.is_some()
             && self.owner_write.is_some()
@@ -123,6 +158,25 @@ impl Permissions {
 
     /// Returns `true` if permissions represent readonly, `false` if permissions represent
     /// writable, and `None` if no permissions have been set to indicate either status.
+    ///
+    /// ```
+    /// use distant_protocol::Permissions;
+    ///
+    /// assert_eq!(
+    ///     Permissions { owner_write: Some(true), ..Default::default() }.is_readonly(),
+    ///     Some(false)
+    /// );
+    ///
+    /// assert_eq!(
+    ///     Permissions { owner_write: Some(false), ..Default::default() }.is_readonly(),
+    ///     Some(true)
+    /// );
+    ///
+    /// assert_eq!(
+    ///     Permissions { ..Default::default() }.is_writable(),
+    ///     None
+    /// );
+    /// ```
     #[inline]
     pub fn is_readonly(&self) -> Option<bool> {
         // Negate the writable status to indicate whether or not readonly
@@ -131,15 +185,63 @@ impl Permissions {
 
     /// Returns `true` if permissions represent ability to write, `false` if permissions represent
     /// inability to write, and `None` if no permissions have been set to indicate either status.
+    ///
+    /// ```
+    /// use distant_protocol::Permissions;
+    ///
+    /// assert_eq!(
+    ///     Permissions { owner_write: Some(true), ..Default::default() }.is_writable(),
+    ///     Some(true)
+    /// );
+    ///
+    /// assert_eq!(
+    ///     Permissions { owner_write: Some(false), ..Default::default() }.is_writable(),
+    ///     Some(false)
+    /// );
+    ///
+    /// assert_eq!(
+    ///     Permissions { ..Default::default() }.is_writable(),
+    ///     None
+    /// );
+    /// ```
     #[inline]
     pub fn is_writable(&self) -> Option<bool> {
-        self.owner_write
-            .zip(self.group_write)
-            .zip(self.other_write)
-            .map(|((owner, group), other)| owner || group || other)
+        match (self.owner_write, self.group_write, self.other_write) {
+            (None, None, None) => None,
+            (owner, group, other) => {
+                Some(owner.unwrap_or(false) || group.unwrap_or(false) || other.unwrap_or(false))
+            }
+        }
     }
 
     /// Applies `other` settings to `self`, overwriting any of the permissions in `self` with `other`.
+    ///
+    /// ```
+    /// use distant_protocol::Permissions;
+    ///
+    /// let mut a = Permissions {
+    ///     owner_read: Some(true),
+    ///     owner_write: Some(false),
+    ///     owner_exec: None,
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let b = Permissions {
+    ///     owner_read: Some(false),
+    ///     owner_write: None,
+    ///     owner_exec: Some(true),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// a.apply_from(&b);
+    ///
+    /// assert_eq!(a, Permissions {
+    ///     owner_read: Some(false),
+    ///     owner_write: Some(false),
+    ///     owner_exec: Some(true),
+    ///     ..Default::default()
+    /// });
+    /// ```
     #[inline]
     pub fn apply_from(&mut self, other: &Self) {
         macro_rules! apply {
@@ -163,6 +265,33 @@ impl Permissions {
 
     /// Applies `self` settings to `other`, overwriting any of the permissions in `other` with
     /// `self`.
+    ///
+    /// ```
+    /// use distant_protocol::Permissions;
+    ///
+    /// let a = Permissions {
+    ///     owner_read: Some(true),
+    ///     owner_write: Some(false),
+    ///     owner_exec: None,
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let mut b = Permissions {
+    ///     owner_read: Some(false),
+    ///     owner_write: None,
+    ///     owner_exec: Some(true),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// a.apply_to(&mut b);
+    ///
+    /// assert_eq!(b, Permissions {
+    ///     owner_read: Some(true),
+    ///     owner_write: Some(false),
+    ///     owner_exec: Some(true),
+    ///     ..Default::default()
+    /// });
+    /// ```
     #[inline]
     pub fn apply_to(&self, other: &mut Self) {
         Self::apply_from(other, self)
@@ -185,6 +314,41 @@ impl Permissions {
     }
 
     /// Converts to a Unix `mode` from a permission set. For any missing setting, a 0 bit is used.
+    ///
+    /// ```
+    /// use distant_protocol::Permissions;
+    ///
+    /// assert_eq!(Permissions {
+    ///     owner_read: Some(true),
+    ///     owner_write: Some(true),
+    ///     owner_exec: Some(true),
+    ///     group_read: Some(true),
+    ///     group_write: Some(true),
+    ///     group_exec: Some(true),
+    ///     other_read: Some(true),
+    ///     other_write: Some(true),
+    ///     other_exec: Some(true),
+    /// }.to_unix_mode(), 0o777);
+    ///
+    /// assert_eq!(Permissions {
+    ///     owner_read: Some(true),
+    ///     owner_write: Some(false),
+    ///     owner_exec: Some(false),
+    ///     group_read: Some(true),
+    ///     group_write: Some(false),
+    ///     group_exec: Some(false),
+    ///     other_read: Some(true),
+    ///     other_write: Some(false),
+    ///     other_exec: Some(false),
+    /// }.to_unix_mode(), 0o444);
+    ///
+    /// assert_eq!(Permissions {
+    ///     owner_exec: Some(true),
+    ///     group_exec: Some(true),
+    ///     other_exec: Some(true),
+    ///     ..Default::default()
+    /// }.to_unix_mode(), 0o111);
+    /// ```
     pub fn to_unix_mode(&self) -> u32 {
         let mut flags = UnixFilePermissionFlags::empty();
 
@@ -274,5 +438,225 @@ bitflags! {
         const OTHER_READ = 0o4;
         const OTHER_WRITE = 0o2;
         const OTHER_EXEC = 0o1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_be_able_to_serialize_minimal_permissions_to_json() {
+        let permissions = Permissions {
+            owner_read: None,
+            owner_write: None,
+            owner_exec: None,
+            group_read: None,
+            group_write: None,
+            group_exec: None,
+            other_read: None,
+            other_write: None,
+            other_exec: None,
+        };
+
+        let value = serde_json::to_value(permissions).unwrap();
+        assert_eq!(value, serde_json::json!({}));
+    }
+
+    #[test]
+    fn should_be_able_to_serialize_full_permissions_to_json() {
+        let permissions = Permissions {
+            owner_read: Some(true),
+            owner_write: Some(false),
+            owner_exec: Some(true),
+            group_read: Some(false),
+            group_write: Some(true),
+            group_exec: Some(false),
+            other_read: Some(true),
+            other_write: Some(false),
+            other_exec: Some(true),
+        };
+
+        let value = serde_json::to_value(permissions).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "owner_read": true,
+                "owner_write": false,
+                "owner_exec": true,
+                "group_read": false,
+                "group_write": true,
+                "group_exec": false,
+                "other_read": true,
+                "other_write": false,
+                "other_exec": true,
+            })
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_minimal_permissions_from_json() {
+        let value = serde_json::json!({});
+
+        let permissions: Permissions = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: None,
+                owner_write: None,
+                owner_exec: None,
+                group_read: None,
+                group_write: None,
+                group_exec: None,
+                other_read: None,
+                other_write: None,
+                other_exec: None,
+            }
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_full_permissions_from_json() {
+        let value = serde_json::json!({
+            "owner_read": true,
+            "owner_write": false,
+            "owner_exec": true,
+            "group_read": false,
+            "group_write": true,
+            "group_exec": false,
+            "other_read": true,
+            "other_write": false,
+            "other_exec": true,
+        });
+
+        let permissions: Permissions = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(true),
+                owner_write: Some(false),
+                owner_exec: Some(true),
+                group_read: Some(false),
+                group_write: Some(true),
+                group_exec: Some(false),
+                other_read: Some(true),
+                other_write: Some(false),
+                other_exec: Some(true),
+            }
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_serialize_minimal_permissions_to_msgpack() {
+        let permissions = Permissions {
+            owner_read: None,
+            owner_write: None,
+            owner_exec: None,
+            group_read: None,
+            group_write: None,
+            group_exec: None,
+            other_read: None,
+            other_write: None,
+            other_exec: None,
+        };
+
+        // NOTE: We don't actually check the output here because it's an implementation detail
+        // and could change as we change how serialization is done. This is merely to verify
+        // that we can serialize since there are times when serde fails to serialize at
+        // runtime.
+        let _ = rmp_serde::encode::to_vec_named(&permissions).unwrap();
+    }
+
+    #[test]
+    fn should_be_able_to_serialize_full_permissions_to_msgpack() {
+        let permissions = Permissions {
+            owner_read: Some(true),
+            owner_write: Some(false),
+            owner_exec: Some(true),
+            group_read: Some(true),
+            group_write: Some(false),
+            group_exec: Some(true),
+            other_read: Some(true),
+            other_write: Some(false),
+            other_exec: Some(true),
+        };
+
+        // NOTE: We don't actually check the output here because it's an implementation detail
+        // and could change as we change how serialization is done. This is merely to verify
+        // that we can serialize since there are times when serde fails to serialize at
+        // runtime.
+        let _ = rmp_serde::encode::to_vec_named(&permissions).unwrap();
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_minimal_permissions_from_msgpack() {
+        // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+        // verify that we are not corrupting or preventing issues when serializing on a
+        // client/server and then trying to deserialize on the other side. This has happened
+        // enough times with minor changes that we need tests to verify.
+        let buf = rmp_serde::encode::to_vec_named(&Permissions {
+            owner_read: None,
+            owner_write: None,
+            owner_exec: None,
+            group_read: None,
+            group_write: None,
+            group_exec: None,
+            other_read: None,
+            other_write: None,
+            other_exec: None,
+        })
+        .unwrap();
+
+        let permissions: Permissions = rmp_serde::decode::from_slice(&buf).unwrap();
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: None,
+                owner_write: None,
+                owner_exec: None,
+                group_read: None,
+                group_write: None,
+                group_exec: None,
+                other_read: None,
+                other_write: None,
+                other_exec: None,
+            }
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_full_permissions_from_msgpack() {
+        // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+        // verify that we are not corrupting or preventing issues when serializing on a
+        // client/server and then trying to deserialize on the other side. This has happened
+        // enough times with minor changes that we need tests to verify.
+        let buf = rmp_serde::encode::to_vec_named(&Permissions {
+            owner_read: Some(true),
+            owner_write: Some(false),
+            owner_exec: Some(true),
+            group_read: Some(true),
+            group_write: Some(false),
+            group_exec: Some(true),
+            other_read: Some(true),
+            other_write: Some(false),
+            other_exec: Some(true),
+        })
+        .unwrap();
+
+        let permissions: Permissions = rmp_serde::decode::from_slice(&buf).unwrap();
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(true),
+                owner_write: Some(false),
+                owner_exec: Some(true),
+                group_read: Some(true),
+                group_write: Some(false),
+                group_exec: Some(true),
+                other_read: Some(true),
+                other_write: Some(false),
+                other_exec: Some(true),
+            }
+        );
     }
 }

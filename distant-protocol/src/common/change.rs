@@ -128,6 +128,10 @@ impl BitOr for ChangeKind {
 pub struct ChangeKindSet(HashSet<ChangeKind>);
 
 impl ChangeKindSet {
+    pub fn new(set: impl IntoIterator<Item = ChangeKind>) -> Self {
+        set.into_iter().collect()
+    }
+
     /// Produces an empty set of [`ChangeKind`]
     pub fn empty() -> Self {
         Self(HashSet::new())
@@ -276,5 +280,97 @@ impl From<Vec<ChangeKind>> for ChangeKindSet {
 impl Default for ChangeKindSet {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod change_kind_set {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let set = ChangeKindSet::new([ChangeKind::MoveTo]);
+
+            let value = serde_json::to_value(set).unwrap();
+            assert_eq!(value, serde_json::json!(["move_to"]));
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!(["move_to"]);
+
+            let set: ChangeKindSet = serde_json::from_value(value).unwrap();
+            assert_eq!(set, ChangeKindSet::new([ChangeKind::MoveTo]));
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let set = ChangeKindSet::new([ChangeKind::MoveTo]);
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&set).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf =
+                rmp_serde::encode::to_vec_named(&ChangeKindSet::new([ChangeKind::MoveTo])).unwrap();
+
+            let set: ChangeKindSet = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(set, ChangeKindSet::new([ChangeKind::MoveTo]));
+        }
+    }
+
+    mod change_kind {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let kind = ChangeKind::MoveTo;
+
+            let value = serde_json::to_value(kind).unwrap();
+            assert_eq!(value, serde_json::json!("move_to"));
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!("move_to");
+
+            let kind: ChangeKind = serde_json::from_value(value).unwrap();
+            assert_eq!(kind, ChangeKind::MoveTo);
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let kind = ChangeKind::MoveTo;
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&kind).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&ChangeKind::MoveTo).unwrap();
+
+            let kind: ChangeKind = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(kind, ChangeKind::MoveTo);
+        }
     }
 }

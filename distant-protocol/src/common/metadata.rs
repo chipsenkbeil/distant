@@ -6,75 +6,93 @@ use serde::{Deserialize, Serialize};
 use crate::common::FileType;
 use crate::utils::{deserialize_u128_option, serialize_u128_option};
 
-/// Represents metadata about some path on a remote machine
+/// Represents metadata about some path on a remote machine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Metadata {
-    /// Canonicalized path to the file or directory, resolving symlinks, only included
-    /// if flagged during the request
+    /// Canonicalized path to the file or directory, resolving symlinks, only included if flagged
+    /// during the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub canonicalized_path: Option<PathBuf>,
 
-    /// Represents the type of the entry as a file/dir/symlink
+    /// Represents the type of the entry as a file/dir/symlink.
     pub file_type: FileType,
 
-    /// Size of the file/directory/symlink in bytes
+    /// Size of the file/directory/symlink in bytes.
     pub len: u64,
 
-    /// Whether or not the file/directory/symlink is marked as unwriteable
+    /// Whether or not the file/directory/symlink is marked as unwriteable.
     pub readonly: bool,
 
     /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
-    /// can be optional as certain systems don't support this
+    /// can be optional as certain systems don't support this.
+    ///
+    /// Note that this is represented as a string and not a number when serialized!
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(serialize_with = "serialize_u128_option")]
     #[serde(deserialize_with = "deserialize_u128_option")]
+    #[serde(default)]
     pub accessed: Option<u128>,
 
     /// Represents when (in milliseconds) the file/directory/symlink was created;
-    /// can be optional as certain systems don't support this
+    /// can be optional as certain systems don't support this.
+    ///
+    /// Note that this is represented as a string and not a number when serialized!
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(serialize_with = "serialize_u128_option")]
     #[serde(deserialize_with = "deserialize_u128_option")]
+    #[serde(default)]
     pub created: Option<u128>,
 
     /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
-    /// can be optional as certain systems don't support this
+    /// can be optional as certain systems don't support this.
+    ///
+    /// Note that this is represented as a string and not a number when serialized!
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(serialize_with = "serialize_u128_option")]
     #[serde(deserialize_with = "deserialize_u128_option")]
+    #[serde(default)]
     pub modified: Option<u128>,
 
-    /// Represents metadata that is specific to a unix remote machine
+    /// Represents metadata that is specific to a unix remote machine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unix: Option<UnixMetadata>,
 
-    /// Represents metadata that is specific to a windows remote machine
+    /// Represents metadata that is specific to a windows remote machine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub windows: Option<WindowsMetadata>,
 }
 
-/// Represents unix-specific metadata about some path on a remote machine
+/// Represents unix-specific metadata about some path on a remote machine.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnixMetadata {
-    /// Represents whether or not owner can read from the file
+    /// Represents whether or not owner can read from the file.
     pub owner_read: bool,
 
-    /// Represents whether or not owner can write to the file
+    /// Represents whether or not owner can write to the file.
     pub owner_write: bool,
 
-    /// Represents whether or not owner can execute the file
+    /// Represents whether or not owner can execute the file.
     pub owner_exec: bool,
 
-    /// Represents whether or not associated group can read from the file
+    /// Represents whether or not associated group can read from the file.
     pub group_read: bool,
 
-    /// Represents whether or not associated group can write to the file
+    /// Represents whether or not associated group can write to the file.
     pub group_write: bool,
 
-    /// Represents whether or not associated group can execute the file
+    /// Represents whether or not associated group can execute the file.
     pub group_exec: bool,
 
-    /// Represents whether or not other can read from the file
+    /// Represents whether or not other can read from the file.
     pub other_read: bool,
 
-    /// Represents whether or not other can write to the file
+    /// Represents whether or not other can write to the file.
     pub other_write: bool,
 
-    /// Represents whether or not other can execute the file
+    /// Represents whether or not other can execute the file.
     pub other_exec: bool,
 }
 
@@ -97,7 +115,7 @@ impl From<u32> for UnixMetadata {
 }
 
 impl From<UnixMetadata> for u32 {
-    /// Convert to a unix mode bitset
+    /// Convert to a unix mode bitset.
     fn from(metadata: UnixMetadata) -> Self {
         let mut flags = UnixFilePermissionFlags::empty();
 
@@ -137,7 +155,7 @@ impl From<UnixMetadata> for u32 {
 
 impl UnixMetadata {
     pub fn is_readonly(self) -> bool {
-        !(self.owner_read || self.group_read || self.other_read)
+        !(self.owner_write || self.group_write || self.other_write)
     }
 }
 
@@ -306,5 +324,718 @@ bitflags! {
         const SYSTEM = 0x4;
         const TEMPORARY = 0x100;
         const VIRTUAL = 0x10000;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod metadata {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_metadata_to_json() {
+            let metadata = Metadata {
+                canonicalized_path: None,
+                file_type: FileType::Dir,
+                len: 999,
+                readonly: true,
+                accessed: None,
+                created: None,
+                modified: None,
+                unix: None,
+                windows: None,
+            };
+
+            let value = serde_json::to_value(metadata).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "file_type": "dir",
+                    "len": 999,
+                    "readonly": true,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_full_metadata_to_json() {
+            let metadata = Metadata {
+                canonicalized_path: Some(PathBuf::from("test-dir")),
+                file_type: FileType::Dir,
+                len: 999,
+                readonly: true,
+                accessed: Some(u128::MAX),
+                created: Some(u128::MAX),
+                modified: Some(u128::MAX),
+                unix: Some(UnixMetadata {
+                    owner_read: true,
+                    owner_write: false,
+                    owner_exec: false,
+                    group_read: true,
+                    group_write: false,
+                    group_exec: false,
+                    other_read: true,
+                    other_write: false,
+                    other_exec: false,
+                }),
+                windows: Some(WindowsMetadata {
+                    archive: true,
+                    compressed: false,
+                    encrypted: true,
+                    hidden: false,
+                    integrity_stream: true,
+                    normal: false,
+                    not_content_indexed: true,
+                    no_scrub_data: false,
+                    offline: true,
+                    recall_on_data_access: false,
+                    recall_on_open: true,
+                    reparse_point: false,
+                    sparse_file: true,
+                    system: false,
+                    temporary: true,
+                }),
+            };
+
+            // NOTE: These values are too big to normally serialize, so we have to convert them to
+            // a string type, which is why the value here also needs to be a string.
+            let max_u128_str = u128::MAX.to_string();
+
+            let value = serde_json::to_value(metadata).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "canonicalized_path": "test-dir",
+                    "file_type": "dir",
+                    "len": 999,
+                    "readonly": true,
+                    "accessed": max_u128_str,
+                    "created": max_u128_str,
+                    "modified": max_u128_str,
+                    "unix": {
+                        "owner_read": true,
+                        "owner_write": false,
+                        "owner_exec": false,
+                        "group_read": true,
+                        "group_write": false,
+                        "group_exec": false,
+                        "other_read": true,
+                        "other_write": false,
+                        "other_exec": false,
+                    },
+                    "windows": {
+                        "archive": true,
+                        "compressed": false,
+                        "encrypted": true,
+                        "hidden": false,
+                        "integrity_stream": true,
+                        "normal": false,
+                        "not_content_indexed": true,
+                        "no_scrub_data": false,
+                        "offline": true,
+                        "recall_on_data_access": false,
+                        "recall_on_open": true,
+                        "reparse_point": false,
+                        "sparse_file": true,
+                        "system": false,
+                        "temporary": true,
+                    }
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_metadata_from_json() {
+            let value = serde_json::json!({
+                "file_type": "dir",
+                "len": 999,
+                "readonly": true,
+            });
+
+            let metadata: Metadata = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                metadata,
+                Metadata {
+                    canonicalized_path: None,
+                    file_type: FileType::Dir,
+                    len: 999,
+                    readonly: true,
+                    accessed: None,
+                    created: None,
+                    modified: None,
+                    unix: None,
+                    windows: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_metadata_from_json() {
+            // NOTE: These values are too big to normally serialize, so we have to convert them to
+            // a string type, which is why the value here also needs to be a string.
+            let max_u128_str = u128::MAX.to_string();
+
+            let value = serde_json::json!({
+                "canonicalized_path": "test-dir",
+                "file_type": "dir",
+                "len": 999,
+                "readonly": true,
+                "accessed": max_u128_str,
+                "created": max_u128_str,
+                "modified": max_u128_str,
+                "unix": {
+                    "owner_read": true,
+                    "owner_write": false,
+                    "owner_exec": false,
+                    "group_read": true,
+                    "group_write": false,
+                    "group_exec": false,
+                    "other_read": true,
+                    "other_write": false,
+                    "other_exec": false,
+                },
+                "windows": {
+                    "archive": true,
+                    "compressed": false,
+                    "encrypted": true,
+                    "hidden": false,
+                    "integrity_stream": true,
+                    "normal": false,
+                    "not_content_indexed": true,
+                    "no_scrub_data": false,
+                    "offline": true,
+                    "recall_on_data_access": false,
+                    "recall_on_open": true,
+                    "reparse_point": false,
+                    "sparse_file": true,
+                    "system": false,
+                    "temporary": true,
+                }
+            });
+
+            let metadata: Metadata = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                metadata,
+                Metadata {
+                    canonicalized_path: Some(PathBuf::from("test-dir")),
+                    file_type: FileType::Dir,
+                    len: 999,
+                    readonly: true,
+                    accessed: Some(u128::MAX),
+                    created: Some(u128::MAX),
+                    modified: Some(u128::MAX),
+                    unix: Some(UnixMetadata {
+                        owner_read: true,
+                        owner_write: false,
+                        owner_exec: false,
+                        group_read: true,
+                        group_write: false,
+                        group_exec: false,
+                        other_read: true,
+                        other_write: false,
+                        other_exec: false,
+                    }),
+                    windows: Some(WindowsMetadata {
+                        archive: true,
+                        compressed: false,
+                        encrypted: true,
+                        hidden: false,
+                        integrity_stream: true,
+                        normal: false,
+                        not_content_indexed: true,
+                        no_scrub_data: false,
+                        offline: true,
+                        recall_on_data_access: false,
+                        recall_on_open: true,
+                        reparse_point: false,
+                        sparse_file: true,
+                        system: false,
+                        temporary: true,
+                    }),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_metadata_to_msgpack() {
+            let metadata = Metadata {
+                canonicalized_path: None,
+                file_type: FileType::Dir,
+                len: 999,
+                readonly: true,
+                accessed: None,
+                created: None,
+                modified: None,
+                unix: None,
+                windows: None,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&metadata).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_full_metadata_to_msgpack() {
+            let metadata = Metadata {
+                canonicalized_path: Some(PathBuf::from("test-dir")),
+                file_type: FileType::Dir,
+                len: 999,
+                readonly: true,
+                accessed: Some(u128::MAX),
+                created: Some(u128::MAX),
+                modified: Some(u128::MAX),
+                unix: Some(UnixMetadata {
+                    owner_read: true,
+                    owner_write: false,
+                    owner_exec: false,
+                    group_read: true,
+                    group_write: false,
+                    group_exec: false,
+                    other_read: true,
+                    other_write: false,
+                    other_exec: false,
+                }),
+                windows: Some(WindowsMetadata {
+                    archive: true,
+                    compressed: false,
+                    encrypted: true,
+                    hidden: false,
+                    integrity_stream: true,
+                    normal: false,
+                    not_content_indexed: true,
+                    no_scrub_data: false,
+                    offline: true,
+                    recall_on_data_access: false,
+                    recall_on_open: true,
+                    reparse_point: false,
+                    sparse_file: true,
+                    system: false,
+                    temporary: true,
+                }),
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&metadata).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_metadata_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or preventing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Metadata {
+                canonicalized_path: None,
+                file_type: FileType::Dir,
+                len: 999,
+                readonly: true,
+                accessed: None,
+                created: None,
+                modified: None,
+                unix: None,
+                windows: None,
+            })
+            .unwrap();
+
+            let metadata: Metadata = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                metadata,
+                Metadata {
+                    canonicalized_path: None,
+                    file_type: FileType::Dir,
+                    len: 999,
+                    readonly: true,
+                    accessed: None,
+                    created: None,
+                    modified: None,
+                    unix: None,
+                    windows: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_metadata_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or preventing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Metadata {
+                canonicalized_path: Some(PathBuf::from("test-dir")),
+                file_type: FileType::Dir,
+                len: 999,
+                readonly: true,
+                accessed: Some(u128::MAX),
+                created: Some(u128::MAX),
+                modified: Some(u128::MAX),
+                unix: Some(UnixMetadata {
+                    owner_read: true,
+                    owner_write: false,
+                    owner_exec: false,
+                    group_read: true,
+                    group_write: false,
+                    group_exec: false,
+                    other_read: true,
+                    other_write: false,
+                    other_exec: false,
+                }),
+                windows: Some(WindowsMetadata {
+                    archive: true,
+                    compressed: false,
+                    encrypted: true,
+                    hidden: false,
+                    integrity_stream: true,
+                    normal: false,
+                    not_content_indexed: true,
+                    no_scrub_data: false,
+                    offline: true,
+                    recall_on_data_access: false,
+                    recall_on_open: true,
+                    reparse_point: false,
+                    sparse_file: true,
+                    system: false,
+                    temporary: true,
+                }),
+            })
+            .unwrap();
+
+            let metadata: Metadata = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                metadata,
+                Metadata {
+                    canonicalized_path: Some(PathBuf::from("test-dir")),
+                    file_type: FileType::Dir,
+                    len: 999,
+                    readonly: true,
+                    accessed: Some(u128::MAX),
+                    created: Some(u128::MAX),
+                    modified: Some(u128::MAX),
+                    unix: Some(UnixMetadata {
+                        owner_read: true,
+                        owner_write: false,
+                        owner_exec: false,
+                        group_read: true,
+                        group_write: false,
+                        group_exec: false,
+                        other_read: true,
+                        other_write: false,
+                        other_exec: false,
+                    }),
+                    windows: Some(WindowsMetadata {
+                        archive: true,
+                        compressed: false,
+                        encrypted: true,
+                        hidden: false,
+                        integrity_stream: true,
+                        normal: false,
+                        not_content_indexed: true,
+                        no_scrub_data: false,
+                        offline: true,
+                        recall_on_data_access: false,
+                        recall_on_open: true,
+                        reparse_point: false,
+                        sparse_file: true,
+                        system: false,
+                        temporary: true,
+                    }),
+                }
+            );
+        }
+    }
+
+    mod unix_metadata {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let metadata = UnixMetadata {
+                owner_read: true,
+                owner_write: false,
+                owner_exec: false,
+                group_read: true,
+                group_write: false,
+                group_exec: false,
+                other_read: true,
+                other_write: false,
+                other_exec: false,
+            };
+
+            let value = serde_json::to_value(metadata).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "owner_read": true,
+                    "owner_write": false,
+                    "owner_exec": false,
+                    "group_read": true,
+                    "group_write": false,
+                    "group_exec": false,
+                    "other_read": true,
+                    "other_write": false,
+                    "other_exec": false,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "owner_read": true,
+                "owner_write": false,
+                "owner_exec": false,
+                "group_read": true,
+                "group_write": false,
+                "group_exec": false,
+                "other_read": true,
+                "other_write": false,
+                "other_exec": false,
+            });
+
+            let metadata: UnixMetadata = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                metadata,
+                UnixMetadata {
+                    owner_read: true,
+                    owner_write: false,
+                    owner_exec: false,
+                    group_read: true,
+                    group_write: false,
+                    group_exec: false,
+                    other_read: true,
+                    other_write: false,
+                    other_exec: false,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let metadata = UnixMetadata {
+                owner_read: true,
+                owner_write: false,
+                owner_exec: false,
+                group_read: true,
+                group_write: false,
+                group_exec: false,
+                other_read: true,
+                other_write: false,
+                other_exec: false,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&metadata).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or preventing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&UnixMetadata {
+                owner_read: true,
+                owner_write: false,
+                owner_exec: false,
+                group_read: true,
+                group_write: false,
+                group_exec: false,
+                other_read: true,
+                other_write: false,
+                other_exec: false,
+            })
+            .unwrap();
+
+            let metadata: UnixMetadata = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                metadata,
+                UnixMetadata {
+                    owner_read: true,
+                    owner_write: false,
+                    owner_exec: false,
+                    group_read: true,
+                    group_write: false,
+                    group_exec: false,
+                    other_read: true,
+                    other_write: false,
+                    other_exec: false,
+                }
+            );
+        }
+    }
+
+    mod windows_metadata {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let metadata = WindowsMetadata {
+                archive: true,
+                compressed: false,
+                encrypted: true,
+                hidden: false,
+                integrity_stream: true,
+                normal: false,
+                not_content_indexed: true,
+                no_scrub_data: false,
+                offline: true,
+                recall_on_data_access: false,
+                recall_on_open: true,
+                reparse_point: false,
+                sparse_file: true,
+                system: false,
+                temporary: true,
+            };
+
+            let value = serde_json::to_value(metadata).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "archive": true,
+                    "compressed": false,
+                    "encrypted": true,
+                    "hidden": false,
+                    "integrity_stream": true,
+                    "normal": false,
+                    "not_content_indexed": true,
+                    "no_scrub_data": false,
+                    "offline": true,
+                    "recall_on_data_access": false,
+                    "recall_on_open": true,
+                    "reparse_point": false,
+                    "sparse_file": true,
+                    "system": false,
+                    "temporary": true,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "archive": true,
+                "compressed": false,
+                "encrypted": true,
+                "hidden": false,
+                "integrity_stream": true,
+                "normal": false,
+                "not_content_indexed": true,
+                "no_scrub_data": false,
+                "offline": true,
+                "recall_on_data_access": false,
+                "recall_on_open": true,
+                "reparse_point": false,
+                "sparse_file": true,
+                "system": false,
+                "temporary": true,
+            });
+
+            let metadata: WindowsMetadata = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                metadata,
+                WindowsMetadata {
+                    archive: true,
+                    compressed: false,
+                    encrypted: true,
+                    hidden: false,
+                    integrity_stream: true,
+                    normal: false,
+                    not_content_indexed: true,
+                    no_scrub_data: false,
+                    offline: true,
+                    recall_on_data_access: false,
+                    recall_on_open: true,
+                    reparse_point: false,
+                    sparse_file: true,
+                    system: false,
+                    temporary: true,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let metadata = WindowsMetadata {
+                archive: true,
+                compressed: false,
+                encrypted: true,
+                hidden: false,
+                integrity_stream: true,
+                normal: false,
+                not_content_indexed: true,
+                no_scrub_data: false,
+                offline: true,
+                recall_on_data_access: false,
+                recall_on_open: true,
+                reparse_point: false,
+                sparse_file: true,
+                system: false,
+                temporary: true,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&metadata).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or preventing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&WindowsMetadata {
+                archive: true,
+                compressed: false,
+                encrypted: true,
+                hidden: false,
+                integrity_stream: true,
+                normal: false,
+                not_content_indexed: true,
+                no_scrub_data: false,
+                offline: true,
+                recall_on_data_access: false,
+                recall_on_open: true,
+                reparse_point: false,
+                sparse_file: true,
+                system: false,
+                temporary: true,
+            })
+            .unwrap();
+
+            let metadata: WindowsMetadata = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                metadata,
+                WindowsMetadata {
+                    archive: true,
+                    compressed: false,
+                    encrypted: true,
+                    hidden: false,
+                    integrity_stream: true,
+                    normal: false,
+                    not_content_indexed: true,
+                    no_scrub_data: false,
+                    offline: true,
+                    recall_on_data_access: false,
+                    recall_on_open: true,
+                    reparse_point: false,
+                    sparse_file: true,
+                    system: false,
+                    temporary: true,
+                }
+            );
+        }
     }
 }
