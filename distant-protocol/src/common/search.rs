@@ -302,6 +302,17 @@ pub struct SearchQuerySubmatch {
     pub end: u64,
 }
 
+impl SearchQuerySubmatch {
+    /// Creates a new submatch using the given `match` data, `start`, and `end`.
+    pub fn new(r#match: impl Into<SearchQueryMatchData>, start: u64, end: u64) -> Self {
+        Self {
+            r#match: r#match.into(),
+            start,
+            end,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SearchQueryMatchData {
@@ -338,6 +349,30 @@ impl SearchQueryMatchData {
             Self::Text(x) => Cow::Borrowed(x),
             Self::Bytes(x) => String::from_utf8_lossy(x),
         }
+    }
+}
+
+impl From<Vec<u8>> for SearchQueryMatchData {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Bytes(bytes)
+    }
+}
+
+impl<'a> From<&'a [u8]> for SearchQueryMatchData {
+    fn from(bytes: &'a [u8]) -> Self {
+        Self::Bytes(bytes.to_vec())
+    }
+}
+
+impl From<String> for SearchQueryMatchData {
+    fn from(text: String) -> Self {
+        Self::Text(text)
+    }
+}
+
+impl<'a> From<&'a str> for SearchQueryMatchData {
+    fn from(text: &'a str) -> Self {
+        Self::Text(text.to_string())
     }
 }
 
