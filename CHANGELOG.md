@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `distant_net::common::Keychain`
 - Moved `distant_net::common::transport::framed::codec::encryption::SecretKey`
   and similar to `distant_net::common::SecretKey`
+- Search matches reported with `match` key are now inlined as either a byte
+  array or a string and no longer an object with a `type` and `value` field
+- Unset options and values are not now returned in `JSON` serialization versus
+  the explicit `null` value provided
 
 ## [0.20.0-alpha.6]
 
