@@ -1,21 +1,26 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use crate::utils;
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct SetPermissionsOptions {
     /// Whether or not to exclude symlinks from traversal entirely, meaning that permissions will
     /// not be set on symlinks (usually resolving the symlink and setting the permission of the
     /// referenced file or directory) that are explicitly provided or show up during recursion.
+    #[serde(skip_serializing_if = "utils::is_false")]
     pub exclude_symlinks: bool,
 
     /// Whether or not to traverse symlinks when recursively setting permissions. Note that this
     /// does NOT influence setting permissions when encountering a symlink as most platforms will
     /// resolve the symlink before setting permissions.
+    #[serde(skip_serializing_if = "utils::is_false")]
     pub follow_symlinks: bool,
 
     /// Whether or not to set the permissions of the file hierarchies rooted in the paths, instead
     /// of just the paths themselves.
+    #[serde(skip_serializing_if = "utils::is_false")]
     pub recursive: bool,
 }
 

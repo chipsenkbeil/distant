@@ -6,6 +6,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::common::FileType;
+use crate::utils;
 
 /// Id associated with a search
 pub type SearchId = u32;
@@ -25,6 +26,44 @@ pub struct SearchQuery {
     /// Options to apply to the query
     #[serde(default)]
     pub options: SearchQueryOptions,
+}
+
+impl SearchQuery {
+    /// Creates a search query targeting the contents of files.
+    pub fn contents<I, T>(
+        condition: SearchQueryCondition,
+        paths: I,
+        options: SearchQueryOptions,
+    ) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<PathBuf>,
+    {
+        Self {
+            target: SearchQueryTarget::Contents,
+            condition,
+            paths: paths.into_iter().map(Into::into).collect(),
+            options,
+        }
+    }
+
+    /// Creates a search query targeting the paths of files, directories, and symlinks.
+    pub fn path<I, T>(
+        condition: SearchQueryCondition,
+        paths: I,
+        options: SearchQueryOptions,
+    ) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<PathBuf>,
+    {
+        Self {
+            target: SearchQueryTarget::Path,
+            condition,
+            paths: paths.into_iter().map(Into::into).collect(),
+            options,
+        }
+    }
 }
 
 /// Kind of data to examine using conditions
@@ -144,6 +183,7 @@ impl FromStr for SearchQueryCondition {
 #[serde(default)]
 pub struct SearchQueryOptions {
     /// Restrict search to only these file types (otherwise all are allowed).
+    #[serde(skip_serializing_if = "HashSet::is_empty")]
     pub allowed_file_types: HashSet<FileType>,
 
     /// Regex to use to filter paths being searched to only those that match the include condition.
@@ -164,9 +204,11 @@ pub struct SearchQueryOptions {
     ///
     /// An upward search will ALWAYS search the contents of a directory, so this means providing a
     /// path to a directory will search its entries EVEN if the max_depth is 0.
+    #[serde(skip_serializing_if = "utils::is_false")]
     pub upward: bool,
 
     /// Search should follow symbolic links.
+    #[serde(skip_serializing_if = "utils::is_false")]
     pub follow_symbolic_links: bool,
 
     /// Maximum results to return before stopping the query.
@@ -325,11 +367,7 @@ mod tests {
                         "value": "hello world",
                     },
                     "paths": ["path1", "path2"],
-                    "options": {
-                        "allowed_file_types": [],
-                        "upward": false,
-                        "follow_symbolic_links": false,
-                    },
+                    "options": {},
                 })
             );
         }
@@ -343,11 +381,6 @@ mod tests {
                     "value": "hello world",
                 },
                 "paths": ["path1", "path2"],
-                "options": {
-                    "allowed_file_types": [],
-                    "upward": false,
-                    "follow_symbolic_links": false,
-                },
             });
 
             let query: SearchQuery = serde_json::from_value(value).unwrap();
@@ -864,14 +897,7 @@ mod tests {
             };
 
             let value = serde_json::to_value(options).unwrap();
-            assert_eq!(
-                value,
-                serde_json::json!({
-                    "allowed_file_types": [],
-                    "upward": false,
-                    "follow_symbolic_links": false,
-                })
-            );
+            assert_eq!(value, serde_json::json!({}));
         }
 
         #[test]
@@ -915,11 +941,7 @@ mod tests {
 
         #[test]
         fn should_be_able_to_deserialize_minimal_options_from_json() {
-            let value = serde_json::json!({
-                "allowed_file_types": [],
-                "upward": false,
-                "follow_symbolic_links": false,
-            });
+            let value = serde_json::json!({});
 
             let options: SearchQueryOptions = serde_json::from_value(value).unwrap();
             assert_eq!(
