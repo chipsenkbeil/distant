@@ -30,48 +30,39 @@ pub struct SetPermissionsOptions {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permissions {
     /// Represents whether or not owner can read from the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_read: Option<bool>,
 
     /// Represents whether or not owner can write to the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_write: Option<bool>,
 
     /// Represents whether or not owner can execute the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_exec: Option<bool>,
 
     /// Represents whether or not associated group can read from the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_read: Option<bool>,
 
     /// Represents whether or not associated group can write to the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_write: Option<bool>,
 
     /// Represents whether or not associated group can execute the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_exec: Option<bool>,
 
     /// Represents whether or not other can read from the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub other_read: Option<bool>,
 
     /// Represents whether or not other can write to the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub other_write: Option<bool>,
 
     /// Represents whether or not other can execute the file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub other_exec: Option<bool>,
 }
 

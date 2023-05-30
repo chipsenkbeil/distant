@@ -11,8 +11,7 @@ use crate::utils::{deserialize_u128_option, serialize_u128_option};
 pub struct Metadata {
     /// Canonicalized path to the file or directory, resolving symlinks, only included if flagged
     /// during the request.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonicalized_path: Option<PathBuf>,
 
     /// Represents the type of the entry as a file/dir/symlink.
@@ -28,40 +27,44 @@ pub struct Metadata {
     /// can be optional as certain systems don't support this.
     ///
     /// Note that this is represented as a string and not a number when serialized!
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(serialize_with = "serialize_u128_option")]
-    #[serde(deserialize_with = "deserialize_u128_option")]
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_u128_option",
+        deserialize_with = "deserialize_u128_option"
+    )]
     pub accessed: Option<u128>,
 
     /// Represents when (in milliseconds) the file/directory/symlink was created;
     /// can be optional as certain systems don't support this.
     ///
     /// Note that this is represented as a string and not a number when serialized!
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(serialize_with = "serialize_u128_option")]
-    #[serde(deserialize_with = "deserialize_u128_option")]
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_u128_option",
+        deserialize_with = "deserialize_u128_option"
+    )]
     pub created: Option<u128>,
 
     /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
     /// can be optional as certain systems don't support this.
     ///
     /// Note that this is represented as a string and not a number when serialized!
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(serialize_with = "serialize_u128_option")]
-    #[serde(deserialize_with = "deserialize_u128_option")]
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_u128_option",
+        deserialize_with = "deserialize_u128_option"
+    )]
     pub modified: Option<u128>,
 
     /// Represents metadata that is specific to a unix remote machine.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unix: Option<UnixMetadata>,
 
     /// Represents metadata that is specific to a windows remote machine.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<WindowsMetadata>,
 }
 

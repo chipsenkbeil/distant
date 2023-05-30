@@ -147,10 +147,12 @@ pub struct SearchQueryOptions {
     pub allowed_file_types: HashSet<FileType>,
 
     /// Regex to use to filter paths being searched to only those that match the include condition.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<SearchQueryCondition>,
 
     /// Regex to use to filter paths being searched to only those that do not match the exclude.
     /// condition
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude: Option<SearchQueryCondition>,
 
     /// If true, will search upward through parent directories rather than the traditional downward
@@ -168,6 +170,7 @@ pub struct SearchQueryOptions {
     pub follow_symbolic_links: bool,
 
     /// Maximum results to return before stopping the query.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
 
     /// Maximum depth (directories) to search
@@ -178,10 +181,12 @@ pub struct SearchQueryOptions {
     ///
     /// Note that this will not simply filter the entries of the iterator, but it will actually
     /// avoid descending into directories when the depth is exceeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_depth: Option<u64>,
 
     /// Amount of results to batch before sending back excluding final submission that will always
     /// include the remaining results even if less than pagination request.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<u64>,
 }
 
@@ -256,18 +261,13 @@ pub struct SearchQuerySubmatch {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    rename_all = "snake_case",
-    deny_unknown_fields,
-    tag = "type",
-    content = "value"
-)]
+#[serde(untagged)]
 pub enum SearchQueryMatchData {
-    /// Match represented as UTF-8 text
-    Text(String),
-
     /// Match represented as bytes
     Bytes(Vec<u8>),
+
+    /// Match represented as UTF-8 text
+    Text(String),
 }
 
 impl SearchQueryMatchData {
@@ -303,6 +303,162 @@ impl SearchQueryMatchData {
 mod tests {
     use super::*;
 
+    mod search_query {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let query = SearchQuery {
+                target: SearchQueryTarget::Contents,
+                condition: SearchQueryCondition::equals("hello world"),
+                paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                options: SearchQueryOptions::default(),
+            };
+
+            let value = serde_json::to_value(query).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "target": "contents",
+                    "condition": {
+                        "type": "equals",
+                        "value": "hello world",
+                    },
+                    "paths": ["path1", "path2"],
+                    "options": {
+                        "allowed_file_types": [],
+                        "upward": false,
+                        "follow_symbolic_links": false,
+                    },
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "target": "contents",
+                "condition": {
+                    "type": "equals",
+                    "value": "hello world",
+                },
+                "paths": ["path1", "path2"],
+                "options": {
+                    "allowed_file_types": [],
+                    "upward": false,
+                    "follow_symbolic_links": false,
+                },
+            });
+
+            let query: SearchQuery = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                query,
+                SearchQuery {
+                    target: SearchQueryTarget::Contents,
+                    condition: SearchQueryCondition::equals("hello world"),
+                    paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                    options: SearchQueryOptions::default(),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let query = SearchQuery {
+                target: SearchQueryTarget::Contents,
+                condition: SearchQueryCondition::equals("hello world"),
+                paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                options: SearchQueryOptions::default(),
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&query).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQuery {
+                target: SearchQueryTarget::Contents,
+                condition: SearchQueryCondition::equals("hello world"),
+                paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                options: SearchQueryOptions::default(),
+            })
+            .unwrap();
+
+            let query: SearchQuery = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                query,
+                SearchQuery {
+                    target: SearchQueryTarget::Contents,
+                    condition: SearchQueryCondition::equals("hello world"),
+                    paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                    options: SearchQueryOptions::default(),
+                }
+            );
+        }
+    }
+
+    mod search_query_target {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let target = SearchQueryTarget::Contents;
+            let value = serde_json::to_value(target).unwrap();
+            assert_eq!(value, serde_json::json!("contents"));
+
+            let target = SearchQueryTarget::Path;
+            let value = serde_json::to_value(target).unwrap();
+            assert_eq!(value, serde_json::json!("path"));
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!("contents");
+            let target: SearchQueryTarget = serde_json::from_value(value).unwrap();
+            assert_eq!(target, SearchQueryTarget::Contents);
+
+            let value = serde_json::json!("path");
+            let target: SearchQueryTarget = serde_json::from_value(value).unwrap();
+            assert_eq!(target, SearchQueryTarget::Path);
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let target = SearchQueryTarget::Contents;
+            let _ = rmp_serde::encode::to_vec_named(&target).unwrap();
+
+            let target = SearchQueryTarget::Path;
+            let _ = rmp_serde::encode::to_vec_named(&target).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryTarget::Contents).unwrap();
+            let target: SearchQueryTarget = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(target, SearchQueryTarget::Contents);
+
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryTarget::Path).unwrap();
+            let target: SearchQueryTarget = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(target, SearchQueryTarget::Path);
+        }
+    }
+
     mod search_query_condition {
         use super::*;
 
@@ -337,6 +493,1280 @@ mod tests {
                 SearchQueryCondition::starts_with("t^es$t").to_regex_string(),
                 r"^t\^es\$t"
             );
+        }
+
+        mod contains {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let condition = SearchQueryCondition::contains("some text");
+
+                let value = serde_json::to_value(condition).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "contains",
+                        "value": "some text",
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "contains",
+                    "value": "some text",
+                });
+
+                let condition: SearchQueryCondition = serde_json::from_value(value).unwrap();
+                assert_eq!(condition, SearchQueryCondition::contains("some text"));
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let condition = SearchQueryCondition::contains("some text");
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&condition).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf =
+                    rmp_serde::encode::to_vec_named(&SearchQueryCondition::contains("some text"))
+                        .unwrap();
+
+                let condition: SearchQueryCondition = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(condition, SearchQueryCondition::contains("some text"));
+            }
+        }
+
+        mod ends_with {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let condition = SearchQueryCondition::ends_with("some text");
+
+                let value = serde_json::to_value(condition).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "ends_with",
+                        "value": "some text",
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "ends_with",
+                    "value": "some text",
+                });
+
+                let condition: SearchQueryCondition = serde_json::from_value(value).unwrap();
+                assert_eq!(condition, SearchQueryCondition::ends_with("some text"));
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let condition = SearchQueryCondition::ends_with("some text");
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&condition).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf =
+                    rmp_serde::encode::to_vec_named(&SearchQueryCondition::ends_with("some text"))
+                        .unwrap();
+
+                let condition: SearchQueryCondition = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(condition, SearchQueryCondition::ends_with("some text"));
+            }
+        }
+
+        mod equals {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let condition = SearchQueryCondition::equals("some text");
+
+                let value = serde_json::to_value(condition).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "equals",
+                        "value": "some text",
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "equals",
+                    "value": "some text",
+                });
+
+                let condition: SearchQueryCondition = serde_json::from_value(value).unwrap();
+                assert_eq!(condition, SearchQueryCondition::equals("some text"));
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let condition = SearchQueryCondition::equals("some text");
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&condition).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf =
+                    rmp_serde::encode::to_vec_named(&SearchQueryCondition::equals("some text"))
+                        .unwrap();
+
+                let condition: SearchQueryCondition = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(condition, SearchQueryCondition::equals("some text"));
+            }
+        }
+
+        mod or {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let condition = SearchQueryCondition::or([
+                    SearchQueryCondition::starts_with("start text"),
+                    SearchQueryCondition::ends_with("end text"),
+                ]);
+
+                let value = serde_json::to_value(condition).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "or",
+                        "value": [
+                            { "type": "starts_with", "value": "start text" },
+                            { "type": "ends_with", "value": "end text" },
+                        ],
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "or",
+                    "value": [
+                        { "type": "starts_with", "value": "start text" },
+                        { "type": "ends_with", "value": "end text" },
+                    ],
+                });
+
+                let condition: SearchQueryCondition = serde_json::from_value(value).unwrap();
+                assert_eq!(
+                    condition,
+                    SearchQueryCondition::or([
+                        SearchQueryCondition::starts_with("start text"),
+                        SearchQueryCondition::ends_with("end text"),
+                    ])
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let condition = SearchQueryCondition::or([
+                    SearchQueryCondition::starts_with("start text"),
+                    SearchQueryCondition::ends_with("end text"),
+                ]);
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&condition).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf = rmp_serde::encode::to_vec_named(&SearchQueryCondition::or([
+                    SearchQueryCondition::starts_with("start text"),
+                    SearchQueryCondition::ends_with("end text"),
+                ]))
+                .unwrap();
+
+                let condition: SearchQueryCondition = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(
+                    condition,
+                    SearchQueryCondition::or([
+                        SearchQueryCondition::starts_with("start text"),
+                        SearchQueryCondition::ends_with("end text"),
+                    ])
+                );
+            }
+        }
+
+        mod regex {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let condition = SearchQueryCondition::regex("some text");
+
+                let value = serde_json::to_value(condition).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "regex",
+                        "value": "some text",
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "regex",
+                    "value": "some text",
+                });
+
+                let condition: SearchQueryCondition = serde_json::from_value(value).unwrap();
+                assert_eq!(condition, SearchQueryCondition::regex("some text"));
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let condition = SearchQueryCondition::regex("some text");
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&condition).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf =
+                    rmp_serde::encode::to_vec_named(&SearchQueryCondition::regex("some text"))
+                        .unwrap();
+
+                let condition: SearchQueryCondition = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(condition, SearchQueryCondition::regex("some text"));
+            }
+        }
+
+        mod starts_with {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let condition = SearchQueryCondition::starts_with("some text");
+
+                let value = serde_json::to_value(condition).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "starts_with",
+                        "value": "some text",
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "starts_with",
+                    "value": "some text",
+                });
+
+                let condition: SearchQueryCondition = serde_json::from_value(value).unwrap();
+                assert_eq!(condition, SearchQueryCondition::starts_with("some text"));
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let condition = SearchQueryCondition::starts_with("some text");
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&condition).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf = rmp_serde::encode::to_vec_named(&SearchQueryCondition::starts_with(
+                    "some text",
+                ))
+                .unwrap();
+
+                let condition: SearchQueryCondition = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(condition, SearchQueryCondition::starts_with("some text"));
+            }
+        }
+    }
+
+    mod search_query_options {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_options_to_json() {
+            let options = SearchQueryOptions {
+                allowed_file_types: [].into_iter().collect(),
+                include: None,
+                exclude: None,
+                upward: false,
+                follow_symbolic_links: false,
+                limit: None,
+                max_depth: None,
+                pagination: None,
+            };
+
+            let value = serde_json::to_value(options).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "allowed_file_types": [],
+                    "upward": false,
+                    "follow_symbolic_links": false,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_full_options_to_json() {
+            let options = SearchQueryOptions {
+                allowed_file_types: [FileType::File].into_iter().collect(),
+                include: Some(SearchQueryCondition::Equals {
+                    value: String::from("hello"),
+                }),
+                exclude: Some(SearchQueryCondition::Contains {
+                    value: String::from("world"),
+                }),
+                upward: true,
+                follow_symbolic_links: true,
+                limit: Some(u64::MAX),
+                max_depth: Some(u64::MAX),
+                pagination: Some(u64::MAX),
+            };
+
+            let value = serde_json::to_value(options).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "allowed_file_types": ["file"],
+                    "include": {
+                        "type": "equals",
+                        "value": "hello",
+                    },
+                    "exclude": {
+                        "type": "contains",
+                        "value": "world",
+                    },
+                    "upward": true,
+                    "follow_symbolic_links": true,
+                    "limit": u64::MAX,
+                    "max_depth": u64::MAX,
+                    "pagination": u64::MAX,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_options_from_json() {
+            let value = serde_json::json!({
+                "allowed_file_types": [],
+                "upward": false,
+                "follow_symbolic_links": false,
+            });
+
+            let options: SearchQueryOptions = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                options,
+                SearchQueryOptions {
+                    allowed_file_types: [].into_iter().collect(),
+                    include: None,
+                    exclude: None,
+                    upward: false,
+                    follow_symbolic_links: false,
+                    limit: None,
+                    max_depth: None,
+                    pagination: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_options_from_json() {
+            let value = serde_json::json!({
+                "allowed_file_types": ["file"],
+                "include": {
+                    "type": "equals",
+                    "value": "hello",
+                },
+                "exclude": {
+                    "type": "contains",
+                    "value": "world",
+                },
+                "upward": true,
+                "follow_symbolic_links": true,
+                "limit": u64::MAX,
+                "max_depth": u64::MAX,
+                "pagination": u64::MAX,
+            });
+
+            let options: SearchQueryOptions = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                options,
+                SearchQueryOptions {
+                    allowed_file_types: [FileType::File].into_iter().collect(),
+                    include: Some(SearchQueryCondition::Equals {
+                        value: String::from("hello"),
+                    }),
+                    exclude: Some(SearchQueryCondition::Contains {
+                        value: String::from("world"),
+                    }),
+                    upward: true,
+                    follow_symbolic_links: true,
+                    limit: Some(u64::MAX),
+                    max_depth: Some(u64::MAX),
+                    pagination: Some(u64::MAX),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_options_to_msgpack() {
+            let options = SearchQueryOptions {
+                allowed_file_types: [].into_iter().collect(),
+                include: None,
+                exclude: None,
+                upward: false,
+                follow_symbolic_links: false,
+                limit: None,
+                max_depth: None,
+                pagination: None,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&options).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_full_options_to_msgpack() {
+            let options = SearchQueryOptions {
+                allowed_file_types: [FileType::File].into_iter().collect(),
+                include: Some(SearchQueryCondition::Equals {
+                    value: String::from("hello"),
+                }),
+                exclude: Some(SearchQueryCondition::Contains {
+                    value: String::from("world"),
+                }),
+                upward: true,
+                follow_symbolic_links: true,
+                limit: Some(u64::MAX),
+                max_depth: Some(u64::MAX),
+                pagination: Some(u64::MAX),
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&options).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_options_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryOptions {
+                allowed_file_types: [].into_iter().collect(),
+                include: None,
+                exclude: None,
+                upward: false,
+                follow_symbolic_links: false,
+                limit: None,
+                max_depth: None,
+                pagination: None,
+            })
+            .unwrap();
+
+            let options: SearchQueryOptions = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                options,
+                SearchQueryOptions {
+                    allowed_file_types: [].into_iter().collect(),
+                    include: None,
+                    exclude: None,
+                    upward: false,
+                    follow_symbolic_links: false,
+                    limit: None,
+                    max_depth: None,
+                    pagination: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_options_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryOptions {
+                allowed_file_types: [FileType::File].into_iter().collect(),
+                include: Some(SearchQueryCondition::Equals {
+                    value: String::from("hello"),
+                }),
+                exclude: Some(SearchQueryCondition::Contains {
+                    value: String::from("world"),
+                }),
+                upward: true,
+                follow_symbolic_links: true,
+                limit: Some(u64::MAX),
+                max_depth: Some(u64::MAX),
+                pagination: Some(u64::MAX),
+            })
+            .unwrap();
+
+            let options: SearchQueryOptions = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                options,
+                SearchQueryOptions {
+                    allowed_file_types: [FileType::File].into_iter().collect(),
+                    include: Some(SearchQueryCondition::Equals {
+                        value: String::from("hello"),
+                    }),
+                    exclude: Some(SearchQueryCondition::Contains {
+                        value: String::from("world"),
+                    }),
+                    upward: true,
+                    follow_symbolic_links: true,
+                    limit: Some(u64::MAX),
+                    max_depth: Some(u64::MAX),
+                    pagination: Some(u64::MAX),
+                }
+            );
+        }
+    }
+
+    mod search_query_match {
+        use super::*;
+
+        mod for_path {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
+                    path: PathBuf::from("path"),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                });
+
+                let value = serde_json::to_value(r#match).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "path",
+                        "path": "path",
+                        "submatches": [{
+                            "match": "text",
+                            "start": 8,
+                            "end": 13,
+                        }],
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "path",
+                    "path": "path",
+                    "submatches": [{
+                        "match": "text",
+                        "start": 8,
+                        "end": 13,
+                    }],
+                });
+
+                let r#match: SearchQueryMatch = serde_json::from_value(value).unwrap();
+                assert_eq!(
+                    r#match,
+                    SearchQueryMatch::Path(SearchQueryPathMatch {
+                        path: PathBuf::from("path"),
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text(String::from("text")),
+                            start: 8,
+                            end: 13,
+                        }],
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
+                    path: PathBuf::from("path"),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                });
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&r#match).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf = rmp_serde::encode::to_vec_named(&SearchQueryMatch::Path(
+                    SearchQueryPathMatch {
+                        path: PathBuf::from("path"),
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text(String::from("text")),
+                            start: 8,
+                            end: 13,
+                        }],
+                    },
+                ))
+                .unwrap();
+
+                let r#match: SearchQueryMatch = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(
+                    r#match,
+                    SearchQueryMatch::Path(SearchQueryPathMatch {
+                        path: PathBuf::from("path"),
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text(String::from("text")),
+                            start: 8,
+                            end: 13,
+                        }],
+                    })
+                );
+            }
+        }
+
+        mod for_contents {
+            use super::*;
+
+            #[test]
+            fn should_be_able_to_serialize_to_json() {
+                let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                    path: PathBuf::from("path"),
+                    lines: SearchQueryMatchData::Text(String::from("some text")),
+                    line_number: 12,
+                    absolute_offset: 24,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                });
+
+                let value = serde_json::to_value(r#match).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "type": "contents",
+                        "path": "path",
+                        "lines": "some text",
+                        "line_number": 12,
+                        "absolute_offset": 24,
+                        "submatches": [{
+                            "match": "text",
+                            "start": 8,
+                            "end": 13,
+                        }],
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_json() {
+                let value = serde_json::json!({
+                    "type": "contents",
+                    "path": "path",
+                    "lines": "some text",
+                    "line_number": 12,
+                    "absolute_offset": 24,
+                    "submatches": [{
+                        "match": "text",
+                        "start": 8,
+                        "end": 13,
+                    }],
+                });
+
+                let r#match: SearchQueryMatch = serde_json::from_value(value).unwrap();
+                assert_eq!(
+                    r#match,
+                    SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                        path: PathBuf::from("path"),
+                        lines: SearchQueryMatchData::Text(String::from("some text")),
+                        line_number: 12,
+                        absolute_offset: 24,
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text(String::from("text")),
+                            start: 8,
+                            end: 13,
+                        }],
+                    })
+                );
+            }
+
+            #[test]
+            fn should_be_able_to_serialize_to_msgpack() {
+                let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                    path: PathBuf::from("path"),
+                    lines: SearchQueryMatchData::Text(String::from("some text")),
+                    line_number: 12,
+                    absolute_offset: 24,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                });
+
+                // NOTE: We don't actually check the output here because it's an implementation detail
+                // and could change as we change how serialization is done. This is merely to verify
+                // that we can serialize since there are times when serde fails to serialize at
+                // runtime.
+                let _ = rmp_serde::encode::to_vec_named(&r#match).unwrap();
+            }
+
+            #[test]
+            fn should_be_able_to_deserialize_from_msgpack() {
+                // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+                // verify that we are not corrupting or causing issues when serializing on a
+                // client/server and then trying to deserialize on the other side. This has happened
+                // enough times with minor changes that we need tests to verify.
+                let buf = rmp_serde::encode::to_vec_named(&SearchQueryMatch::Contents(
+                    SearchQueryContentsMatch {
+                        path: PathBuf::from("path"),
+                        lines: SearchQueryMatchData::Text(String::from("some text")),
+                        line_number: 12,
+                        absolute_offset: 24,
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text(String::from("text")),
+                            start: 8,
+                            end: 13,
+                        }],
+                    },
+                ))
+                .unwrap();
+
+                let r#match: SearchQueryMatch = rmp_serde::decode::from_slice(&buf).unwrap();
+                assert_eq!(
+                    r#match,
+                    SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                        path: PathBuf::from("path"),
+                        lines: SearchQueryMatchData::Text(String::from("some text")),
+                        line_number: 12,
+                        absolute_offset: 24,
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text(String::from("text")),
+                            start: 8,
+                            end: 13,
+                        }],
+                    })
+                );
+            }
+        }
+    }
+
+    mod search_query_path_match {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let r#match = SearchQueryPathMatch {
+                path: PathBuf::from("path"),
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("text")),
+                    start: 8,
+                    end: 13,
+                }],
+            };
+
+            let value = serde_json::to_value(r#match).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "path": "path",
+                    "submatches": [{
+                        "match": "text",
+                        "start": 8,
+                        "end": 13,
+                    }],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "path": "path",
+                "submatches": [{
+                    "match": "text",
+                    "start": 8,
+                    "end": 13,
+                }],
+            });
+
+            let r#match: SearchQueryPathMatch = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                r#match,
+                SearchQueryPathMatch {
+                    path: PathBuf::from("path"),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let r#match = SearchQueryPathMatch {
+                path: PathBuf::from("path"),
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("text")),
+                    start: 8,
+                    end: 13,
+                }],
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&r#match).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryPathMatch {
+                path: PathBuf::from("path"),
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("text")),
+                    start: 8,
+                    end: 13,
+                }],
+            })
+            .unwrap();
+
+            let r#match: SearchQueryPathMatch = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                r#match,
+                SearchQueryPathMatch {
+                    path: PathBuf::from("path"),
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                }
+            );
+        }
+    }
+
+    mod search_query_contents_match {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let r#match = SearchQueryContentsMatch {
+                path: PathBuf::from("path"),
+                lines: SearchQueryMatchData::Text(String::from("some text")),
+                line_number: 12,
+                absolute_offset: 24,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("text")),
+                    start: 8,
+                    end: 13,
+                }],
+            };
+
+            let value = serde_json::to_value(r#match).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "path": "path",
+                    "lines": "some text",
+                    "line_number": 12,
+                    "absolute_offset": 24,
+                    "submatches": [{
+                        "match": "text",
+                        "start": 8,
+                        "end": 13,
+                    }],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "path": "path",
+                "lines": "some text",
+                "line_number": 12,
+                "absolute_offset": 24,
+                "submatches": [{
+                    "match": "text",
+                    "start": 8,
+                    "end": 13,
+                }],
+            });
+
+            let r#match: SearchQueryContentsMatch = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                r#match,
+                SearchQueryContentsMatch {
+                    path: PathBuf::from("path"),
+                    lines: SearchQueryMatchData::Text(String::from("some text")),
+                    line_number: 12,
+                    absolute_offset: 24,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let r#match = SearchQueryContentsMatch {
+                path: PathBuf::from("path"),
+                lines: SearchQueryMatchData::Text(String::from("some text")),
+                line_number: 12,
+                absolute_offset: 24,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("text")),
+                    start: 8,
+                    end: 13,
+                }],
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&r#match).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryContentsMatch {
+                path: PathBuf::from("path"),
+                lines: SearchQueryMatchData::Text(String::from("some text")),
+                line_number: 12,
+                absolute_offset: 24,
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("text")),
+                    start: 8,
+                    end: 13,
+                }],
+            })
+            .unwrap();
+
+            let r#match: SearchQueryContentsMatch = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                r#match,
+                SearchQueryContentsMatch {
+                    path: PathBuf::from("path"),
+                    lines: SearchQueryMatchData::Text(String::from("some text")),
+                    line_number: 12,
+                    absolute_offset: 24,
+                    submatches: vec![SearchQuerySubmatch {
+                        r#match: SearchQueryMatchData::Text(String::from("text")),
+                        start: 8,
+                        end: 13,
+                    }],
+                }
+            );
+        }
+    }
+
+    mod search_query_submatch {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let data = SearchQuerySubmatch {
+                r#match: SearchQueryMatchData::Text(String::from("some text")),
+                start: 12,
+                end: 24,
+            };
+
+            let value = serde_json::to_value(data).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "match": "some text",
+                    "start": 12,
+                    "end": 24,
+                })
+            );
+
+            let data = SearchQuerySubmatch {
+                r#match: SearchQueryMatchData::Bytes(vec![1, 2, 3]),
+                start: 12,
+                end: 24,
+            };
+
+            // Do the same for bytes
+            let value = serde_json::to_value(data).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "match": [1, 2, 3],
+                    "start": 12,
+                    "end": 24,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "match": "some text",
+                "start": 12,
+                "end": 24,
+            });
+
+            let submatch: SearchQuerySubmatch = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                submatch,
+                SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("some text")),
+                    start: 12,
+                    end: 24,
+                }
+            );
+
+            // Do the same for bytes
+            let value = serde_json::json!({
+                "match": [1, 2, 3],
+                "start": 12,
+                "end": 24,
+            });
+
+            let submatch: SearchQuerySubmatch = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                submatch,
+                SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Bytes(vec![1, 2, 3]),
+                    start: 12,
+                    end: 24,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let submatch = SearchQuerySubmatch {
+                r#match: SearchQueryMatchData::Text(String::from("some text")),
+                start: 12,
+                end: 24,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&submatch).unwrap();
+
+            // Do the same for bytes
+            let submatch = SearchQuerySubmatch {
+                r#match: SearchQueryMatchData::Bytes(vec![1, 2, 3]),
+                start: 12,
+                end: 24,
+            };
+
+            let _ = rmp_serde::encode::to_vec_named(&submatch).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQuerySubmatch {
+                r#match: SearchQueryMatchData::Text(String::from("some text")),
+                start: 12,
+                end: 24,
+            })
+            .unwrap();
+
+            let submatch: SearchQuerySubmatch = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                submatch,
+                SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text(String::from("some text")),
+                    start: 12,
+                    end: 24,
+                }
+            );
+
+            // Do the same for bytes
+            let buf = rmp_serde::encode::to_vec_named(&SearchQuerySubmatch {
+                r#match: SearchQueryMatchData::Bytes(vec![1, 2, 3]),
+                start: 12,
+                end: 24,
+            })
+            .unwrap();
+
+            let submatch: SearchQuerySubmatch = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                submatch,
+                SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Bytes(vec![1, 2, 3]),
+                    start: 12,
+                    end: 24,
+                }
+            );
+        }
+    }
+
+    mod search_query_match_data {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let data = SearchQueryMatchData::Text(String::from("some text"));
+
+            let value = serde_json::to_value(data).unwrap();
+            assert_eq!(value, serde_json::json!("some text"));
+
+            // Do the same for bytes
+            let data = SearchQueryMatchData::Bytes(vec![1, 2, 3]);
+
+            let value = serde_json::to_value(data).unwrap();
+            assert_eq!(value, serde_json::json!([1, 2, 3]));
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!("some text");
+
+            let data: SearchQueryMatchData = serde_json::from_value(value).unwrap();
+            assert_eq!(data, SearchQueryMatchData::Text(String::from("some text")));
+
+            // Do the same for bytes
+            let value = serde_json::json!([1, 2, 3]);
+
+            let data: SearchQueryMatchData = serde_json::from_value(value).unwrap();
+            assert_eq!(data, SearchQueryMatchData::Bytes(vec![1, 2, 3]));
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let data = SearchQueryMatchData::Text(String::from("some text"));
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&data).unwrap();
+
+            // Do the same for bytes
+            let data = SearchQueryMatchData::Bytes(vec![1, 2, 3]);
+            let _ = rmp_serde::encode::to_vec_named(&data).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryMatchData::Text(String::from(
+                "some text",
+            )))
+            .unwrap();
+
+            let data: SearchQueryMatchData = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(data, SearchQueryMatchData::Text(String::from("some text")));
+
+            // Do the same for bytes
+            let buf = rmp_serde::encode::to_vec_named(&SearchQueryMatchData::Bytes(vec![1, 2, 3]))
+                .unwrap();
+
+            let data: SearchQueryMatchData = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(data, SearchQueryMatchData::Bytes(vec![1, 2, 3]));
         }
     }
 }

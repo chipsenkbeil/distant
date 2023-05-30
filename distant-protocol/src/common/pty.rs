@@ -107,3 +107,135 @@ impl FromStr for PtySize {
         })
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_be_able_to_serialize_to_json() {
+        let size = PtySize {
+            rows: 10,
+            cols: 20,
+            pixel_width: 30,
+            pixel_height: 40,
+        };
+
+        let value = serde_json::to_value(size).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "rows": 10,
+                "cols": 20,
+                "pixel_width": 30,
+                "pixel_height": 40,
+            })
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_minimal_size_from_json() {
+        let value = serde_json::json!({
+            "rows": 10,
+            "cols": 20,
+        });
+
+        let size: PtySize = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            size,
+            PtySize {
+                rows: 10,
+                cols: 20,
+                pixel_width: 0,
+                pixel_height: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_full_size_from_json() {
+        let value = serde_json::json!({
+            "rows": 10,
+            "cols": 20,
+            "pixel_width": 30,
+            "pixel_height": 40,
+        });
+
+        let size: PtySize = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            size,
+            PtySize {
+                rows: 10,
+                cols: 20,
+                pixel_width: 30,
+                pixel_height: 40,
+            }
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_serialize_to_msgpack() {
+        let size = PtySize {
+            rows: 10,
+            cols: 20,
+            pixel_width: 30,
+            pixel_height: 40,
+        };
+
+        // NOTE: We don't actually check the output here because it's an implementation detail
+        // and could change as we change how serialization is done. This is merely to verify
+        // that we can serialize since there are times when serde fails to serialize at
+        // runtime.
+        let _ = rmp_serde::encode::to_vec_named(&size).unwrap();
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_minimal_size_from_msgpack() {
+        // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+        // verify that we are not corrupting or causing issues when serializing on a
+        // client/server and then trying to deserialize on the other side. This has happened
+        // enough times with minor changes that we need tests to verify.
+        #[derive(Serialize)]
+        struct PartialSize {
+            rows: u16,
+            cols: u16,
+        }
+        let buf = rmp_serde::encode::to_vec_named(&PartialSize { rows: 10, cols: 20 }).unwrap();
+
+        let size: PtySize = rmp_serde::decode::from_slice(&buf).unwrap();
+        assert_eq!(
+            size,
+            PtySize {
+                rows: 10,
+                cols: 20,
+                pixel_width: 0,
+                pixel_height: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn should_be_able_to_deserialize_full_size_from_msgpack() {
+        // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+        // verify that we are not corrupting or causing issues when serializing on a
+        // client/server and then trying to deserialize on the other side. This has happened
+        // enough times with minor changes that we need tests to verify.
+        let buf = rmp_serde::encode::to_vec_named(&PtySize {
+            rows: 10,
+            cols: 20,
+            pixel_width: 30,
+            pixel_height: 40,
+        })
+        .unwrap();
+
+        let size: PtySize = rmp_serde::decode::from_slice(&buf).unwrap();
+        assert_eq!(
+            size,
+            PtySize {
+                rows: 10,
+                cols: 20,
+                pixel_width: 30,
+                pixel_height: 40,
+            }
+        );
+    }
+}
