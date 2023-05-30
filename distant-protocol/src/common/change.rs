@@ -57,26 +57,17 @@ pub enum ChangeKind {
     /// A file, directory, or something else was created within a watched directory
     Create,
 
-    /// A file, directory, or something else was deleted within a watched directory
+    /// A file, directory, or something else was deleted
     Delete,
-
-    /// A watched file or directory was deleted
-    DeleteSelf,
 
     /// A file's content was modified
     Modify,
 
-    /// A file, directory, or something else was moved out of a watched directory
-    MoveFrom,
-
-    /// A watched file or directory was moved
-    MoveSelf,
-
-    /// A file, directory, or something else was moved into a watched directory
-    MoveTo,
-
     /// A file was opened
     Open,
+
+    /// A file, directory, or something else was renamed in some way
+    Rename,
 
     /// Catch-all for any other change
     Unknown,
@@ -101,9 +92,24 @@ impl ChangeKind {
         )
     }
 
+    /// Returns true if kind is part of the create family.
+    pub fn is_create(&self) -> bool {
+        matches!(self, Self::Create)
+    }
+
+    /// Returns true if kind is part of the delete family.
+    pub fn is_delete(&self) -> bool {
+        matches!(self, Self::Delete)
+    }
+
     /// Returns true if kind is part of the modify family.
     pub fn is_modify(&self) -> bool {
         matches!(self, Self::Attribute | Self::Modify)
+    }
+
+    /// Returns true if kind is part of the rename family.
+    pub fn is_rename(&self) -> bool {
+        matches!(self, Self::Rename)
     }
 
     /// Returns true if kind is unknown.
@@ -146,12 +152,9 @@ impl ChangeKindSet {
             ChangeKind::CloseNoWrite,
             ChangeKind::Create,
             ChangeKind::Delete,
-            ChangeKind::DeleteSelf,
             ChangeKind::Modify,
-            ChangeKind::MoveFrom,
-            ChangeKind::MoveSelf,
-            ChangeKind::MoveTo,
             ChangeKind::Open,
+            ChangeKind::Rename,
             ChangeKind::Unknown,
         ]
         .into_iter()
@@ -292,23 +295,23 @@ mod tests {
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
-            let set = ChangeKindSet::new([ChangeKind::MoveTo]);
+            let set = ChangeKindSet::new([ChangeKind::CloseWrite]);
 
             let value = serde_json::to_value(set).unwrap();
-            assert_eq!(value, serde_json::json!(["move_to"]));
+            assert_eq!(value, serde_json::json!(["close_write"]));
         }
 
         #[test]
         fn should_be_able_to_deserialize_from_json() {
-            let value = serde_json::json!(["move_to"]);
+            let value = serde_json::json!(["close_write"]);
 
             let set: ChangeKindSet = serde_json::from_value(value).unwrap();
-            assert_eq!(set, ChangeKindSet::new([ChangeKind::MoveTo]));
+            assert_eq!(set, ChangeKindSet::new([ChangeKind::CloseWrite]));
         }
 
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
-            let set = ChangeKindSet::new([ChangeKind::MoveTo]);
+            let set = ChangeKindSet::new([ChangeKind::CloseWrite]);
 
             // NOTE: We don't actually check the output here because it's an implementation detail
             // and could change as we change how serialization is done. This is merely to verify
@@ -324,10 +327,11 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf =
-                rmp_serde::encode::to_vec_named(&ChangeKindSet::new([ChangeKind::MoveTo])).unwrap();
+                rmp_serde::encode::to_vec_named(&ChangeKindSet::new([ChangeKind::CloseWrite]))
+                    .unwrap();
 
             let set: ChangeKindSet = rmp_serde::decode::from_slice(&buf).unwrap();
-            assert_eq!(set, ChangeKindSet::new([ChangeKind::MoveTo]));
+            assert_eq!(set, ChangeKindSet::new([ChangeKind::CloseWrite]));
         }
     }
 
@@ -336,23 +340,23 @@ mod tests {
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
-            let kind = ChangeKind::MoveTo;
+            let kind = ChangeKind::CloseWrite;
 
             let value = serde_json::to_value(kind).unwrap();
-            assert_eq!(value, serde_json::json!("move_to"));
+            assert_eq!(value, serde_json::json!("close_write"));
         }
 
         #[test]
         fn should_be_able_to_deserialize_from_json() {
-            let value = serde_json::json!("move_to");
+            let value = serde_json::json!("close_write");
 
             let kind: ChangeKind = serde_json::from_value(value).unwrap();
-            assert_eq!(kind, ChangeKind::MoveTo);
+            assert_eq!(kind, ChangeKind::CloseWrite);
         }
 
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
-            let kind = ChangeKind::MoveTo;
+            let kind = ChangeKind::CloseWrite;
 
             // NOTE: We don't actually check the output here because it's an implementation detail
             // and could change as we change how serialization is done. This is merely to verify
@@ -367,10 +371,10 @@ mod tests {
             // verify that we are not corrupting or causing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&ChangeKind::MoveTo).unwrap();
+            let buf = rmp_serde::encode::to_vec_named(&ChangeKind::CloseWrite).unwrap();
 
             let kind: ChangeKind = rmp_serde::decode::from_slice(&buf).unwrap();
-            assert_eq!(kind, ChangeKind::MoveTo);
+            assert_eq!(kind, ChangeKind::CloseWrite);
         }
     }
 }

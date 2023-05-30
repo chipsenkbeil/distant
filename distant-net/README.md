@@ -25,17 +25,8 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-net = "0.19"
+distant-net = "0.20"
 ```
-
-## Features
-
-Currently, the library supports the following features:
-
-- `schemars`: derives the `schemars::JsonSchema` interface on `Request`
-  and `Response` data types
-
-By default, no features are enabled on the library.
 
 ## License
 

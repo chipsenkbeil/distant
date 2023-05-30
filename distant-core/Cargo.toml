@@ -11,9 +11,6 @@ repository = "https://github.com/chipsenkbeil/distant"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 
-[features]
-schemars = ["dep:schemars", "distant-net/schemars"]
-
 [dependencies]
 async-trait = "0.1.68"
 bitflags = "2.0.2"
@@ -42,9 +39,6 @@ tokio-util = { version = "0.7.7", features = ["codec"] }
 walkdir = "2.3.3"
 whoami = "1.4.0"
 winsplit = "0.1.0"
-
-# Optional dependencies based on features
-schemars = { version = "0.8.12", optional = true }
 
 [dev-dependencies]
 assert_fs = "1.0.12"

@@ -156,10 +156,10 @@ fn format_shell(state: &mut FormatterState, data: protocol::Response) -> Output 
                 "{}{}",
                 match change.kind {
                     ChangeKind::Create => "Following paths were created:\n",
-                    ChangeKind::Remove => "Following paths were removed:\n",
-                    x if x.is_access_kind() => "Following paths were accessed:\n",
-                    x if x.is_modify_kind() => "Following paths were modified:\n",
-                    x if x.is_rename_kind() => "Following paths were renamed:\n",
+                    ChangeKind::Delete => "Following paths were removed:\n",
+                    x if x.is_access() => "Following paths were accessed:\n",
+                    x if x.is_modify() => "Following paths were modified:\n",
+                    x if x.is_rename() => "Following paths were renamed:\n",
                     _ => "Following paths were affected:\n",
                 },
                 change

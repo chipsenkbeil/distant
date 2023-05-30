@@ -7,7 +7,7 @@ use clap_complete::Shell as ClapCompleteShell;
 use derive_more::IsVariant;
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
 use distant_core::net::server::Shutdown;
-use distant_core::protocol::{ChangeKind, Environment};
+use distant_core::protocol::ChangeKind;
 use service_manager::ServiceManagerKind;
 
 use crate::constants;
@@ -392,7 +392,7 @@ pub enum ClientSubcommand {
 
         /// Environment variables to provide to the shell
         #[clap(long, default_value_t)]
-        environment: Environment,
+        environment: Map,
 
         /// Optional command to run instead of $SHELL
         #[clap(name = "CMD", last = true)]
@@ -434,7 +434,7 @@ pub enum ClientSubcommand {
 
         /// Environment variables to provide to the shell
         #[clap(long, default_value_t)]
-        environment: Environment,
+        environment: Map,
 
         /// Command to run
         #[clap(name = "CMD", num_args = 1.., last = true)]
@@ -892,13 +892,6 @@ pub enum GenerateSubcommand {
     Config {
         /// Path to where the configuration file should be created
         file: PathBuf,
-    },
-
-    /// Generate JSON schema for server request/response
-    Schema {
-        /// If specified, will output to the file at the given path instead of stdout
-        #[clap(long)]
-        file: Option<PathBuf>,
     },
 
     // Generate completion info for CLI
@@ -1666,7 +1659,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 current_dir: None,
-                environment: map!(),
+                environment: Default::default(),
                 cmd: None,
             }),
         };

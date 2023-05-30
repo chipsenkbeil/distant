@@ -267,7 +267,7 @@ mod tests {
                         paths: vec![test_path.to_path_buf()],
                     }),
                     protocol::Response::Changed(Change {
-                        kind: ChangeKind::Content,
+                        kind: ChangeKind::Modify,
                         paths: vec![test_path.to_path_buf()],
                     }),
                 ],
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(
             change,
             Change {
-                kind: ChangeKind::Content,
+                kind: ChangeKind::Modify,
                 paths: vec![test_path.to_path_buf()]
             }
         );
@@ -342,7 +342,7 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id.clone() + "1",
                 protocol::Response::Changed(Change {
-                    kind: ChangeKind::Content,
+                    kind: ChangeKind::Modify,
                     paths: vec![test_path.to_path_buf()],
                 }),
             ))
@@ -354,7 +354,7 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id,
                 protocol::Response::Changed(Change {
-                    kind: ChangeKind::Remove,
+                    kind: ChangeKind::Delete,
                     paths: vec![test_path.to_path_buf()],
                 }),
             ))
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(
             change,
             Change {
-                kind: ChangeKind::Remove,
+                kind: ChangeKind::Delete,
                 paths: vec![test_path.to_path_buf()]
             }
         );
@@ -418,11 +418,11 @@ mod tests {
                         paths: vec![test_path.to_path_buf()],
                     }),
                     protocol::Response::Changed(Change {
-                        kind: ChangeKind::Content,
+                        kind: ChangeKind::Modify,
                         paths: vec![test_path.to_path_buf()],
                     }),
                     protocol::Response::Changed(Change {
-                        kind: ChangeKind::Remove,
+                        kind: ChangeKind::Delete,
                         paths: vec![test_path.to_path_buf()],
                     }),
                 ],
@@ -482,14 +482,14 @@ mod tests {
         assert_eq!(
             watcher.lock().await.next().await,
             Some(Change {
-                kind: ChangeKind::Content,
+                kind: ChangeKind::Modify,
                 paths: vec![test_path.to_path_buf()]
             })
         );
         assert_eq!(
             watcher.lock().await.next().await,
             Some(Change {
-                kind: ChangeKind::Remove,
+                kind: ChangeKind::Delete,
                 paths: vec![test_path.to_path_buf()]
             })
         );

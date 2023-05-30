@@ -10,7 +10,6 @@ use crate::common::utils;
 
 /// Represents a response received related to some response
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Response<T> {
     /// Unique id associated with the response
     pub id: Id,
@@ -64,13 +63,6 @@ where
     /// Deserializes the response from bytes
     pub fn from_slice(slice: &[u8]) -> std::io::Result<Self> {
         utils::deserialize_from_slice(slice)
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl<T: schemars::JsonSchema> Response<T> {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Response<T>)
     }
 }
 

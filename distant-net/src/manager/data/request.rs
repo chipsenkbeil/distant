@@ -21,10 +21,6 @@ use crate::common::{ConnectionId, Destination, Map, UntypedRequest};
     Serialize,
     Deserialize
 ))]
-#[cfg_attr(
-    feature = "schemars",
-    strum_discriminants(derive(schemars::JsonSchema))
-)]
 #[strum_discriminants(name(ManagerCapabilityKind))]
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]

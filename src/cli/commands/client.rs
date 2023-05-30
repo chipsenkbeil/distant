@@ -402,7 +402,12 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 cmd.as_deref().unwrap_or(r"$SHELL")
             );
             Shell::new(channel.into_client().into_channel())
-                .spawn(cmd, environment, current_dir, MAX_PIPE_CHUNK_SIZE)
+                .spawn(
+                    cmd,
+                    environment.into_map(),
+                    current_dir,
+                    MAX_PIPE_CHUNK_SIZE,
+                )
                 .await?;
         }
         ClientSubcommand::Spawn {
@@ -449,7 +454,12 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     environment, current_dir, cmd
                 );
                 Shell::new(channel.into_client().into_channel())
-                    .spawn(cmd, environment, current_dir, MAX_PIPE_CHUNK_SIZE)
+                    .spawn(
+                        cmd,
+                        environment.into_map(),
+                        current_dir,
+                        MAX_PIPE_CHUNK_SIZE,
+                    )
                     .await?;
             } else {
                 debug!(
@@ -457,7 +467,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     environment, current_dir, cmd
                 );
                 let mut proc = RemoteCommand::new()
-                    .environment(environment)
+                    .environment(environment.into_map())
                     .current_dir(current_dir)
                     .pty(None)
                     .spawn(channel.into_client().into_channel(), &cmd)

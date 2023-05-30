@@ -1,5 +1,5 @@
 use assert_fs::prelude::*;
-use distant_core::protocol::ChangeKindSet;
+use distant_core::protocol::{ChangeKind, ChangeKindSet};
 use distant_core::DistantChannelExt;
 use rstest::*;
 use test_log::test;
@@ -29,7 +29,7 @@ async fn should_handle_large_volume_of_file_watching(#[future] ctx: DistantClien
             .watch(
                 file.path(),
                 false,
-                ChangeKindSet::modify_set(),
+                ChangeKindSet::new([ChangeKind::Modify]),
                 ChangeKindSet::empty(),
             )
             .await
