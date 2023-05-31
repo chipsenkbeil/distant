@@ -103,9 +103,6 @@ impl Options {
                         network.merge(config.client.network);
                         *timeout = timeout.take().or(config.client.api.timeout);
                     }
-                    ClientSubcommand::Version { network, .. } => {
-                        network.merge(config.client.network);
-                    }
                     ClientSubcommand::Connect {
                         network, options, ..
                     } => {
@@ -151,6 +148,9 @@ impl Options {
                         network.merge(config.client.network);
                     }
                     ClientSubcommand::SystemInfo { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::Version { network, .. } => {
                         network.merge(config.client.network);
                     }
                 }
@@ -261,28 +261,6 @@ pub enum ClientSubcommand {
 
         #[clap(flatten)]
         network: NetworkSettings,
-    },
-
-    /// Retrieves capabilities of the remote server
-    Version {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Specify a connection being managed
-        #[clap(long)]
-        connection: Option<ConnectionId>,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
     },
 
     /// Requests that active manager connects to the server at the specified destination
@@ -458,12 +436,33 @@ pub enum ClientSubcommand {
         #[clap(flatten)]
         network: NetworkSettings,
     },
+
+    /// Retrieves version information of the remote server
+    Version {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+    },
 }
 
 impl ClientSubcommand {
     pub fn cache_path(&self) -> &Path {
         match self {
-            Self::Version { cache, .. } => cache.as_path(),
             Self::Connect { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
@@ -471,12 +470,12 @@ impl ClientSubcommand {
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
             Self::SystemInfo { cache, .. } => cache.as_path(),
+            Self::Version { cache, .. } => cache.as_path(),
         }
     }
 
     pub fn network_settings(&self) -> &NetworkSettings {
         match self {
-            Self::Version { network, .. } => network,
             Self::Connect { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
@@ -484,6 +483,7 @@ impl ClientSubcommand {
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
+            Self::Version { network, .. } => network,
         }
     }
 }
