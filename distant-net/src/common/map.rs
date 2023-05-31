@@ -13,7 +13,6 @@ use crate::common::utils::{deserialize_from_str, serialize_to_str};
 
 /// Contains map information for connections and other use cases
 #[derive(Clone, Debug, From, IntoIterator, PartialEq, Eq)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Map(HashMap<String, String>);
 
 impl Map {
@@ -74,13 +73,6 @@ impl Map {
                 }
             }
         }
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl Map {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Map)
     }
 }
 

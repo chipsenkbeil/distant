@@ -12,7 +12,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["distant-auth", "distant-core", "distant-net", "distant-ssh2"]
+members = ["distant-auth", "distant-core", "distant-net", "distant-protocol", "distant-ssh2"]
 
 [profile.release]
 opt-level = 'z'
@@ -32,7 +32,7 @@ clap_complete = "4.2.0"
 config = { version = "0.13.3", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.3", default-features = false }
-distant-core = { version = "=0.20.0-alpha.7", path = "distant-core", features = ["schemars"] }
+distant-core = { version = "=0.20.0-alpha.7", path = "distant-core" }
 directories = "5.0.0"
 file-mode = "0.1.2"
 flexi_logger = "0.25.3"

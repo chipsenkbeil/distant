@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 
 use distant_net::common::ConnectionId;
 use log::*;
+use notify::event::{AccessKind, AccessMode, ModifyKind};
 use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
-    Event as WatcherEvent, PollWatcher, RecursiveMode, Watcher,
+    Event as WatcherEvent, EventKind, PollWatcher, RecursiveMode, Watcher,
 };
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::mpsc::{self};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -256,7 +257,20 @@ async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWat
                 }
             }
             InnerWatcherMsg::Event { ev } => {
-                let kind = ChangeKind::from(ev.kind);
+                let kind = match ev.kind {
+                    EventKind::Access(AccessKind::Read) => ChangeKind::Access,
+                    EventKind::Modify(ModifyKind::Metadata(_)) => ChangeKind::Attribute,
+                    EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
+                        ChangeKind::CloseWrite
+                    }
+                    EventKind::Access(AccessKind::Close(_)) => ChangeKind::CloseNoWrite,
+                    EventKind::Create(_) => ChangeKind::Create,
+                    EventKind::Remove(_) => ChangeKind::Delete,
+                    EventKind::Modify(ModifyKind::Data(_)) => ChangeKind::Modify,
+                    EventKind::Access(AccessKind::Open(_)) => ChangeKind::Open,
+                    EventKind::Modify(ModifyKind::Name(_)) => ChangeKind::Rename,
+                    _ => ChangeKind::Unknown,
+                };
 
                 for registered_path in registered_paths.iter() {
                     match registered_path.filter_and_send(kind, &ev.paths).await {

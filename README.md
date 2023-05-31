@@ -64,13 +64,13 @@ the available features and which backend supports each feature:
 
 | Feature               | distant | ssh |
 | --------------------- | --------| ----|
-| Capabilities          | ✅      | ✅  |
 | Filesystem I/O        | ✅      | ✅  |
 | Filesystem Watching   | ✅      | ✅  |
 | Process Execution     | ✅      | ✅  |
 | Reconnect             | ✅      | ❌  |
 | Search                | ✅      | ❌  |
-| System Information    | ✅      | ⚠  |
+| System Information    | ✅      | ⚠   |
+| Version               | ✅      | ✅  |
 
 * ✅ means full support
 * ⚠ means partial support
@@ -78,7 +78,6 @@ the available features and which backend supports each feature:
 
 ### Feature Details
 
-* `Capabilities` - able to report back what it is capable of performing
 * `Filesystem I/O` - able to read from and write to the filesystem
 * `Filesystem Watching` - able to receive notifications when changes to the
   filesystem occur
@@ -86,6 +85,7 @@ the available features and which backend supports each feature:
 * `Reconnect` - able to reconnect after network outages
 * `Search` - able to search the filesystem
 * `System Information` - able to retrieve information about the system
+* `Version` - able to report back version information
 
 ## Example
 

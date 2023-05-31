@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `set_permissions` method available `DistantApi` and implemented by local
   server (ssh unavailable due to https://github.com/wez/wezterm/issues/3784)
 - Implementation of `DistantChannelExt::set_permissions`
+- `distant version` to display information about connected server
 
 ### Changed
 
@@ -22,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `distant_net::common::Keychain`
 - Moved `distant_net::common::transport::framed::codec::encryption::SecretKey`
   and similar to `distant_net::common::SecretKey`
+- Search matches reported with `match` key are now inlined as either a byte
+  array or a string and no longer an object with a `type` and `value` field
+- Unset options and values are not now returned in `JSON` serialization versus
+  the explicit `null` value provided
+- `Capabilities` message type has been changed to `Version` with new struct to
+  report the version information that includes a server version string,
+  protocol version tuple, and capabilities
+
+### Removed
+
+- `distant capabilities` has been removed in favor of `distant version`
 
 ## [0.20.0-alpha.6]
 

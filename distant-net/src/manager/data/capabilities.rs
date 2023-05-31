@@ -12,7 +12,6 @@ use super::ManagerCapabilityKind;
 
 /// Set of supported capabilities for a manager
 #[derive(Clone, Debug, From, Into, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct ManagerCapabilities(#[into_iterator(owned, ref)] HashSet<ManagerCapability>);
 
@@ -76,13 +75,6 @@ impl ManagerCapabilities {
     }
 }
 
-#[cfg(feature = "schemars")]
-impl ManagerCapabilities {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(ManagerCapabilities)
-    }
-}
-
 impl BitAnd for &ManagerCapabilities {
     type Output = ManagerCapabilities;
 
@@ -133,7 +125,6 @@ impl FromIterator<ManagerCapability> for ManagerCapabilities {
 /// ManagerCapability tied to a manager. A capability is equivalent based on its kind and not
 /// description.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ManagerCapability {
     /// Label describing the kind of capability
@@ -194,19 +185,5 @@ impl From<ManagerCapabilityKind> for ManagerCapability {
                 .map(ToString::to_string)
                 .unwrap_or_default(),
         }
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl ManagerCapability {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(ManagerCapability)
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl ManagerCapabilityKind {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(ManagerCapabilityKind)
     }
 }

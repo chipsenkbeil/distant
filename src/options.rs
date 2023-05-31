@@ -7,7 +7,7 @@ use clap_complete::Shell as ClapCompleteShell;
 use derive_more::IsVariant;
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
 use distant_core::net::server::Shutdown;
-use distant_core::protocol::{ChangeKind, Environment};
+use distant_core::protocol::ChangeKind;
 use service_manager::ServiceManagerKind;
 
 use crate::constants;
@@ -103,9 +103,6 @@ impl Options {
                         network.merge(config.client.network);
                         *timeout = timeout.take().or(config.client.api.timeout);
                     }
-                    ClientSubcommand::Capabilities { network, .. } => {
-                        network.merge(config.client.network);
-                    }
                     ClientSubcommand::Connect {
                         network, options, ..
                     } => {
@@ -151,6 +148,9 @@ impl Options {
                         network.merge(config.client.network);
                     }
                     ClientSubcommand::SystemInfo { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::Version { network, .. } => {
                         network.merge(config.client.network);
                     }
                 }
@@ -263,28 +263,6 @@ pub enum ClientSubcommand {
         network: NetworkSettings,
     },
 
-    /// Retrieves capabilities of the remote server
-    Capabilities {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Specify a connection being managed
-        #[clap(long)]
-        connection: Option<ConnectionId>,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-    },
-
     /// Requests that active manager connects to the server at the specified destination
     Connect {
         /// Location to store cached data
@@ -392,7 +370,7 @@ pub enum ClientSubcommand {
 
         /// Environment variables to provide to the shell
         #[clap(long, default_value_t)]
-        environment: Environment,
+        environment: Map,
 
         /// Optional command to run instead of $SHELL
         #[clap(name = "CMD", last = true)]
@@ -434,7 +412,7 @@ pub enum ClientSubcommand {
 
         /// Environment variables to provide to the shell
         #[clap(long, default_value_t)]
-        environment: Environment,
+        environment: Map,
 
         /// Command to run
         #[clap(name = "CMD", num_args = 1.., last = true)]
@@ -458,12 +436,33 @@ pub enum ClientSubcommand {
         #[clap(flatten)]
         network: NetworkSettings,
     },
+
+    /// Retrieves version information of the remote server
+    Version {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+    },
 }
 
 impl ClientSubcommand {
     pub fn cache_path(&self) -> &Path {
         match self {
-            Self::Capabilities { cache, .. } => cache.as_path(),
             Self::Connect { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
@@ -471,12 +470,12 @@ impl ClientSubcommand {
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
             Self::SystemInfo { cache, .. } => cache.as_path(),
+            Self::Version { cache, .. } => cache.as_path(),
         }
     }
 
     pub fn network_settings(&self) -> &NetworkSettings {
         match self {
-            Self::Capabilities { network, .. } => network,
             Self::Connect { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
@@ -484,6 +483,7 @@ impl ClientSubcommand {
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
+            Self::Version { network, .. } => network,
         }
     }
 }
@@ -894,13 +894,6 @@ pub enum GenerateSubcommand {
         file: PathBuf,
     },
 
-    /// Generate JSON schema for server request/response
-    Schema {
-        /// If specified, will output to the file at the given path instead of stdout
-        #[clap(long)]
-        file: Option<PathBuf>,
-    },
-
     // Generate completion info for CLI
     Completion {
         /// If specified, will output to the file at the given path instead of stdout
@@ -1272,7 +1265,7 @@ mod tests {
                 log_file: None,
                 log_level: None,
             },
-            command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+            command: DistantSubcommand::Client(ClientSubcommand::Version {
                 cache: PathBuf::new(),
                 connection: None,
                 network: NetworkSettings {
@@ -1309,7 +1302,7 @@ mod tests {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
                 },
-                command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                command: DistantSubcommand::Client(ClientSubcommand::Version {
                     cache: PathBuf::new(),
                     connection: None,
                     network: NetworkSettings {
@@ -1330,7 +1323,7 @@ mod tests {
                 log_file: Some(PathBuf::from("cli-log-file")),
                 log_level: Some(LogLevel::Info),
             },
-            command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+            command: DistantSubcommand::Client(ClientSubcommand::Version {
                 cache: PathBuf::new(),
                 connection: None,
                 network: NetworkSettings {
@@ -1367,7 +1360,7 @@ mod tests {
                     log_file: Some(PathBuf::from("cli-log-file")),
                     log_level: Some(LogLevel::Info),
                 },
-                command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                command: DistantSubcommand::Client(ClientSubcommand::Version {
                     cache: PathBuf::new(),
                     connection: None,
                     network: NetworkSettings {
@@ -1666,7 +1659,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 current_dir: None,
-                environment: map!(),
+                environment: Default::default(),
                 cmd: None,
             }),
         };

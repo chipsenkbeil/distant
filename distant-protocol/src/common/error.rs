@@ -1,12 +1,10 @@
 use std::io;
 
 use derive_more::Display;
-use notify::ErrorKind as NotifyErrorKind;
 use serde::{Deserialize, Serialize};
 
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[display(fmt = "{kind}: {description}")]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
@@ -23,13 +21,6 @@ impl Error {
     /// Produces an [`io::Error`] from this error.
     pub fn to_io_error(&self) -> io::Error {
         io::Error::new(self.kind.into(), self.description.to_string())
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl Error {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Error)
     }
 }
 
@@ -63,76 +54,8 @@ impl From<Error> for io::Error {
     }
 }
 
-impl From<notify::Error> for Error {
-    fn from(x: notify::Error) -> Self {
-        let err = match x.kind {
-            NotifyErrorKind::Generic(x) => Self {
-                kind: ErrorKind::Other,
-                description: x,
-            },
-            NotifyErrorKind::Io(x) => Self::from(x),
-            NotifyErrorKind::PathNotFound => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Path not found"),
-            },
-            NotifyErrorKind::WatchNotFound => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Watch not found"),
-            },
-            NotifyErrorKind::InvalidConfig(_) => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Invalid config"),
-            },
-            NotifyErrorKind::MaxFilesWatch => Self {
-                kind: ErrorKind::Other,
-                description: String::from("Max files watched"),
-            },
-        };
-
-        Self {
-            kind: err.kind,
-            description: format!(
-                "{}\n\nPaths: {}",
-                err.description,
-                x.paths
-                    .into_iter()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
-        }
-    }
-}
-
-impl From<walkdir::Error> for Error {
-    fn from(x: walkdir::Error) -> Self {
-        if x.io_error().is_some() {
-            x.into_io_error().map(Self::from).unwrap()
-        } else {
-            Self {
-                kind: ErrorKind::Loop,
-                description: format!("{x}"),
-            }
-        }
-    }
-}
-
-impl From<tokio::task::JoinError> for Error {
-    fn from(x: tokio::task::JoinError) -> Self {
-        Self {
-            kind: if x.is_cancelled() {
-                ErrorKind::TaskCancelled
-            } else {
-                ErrorKind::TaskPanicked
-            },
-            description: format!("{x}"),
-        }
-    }
-}
-
 /// All possible kinds of errors that can be returned
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ErrorKind {
     /// An entity was not found, often a file
@@ -211,13 +134,6 @@ pub enum ErrorKind {
     Unknown,
 }
 
-#[cfg(feature = "schemars")]
-impl ErrorKind {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(ErrorKind)
-    }
-}
-
 impl From<io::ErrorKind> for ErrorKind {
     fn from(kind: io::ErrorKind) -> Self {
         match kind {
@@ -272,6 +188,128 @@ impl From<ErrorKind> for io::ErrorKind {
             ErrorKind::UnexpectedEof => Self::UnexpectedEof,
             ErrorKind::Unsupported => Self::Unsupported,
             _ => Self::Other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod error {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let error = Error {
+                kind: ErrorKind::AddrInUse,
+                description: "some description".to_string(),
+            };
+
+            let value = serde_json::to_value(error).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "kind": "addr_in_use",
+                    "description": "some description",
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "kind": "addr_in_use",
+                "description": "some description",
+            });
+
+            let error: Error = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                error,
+                Error {
+                    kind: ErrorKind::AddrInUse,
+                    description: "some description".to_string(),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let error = Error {
+                kind: ErrorKind::AddrInUse,
+                description: "some description".to_string(),
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&error).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or preventing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Error {
+                kind: ErrorKind::AddrInUse,
+                description: "some description".to_string(),
+            })
+            .unwrap();
+
+            let error: Error = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                error,
+                Error {
+                    kind: ErrorKind::AddrInUse,
+                    description: "some description".to_string(),
+                }
+            );
+        }
+    }
+
+    mod error_kind {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let kind = ErrorKind::AddrInUse;
+
+            let value = serde_json::to_value(kind).unwrap();
+            assert_eq!(value, serde_json::json!("addr_in_use"));
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!("addr_in_use");
+
+            let kind: ErrorKind = serde_json::from_value(value).unwrap();
+            assert_eq!(kind, ErrorKind::AddrInUse);
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let kind = ErrorKind::AddrInUse;
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&kind).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&ErrorKind::AddrInUse).unwrap();
+
+            let kind: ErrorKind = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(kind, ErrorKind::AddrInUse);
         }
     }
 }

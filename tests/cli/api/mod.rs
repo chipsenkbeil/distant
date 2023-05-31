@@ -1,4 +1,3 @@
-mod capabilities;
 mod copy;
 mod dir_create;
 mod dir_read;
@@ -15,4 +14,5 @@ mod remove;
 mod rename;
 mod search;
 mod system_info;
+mod version;
 mod watch;

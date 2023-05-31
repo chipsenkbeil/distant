@@ -1,5 +1,6 @@
-use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use std::{env, io};
 
 use async_trait::async_trait;
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
@@ -10,6 +11,7 @@ use walkdir::WalkDir;
 use crate::protocol::{
     Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
     Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
+    Version, PROTOCOL_VERSION,
 };
 use crate::{DistantApi, DistantCtx};
 
@@ -38,12 +40,6 @@ impl LocalDistantApi {
 #[async_trait]
 impl DistantApi for LocalDistantApi {
     type LocalData = ();
-
-    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
-        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
-
-        Ok(Capabilities::all())
-    }
 
     async fn read_file(
         &self,
@@ -409,7 +405,66 @@ impl DistantApi for LocalDistantApi {
             "[Conn {}] Reading metadata for {:?} {{canonicalize: {}, resolve_file_type: {}}}",
             ctx.connection_id, path, canonicalize, resolve_file_type
         );
-        Metadata::read(path, canonicalize, resolve_file_type).await
+        let metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
+        let canonicalized_path = if canonicalize {
+            Some(tokio::fs::canonicalize(path.as_path()).await?)
+        } else {
+            None
+        };
+
+        // If asking for resolved file type and current type is symlink, then we want to refresh
+        // our metadata to get the filetype for the resolved link
+        let file_type = if resolve_file_type && metadata.file_type().is_symlink() {
+            tokio::fs::metadata(path).await?.file_type()
+        } else {
+            metadata.file_type()
+        };
+
+        Ok(Metadata {
+            canonicalized_path,
+            accessed: metadata
+                .accessed()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis()),
+            created: metadata
+                .created()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis()),
+            modified: metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis()),
+            len: metadata.len(),
+            readonly: metadata.permissions().readonly(),
+            file_type: if file_type.is_dir() {
+                FileType::Dir
+            } else if file_type.is_file() {
+                FileType::File
+            } else {
+                FileType::Symlink
+            },
+
+            #[cfg(unix)]
+            unix: Some({
+                use std::os::unix::prelude::*;
+                let mode = metadata.mode();
+                crate::protocol::UnixMetadata::from(mode)
+            }),
+            #[cfg(not(unix))]
+            unix: None,
+
+            #[cfg(windows)]
+            windows: Some({
+                use std::os::windows::prelude::*;
+                let attributes = metadata.file_attributes();
+                crate::protocol::WindowsMetadata::from(attributes)
+            }),
+            #[cfg(not(windows))]
+            windows: None,
+        })
     }
 
     async fn set_permissions(
@@ -615,7 +670,29 @@ impl DistantApi for LocalDistantApi {
 
     async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
         debug!("[Conn {}] Reading system information", ctx.connection_id);
-        Ok(SystemInfo::default())
+        Ok(SystemInfo {
+            family: env::consts::FAMILY.to_string(),
+            os: env::consts::OS.to_string(),
+            arch: env::consts::ARCH.to_string(),
+            current_dir: env::current_dir().unwrap_or_default(),
+            main_separator: std::path::MAIN_SEPARATOR,
+            username: whoami::username(),
+            shell: if cfg!(windows) {
+                env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
+            } else {
+                env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
+            },
+        })
+    }
+
+    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+        debug!("[Conn {}] Querying version", ctx.connection_id);
+
+        Ok(Version {
+            server_version: format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: Capabilities::all(),
+        })
     }
 }
 

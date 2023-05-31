@@ -1,4 +1,3 @@
-mod capabilities;
 mod fs_copy;
 mod fs_exists;
 mod fs_make_dir;
@@ -12,3 +11,4 @@ mod fs_watch;
 mod fs_write;
 mod spawn;
 mod system_info;
+mod version;

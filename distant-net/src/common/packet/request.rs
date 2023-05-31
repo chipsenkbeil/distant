@@ -10,7 +10,6 @@ use crate::common::utils;
 
 /// Represents a request to send
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Request<T> {
     /// Unique id associated with the request
     pub id: Id,
@@ -59,13 +58,6 @@ where
     /// Deserializes the request from bytes
     pub fn from_slice(slice: &[u8]) -> io::Result<Self> {
         utils::deserialize_from_slice(slice)
-    }
-}
-
-#[cfg(feature = "schemars")]
-impl<T: schemars::JsonSchema> Request<T> {
-    pub fn root_schema() -> schemars::schema::RootSchema {
-        schemars::schema_for!(Request<T>)
     }
 }
 

@@ -57,7 +57,7 @@ where
             if environment.is_empty() {
                 None
             } else {
-                Some(environment.into_map())
+                Some(environment)
             },
         )
         .compat()
@@ -143,7 +143,7 @@ where
             if environment.is_empty() {
                 None
             } else {
-                Some(environment.into_map())
+                Some(environment)
             },
         )
         .compat()

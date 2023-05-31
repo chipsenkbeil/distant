@@ -11,8 +11,8 @@ use crate::client::{
     Watcher,
 };
 use crate::protocol::{
-    self, Capabilities, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata,
-    Permissions, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
+    self, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, Permissions, PtySize,
+    SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
 };
 
 pub type AsyncReturn<'a, T, E = io::Error> =
@@ -37,9 +37,6 @@ pub trait DistantChannelExt {
         path: impl Into<PathBuf>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()>;
-
-    /// Retrieves server capabilities
-    fn capabilities(&mut self) -> AsyncReturn<'_, Capabilities>;
 
     /// Copies a remote file or directory from src to dst
     fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
@@ -136,6 +133,9 @@ pub trait DistantChannelExt {
     /// Retrieves information about the remote system
     fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo>;
 
+    /// Retrieves server version information
+    fn version(&mut self) -> AsyncReturn<'_, Version>;
+
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
         &mut self,
@@ -201,18 +201,6 @@ impl DistantChannelExt
             self,
             protocol::Request::FileAppendText { path: path.into(), text: data.into() },
             @ok
-        )
-    }
-
-    fn capabilities(&mut self) -> AsyncReturn<'_, Capabilities> {
-        make_body!(
-            self,
-            protocol::Request::Capabilities {},
-            |data| match data {
-                protocol::Response::Capabilities { supported } => Ok(supported),
-                protocol::Response::Error(x) => Err(io::Error::from(x)),
-                _ => Err(mismatched_response()),
-            }
         )
     }
 
@@ -452,6 +440,14 @@ impl DistantChannelExt
     fn system_info(&mut self) -> AsyncReturn<'_, SystemInfo> {
         make_body!(self, protocol::Request::SystemInfo {}, |data| match data {
             protocol::Response::SystemInfo(x) => Ok(x),
+            protocol::Response::Error(x) => Err(io::Error::from(x)),
+            _ => Err(mismatched_response()),
+        })
+    }
+
+    fn version(&mut self) -> AsyncReturn<'_, Version> {
+        make_body!(self, protocol::Request::Version {}, |data| match data {
+            protocol::Response::Version(x) => Ok(x),
             protocol::Response::Error(x) => Err(io::Error::from(x)),
             _ => Err(mismatched_response()),
         })

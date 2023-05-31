@@ -54,18 +54,12 @@ async fn should_support_json_search_filesystem_using_query(
                 {
                     "type": "contents",
                     "path": root.child("file2.txt").to_string_lossy(),
-                    "lines": {
-                        "type": "text",
-                        "value": "textual\n",
-                    },
+                    "lines": "textual\n",
                     "line_number": 3,
                     "absolute_offset": 9,
                     "submatches": [
                         {
-                            "match": {
-                                "type": "text",
-                                "value": "ua",
-                            },
+                            "match": "ua",
                             "start": 4,
                             "end": 6,
                         }
