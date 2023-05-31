@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 use crate::common::{
-    Capabilities, Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch,
-    SystemInfo,
+    Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch, SystemInfo, Version,
 };
 
 /// Represents the payload of a successful response
@@ -133,8 +132,8 @@ pub enum Response {
     /// Response to retrieving information about the server and the system it is on
     SystemInfo(SystemInfo),
 
-    /// Response to retrieving information about the server's capabilities
-    Capabilities { supported: Capabilities },
+    /// Response to retrieving information about the server's version
+    Version(Version),
 }
 
 impl From<io::Error> for Response {
@@ -1880,27 +1879,31 @@ mod tests {
         }
     }
 
-    mod capabilities {
+    mod version {
         use super::*;
-        use crate::common::Capability;
+        use crate::common::{Capabilities, Capability};
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
-            let payload = Response::Capabilities {
-                supported: [Capability {
+            let payload = Response::Version(Version {
+                server_version: String::from("some version"),
+                protocol_version: (1, 2, 3),
+                capabilities: [Capability {
                     kind: String::from("some kind"),
                     description: String::from("some description"),
                 }]
                 .into_iter()
                 .collect(),
-            };
+            });
 
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
                 serde_json::json!({
-                    "type": "capabilities",
-                    "supported": [{
+                    "type": "version",
+                    "server_version": "some version",
+                    "protocol_version": [1, 2, 3],
+                    "capabilities": [{
                         "kind": "some kind",
                         "description": "some description",
                     }],
@@ -1911,24 +1914,30 @@ mod tests {
         #[test]
         fn should_be_able_to_deserialize_from_json() {
             let value = serde_json::json!({
-                "type": "capabilities",
-                "supported": Capabilities::all(),
+                "type": "version",
+                "server_version": "some version",
+                "protocol_version": [1, 2, 3],
+                "capabilities": Capabilities::all(),
             });
 
             let payload: Response = serde_json::from_value(value).unwrap();
             assert_eq!(
                 payload,
-                Response::Capabilities {
-                    supported: Capabilities::all(),
-                }
+                Response::Version(Version {
+                    server_version: String::from("some version"),
+                    protocol_version: (1, 2, 3),
+                    capabilities: Capabilities::all(),
+                })
             );
         }
 
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Response::Capabilities {
-                supported: Capabilities::all(),
-            };
+            let payload = Response::Version(Version {
+                server_version: String::from("some version"),
+                protocol_version: (1, 2, 3),
+                capabilities: Capabilities::all(),
+            });
 
             // NOTE: We don't actually check the errput here because it's an implementation detail
             // and could change as we change how serialization is done. This is merely to verify
@@ -1943,17 +1952,21 @@ mod tests {
             // verify that we are not corrupting or causing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Response::Capabilities {
-                supported: Capabilities::all(),
-            })
+            let buf = rmp_serde::encode::to_vec_named(&Response::Version(Version {
+                server_version: String::from("some version"),
+                protocol_version: (1, 2, 3),
+                capabilities: Capabilities::all(),
+            }))
             .unwrap();
 
             let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(
                 payload,
-                Response::Capabilities {
-                    supported: Capabilities::all(),
-                }
+                Response::Version(Version {
+                    server_version: String::from("some version"),
+                    protocol_version: (1, 2, 3),
+                    capabilities: Capabilities::all(),
+                })
             );
         }
     }

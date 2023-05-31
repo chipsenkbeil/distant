@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 use crate::protocol::{
     Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
     Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
+    Version, PROTOCOL_VERSION,
 };
 use crate::{DistantApi, DistantCtx};
 
@@ -39,12 +40,6 @@ impl LocalDistantApi {
 #[async_trait]
 impl DistantApi for LocalDistantApi {
     type LocalData = ();
-
-    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
-        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
-
-        Ok(Capabilities::all())
-    }
 
     async fn read_file(
         &self,
@@ -687,6 +682,16 @@ impl DistantApi for LocalDistantApi {
             } else {
                 env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
             },
+        })
+    }
+
+    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+        debug!("[Conn {}] Querying version", ctx.connection_id);
+
+        Ok(Version {
+            server_version: format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: Capabilities::all(),
         })
     }
 }

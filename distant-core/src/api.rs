@@ -8,8 +8,8 @@ use distant_net::server::{ConnectionCtx, Reply, ServerCtx, ServerHandler};
 use log::*;
 
 use crate::protocol::{
-    self, Capabilities, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId,
-    PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
+    self, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId, PtySize,
+    SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
 };
 
 mod local;
@@ -76,8 +76,8 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
-        unsupported("capabilities")
+    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+        unsupported("version")
     }
 
     /// Reads bytes from a file.
@@ -536,11 +536,11 @@ where
     D: Send + Sync,
 {
     match request {
-        protocol::Request::Capabilities {} => server
+        protocol::Request::Version {} => server
             .api
-            .capabilities(ctx)
+            .version(ctx)
             .await
-            .map(|supported| protocol::Response::Capabilities { supported })
+            .map(protocol::Response::Version)
             .unwrap_or_else(protocol::Response::from),
         protocol::Request::FileRead { path } => server
             .api

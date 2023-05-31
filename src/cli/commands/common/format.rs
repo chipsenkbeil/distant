@@ -375,17 +375,23 @@ fn format_shell(state: &mut FormatterState, data: protocol::Response) -> Output 
             )
             .into_bytes(),
         ),
-        protocol::Response::Capabilities { supported } => {
+        protocol::Response::Version(version) => {
             #[derive(Tabled)]
             struct EntryRow {
                 kind: String,
                 description: String,
             }
 
-            let table = Table::new(supported.into_sorted_vec().into_iter().map(|cap| EntryRow {
-                kind: cap.kind,
-                description: cap.description,
-            }))
+            let table = Table::new(
+                version
+                    .capabilities
+                    .into_sorted_vec()
+                    .into_iter()
+                    .map(|cap| EntryRow {
+                        kind: cap.kind,
+                        description: cap.description,
+                    }),
+            )
             .with(Style::ascii())
             .with(Modify::new(Rows::new(..)).with(Alignment::left()))
             .to_string()

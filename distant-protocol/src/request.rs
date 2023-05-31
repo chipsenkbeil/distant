@@ -32,10 +32,6 @@ pub type Environment = HashMap<String, String>;
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum Request {
-    /// Retrieve information about the server's capabilities
-    #[strum_discriminants(strum(message = "Supports retrieving capabilities"))]
-    Capabilities {},
-
     /// Reads a file from the specified path on the remote machine
     #[strum_discriminants(strum(message = "Supports reading binary file"))]
     FileRead {
@@ -307,61 +303,15 @@ pub enum Request {
     /// Retrieve information about the server and the system it is on
     #[strum_discriminants(strum(message = "Supports retrieving system information"))]
     SystemInfo {},
+
+    /// Retrieve information about the server's protocol version
+    #[strum_discriminants(strum(message = "Supports retrieving version"))]
+    Version {},
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    mod capabilities {
-        use super::*;
-
-        #[test]
-        fn should_be_able_to_serialize_to_json() {
-            let payload = Request::Capabilities {};
-
-            let value = serde_json::to_value(payload).unwrap();
-            assert_eq!(
-                value,
-                serde_json::json!({
-                    "type": "capabilities",
-                })
-            );
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_json() {
-            let value = serde_json::json!({
-                "type": "capabilities",
-            });
-
-            let payload: Request = serde_json::from_value(value).unwrap();
-            assert_eq!(payload, Request::Capabilities {});
-        }
-
-        #[test]
-        fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Request::Capabilities {};
-
-            // NOTE: We don't actually check the output here because it's an implementation detail
-            // and could change as we change how serialization is done. This is merely to verify
-            // that we can serialize since there are times when serde fails to serialize at
-            // runtime.
-            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_msgpack() {
-            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
-            // verify that we are not corrupting or causing issues when serializing on a
-            // client/server and then trying to deserialize on the other side. This has happened
-            // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Request::Capabilities {}).unwrap();
-
-            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
-            assert_eq!(payload, Request::Capabilities {});
-        }
-    }
 
     mod file_read {
         use super::*;
@@ -2976,6 +2926,56 @@ mod tests {
 
             let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(payload, Request::SystemInfo {});
+        }
+    }
+
+    mod version {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Request::Version {};
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "version",
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "version",
+            });
+
+            let payload: Request = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Request::Version {});
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Request::Version {};
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Request::Version {}).unwrap();
+
+            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Request::Version {});
         }
     }
 }

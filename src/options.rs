@@ -103,7 +103,7 @@ impl Options {
                         network.merge(config.client.network);
                         *timeout = timeout.take().or(config.client.api.timeout);
                     }
-                    ClientSubcommand::Capabilities { network, .. } => {
+                    ClientSubcommand::Version { network, .. } => {
                         network.merge(config.client.network);
                     }
                     ClientSubcommand::Connect {
@@ -264,7 +264,7 @@ pub enum ClientSubcommand {
     },
 
     /// Retrieves capabilities of the remote server
-    Capabilities {
+    Version {
         /// Location to store cached data
         #[clap(
             long,
@@ -463,7 +463,7 @@ pub enum ClientSubcommand {
 impl ClientSubcommand {
     pub fn cache_path(&self) -> &Path {
         match self {
-            Self::Capabilities { cache, .. } => cache.as_path(),
+            Self::Version { cache, .. } => cache.as_path(),
             Self::Connect { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
@@ -476,7 +476,7 @@ impl ClientSubcommand {
 
     pub fn network_settings(&self) -> &NetworkSettings {
         match self {
-            Self::Capabilities { network, .. } => network,
+            Self::Version { network, .. } => network,
             Self::Connect { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
@@ -1265,7 +1265,7 @@ mod tests {
                 log_file: None,
                 log_level: None,
             },
-            command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+            command: DistantSubcommand::Client(ClientSubcommand::Version {
                 cache: PathBuf::new(),
                 connection: None,
                 network: NetworkSettings {
@@ -1302,7 +1302,7 @@ mod tests {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
                 },
-                command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                command: DistantSubcommand::Client(ClientSubcommand::Version {
                     cache: PathBuf::new(),
                     connection: None,
                     network: NetworkSettings {
@@ -1323,7 +1323,7 @@ mod tests {
                 log_file: Some(PathBuf::from("cli-log-file")),
                 log_level: Some(LogLevel::Info),
             },
-            command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+            command: DistantSubcommand::Client(ClientSubcommand::Version {
                 cache: PathBuf::new(),
                 connection: None,
                 network: NetworkSettings {
@@ -1360,7 +1360,7 @@ mod tests {
                     log_file: Some(PathBuf::from("cli-log-file")),
                     log_level: Some(LogLevel::Info),
                 },
-                command: DistantSubcommand::Client(ClientSubcommand::Capabilities {
+                command: DistantSubcommand::Client(ClientSubcommand::Version {
                     cache: PathBuf::new(),
                     connection: None,
                     network: NetworkSettings {

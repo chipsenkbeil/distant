@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::ops::{BitAnd, BitOr, BitXor};
+use std::ops::{BitAnd, BitOr, BitXor, Deref, DerefMut};
 use std::str::FromStr;
 
 use derive_more::{From, Into, IntoIterator};
@@ -69,6 +69,32 @@ impl Capabilities {
         this.sort_unstable();
 
         this
+    }
+}
+
+impl AsRef<HashSet<Capability>> for Capabilities {
+    fn as_ref(&self) -> &HashSet<Capability> {
+        &self.0
+    }
+}
+
+impl AsMut<HashSet<Capability>> for Capabilities {
+    fn as_mut(&mut self) -> &mut HashSet<Capability> {
+        &mut self.0
+    }
+}
+
+impl Deref for Capabilities {
+    type Target = HashSet<Capability>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Capabilities {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

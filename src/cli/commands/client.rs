@@ -7,7 +7,8 @@ use anyhow::Context;
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
-    self, ChangeKindSet, FileType, Permissions, SearchQuery, SetPermissionsOptions, SystemInfo,
+    self, Capabilities, ChangeKindSet, FileType, Permissions, SearchQuery, SetPermissionsOptions,
+    SystemInfo,
 };
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
@@ -48,7 +49,7 @@ async fn read_cache(path: &Path) -> Cache {
 
 async fn async_run(cmd: ClientSubcommand) -> CliResult {
     match cmd {
-        ClientSubcommand::Capabilities {
+        ClientSubcommand::Version {
             cache,
             connection,
             format,
@@ -69,37 +70,83 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     format!("Failed to open raw channel to connection {connection_id}")
                 })?;
 
-            debug!("Retrieving capabilities");
-            let capabilities = channel
+            debug!("Retrieving version information");
+            let version = channel
                 .into_client()
                 .into_channel()
-                .capabilities()
+                .version()
                 .await
                 .with_context(|| {
-                    format!("Failed to retrieve capabilities using connection {connection_id}")
+                    format!("Failed to retrieve version using connection {connection_id}")
                 })?;
 
             match format {
                 Format::Shell => {
-                    #[derive(Tabled)]
-                    struct EntryRow {
-                        kind: String,
-                        description: String,
-                    }
+                    println!("Server version: {}", version.server_version);
 
-                    let table = Table::new(capabilities.into_sorted_vec().into_iter().map(|cap| {
-                        EntryRow {
-                            kind: cap.kind,
-                            description: cap.description,
+                    let (major, minor, patch) = version.protocol_version;
+                    println!("Protocol version: {major}.{minor}.{patch}");
+
+                    // Build a complete set of capabilities to show which ones we support
+                    let client_capabilities = Capabilities::all();
+                    let server_capabilities = version.capabilities;
+                    let mut capabilities: Vec<String> = client_capabilities
+                        .union(server_capabilities.as_ref())
+                        .map(|cap| {
+                            let kind = &cap.kind;
+                            if client_capabilities.contains(kind)
+                                && server_capabilities.contains(kind)
+                            {
+                                format!("+{kind}")
+                            } else {
+                                format!("-{kind}")
+                            }
+                        })
+                        .collect();
+                    capabilities.sort_unstable();
+
+                    // Figure out the text length of the longest capability
+                    let max_len = capabilities.iter().map(|x| x.len()).max().unwrap_or(0);
+
+                    if max_len > 0 {
+                        const MAX_COLS: usize = 4;
+
+                        // Determine how wide we have available to determine how many columns
+                        // to use; if we don't have a terminal width, default to something
+                        //
+                        // Maximum columns we want to support is 4
+                        let cols = match terminal_size::terminal_size() {
+                            // If we have a tty, see how many we can fit including space char
+                            //
+                            // Ensure that we at least return 1 as cols
+                            Some((width, _)) => std::cmp::max(width.0 as usize / (max_len + 1), 1),
+
+                            // If we have no tty, default to 4 columns
+                            None => MAX_COLS,
+                        };
+
+                        println!("Capabilities supported (+) or not (-):");
+                        for chunk in capabilities.chunks(std::cmp::min(cols, MAX_COLS)) {
+                            let cnt = chunk.len();
+                            match cnt {
+                                1 => println!("{:max_len$}", chunk[0]),
+                                2 => println!("{:max_len$} {:max_len$}", chunk[0], chunk[1]),
+                                3 => println!(
+                                    "{:max_len$} {:max_len$} {:max_len$}",
+                                    chunk[0], chunk[1], chunk[2]
+                                ),
+                                4 => println!(
+                                    "{:max_len$} {:max_len$} {:max_len$} {:max_len$}",
+                                    chunk[0], chunk[1], chunk[2], chunk[3]
+                                ),
+                                _ => unreachable!("Chunk of size {cnt} is not 1 > i <= {MAX_COLS}"),
+                            }
                         }
-                    }))
-                    .with(Style::ascii())
-                    .with(Modify::new(Rows::new(..)).with(Alignment::left()))
-                    .to_string();
-
-                    println!("{table}");
+                    }
                 }
-                Format::Json => println!("{}", serde_json::to_string(&capabilities).unwrap()),
+                Format::Json => {
+                    println!("{}", serde_json::to_string(&version).unwrap())
+                }
             }
         }
         ClientSubcommand::Connect {

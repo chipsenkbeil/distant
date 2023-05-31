@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use distant_core::net::server::ConnectionCtx;
 use distant_core::protocol::{
     Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, Permissions,
-    ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata,
+    ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata, Version, PROTOCOL_VERSION,
 };
 use distant_core::{DistantApi, DistantCtx};
 use log::*;
@@ -77,22 +77,6 @@ impl DistantApi for SshDistantApi {
     async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
         ctx.local_data.global_processes = Arc::downgrade(&self.processes);
         Ok(())
-    }
-
-    async fn capabilities(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Capabilities> {
-        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
-
-        let mut capabilities = Capabilities::all();
-
-        // Searching is not supported by ssh implementation
-        // TODO: Could we have external search using ripgrep's JSON lines API?
-        capabilities.take(CapabilityKind::Search);
-        capabilities.take(CapabilityKind::CancelSearch);
-
-        // Broken via wezterm-ssh, so not supported right now
-        capabilities.take(CapabilityKind::SetPermissions);
-
-        Ok(capabilities)
     }
 
     async fn read_file(
@@ -1011,6 +995,26 @@ impl DistantApi for SshDistantApi {
             main_separator: if is_windows { '\\' } else { '/' },
             username,
             shell,
+        })
+    }
+
+    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
+
+        let mut capabilities = Capabilities::all();
+
+        // Searching is not supported by ssh implementation
+        // TODO: Could we have external search using ripgrep's JSON lines API?
+        capabilities.take(CapabilityKind::Search);
+        capabilities.take(CapabilityKind::CancelSearch);
+
+        // Broken via wezterm-ssh, so not supported right now
+        capabilities.take(CapabilityKind::SetPermissions);
+
+        Ok(Version {
+            server_version: format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities,
         })
     }
 }
