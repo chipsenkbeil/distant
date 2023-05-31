@@ -1404,25 +1404,557 @@ mod tests {
 
     mod proc_spawned {
         use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::ProcSpawned { id: ProcessId::MAX };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "proc_spawned",
+                    "id": ProcessId::MAX,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "proc_spawned",
+                "id": ProcessId::MAX,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Response::ProcSpawned { id: ProcessId::MAX });
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::ProcSpawned { id: ProcessId::MAX };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf =
+                rmp_serde::encode::to_vec_named(&Response::ProcSpawned { id: ProcessId::MAX })
+                    .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Response::ProcSpawned { id: ProcessId::MAX });
+        }
     }
 
     mod proc_stdout {
         use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::ProcStdout {
+                id: ProcessId::MAX,
+                data: vec![0, 1, 2, u8::MAX],
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "proc_stdout",
+                    "id": ProcessId::MAX,
+                    "data": vec![0, 1, 2, u8::MAX],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "proc_stdout",
+                "id": ProcessId::MAX,
+                "data": vec![0, 1, 2, u8::MAX],
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcStdout {
+                    id: ProcessId::MAX,
+                    data: vec![0, 1, 2, u8::MAX],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::ProcStdout {
+                id: ProcessId::MAX,
+                data: vec![0, 1, 2, u8::MAX],
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::ProcStdout {
+                id: ProcessId::MAX,
+                data: vec![0, 1, 2, u8::MAX],
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcStdout {
+                    id: ProcessId::MAX,
+                    data: vec![0, 1, 2, u8::MAX],
+                }
+            );
+        }
     }
 
     mod proc_stderr {
         use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::ProcStderr {
+                id: ProcessId::MAX,
+                data: vec![0, 1, 2, u8::MAX],
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "proc_stderr",
+                    "id": ProcessId::MAX,
+                    "data": vec![0, 1, 2, u8::MAX],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "proc_stderr",
+                "id": ProcessId::MAX,
+                "data": vec![0, 1, 2, u8::MAX],
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcStderr {
+                    id: ProcessId::MAX,
+                    data: vec![0, 1, 2, u8::MAX],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::ProcStderr {
+                id: ProcessId::MAX,
+                data: vec![0, 1, 2, u8::MAX],
+            };
+
+            // NOTE: We don't actually check the errput here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::ProcStderr {
+                id: ProcessId::MAX,
+                data: vec![0, 1, 2, u8::MAX],
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcStderr {
+                    id: ProcessId::MAX,
+                    data: vec![0, 1, 2, u8::MAX],
+                }
+            );
+        }
     }
 
     mod proc_done {
         use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_payload_to_json() {
+            let payload = Response::ProcDone {
+                id: ProcessId::MAX,
+                success: false,
+                code: None,
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "proc_done",
+                    "id": ProcessId::MAX,
+                    "success": false,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_full_payload_to_json() {
+            let payload = Response::ProcDone {
+                id: ProcessId::MAX,
+                success: true,
+                code: Some(i32::MAX),
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "proc_done",
+                    "id": ProcessId::MAX,
+                    "success": true,
+                    "code": i32::MAX,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_payload_from_json() {
+            let value = serde_json::json!({
+                "type": "proc_done",
+                "id": ProcessId::MAX,
+                "success": false,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcDone {
+                    id: ProcessId::MAX,
+                    success: false,
+                    code: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_payload_from_json() {
+            let value = serde_json::json!({
+                "type": "proc_done",
+                "id": ProcessId::MAX,
+                "success": true,
+                "code": i32::MAX,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcDone {
+                    id: ProcessId::MAX,
+                    success: true,
+                    code: Some(i32::MAX),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
+            let payload = Response::ProcDone {
+                id: ProcessId::MAX,
+                success: false,
+                code: None,
+            };
+
+            // NOTE: We don't actually check the errput here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_full_payload_to_msgpack() {
+            let payload = Response::ProcDone {
+                id: ProcessId::MAX,
+                success: true,
+                code: Some(i32::MAX),
+            };
+
+            // NOTE: We don't actually check the errput here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_payload_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::ProcDone {
+                id: ProcessId::MAX,
+                success: false,
+                code: None,
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcDone {
+                    id: ProcessId::MAX,
+                    success: false,
+                    code: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_payload_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::ProcDone {
+                id: ProcessId::MAX,
+                success: true,
+                code: Some(i32::MAX),
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::ProcDone {
+                    id: ProcessId::MAX,
+                    success: true,
+                    code: Some(i32::MAX),
+                }
+            );
+        }
     }
 
     mod system_info {
         use super::*;
+        use std::path::PathBuf;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::SystemInfo(SystemInfo {
+                family: String::from("family"),
+                os: String::from("os"),
+                arch: String::from("arch"),
+                current_dir: PathBuf::from("current-dir"),
+                main_separator: '/',
+                username: String::from("username"),
+                shell: String::from("shell"),
+            });
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "system_info",
+                    "family": "family",
+                    "os": "os",
+                    "arch": "arch",
+                    "current_dir": "current-dir",
+                    "main_separator": '/',
+                    "username": "username",
+                    "shell": "shell",
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "system_info",
+                "family": "family",
+                "os": "os",
+                "arch": "arch",
+                "current_dir": "current-dir",
+                "main_separator": '/',
+                "username": "username",
+                "shell": "shell",
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::SystemInfo(SystemInfo {
+                    family: String::from("family"),
+                    os: String::from("os"),
+                    arch: String::from("arch"),
+                    current_dir: PathBuf::from("current-dir"),
+                    main_separator: '/',
+                    username: String::from("username"),
+                    shell: String::from("shell"),
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::SystemInfo(SystemInfo {
+                family: String::from("family"),
+                os: String::from("os"),
+                arch: String::from("arch"),
+                current_dir: PathBuf::from("current-dir"),
+                main_separator: '/',
+                username: String::from("username"),
+                shell: String::from("shell"),
+            });
+
+            // NOTE: We don't actually check the errput here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::SystemInfo(SystemInfo {
+                family: String::from("family"),
+                os: String::from("os"),
+                arch: String::from("arch"),
+                current_dir: PathBuf::from("current-dir"),
+                main_separator: '/',
+                username: String::from("username"),
+                shell: String::from("shell"),
+            }))
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::SystemInfo(SystemInfo {
+                    family: String::from("family"),
+                    os: String::from("os"),
+                    arch: String::from("arch"),
+                    current_dir: PathBuf::from("current-dir"),
+                    main_separator: '/',
+                    username: String::from("username"),
+                    shell: String::from("shell"),
+                })
+            );
+        }
     }
 
     mod capabilities {
         use super::*;
+        use crate::common::Capability;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::Capabilities {
+                supported: [Capability {
+                    kind: String::from("some kind"),
+                    description: String::from("some description"),
+                }]
+                .into_iter()
+                .collect(),
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "capabilities",
+                    "supported": [{
+                        "kind": "some kind",
+                        "description": "some description",
+                    }],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "capabilities",
+                "supported": Capabilities::all(),
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::Capabilities {
+                    supported: Capabilities::all(),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::Capabilities {
+                supported: Capabilities::all(),
+            };
+
+            // NOTE: We don't actually check the errput here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::Capabilities {
+                supported: Capabilities::all(),
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::Capabilities {
+                    supported: Capabilities::all(),
+                }
+            );
+        }
     }
 }
