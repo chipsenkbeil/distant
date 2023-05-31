@@ -15,8 +15,8 @@ fn should_output_capabilities(ctx: DistantManagerCtx) {
     // Since our client and server are built the same, all capabilities should be listed with +
     // and using 4 columns since we are not using a tty
     let expected = indoc::formatdoc! {"
-        Server version: {package_name} {package_version}
-        Protocol version: {major}.{minor}.{patch}
+        Client: distant {package_version} (Protocol {major}.{minor}.{patch})
+        Server: {package_name} {package_version} (Protocol {major}.{minor}.{patch})
         Capabilities supported (+) or not (-):
         +cancel_search    +copy             +dir_create       +dir_read
         +exists           +file_append      +file_append_text +file_read

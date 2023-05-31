@@ -538,10 +538,18 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             match format {
                 Format::Shell => {
-                    println!("Server version: {}", version.server_version);
+                    let (major, minor, patch) = distant_core::protocol::PROTOCOL_VERSION;
+                    println!(
+                        "Client: {} {} (Protocol {major}.{minor}.{patch})",
+                        env!("CARGO_PKG_NAME"),
+                        env!("CARGO_PKG_VERSION")
+                    );
 
                     let (major, minor, patch) = version.protocol_version;
-                    println!("Protocol version: {major}.{minor}.{patch}");
+                    println!(
+                        "Server: {} (Protocol {major}.{minor}.{patch})",
+                        version.server_version
+                    );
 
                     // Build a complete set of capabilities to show which ones we support
                     let client_capabilities = Capabilities::all();
