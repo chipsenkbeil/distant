@@ -1034,6 +1034,10 @@ pub enum ManagerServiceSubcommand {
         /// If specified, installs as a user-level service
         #[clap(long)]
         user: bool,
+
+        /// Additional arguments to provide to the manager when started
+        #[clap(name = "ARGS", last = true)]
+        args: Vec<String>,
     },
 
     /// Uninstall the manager as a service

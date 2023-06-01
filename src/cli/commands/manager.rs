@@ -113,7 +113,11 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 .context("Failed to stop service")?;
             Ok(())
         }
-        ManagerSubcommand::Service(ManagerServiceSubcommand::Install { kind, user }) => {
+        ManagerSubcommand::Service(ManagerServiceSubcommand::Install {
+            kind,
+            user,
+            args: extra_args,
+        }) => {
             debug!("Installing manager service via {:?}", kind);
             let mut manager = <dyn ServiceManager>::target_or_native(kind)
                 .context("Failed to detect native service manager")?;
@@ -124,6 +128,10 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 manager
                     .set_level(ServiceLevel::User)
                     .context("Failed to set service manager to user level")?;
+            }
+
+            for arg in extra_args {
+                args.push(arg.into());
             }
 
             manager
