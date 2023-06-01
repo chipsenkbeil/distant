@@ -3,17 +3,16 @@ use std::time::SystemTime;
 use std::{env, io};
 
 use async_trait::async_trait;
-use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
-use log::*;
-use tokio::io::AsyncWriteExt;
-use walkdir::WalkDir;
-
 use distant_core::protocol::{
     Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
     Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
     Version, PROTOCOL_VERSION,
 };
 use distant_core::{DistantApi, DistantCtx};
+use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
+use log::*;
+use tokio::io::AsyncWriteExt;
+use walkdir::WalkDir;
 
 mod process;
 
@@ -702,15 +701,14 @@ mod tests {
     use std::time::Duration;
 
     use assert_fs::prelude::*;
-    use distant_core::net::server::Reply;
+    use distant_core::net::server::{ConnectionCtx, Reply};
+    use distant_core::protocol::Response;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
     use test_log::test;
     use tokio::sync::mpsc;
 
     use super::*;
-    use distant_core::net::server::ConnectionCtx;
-    use distant_core::protocol::Response;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
         Lazy::new(|| assert_fs::TempDir::new().unwrap());

@@ -1,6 +1,7 @@
+use std::fmt;
+
 use predicates::reflection::PredicateReflection;
 use predicates::Predicate;
-use std::fmt;
 
 /// Checks if lines of text match the provided, trimming each line
 /// of both before comparing.

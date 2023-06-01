@@ -806,10 +806,10 @@ mod tests {
     use std::path::PathBuf;
 
     use assert_fs::prelude::*;
+    use distant_core::protocol::{FileType, SearchQueryCondition, SearchQueryMatchData};
     use test_log::test;
 
     use super::*;
-    use distant_core::protocol::{FileType, SearchQueryCondition, SearchQueryMatchData};
 
     fn make_path(path: &str) -> PathBuf {
         use std::path::MAIN_SEPARATOR;

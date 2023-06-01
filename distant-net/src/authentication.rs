@@ -1,10 +1,11 @@
-use crate::common::utils;
-use crate::common::{FramedTransport, Transport};
+use std::io;
+
 use async_trait::async_trait;
 use distant_auth::msg::*;
 use distant_auth::{AuthHandler, Authenticate, Authenticator};
 use log::*;
-use std::io;
+
+use crate::common::{utils, FramedTransport, Transport};
 
 macro_rules! write_frame {
     ($transport:expr, $data:expr) => {{

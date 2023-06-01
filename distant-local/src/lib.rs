@@ -1,7 +1,6 @@
 mod api;
 mod constants;
 pub use api::LocalDistantApi;
-
 use distant_core::{DistantApi, DistantApiServerHandler};
 
 /// Implementation of [`DistantApiServerHandler`] using [`LocalDistantApi`].
@@ -14,4 +13,3 @@ pub fn initialize_handler() -> std::io::Result<LocalDistantApiServerHandler> {
         LocalDistantApi::initialize()?,
     ))
 }
-

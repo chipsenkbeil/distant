@@ -11,9 +11,8 @@ use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
     Event as WatcherEvent, EventKind, PollWatcher, RecursiveMode, Watcher,
 };
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::constants::SERVER_WATCHER_CAPACITY;
