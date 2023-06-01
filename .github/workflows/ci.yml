@@ -42,7 +42,7 @@ jobs:
           key: "ci-clippy-${{ matrix.os }}"
       - name: Check Cargo availability
         run: cargo --version
-      - name: Run clippy (all features_
+      - name: Run clippy (all features)
         run: cargo clippy --workspace --all-targets --verbose --all-features
   rustfmt:
     name: "Verify code formatting (${{ matrix.os }})"
