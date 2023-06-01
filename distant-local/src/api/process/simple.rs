@@ -2,6 +2,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Stdio;
 
+use distant_core::protocol::Environment;
 use log::*;
 use tokio::io;
 use tokio::process::Command;
@@ -12,7 +13,6 @@ use super::{
     wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process, ProcessId,
     ProcessKiller, WaitRx,
 };
-use crate::protocol::Environment;
 
 mod tasks;
 

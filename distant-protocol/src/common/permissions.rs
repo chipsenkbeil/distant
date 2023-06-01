@@ -96,6 +96,7 @@ impl Permissions {
             other_exec: None,
         }
     }
+
     /// Creates a set of [`Permissions`] that indicate globally writable status.
     ///
     /// ```

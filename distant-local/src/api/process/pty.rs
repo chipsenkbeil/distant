@@ -3,6 +3,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
 
+use distant_core::protocol::Environment;
 use log::*;
 use portable_pty::{CommandBuilder, MasterPty, PtySize as PortablePtySize};
 use tokio::sync::mpsc;
@@ -13,7 +14,6 @@ use super::{
     ProcessPty, PtySize, WaitRx,
 };
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
-use crate::protocol::Environment;
 
 /// Represents a process that is associated with a pty
 pub struct PtyProcess {

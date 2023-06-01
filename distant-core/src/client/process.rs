@@ -5,9 +5,8 @@ use distant_net::client::Mailbox;
 use distant_net::common::{Request, Response};
 use log::*;
 use tokio::io;
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::client::DistantChannel;

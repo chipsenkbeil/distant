@@ -3981,6 +3981,7 @@ mod tests {
                 ManagerServiceSubcommand::Install {
                     kind: None,
                     user: false,
+                    args: Vec::new(),
                 },
             )),
         };
@@ -4008,6 +4009,7 @@ mod tests {
                     ManagerServiceSubcommand::Install {
                         kind: None,
                         user: false,
+                        args: Vec::new(),
                     },
                 )),
             }
@@ -4026,6 +4028,7 @@ mod tests {
                 ManagerServiceSubcommand::Install {
                     kind: None,
                     user: false,
+                    args: Vec::new(),
                 },
             )),
         };
@@ -4053,6 +4056,7 @@ mod tests {
                     ManagerServiceSubcommand::Install {
                         kind: None,
                         user: false,
+                        args: Vec::new(),
                     },
                 )),
             }

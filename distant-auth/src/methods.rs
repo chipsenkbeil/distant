@@ -121,10 +121,10 @@ pub trait AuthenticationMethod: Send + Sync {
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+
     use test_log::test;
 
     use super::*;
-
     use crate::authenticator::TestAuthenticator;
 
     struct SuccessAuthenticationMethod;

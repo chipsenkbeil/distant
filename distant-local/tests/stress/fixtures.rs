@@ -5,7 +5,8 @@ use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, TcpConnector};
 use distant_core::net::common::PortRange;
 use distant_core::net::server::Server;
-use distant_core::{DistantApiServerHandler, DistantClient, LocalDistantApi};
+use distant_core::{DistantApiServerHandler, DistantClient};
+use distant_local::LocalDistantApi;
 use rstest::*;
 use tokio::sync::mpsc;
 

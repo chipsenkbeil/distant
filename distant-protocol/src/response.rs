@@ -612,9 +612,10 @@ mod tests {
     }
 
     mod changed {
+        use std::path::PathBuf;
+
         use super::*;
         use crate::common::ChangeKind;
-        use std::path::PathBuf;
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
@@ -742,9 +743,10 @@ mod tests {
     }
 
     mod metadata {
+        use std::path::PathBuf;
+
         use super::*;
         use crate::common::{FileType, UnixMetadata, WindowsMetadata};
-        use std::path::PathBuf;
 
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
@@ -1219,9 +1221,10 @@ mod tests {
     }
 
     mod search_results {
+        use std::path::PathBuf;
+
         use super::*;
         use crate::common::{SearchQueryContentsMatch, SearchQueryMatch, SearchQuerySubmatch};
-        use std::path::PathBuf;
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
@@ -1768,8 +1771,9 @@ mod tests {
     }
 
     mod system_info {
-        use super::*;
         use std::path::PathBuf;
+
+        use super::*;
 
         #[test]
         fn should_be_able_to_serialize_to_json() {

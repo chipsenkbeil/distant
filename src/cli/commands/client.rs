@@ -13,9 +13,10 @@ use distant_core::protocol::{
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
 use serde_json::json;
-use tabled::object::Rows;
-use tabled::style::Style;
-use tabled::{Alignment, Disable, Modify, Table, Tabled};
+use tabled::settings::object::Rows;
+use tabled::settings::style::Style;
+use tabled::settings::{Alignment, Disable, Modify};
+use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
 use crate::cli::common::{

@@ -12,6 +12,5 @@ mod serde_str;
 
 /// Network functionality.
 pub use distant_net as net;
-
 /// Protocol structures.
 pub use distant_protocol as protocol;

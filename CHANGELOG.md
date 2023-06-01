@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Capabilities` message type has been changed to `Version` with new struct to
   report the version information that includes a server version string,
   protocol version tuple, and capabilities
+- `distant_core::api::local` moved to `distant_local`
 
 ### Removed
 

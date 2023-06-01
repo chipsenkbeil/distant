@@ -9,8 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::{InmemoryTransport, Interest, Ready, Reconnectable, Transport};
-use crate::common::utils;
-use crate::common::SecretKey32;
+use crate::common::{utils, SecretKey32};
 
 mod backup;
 mod codec;

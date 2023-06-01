@@ -8,7 +8,7 @@ use crate::cli::utils::TrimmedLinesMatchPredicate;
 #[test_log::test]
 fn should_output_capabilities(ctx: DistantManagerCtx) {
     // Because all of our crates have the same version, we can expect it to match
-    let package_name = "distant-core";
+    let package_name = "distant-local";
     let package_version = env!("CARGO_PKG_VERSION");
     let (major, minor, patch) = PROTOCOL_VERSION;
 

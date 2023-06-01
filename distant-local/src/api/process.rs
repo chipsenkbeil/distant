@@ -1,10 +1,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use distant_core::protocol::{ProcessId, PtySize};
 use tokio::io;
 use tokio::sync::mpsc;
-
-use crate::protocol::{ProcessId, PtySize};
 
 mod pty;
 pub use pty::*;
