@@ -38,6 +38,8 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: "ci-clippy-${{ matrix.os }}"
       - name: Check Cargo availability
         run: cargo --version
       - name: Run clippy (all features_
@@ -65,6 +67,8 @@ jobs:
           toolchain: stable
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: "ci-rustfmt-${{ matrix.os }}"
       - name: Check Cargo availability
         run: cargo --version
       - run: cargo fmt --all -- --check
@@ -94,6 +98,8 @@ jobs:
         with:
           tool: cargo-nextest@0.9.45
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: "ci-tests-${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.target }}"
       - name: Check Cargo availability
         run: cargo --version
       - uses: nick-fields/retry@v2
