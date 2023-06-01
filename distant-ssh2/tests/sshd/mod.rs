@@ -15,7 +15,7 @@ use assert_fs::TempDir;
 use async_trait::async_trait;
 use derive_more::{Deref, DerefMut, Display};
 use distant_core::DistantClient;
-use distant_ssh2::{DistantLaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use distant_ssh2::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use log::*;
 use once_cell::sync::Lazy;
 use rstest::*;
@@ -630,38 +630,6 @@ pub async fn client(sshd: Sshd) -> Ctx<DistantClient> {
         .into_distant_client()
         .await
         .context("Failed to convert into distant client")
-        .unwrap();
-    client.shutdown_on_drop(true);
-    Ctx {
-        sshd,
-        value: client,
-    }
-}
-
-/// Fixture to establish a client to a launched server
-#[fixture]
-pub async fn launched_client(sshd: Sshd) -> Ctx<DistantClient> {
-    let binary = std::env::var("DISTANT_PATH").unwrap_or_else(|_| String::from("distant"));
-    debug!("Setting path to distant binary as {binary}");
-
-    // Attempt to launch the server and connect to it, using $DISTANT_PATH as the path to the
-    // binary if provided, defaulting to assuming the binary is on our ssh path otherwise
-    //
-    // NOTE: Wrapping in ctx does not fully clean up the test as the launched distant server
-    //       is not cleaned up during drop. We don't know what the server's pid is, so our
-    //       only option would be to look up all running distant servers and kill them on drop,
-    //       but that would cause other tests to fail.
-    //
-    //       Setting an expiration of 1s would clean up running servers and possibly be good enough
-    let ssh_client = load_ssh_client(&sshd).await;
-    let mut client = ssh_client
-        .launch_and_connect(DistantLaunchOpts {
-            binary,
-            args: "--shutdown lonely=10".to_string(),
-            ..Default::default()
-        })
-        .await
-        .context("Failed to launch and connect to distant server")
         .unwrap();
     client.shutdown_on_drop(true);
     Ctx {
