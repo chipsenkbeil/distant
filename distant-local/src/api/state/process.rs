@@ -3,11 +3,10 @@ use std::io;
 use std::ops::Deref;
 use std::path::PathBuf;
 
-use distant_net::server::Reply;
+use distant_core::net::server::Reply;
+use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-
-use crate::protocol::{Environment, ProcessId, PtySize, Response};
 
 mod instance;
 pub use instance::*;

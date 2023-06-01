@@ -2,10 +2,9 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
-use distant_net::common::ConnectionId;
-use distant_net::server::Reply;
-
-use crate::protocol::{Change, ChangeKind, ChangeKindSet, Error, Response};
+use distant_core::net::common::ConnectionId;
+use distant_core::net::server::Reply;
+use distant_core::protocol::{Change, ChangeKind, ChangeKindSet, Error, Response};
 
 /// Represents a path registered with a watcher that includes relevant state including
 /// the ability to reply with

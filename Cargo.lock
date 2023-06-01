@@ -820,6 +820,7 @@ dependencies = [
  "dialoguer",
  "directories",
  "distant-core",
+ "distant-local",
  "distant-ssh2",
  "env_logger",
  "file-mode",
@@ -896,6 +897,33 @@ dependencies = [
  "test-log",
  "tokio",
  "tokio-util",
+ "walkdir",
+ "whoami",
+ "winsplit",
+]
+
+[[package]]
+name = "distant-local"
+version = "0.20.0-alpha.7"
+dependencies = [
+ "assert_fs",
+ "async-trait",
+ "distant-core",
+ "env_logger",
+ "grep",
+ "ignore",
+ "indoc",
+ "log",
+ "notify",
+ "num_cpus",
+ "once_cell",
+ "portable-pty 0.8.1",
+ "predicates",
+ "rand",
+ "rstest",
+ "shell-words",
+ "test-log",
+ "tokio",
  "walkdir",
  "whoami",
  "winsplit",

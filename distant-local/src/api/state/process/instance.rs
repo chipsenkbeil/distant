@@ -2,14 +2,14 @@ use std::future::Future;
 use std::io;
 use std::path::PathBuf;
 
-use distant_net::server::Reply;
+use distant_core::net::server::Reply;
+use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
 use log::*;
 use tokio::task::JoinHandle;
 
-use crate::api::local::process::{
+use crate::api::process::{
     InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
 };
-use crate::protocol::{Environment, ProcessId, PtySize, Response};
 
 /// Holds information related to a spawned process on the server
 pub struct ProcessInstance {

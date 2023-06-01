@@ -8,12 +8,12 @@ use log::*;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
-use crate::protocol::{
+use distant_core::protocol::{
     Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
     Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
     Version, PROTOCOL_VERSION,
 };
-use crate::{DistantApi, DistantCtx};
+use distant_core::{DistantApi, DistantCtx};
 
 mod process;
 
@@ -23,7 +23,7 @@ use state::*;
 /// Represents an implementation of [`DistantApi`] that works with the local machine
 /// where the server using this api is running. In other words, this is a direct
 /// impementation of the API instead of a proxy to another machine as seen with
-/// implementations on top of SSH and other protocol
+/// implementations on top of SSH and other protocol.
 pub struct LocalDistantApi {
     state: GlobalState,
 }
@@ -451,7 +451,7 @@ impl DistantApi for LocalDistantApi {
             unix: Some({
                 use std::os::unix::prelude::*;
                 let mode = metadata.mode();
-                crate::protocol::UnixMetadata::from(mode)
+                distant_core::protocol::UnixMetadata::from(mode)
             }),
             #[cfg(not(unix))]
             unix: None,
@@ -460,7 +460,7 @@ impl DistantApi for LocalDistantApi {
             windows: Some({
                 use std::os::windows::prelude::*;
                 let attributes = metadata.file_attributes();
-                crate::protocol::WindowsMetadata::from(attributes)
+                distant_core::protocol::WindowsMetadata::from(attributes)
             }),
             #[cfg(not(windows))]
             windows: None,
@@ -702,15 +702,15 @@ mod tests {
     use std::time::Duration;
 
     use assert_fs::prelude::*;
-    use distant_net::server::Reply;
+    use distant_core::net::server::Reply;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
     use test_log::test;
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::api::ConnectionCtx;
-    use crate::protocol::Response;
+    use distant_core::net::server::ConnectionCtx;
+    use distant_core::protocol::Response;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
         Lazy::new(|| assert_fs::TempDir::new().unwrap());

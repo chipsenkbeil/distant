@@ -12,7 +12,7 @@ use super::{
     wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process, ProcessId,
     ProcessKiller, WaitRx,
 };
-use crate::protocol::Environment;
+use distant_core::protocol::Environment;
 
 mod tasks;
 

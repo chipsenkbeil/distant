@@ -4,7 +4,7 @@ use anyhow::Context;
 use distant_core::net::auth::Verifier;
 use distant_core::net::common::{Host, SecretKey32};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig, ServerRef};
-use distant_core::{DistantApiServerHandler, DistantSingleKeyCredentials};
+use distant_core::DistantSingleKeyCredentials;
 use log::*;
 
 use crate::options::ServerSubcommand;
@@ -140,8 +140,8 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                     "using an ephemeral port".to_string()
                 }
             );
-            let handler =
-                DistantApiServerHandler::local().context("Failed to create local distant api")?;
+            let handler = distant_local::initialize_handler()
+                .context("Failed to create local distant api")?;
             let server = Server::tcp()
                 .config(NetServerConfig {
                     shutdown: shutdown.into_inner(),

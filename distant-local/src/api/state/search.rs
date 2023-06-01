@@ -3,7 +3,12 @@ use std::ops::Deref;
 use std::path::Path;
 use std::{cmp, io};
 
-use distant_net::server::Reply;
+use distant_core::net::server::Reply;
+use distant_core::protocol::{
+    Response, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
+    SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
+    SearchQueryTarget,
+};
 use grep::matcher::Matcher;
 use grep::regex::{RegexMatcher, RegexMatcherBuilder};
 use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
@@ -12,12 +17,6 @@ use ignore::{DirEntry, ParallelVisitor, ParallelVisitorBuilder, WalkBuilder, Wal
 use log::*;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
-
-use crate::protocol::{
-    Response, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
-    SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
-    SearchQueryTarget,
-};
 
 const MAXIMUM_SEARCH_THREADS: usize = 12;
 
@@ -810,7 +809,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::protocol::{FileType, SearchQueryCondition, SearchQueryMatchData};
+    use distant_core::protocol::{FileType, SearchQueryCondition, SearchQueryMatchData};
 
     fn make_path(path: &str) -> PathBuf {
         use std::path::MAIN_SEPARATOR;

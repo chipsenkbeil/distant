@@ -4,7 +4,7 @@ use std::pin::Pin;
 use tokio::io;
 use tokio::sync::mpsc;
 
-use crate::protocol::{ProcessId, PtySize};
+use distant_core::protocol::{ProcessId, PtySize};
 
 mod pty;
 pub use pty::*;

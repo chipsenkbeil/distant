@@ -12,9 +12,6 @@ use crate::protocol::{
     SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
 };
 
-mod local;
-pub use local::LocalDistantApi;
-
 mod reply;
 use reply::DistantSingleReply;
 
@@ -39,15 +36,6 @@ where
 {
     pub fn new(api: T) -> Self {
         Self { api }
-    }
-}
-
-impl DistantApiServerHandler<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData> {
-    /// Creates a new server using the [`LocalDistantApi`] implementation
-    pub fn local() -> io::Result<Self> {
-        Ok(Self {
-            api: LocalDistantApi::initialize()?,
-        })
     }
 }
 
