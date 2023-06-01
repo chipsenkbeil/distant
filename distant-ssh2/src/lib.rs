@@ -1,3 +1,9 @@
+#![doc = include_str!("../README.md")]
+
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
+
 #[cfg(not(any(feature = "libssh", feature = "ssh2")))]
 compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
 

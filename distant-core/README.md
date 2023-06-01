@@ -9,18 +9,12 @@
 [distant_rustc_img]: https://img.shields.io/badge/distant_core-rustc_1.64+-lightgray.svg
 [distant_rustc_lnk]: https://blog.rust-lang.org/2022/09/22/Rust-1.64.0.html
 
-Library that powers the [`distant`](https://github.com/chipsenkbeil/distant)
-binary.
-
-🚧 **(Alpha stage software) This library is in rapid development and may break or change frequently!** 🚧
-
 ## Details
 
-The `distant-core` library supplies the client, manager, and server
-implementations for use with the distant API in order to communicate with
-remote machines and perform actions. This library acts as the primary
-implementation that powers the CLI, but is also available for other extensions
-like `distant-ssh2`.
+The `distant-core` library supplies the client and server interfaces along with
+a client implementation for distant. The library exposes an API that downstream
+libraries such as `distant-local` and `distant-ssh2` can implement to provide a
+distant-compatible interface.
 
 ## Installation
 
@@ -29,31 +23,6 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 ```toml
 [dependencies]
 distant-core = "0.20"
-```
-
-## Examples
-
-Below is an example of connecting to a distant server over TCP without any
-encryption or authentication:
-
-```rust
-use distant_core::{
-  DistantClient,
-  DistantChannelExt,
-  net::{PlainCodec, TcpClientExt},
-};
-use std::{net::SocketAddr, path::Path};
-
-// Connect to a server located at example.com on port 8080 that is using
-// no encryption or authentication (PlainCodec)
-let addr: SocketAddr = "example.com:8080".parse().unwrap();
-let mut client = DistantClient::connect(addr, PlainCodec).await
-  .expect("Failed to connect");
-
-// Append text to a file
-// NOTE: This method comes from DistantChannelExt
-client.append_file_text(Path::new("path/to/file.txt"), "new contents").await
-  .expect("Failed to append to file");
 ```
 
 ## License

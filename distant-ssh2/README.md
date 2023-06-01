@@ -26,58 +26,7 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-ssh2 = "0.19"
-```
-
-## Examples
-
-Below is an example of connecting to an ssh server and translating between ssh
-protocol and distant protocol:
-
-```rust
-use distant_ssh2::{LocalSshAuthHandler, Ssh, SshOpts};
-
-// Using default ssh arguments to establish a connection
-let mut ssh = Ssh::connect("example.com", SshOpts::default())
-  .expect("Failed to connect");
-
-// Authenticating with the server is a separate step
-// 1. You can pass the local handler and authentication and host verification
-//    will be done over stderr
-// 2. You can provide your own handlers for programmatic engagement
-ssh.authenticate(LocalSshAuthHandler).await
-  .expect("Failed to authenticate");
-
-// Convert into an ssh client session (no distant server required)
-let client = ssh.into_distant_client().await
-  .expect("Failed to convert into distant client");
-```
-
-Below is an example of connecting to an ssh server, spawning a distant server
-on the remote machine, and connecting to the distant server:
-
-```rust
-use distant_ssh2::{DistantLaunchOpts, LocalSshAuthHandler, Ssh, SshOpts};
-
-// Using default ssh arguments to establish a connection
-let mut ssh = Ssh::connect("example.com", SshOpts::default())
-  .expect("Failed to connect");
-
-// Authenticating with the server is a separate step
-// 1. You can pass the local handler and authentication and host verification
-//    will be done over stderr
-// 2. You can provide your own handlers for programmatic engagement
-ssh.authenticate(LocalSshAuthHandler).await
-  .expect("Failed to authenticate");
-
-// Convert into a distant session, which involves spawning a distant server
-// using the current ssh connection and then establishing a new connection
-// to the distant server
-//
-// This takes in `DistantLaunchOpts` to specify the server's bin path,
-// arguments, timeout, and whether or not to spawn using a login shell
-let client = ssh.launch_and_connect(DistantLaunchOpts::default()).await
-  .expect("Failed to spawn server or connect to it");
+distant-ssh2 = "0.20"
 ```
 
 ## License
