@@ -1,18 +1,18 @@
-# distant net
+# distant auth
 
 [![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![Rustc 1.64.0][distant_rustc_img]][distant_rustc_lnk]
 
-[distant_crates_img]: https://img.shields.io/crates/v/distant-net.svg
-[distant_crates_lnk]: https://crates.io/crates/distant-net
-[distant_doc_img]: https://docs.rs/distant-net/badge.svg
-[distant_doc_lnk]: https://docs.rs/distant-net
-[distant_rustc_img]: https://img.shields.io/badge/distant_net-rustc_1.64+-lightgray.svg
+[distant_crates_img]: https://img.shields.io/crates/v/distant-auth.svg
+[distant_crates_lnk]: https://crates.io/crates/distant-auth
+[distant_doc_img]: https://docs.rs/distant-auth/badge.svg
+[distant_doc_lnk]: https://docs.rs/distant-auth
+[distant_rustc_img]: https://img.shields.io/badge/distant_auth-rustc_1.64+-lightgray.svg
 [distant_rustc_lnk]: https://blog.rust-lang.org/2022/09/22/Rust-1.64.0.html
 
 ## Details
 
-The `distant-net` library supplies the foundational networking functionality
-for the distant interfaces and distant cli.
+The `distant-auth` library supplies the authentication functionality for the
+distant interfaces and distant cli.
 
 ## Installation
 
@@ -20,7 +20,7 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-net = "0.20"
+distant-auth = "0.20"
 ```
 
 ## License
