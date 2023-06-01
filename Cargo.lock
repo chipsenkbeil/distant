@@ -867,7 +867,6 @@ dependencies = [
 name = "distant-core"
 version = "0.20.0-alpha.7"
 dependencies = [
- "assert_fs",
  "async-trait",
  "bitflags 2.3.1",
  "bytes",
@@ -876,30 +875,18 @@ dependencies = [
  "distant-protocol",
  "env_logger",
  "futures",
- "grep",
  "hex",
- "ignore",
- "indoc",
  "log",
- "notify",
  "num_cpus",
  "once_cell",
- "portable-pty 0.8.1",
- "predicates",
  "rand",
  "regex",
- "rstest",
  "serde",
  "serde_bytes",
  "serde_json",
- "shell-words",
  "strum",
  "test-log",
  "tokio",
- "tokio-util",
- "walkdir",
- "whoami",
- "winsplit",
 ]
 
 [[package]]
@@ -3308,20 +3295,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-util"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "806fe8c2c87eccc8b3267cbae29ed3ab2d0bd37fca70ab622e46aaa9375ddb7d"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-sink",
- "pin-project-lite",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "toml"
 version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3350,26 +3323,6 @@ dependencies = [
  "serde_spanned",
  "toml_datetime",
  "winnow",
-]
-
-[[package]]
-name = "tracing"
-version = "0.1.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ce8c33a8d48bd45d624a6e523445fd21ec13d3653cd51f681abf67418f54eb8"
-dependencies = [
- "cfg-if",
- "pin-project-lite",
- "tracing-core",
-]
-
-[[package]]
-name = "tracing-core"
-version = "0.1.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0955b8137a1df6f1a2e9a37d8a6656291ff0297c1a97c24e0d8425fe2312f79a"
-dependencies = [
- "once_cell",
 ]
 
 [[package]]
