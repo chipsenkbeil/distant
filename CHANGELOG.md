@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server (ssh unavailable due to https://github.com/wez/wezterm/issues/3784)
 - Implementation of `DistantChannelExt::set_permissions`
 - `distant version` to display information about connected server
+- `distant manager service install` now accepts additional arguments to provide
+  the manager on startup
 
 ### Changed
 
