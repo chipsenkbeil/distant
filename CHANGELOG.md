@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0-alpha.7]
+
 ### Added
 
 - New `SetPermissions` enum variant on protocol request
@@ -459,8 +461,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.6...HEAD
-[0.20.0-alpha.5]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.5...v0.20.0-alpha.6
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.7...HEAD
+[0.20.0-alpha.7]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.6...v0.20.0-alpha.7
+[0.20.0-alpha.6]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.5...v0.20.0-alpha.6
 [0.20.0-alpha.5]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.4...v0.20.0-alpha.5
 [0.20.0-alpha.4]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.3...v0.20.0-alpha.4
 [0.20.0-alpha.3]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.2...v0.20.0-alpha.3
