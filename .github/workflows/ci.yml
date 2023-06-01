@@ -157,3 +157,5 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - name: Run all workspace tests (all features)
         run: cargo nextest run --profile ci --release --all-features --workspace
+      - name: Run all doc tests (all features)
+        run: cargo test --release --all-features --workspace --doc
