@@ -8,9 +8,10 @@ use distant_core::protocol::{
     SearchQueryPathMatch, SystemInfo,
 };
 use log::*;
-use tabled::object::Rows;
-use tabled::style::Style;
-use tabled::{Alignment, Disable, Modify, Table, Tabled};
+use tabled::settings::object::Rows;
+use tabled::settings::style::Style;
+use tabled::settings::{Alignment, Disable, Modify};
+use tabled::{Table, Tabled};
 
 use crate::options::Format;
 

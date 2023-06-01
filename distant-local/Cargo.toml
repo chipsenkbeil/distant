@@ -13,24 +13,24 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 async-trait = "0.1.68"
 distant-core = { version = "=0.20.0-alpha.7", path = "../distant-core" }
-grep = "0.2.11"
+grep = "0.2.12"
 ignore = "0.4.20"
-log = "0.4.17"
+log = "0.4.18"
 notify = { version = "6.0.0", features = ["serde"] }
 num_cpus = "1.15.0"
 portable-pty = "0.8.1"
 rand = { version = "0.8.5", features = ["getrandom"] }
 shell-words = "1.1.0"
-tokio = { version = "1.27.0", features = ["full"] }
+tokio = { version = "1.28.2", features = ["full"] }
 walkdir = "2.3.3"
 whoami = "1.4.0"
 winsplit = "0.1.0"
 
 [dev-dependencies]
-assert_fs = "1.0.12"
+assert_fs = "1.0.13"
 env_logger = "0.10.0"
 indoc = "2.0.1"
-once_cell = "1.17.1"
-predicates = "3.0.2"
+once_cell = "1.17.2"
+predicates = "3.0.3"
 rstest = "0.17.0"
 test-log = "0.2.11"

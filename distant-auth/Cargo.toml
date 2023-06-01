@@ -18,10 +18,10 @@ tests = []
 [dependencies]
 async-trait = "0.1.68"
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error"] }
-log = "0.4.17"
-serde = { version = "1.0.159", features = ["derive"] }
+log = "0.4.18"
+serde = { version = "1.0.163", features = ["derive"] }
 
 [dev-dependencies]
 env_logger = "0.10.0"
 test-log = "0.2.11"
-tokio = { version = "1.27.0", features = ["full"] }
+tokio = { version = "1.28.2", features = ["full"] }
