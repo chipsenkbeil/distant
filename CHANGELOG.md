@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- `crossbeam-channel` dependency removed from notify by disabling its feature
+  in order to avoid a `tokio::spawn` issue (https://github.com/notify-rs/notify/issues/380)
+
 ## [0.20.0-alpha.7]
 
 ### Added
