@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `distant-local` now has two features: `macos-fsevent` and `macos-kqueue`.
+  These are used to indicate what kind of file watching to support (for MacOS).
+  The default is `macos-fsevent`.
+
 ### Removed
 
 - `crossbeam-channel` dependency removed from notify by disabling its feature
