@@ -140,7 +140,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                     "using an ephemeral port".to_string()
                 }
             );
-            let handler = distant_local::initialize_handler()
+            let handler = distant_local::initialize_handler(Default::default())
                 .context("Failed to create local distant api")?;
             let server = Server::tcp()
                 .config(NetServerConfig {
