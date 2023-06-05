@@ -1,5 +1,6 @@
-use crate::config::Config;
 use std::io;
+
+use crate::config::Config;
 
 mod process;
 pub use process::*;

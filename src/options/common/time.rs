@@ -1,8 +1,9 @@
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::time::Duration;
+
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Represents a time in seconds.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

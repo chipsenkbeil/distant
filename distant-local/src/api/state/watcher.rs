@@ -4,7 +4,6 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::config::WatchConfig;
 use distant_core::net::common::ConnectionId;
 use distant_core::protocol::ChangeKind;
 use log::*;
@@ -18,6 +17,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::config::WatchConfig;
 use crate::constants::SERVER_WATCHER_CAPACITY;
 
 mod path;

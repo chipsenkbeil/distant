@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{env, io};
 
-use crate::config::Config;
 use async_trait::async_trait;
 use distant_core::protocol::{
     Capabilities, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata,
@@ -14,6 +13,8 @@ use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
 use log::*;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
+
+use crate::config::Config;
 
 mod process;
 mod state;

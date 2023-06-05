@@ -1,6 +1,6 @@
-use crate::options::common::Seconds;
-
 use serde::{Deserialize, Serialize};
+
+use crate::options::common::Seconds;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerWatchConfig {
