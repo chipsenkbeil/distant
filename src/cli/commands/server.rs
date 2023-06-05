@@ -105,6 +105,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             use_ipv6,
             shutdown,
             current_dir,
+            watch,
             daemon: _,
             key_from_stdin,
             output_to_local_pipe,
@@ -143,10 +144,14 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             );
             let handler = distant_local::new_handler(LocalConfig {
                 watch: LocalWatchConfig {
-                    native: 
-                }
+                    native: !watch.watch_polling,
+                    poll_interval: watch.watch_poll_interval.map(Into::into),
+                    compare_contents: watch.watch_compare_contents,
+                    debounce_timeout: watch.watch_debounce_timeout.into_inner().into(),
+                    debounce_tick_rate: watch.watch_debounce_tick_rate.map(Into::into),
+                },
             })
-                .context("Failed to create local distant api")?;
+            .context("Failed to create local distant api")?;
             let server = Server::tcp()
                 .config(NetServerConfig {
                     shutdown: shutdown.into_inner(),

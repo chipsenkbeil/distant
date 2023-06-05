@@ -152,7 +152,7 @@ impl DistantApi for Api {
         // Traverse, but don't include root directory in entries (hence min depth 1), unless indicated
         // to do so (min depth 0)
         let dir = WalkDir::new(root_path.as_path())
-            .min_depth(if include_root { 0 } else { 1 })
+            .min_depth(usize::from(!include_root))
             .sort_by_file_name();
 
         // If depth > 0, will recursively traverse to specified max depth, otherwise

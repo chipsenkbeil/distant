@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use clap::builder::TypedValueParser as _;
-use clap::{Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
 use derive_more::IsVariant;
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
@@ -194,8 +194,13 @@ impl Options {
                         port,
                         shutdown,
                         use_ipv6,
+                        watch,
                         ..
                     } => {
+                        //
+                        // GENERAL SETTINGS
+                        //
+
                         *current_dir = current_dir.take().or(config.server.listen.current_dir);
                         if host.is_default() && config.server.listen.host.is_some() {
                             *host = Value::Explicit(config.server.listen.host.unwrap());
@@ -209,6 +214,35 @@ impl Options {
                         if !*use_ipv6 && config.server.listen.use_ipv6 {
                             *use_ipv6 = true;
                         }
+
+                        //
+                        // WATCH-SPECIFIC SETTINGS
+                        //
+
+                        if !watch.watch_polling && !config.server.watch.native {
+                            watch.watch_polling = true;
+                        }
+
+                        watch.watch_poll_interval = watch
+                            .watch_poll_interval
+                            .take()
+                            .or(config.server.watch.poll_interval);
+
+                        if !watch.watch_compare_contents && config.server.watch.compare_contents {
+                            watch.watch_compare_contents = true;
+                        }
+
+                        if watch.watch_debounce_timeout.is_default()
+                            && config.server.watch.debounce_timeout.is_some()
+                        {
+                            watch.watch_debounce_timeout =
+                                Value::Explicit(config.server.watch.debounce_timeout.unwrap());
+                        }
+
+                        watch.watch_debounce_tick_rate = watch
+                            .watch_debounce_tick_rate
+                            .take()
+                            .or(config.server.watch.debounce_tick_rate);
                     }
                 }
             }
@@ -253,7 +287,7 @@ pub enum ClientSubcommand {
 
         /// Represents the maximum time (in seconds) to wait for a network request before timing out.
         #[clap(long)]
-        timeout: Option<f32>,
+        timeout: Option<Seconds>,
 
         /// Specify a connection being managed
         #[clap(long)]
@@ -1103,6 +1137,9 @@ pub enum ServerSubcommand {
         #[clap(long)]
         daemon: bool,
 
+        #[clap(flatten)]
+        watch: ServerListenWatchOptions,
+
         /// If specified, the server will not generate a key but instead listen on stdin for the next
         /// 32 bytes that it will use as the key instead. Receiving less than 32 bytes before stdin
         /// is closed is considered an error and any bytes after the first 32 are not used for the key
@@ -1113,6 +1150,34 @@ pub enum ServerSubcommand {
         #[clap(long, help = None, long_help = None)]
         output_to_local_pipe: Option<std::ffi::OsString>,
     },
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct ServerListenWatchOptions {
+    /// If specified, will use the polling-based watcher for filesystem changes
+    #[clap(long)]
+    pub watch_polling: bool,
+
+    /// If specified, represents the time (in seconds) between polls of files being watched,
+    /// only relevant when using the polling watcher implementation
+    #[clap(long)]
+    pub watch_poll_interval: Option<Seconds>,
+
+    /// If true, will attempt to load a file and compare its contents to detect file changes,
+    /// only relevant when using the polling watcher implementation (VERY SLOW)
+    #[clap(long)]
+    pub watch_compare_contents: bool,
+
+    /// Represents the maximum time (in seconds) to wait for filesystem changes before
+    /// reporting them, which is useful to avoid noisy changes as well as serves to consolidate
+    /// different events that represent the same action
+    #[clap(long, default_value_t = Value::Default(Seconds::try_from(0.5).unwrap()))]
+    pub watch_debounce_timeout: Value<Seconds>,
+
+    /// Represents how often (in seconds) to check for new events before the debounce timeout
+    /// occurs. Defaults to 1/4 the debounce timeout if not set.
+    #[clap(long)]
+    pub watch_debounce_tick_rate: Option<Seconds>,
 }
 
 /// Represents the format to use for output from a command.
@@ -1178,7 +1243,9 @@ mod tests {
                     unix_socket: Some(PathBuf::from("config-unix-socket")),
                     windows_pipe: Some(String::from("config-windows-pipe")),
                 },
-                api: ClientApiConfig { timeout: Some(5.0) },
+                api: ClientApiConfig {
+                    timeout: Some(Seconds::from(5u32)),
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -1199,7 +1266,7 @@ mod tests {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
                         windows_pipe: Some(String::from("config-windows-pipe")),
                     },
-                    timeout: Some(5.0),
+                    timeout: Some(Seconds::from(5u32)),
                 }),
             }
         );
@@ -1220,7 +1287,7 @@ mod tests {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
                     windows_pipe: Some(String::from("cli-windows-pipe")),
                 },
-                timeout: Some(99.0),
+                timeout: Some(Seconds::from(99u32)),
             }),
         };
 
@@ -1234,7 +1301,9 @@ mod tests {
                     unix_socket: Some(PathBuf::from("config-unix-socket")),
                     windows_pipe: Some(String::from("config-windows-pipe")),
                 },
-                api: ClientApiConfig { timeout: Some(5.0) },
+                api: ClientApiConfig {
+                    timeout: Some(Seconds::from(5u32)),
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -1255,7 +1324,7 @@ mod tests {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
                         windows_pipe: Some(String::from("cli-windows-pipe")),
                     },
-                    timeout: Some(99.0),
+                    timeout: Some(Seconds::from(99u32)),
                 }),
             }
         );
@@ -4077,6 +4146,13 @@ mod tests {
                 use_ipv6: false,
                 shutdown: Value::Default(Shutdown::After(Duration::from_secs(123))),
                 current_dir: None,
+                watch: ServerListenWatchOptions {
+                    watch_polling: false,
+                    watch_poll_interval: None,
+                    watch_compare_contents: false,
+                    watch_debounce_timeout: Value::Default(Seconds::try_from(0.5).unwrap()),
+                    watch_debounce_tick_rate: None,
+                },
                 daemon: false,
                 key_from_stdin: false,
                 output_to_local_pipe: None,
@@ -4096,6 +4172,13 @@ mod tests {
                     shutdown: Some(Shutdown::Lonely(Duration::from_secs(456))),
                     current_dir: Some(PathBuf::from("config-dir")),
                 },
+                watch: ServerWatchConfig {
+                    native: false,
+                    poll_interval: Some(Seconds::from(100u32)),
+                    compare_contents: true,
+                    debounce_timeout: Some(Seconds::from(200u32)),
+                    debounce_tick_rate: Some(Seconds::from(300u32)),
+                },
             },
             ..Default::default()
         });
@@ -4114,6 +4197,13 @@ mod tests {
                     use_ipv6: true,
                     shutdown: Value::Explicit(Shutdown::Lonely(Duration::from_secs(456))),
                     current_dir: Some(PathBuf::from("config-dir")),
+                    watch: ServerListenWatchOptions {
+                        watch_polling: true,
+                        watch_poll_interval: Some(Seconds::from(100u32)),
+                        watch_compare_contents: true,
+                        watch_debounce_timeout: Value::Explicit(Seconds::from(200u32)),
+                        watch_debounce_tick_rate: Some(Seconds::from(300u32)),
+                    },
                     daemon: false,
                     key_from_stdin: false,
                     output_to_local_pipe: None,
@@ -4136,6 +4226,13 @@ mod tests {
                 use_ipv6: true,
                 shutdown: Value::Explicit(Shutdown::After(Duration::from_secs(123))),
                 current_dir: Some(PathBuf::from("cli-dir")),
+                watch: ServerListenWatchOptions {
+                    watch_polling: true,
+                    watch_poll_interval: Some(Seconds::from(10u32)),
+                    watch_compare_contents: true,
+                    watch_debounce_timeout: Value::Explicit(Seconds::from(20u32)),
+                    watch_debounce_tick_rate: Some(Seconds::from(30u32)),
+                },
                 daemon: false,
                 key_from_stdin: false,
                 output_to_local_pipe: None,
@@ -4155,6 +4252,13 @@ mod tests {
                     shutdown: Some(Shutdown::Lonely(Duration::from_secs(456))),
                     current_dir: Some(PathBuf::from("config-dir")),
                 },
+                watch: ServerWatchConfig {
+                    native: true,
+                    poll_interval: Some(Seconds::from(100u32)),
+                    compare_contents: false,
+                    debounce_timeout: Some(Seconds::from(200u32)),
+                    debounce_tick_rate: Some(Seconds::from(300u32)),
+                },
             },
             ..Default::default()
         });
@@ -4173,6 +4277,13 @@ mod tests {
                     use_ipv6: true,
                     shutdown: Value::Explicit(Shutdown::After(Duration::from_secs(123))),
                     current_dir: Some(PathBuf::from("cli-dir")),
+                    watch: ServerListenWatchOptions {
+                        watch_polling: true,
+                        watch_poll_interval: Some(Seconds::from(10u32)),
+                        watch_compare_contents: true,
+                        watch_debounce_timeout: Value::Explicit(Seconds::from(20u32)),
+                        watch_debounce_tick_rate: Some(Seconds::from(30u32)),
+                    },
                     daemon: false,
                     key_from_stdin: false,
                     output_to_local_pipe: None,

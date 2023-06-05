@@ -169,3 +169,27 @@ shutdown = "never"
 
 # Changes the current working directory (cwd) to the specified directory.
 # current_dir = "path/to/dir"
+
+# Configuration related to filesystem watching done by the server
+[server.watch]
+
+# If true, will attempt to use native filesystem watching (more efficient),
+# otherwise will leverage polling of watched files and directories to detect changes
+native = true
+
+# If specified, represents the time (in seconds) between polls of files being watched,
+# only relevant when using the polling watcher implementation
+#poll_interval = 30
+
+# If true, will attempt to load a file and compare its contents to detect file changes,
+# only relevant when using the polling watcher implementation (VERY SLOW)
+compare_contents = false
+
+# Represents the maximum time (in seconds) to wait for filesystem changes before
+# reporting them, which is useful to avoid noisy changes as well as serves to consolidate
+# different events that represent the same action
+# debounce_timeout = 0.5
+
+# Represents how often (in seconds) to check for new events before the debounce timeout
+# occurs. Defaults to 1/4 the debounce timeout if not set.
+# debounce_tick_rate = 0.125
