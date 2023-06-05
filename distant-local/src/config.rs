@@ -21,7 +21,7 @@ impl Default for WatchConfig {
             native: true,
             poll_interval: None,
             compare_contents: false,
-            debounce_timeout: Duration::from_secs(2),
+            debounce_timeout: Duration::from_millis(500),
             debounce_tick_rate: None,
         }
     }

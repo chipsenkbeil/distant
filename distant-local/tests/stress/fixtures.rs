@@ -6,7 +6,7 @@ use distant_core::net::client::{Client, TcpConnector};
 use distant_core::net::common::PortRange;
 use distant_core::net::server::Server;
 use distant_core::{DistantApiServerHandler, DistantClient};
-use distant_local::LocalDistantApi;
+use distant_local::Api;
 use rstest::*;
 use tokio::sync::mpsc;
 
@@ -22,7 +22,7 @@ impl DistantClientCtx {
         let (started_tx, mut started_rx) = mpsc::channel::<u16>(1);
 
         tokio::spawn(async move {
-            if let Ok(api) = LocalDistantApi::initialize(Default::default()) {
+            if let Ok(api) = Api::initialize(Default::default()) {
                 let port: PortRange = "0".parse().unwrap();
                 let port = {
                     let handler = DistantApiServerHandler::new(api);

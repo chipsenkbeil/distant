@@ -23,11 +23,11 @@ use state::*;
 /// where the server using this api is running. In other words, this is a direct
 /// impementation of the API instead of a proxy to another machine as seen with
 /// implementations on top of SSH and other protocol.
-pub struct LocalDistantApi {
+pub struct Api {
     state: GlobalState,
 }
 
-impl LocalDistantApi {
+impl Api {
     /// Initialize the api instance
     pub fn initialize(config: Config) -> io::Result<Self> {
         Ok(Self {
@@ -37,7 +37,7 @@ impl LocalDistantApi {
 }
 
 #[async_trait]
-impl DistantApi for LocalDistantApi {
+impl DistantApi for Api {
     type LocalData = ();
 
     async fn read_file(
@@ -772,8 +772,8 @@ mod tests {
 
     const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
-    async fn setup(buffer: usize) -> (LocalDistantApi, DistantCtx<()>, mpsc::Receiver<Response>) {
-        let api = LocalDistantApi::initialize(Config {
+    async fn setup(buffer: usize) -> (Api, DistantCtx<()>, mpsc::Receiver<Response>) {
+        let api = Api::initialize(Config {
             watch: WatchConfig {
                 debounce_timeout: DEBOUNCE_TIMEOUT,
                 ..Default::default()
@@ -1622,7 +1622,7 @@ mod tests {
 
         api.watch(
             ctx,
-            file.path().to_path_buf(),
+            temp.path().to_path_buf(),
             /* recursive */ true,
             /* only */ Default::default(),
             /* except */ Default::default(),

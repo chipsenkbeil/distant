@@ -27,8 +27,10 @@ distant-local = "0.20"
 ## Examples
 
 ```rust,no_run
+use distant_local::{Config, new_handler};
+
 // Create a server API handler to be used with the server
-let handler = distant_local::initialize_handler().unwrap();
+let handler = new_handler(Config::default()).unwrap();
 ```
 
 ## License
