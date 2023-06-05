@@ -1,5 +1,7 @@
 use std::io;
 
+use crate::config::Config;
+
 mod process;
 pub use process::*;
 
@@ -22,11 +24,13 @@ pub struct GlobalState {
 }
 
 impl GlobalState {
-    pub fn initialize() -> io::Result<Self> {
+    pub fn initialize(config: Config) -> io::Result<Self> {
         Ok(Self {
             process: ProcessState::new(),
             search: SearchState::new(),
-            watcher: WatcherState::initialize()?,
+            watcher: WatcherBuilder::new()
+                .with_config(config.watch)
+                .initialize()?,
         })
     }
 }

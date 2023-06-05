@@ -812,10 +812,10 @@ mod tests {
     use super::*;
 
     fn make_path(path: &str) -> PathBuf {
-        use std::path::MAIN_SEPARATOR;
+        use std::path::MAIN_SEPARATOR_STR;
 
         // Ensure that our path is compliant with the current platform
-        let path = path.replace('/', &MAIN_SEPARATOR.to_string());
+        let path = path.replace('/', MAIN_SEPARATOR_STR);
 
         PathBuf::from(path)
     }

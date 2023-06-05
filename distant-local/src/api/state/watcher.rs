@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use distant_core::net::common::ConnectionId;
 use distant_core::protocol::ChangeKind;
@@ -9,49 +10,49 @@ use log::*;
 use notify::event::{AccessKind, AccessMode, ModifyKind};
 use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
-    Event as WatcherEvent, EventKind, PollWatcher, RecursiveMode, Watcher,
+    Event as WatcherEvent, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
 };
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, FileIdMap};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::config::WatchConfig;
 use crate::constants::SERVER_WATCHER_CAPACITY;
 
 mod path;
 pub use path::*;
 
-/// Holds information related to watched paths on the server
-pub struct WatcherState {
-    channel: WatcherChannel,
-    task: JoinHandle<()>,
+/// Builder for a watcher.
+#[derive(Default)]
+pub struct WatcherBuilder {
+    config: WatchConfig,
 }
 
-impl Drop for WatcherState {
-    /// Aborts the task that handles watcher path operations and management
-    fn drop(&mut self) {
-        self.abort();
+impl WatcherBuilder {
+    /// Creates a new builder configured to use the native watcher using default configuration.
+    pub fn new() -> Self {
+        Self::default()
     }
-}
 
-impl WatcherState {
+    /// Swaps the configuration with the provided one.
+    pub fn with_config(self, config: WatchConfig) -> Self {
+        Self { config }
+    }
+
     /// Will create a watcher and initialize watched paths to be empty
-    pub fn initialize() -> io::Result<Self> {
+    pub fn initialize(self) -> io::Result<WatcherState> {
         // NOTE: Cannot be something small like 1 as this seems to cause a deadlock sometimes
         //       with a large volume of watch requests
         let (tx, rx) = mpsc::channel(SERVER_WATCHER_CAPACITY);
 
-        macro_rules! spawn_watcher {
-            ($watcher:ident) => {{
-                Self {
-                    channel: WatcherChannel { tx },
-                    task: tokio::spawn(watcher_task($watcher, rx)),
-                }
-            }};
-        }
+        let watcher_config = WatcherConfig::default()
+            .with_compare_contents(self.config.compare_contents)
+            .with_poll_interval(self.config.poll_interval.unwrap_or(Duration::from_secs(30)));
 
-        macro_rules! event_handler {
-            ($tx:ident) => {
-                move |res| match $tx.try_send(match res {
+        macro_rules! process_event {
+            ($tx:ident, $evt:expr) => {
+                match $tx.try_send(match $evt {
                     Ok(x) => InnerWatcherMsg::Event { ev: x },
                     Err(x) => InnerWatcherMsg::Error { err: x },
                 }) {
@@ -69,30 +70,83 @@ impl WatcherState {
             };
         }
 
-        let tx = tx.clone();
-        let result = {
-            let tx = tx.clone();
-            notify::recommended_watcher(event_handler!(tx))
-        };
+        macro_rules! new_debouncer {
+            ($watcher:ident, $tx:ident) => {{
+                new_debouncer_opt::<_, $watcher, FileIdMap>(
+                    self.config.debounce_timeout,
+                    self.config.debounce_tick_rate,
+                    move |result: DebounceEventResult| match result {
+                        Ok(events) => {
+                            for x in events {
+                                process_event!($tx, Ok(x));
+                            }
+                        }
+                        Err(errors) => {
+                            for x in errors {
+                                process_event!($tx, Err(x));
+                            }
+                        }
+                    },
+                    FileIdMap::new(),
+                    watcher_config,
+                )
+            }};
+        }
 
-        match result {
-            Ok(watcher) => Ok(spawn_watcher!(watcher)),
-            Err(x) => match x.kind {
-                // notify-rs has a bug on Mac M1 with Docker and Linux, so we detect that error
-                // and fall back to the poll watcher if this occurs
-                //
-                // https://github.com/notify-rs/notify/issues/423
-                WatcherErrorKind::Io(x) if x.raw_os_error() == Some(38) => {
-                    warn!("Recommended watcher is unsupported! Falling back to polling watcher!");
-                    let watcher = PollWatcher::new(event_handler!(tx), WatcherConfig::default())
-                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-                    Ok(spawn_watcher!(watcher))
+        macro_rules! spawn_task {
+            ($debouncer:expr) => {{
+                WatcherState {
+                    channel: WatcherChannel { tx },
+                    task: tokio::spawn(watcher_task($debouncer, rx)),
                 }
-                _ => Err(io::Error::new(io::ErrorKind::Other, x)),
-            },
+            }};
+        }
+
+        let tx = tx.clone();
+        if self.config.native {
+            let result = {
+                let tx = tx.clone();
+                new_debouncer!(RecommendedWatcher, tx)
+            };
+
+            match result {
+                Ok(debouncer) => Ok(spawn_task!(debouncer)),
+                Err(x) => {
+                    match x.kind {
+                        // notify-rs has a bug on Mac M1 with Docker and Linux, so we detect that error
+                        // and fall back to the poll watcher if this occurs
+                        //
+                        // https://github.com/notify-rs/notify/issues/423
+                        WatcherErrorKind::Io(x) if x.raw_os_error() == Some(38) => {
+                            warn!("Recommended watcher is unsupported! Falling back to polling watcher!");
+                            Ok(spawn_task!(new_debouncer!(PollWatcher, tx)
+                                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?))
+                        }
+                        _ => Err(io::Error::new(io::ErrorKind::Other, x)),
+                    }
+                }
+            }
+        } else {
+            Ok(spawn_task!(new_debouncer!(PollWatcher, tx)
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?))
         }
     }
+}
 
+/// Holds information related to watched paths on the server
+pub struct WatcherState {
+    channel: WatcherChannel,
+    task: JoinHandle<()>,
+}
+
+impl Drop for WatcherState {
+    /// Aborts the task that handles watcher path operations and management
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+impl WatcherState {
     /// Aborts the watcher task
     pub fn abort(&self) {
         self.task.abort();
@@ -169,7 +223,12 @@ enum InnerWatcherMsg {
     },
 }
 
-async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWatcherMsg>) {
+async fn watcher_task<W>(
+    mut debouncer: Debouncer<W, FileIdMap>,
+    mut rx: mpsc::Receiver<InnerWatcherMsg>,
+) where
+    W: Watcher,
+{
     // TODO: Optimize this in some way to be more performant than
     //       checking every path whenever an event comes in
     let mut registered_paths: Vec<RegisteredPath> = Vec::new();
@@ -193,7 +252,8 @@ async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWat
                     // Send an okay because we always succeed in this case
                     let _ = cb.send(Ok(()));
                 } else {
-                    let res = watcher
+                    let res = debouncer
+                        .watcher()
                         .watch(
                             registered_path.path(),
                             if registered_path.is_recursive() {
@@ -233,7 +293,8 @@ async fn watcher_task(mut watcher: impl Watcher, mut rx: mpsc::Receiver<InnerWat
                     // 3. Otherwise, we return okay because we succeeded
                     if *cnt <= removed_cnt {
                         let _ = cb.send(
-                            watcher
+                            debouncer
+                                .watcher()
                                 .unwatch(&path)
                                 .map_err(|x| io::Error::new(io::ErrorKind::Other, x)),
                         );

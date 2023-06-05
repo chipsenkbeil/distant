@@ -5,6 +5,7 @@ use distant_core::net::auth::Verifier;
 use distant_core::net::common::{Host, SecretKey32};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig, ServerRef};
 use distant_core::DistantSingleKeyCredentials;
+use distant_local::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
 use log::*;
 
 use crate::options::ServerSubcommand;
@@ -104,6 +105,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             use_ipv6,
             shutdown,
             current_dir,
+            watch,
             daemon: _,
             key_from_stdin,
             output_to_local_pipe,
@@ -140,8 +142,16 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                     "using an ephemeral port".to_string()
                 }
             );
-            let handler = distant_local::initialize_handler()
-                .context("Failed to create local distant api")?;
+            let handler = distant_local::new_handler(LocalConfig {
+                watch: LocalWatchConfig {
+                    native: !watch.watch_polling,
+                    poll_interval: watch.watch_poll_interval.map(Into::into),
+                    compare_contents: watch.watch_compare_contents,
+                    debounce_timeout: watch.watch_debounce_timeout.into_inner().into(),
+                    debounce_tick_rate: watch.watch_debounce_tick_rate.map(Into::into),
+                },
+            })
+            .context("Failed to create local distant api")?;
             let server = Server::tcp()
                 .config(NetServerConfig {
                     shutdown: shutdown.into_inner(),

@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `distant-local` now has two features: `macos-fsevent` and `macos-kqueue`.
   These are used to indicate what kind of file watching to support (for MacOS).
   The default is `macos-fsevent`.
+- `[server.watch]` configuration is now available with the following
+  settings:
+  - `native = <bool>` to specify whether to use native watching or polling
+    (default true)
+  - `poll_interval = <secs>` to specify seconds to wait between polling
+    attempts (only for polling watcher)
+  - `compare_contents = <bool>` to specify how polling watcher will evaluate a
+    file change (default false)
+  - `debounce_timeout = <secs>` to specify how long to wait before sending a
+    change notification (will aggregate and merge changes)
+  - `debounce_tick_rate = <secs>` to specify how long to wait between event
+    aggregation loops
+
+### Changed
+
+- Bump minimum Rust version to 1.68.0
 
 ### Removed
 

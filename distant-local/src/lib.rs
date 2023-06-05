@@ -5,17 +5,16 @@
 pub struct ReadmeDoctests;
 
 mod api;
+mod config;
 mod constants;
-pub use api::LocalDistantApi;
+pub use api::Api;
+pub use config::*;
 use distant_core::{DistantApi, DistantApiServerHandler};
 
-/// Implementation of [`DistantApiServerHandler`] using [`LocalDistantApi`].
-pub type LocalDistantApiServerHandler =
-    DistantApiServerHandler<LocalDistantApi, <LocalDistantApi as DistantApi>::LocalData>;
+/// Implementation of [`DistantApiServerHandler`] using [`Api`].
+pub type Handler = DistantApiServerHandler<Api, <Api as DistantApi>::LocalData>;
 
-/// Initializes a new [`LocalDistantApiServerHandler`].
-pub fn initialize_handler() -> std::io::Result<LocalDistantApiServerHandler> {
-    Ok(LocalDistantApiServerHandler::new(
-        LocalDistantApi::initialize()?,
-    ))
+/// Initializes a new [`Handler`].
+pub fn new_handler(config: Config) -> std::io::Result<Handler> {
+    Ok(Handler::new(Api::initialize(config)?))
 }

@@ -181,7 +181,7 @@ impl Spawner {
 
         let mut process_id = None;
         let mut return_value = None;
-        for line in stdout.lines().filter_map(|l| l.ok()) {
+        for line in stdout.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.starts_with("ProcessId") {
                 if let Some((_, id)) = line.split_once(':') {

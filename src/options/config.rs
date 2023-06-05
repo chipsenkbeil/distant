@@ -112,7 +112,9 @@ mod tests {
             config,
             Config {
                 client: ClientConfig {
-                    api: ClientApiConfig { timeout: Some(0.) },
+                    api: ClientApiConfig {
+                        timeout: Some(Seconds::from(0u32))
+                    },
                     connect: ClientConnectConfig {
                         options: Map::new()
                     },
@@ -161,6 +163,13 @@ mod tests {
                     logging: LoggingSettings {
                         log_level: Some(LogLevel::Info),
                         log_file: None
+                    },
+                    watch: ServerWatchConfig {
+                        native: true,
+                        poll_interval: None,
+                        compare_contents: false,
+                        debounce_timeout: None,
+                        debounce_tick_rate: None,
                     },
                 },
             }
@@ -213,6 +222,13 @@ port = "8080:8089"
 use_ipv6 = true
 shutdown = "after=123"
 current_dir = "server-current-dir"
+
+[server.watch]
+native = false
+poll_interval = 12.5
+compare_contents = true
+debounce_timeout = 10.5
+debounce_tick_rate = 0.678
 "#,
             )
             .unwrap();
@@ -223,7 +239,7 @@ current_dir = "server-current-dir"
             Config {
                 client: ClientConfig {
                     api: ClientApiConfig {
-                        timeout: Some(456.)
+                        timeout: Some(Seconds::from(456u32))
                     },
                     connect: ClientConnectConfig {
                         options: map!("key" -> "value", "key2" -> "value2"),
@@ -276,6 +292,13 @@ current_dir = "server-current-dir"
                     logging: LoggingSettings {
                         log_level: Some(LogLevel::Error),
                         log_file: Some(PathBuf::from("server-log-file")),
+                    },
+                    watch: ServerWatchConfig {
+                        native: false,
+                        poll_interval: Some(Seconds::try_from(12.5).unwrap()),
+                        compare_contents: true,
+                        debounce_timeout: Some(Seconds::try_from(10.5).unwrap()),
+                        debounce_tick_rate: Some(Seconds::try_from(0.678).unwrap())
                     },
                 },
             }

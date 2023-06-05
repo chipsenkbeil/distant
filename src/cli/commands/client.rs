@@ -205,7 +205,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
             let timeout = match timeout {
-                Some(timeout) if timeout >= f32::EPSILON => Some(timeout),
+                Some(timeout) if timeout.as_secs_f64() >= f64::EPSILON => Some(timeout),
                 _ => None,
             };
 

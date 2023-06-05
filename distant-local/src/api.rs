@@ -14,8 +14,9 @@ use log::*;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
-mod process;
+use crate::config::Config;
 
+mod process;
 mod state;
 use state::*;
 
@@ -23,21 +24,21 @@ use state::*;
 /// where the server using this api is running. In other words, this is a direct
 /// impementation of the API instead of a proxy to another machine as seen with
 /// implementations on top of SSH and other protocol.
-pub struct LocalDistantApi {
+pub struct Api {
     state: GlobalState,
 }
 
-impl LocalDistantApi {
+impl Api {
     /// Initialize the api instance
-    pub fn initialize() -> io::Result<Self> {
+    pub fn initialize(config: Config) -> io::Result<Self> {
         Ok(Self {
-            state: GlobalState::initialize()?,
+            state: GlobalState::initialize(config)?,
         })
     }
 }
 
 #[async_trait]
-impl DistantApi for LocalDistantApi {
+impl DistantApi for Api {
     type LocalData = ();
 
     async fn read_file(
@@ -152,7 +153,7 @@ impl DistantApi for LocalDistantApi {
         // Traverse, but don't include root directory in entries (hence min depth 1), unless indicated
         // to do so (min depth 0)
         let dir = WalkDir::new(root_path.as_path())
-            .min_depth(if include_root { 0 } else { 1 })
+            .min_depth(usize::from(!include_root))
             .sort_by_file_name();
 
         // If depth > 0, will recursively traverse to specified max depth, otherwise
@@ -709,6 +710,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::config::WatchConfig;
 
     static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
         Lazy::new(|| assert_fs::TempDir::new().unwrap());
@@ -769,8 +771,16 @@ mod tests {
     static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
         Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
-    async fn setup(buffer: usize) -> (LocalDistantApi, DistantCtx<()>, mpsc::Receiver<Response>) {
-        let api = LocalDistantApi::initialize().unwrap();
+    const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+
+    async fn setup(buffer: usize) -> (Api, DistantCtx<()>, mpsc::Receiver<Response>) {
+        let api = Api::initialize(Config {
+            watch: WatchConfig {
+                debounce_timeout: DEBOUNCE_TIMEOUT,
+                ..Default::default()
+            },
+        })
+        .unwrap();
         let (reply, rx) = make_reply(buffer);
         let connection_id = rand::random();
 
@@ -1613,7 +1623,7 @@ mod tests {
 
         api.watch(
             ctx,
-            file.path().to_path_buf(),
+            temp.path().to_path_buf(),
             /* recursive */ true,
             /* only */ Default::default(),
             /* except */ Default::default(),
@@ -1630,7 +1640,7 @@ mod tests {
 
         // Sleep a bit to give time to get all changes happening
         // TODO: Can we slim down this sleep? Or redesign test in some other way?
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(DEBOUNCE_TIMEOUT + Duration::from_millis(100)).await;
 
         // Collect all responses, as we may get multiple for interactions within a directory
         let mut responses = Vec::new();
