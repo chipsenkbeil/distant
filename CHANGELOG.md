@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `debounce_tick_rate = <secs>` to specify how long to wait between event
     aggregation loops
 
+### Changed
+
+- Bump minimum Rust version to 1.68.0
+
 ### Removed
 
 - `crossbeam-channel` dependency removed from notify by disabling its feature
