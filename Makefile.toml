@@ -1,21 +1,26 @@
 [tasks.format]
+clear = true
 install_crate = "rustfmt-nightly"
 command = "cargo"
 args = ["+nightly", "fmt", "--all"]
 
 [tasks.test]
+clear = true
 command = "cargo"
 args = ["test", "--release", "--all-features", "--workspace"]
 
 [tasks.ci-test]
+clear = true
 command = "cargo"
 args = ["nextest", "run", "--profile", "ci", "--release", "--all-features", "--workspace"]
 
 [tasks.post-ci-test]
+clear = true
 command = "cargo"
 args = ["test", "--release", "--all-features", "--workspace", "--doc"]
 
 [tasks.publish]
+clear = true
 script = '''
 cargo publish --all-features -p distant-auth
 cargo publish --all-features -p distant-protocol
@@ -27,6 +32,7 @@ cargo publish --all-features
 '''
 
 [tasks.dry-run-publish]
+clear = true
 script = '''
 cargo publish --all-features --dry-run -p distant-auth
 cargo publish --all-features --dry-run -p distant-protocol

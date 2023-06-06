@@ -4,11 +4,13 @@ on:
   push:
     paths-ignore:
       - '**.md'
+      - 'Makefile.toml'
     branches:
       - master
   pull_request:
     paths-ignore:
       - '**.md'
+      - 'Makefile.toml'
     branches:
       - master
 
