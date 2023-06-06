@@ -615,13 +615,15 @@ mod tests {
         use std::path::PathBuf;
 
         use super::*;
-        use crate::common::ChangeKind;
+        use crate::common::{ChangeDetails, ChangeDetailsAttributes, ChangeKind};
 
         #[test]
-        fn should_be_able_to_serialize_to_json() {
+        fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Response::Changed(Change {
+                timestamp: u64::MAX,
                 kind: ChangeKind::Access,
                 paths: vec![PathBuf::from("path")],
+                details: ChangeDetails::default(),
             });
 
             let value = serde_json::to_value(payload).unwrap();
@@ -629,6 +631,7 @@ mod tests {
                 value,
                 serde_json::json!({
                     "type": "changed",
+                    "ts": u64::MAX,
                     "kind": "access",
                     "paths": ["path"],
                 })
@@ -636,9 +639,38 @@ mod tests {
         }
 
         #[test]
-        fn should_be_able_to_deserialize_from_json() {
+        fn should_be_able_to_serialize_full_payload_to_json() {
+            let payload = Response::Changed(Change {
+                timestamp: u64::MAX,
+                kind: ChangeKind::Access,
+                paths: vec![PathBuf::from("path")],
+                details: ChangeDetails {
+                    attributes: vec![ChangeDetailsAttributes::Permissions],
+                    extra: Some(String::from("info")),
+                },
+            });
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "changed",
+                    "ts": u64::MAX,
+                    "kind": "access",
+                    "paths": ["path"],
+                    "details": {
+                        "attributes": ["permissions"],
+                        "extra": "info",
+                    },
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_payload_from_json() {
             let value = serde_json::json!({
                 "type": "changed",
+                "ts": u64::MAX,
                 "kind": "access",
                 "paths": ["path"],
             });
@@ -647,17 +679,49 @@ mod tests {
             assert_eq!(
                 payload,
                 Response::Changed(Change {
+                    timestamp: u64::MAX,
                     kind: ChangeKind::Access,
                     paths: vec![PathBuf::from("path")],
+                    details: ChangeDetails::default(),
                 })
             );
         }
 
         #[test]
-        fn should_be_able_to_serialize_to_msgpack() {
+        fn should_be_able_to_deserialize_full_payload_from_json() {
+            let value = serde_json::json!({
+                "type": "changed",
+                "ts": u64::MAX,
+                "kind": "access",
+                "paths": ["path"],
+                "details": {
+                    "attributes": ["permissions"],
+                    "extra": "info",
+                },
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::Changed(Change {
+                    timestamp: u64::MAX,
+                    kind: ChangeKind::Access,
+                    paths: vec![PathBuf::from("path")],
+                    details: ChangeDetails {
+                        attributes: vec![ChangeDetailsAttributes::Permissions],
+                        extra: Some(String::from("info")),
+                    },
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Response::Changed(Change {
+                timestamp: u64::MAX,
                 kind: ChangeKind::Access,
                 paths: vec![PathBuf::from("path")],
+                details: ChangeDetails::default(),
             });
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -668,14 +732,35 @@ mod tests {
         }
 
         #[test]
-        fn should_be_able_to_deserialize_from_msgpack() {
+        fn should_be_able_to_serialize_full_payload_to_msgpack() {
+            let payload = Response::Changed(Change {
+                timestamp: u64::MAX,
+                kind: ChangeKind::Access,
+                paths: vec![PathBuf::from("path")],
+                details: ChangeDetails {
+                    attributes: vec![ChangeDetailsAttributes::Permissions],
+                    extra: Some(String::from("info")),
+                },
+            });
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_minimal_payload_from_msgpack() {
             // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
             // verify that we are not corrupting or causing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Response::Changed(Change {
+                timestamp: u64::MAX,
                 kind: ChangeKind::Access,
                 paths: vec![PathBuf::from("path")],
+                details: ChangeDetails::default(),
             }))
             .unwrap();
 
@@ -683,8 +768,42 @@ mod tests {
             assert_eq!(
                 payload,
                 Response::Changed(Change {
+                    timestamp: u64::MAX,
                     kind: ChangeKind::Access,
                     paths: vec![PathBuf::from("path")],
+                    details: ChangeDetails::default(),
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_full_payload_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::Changed(Change {
+                timestamp: u64::MAX,
+                kind: ChangeKind::Access,
+                paths: vec![PathBuf::from("path")],
+                details: ChangeDetails {
+                    attributes: vec![ChangeDetailsAttributes::Permissions],
+                    extra: Some(String::from("info")),
+                },
+            }))
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::Changed(Change {
+                    timestamp: u64::MAX,
+                    kind: ChangeKind::Access,
+                    paths: vec![PathBuf::from("path")],
+                    details: ChangeDetails {
+                        attributes: vec![ChangeDetailsAttributes::Permissions],
+                        extra: Some(String::from("info")),
+                    },
                 })
             );
         }

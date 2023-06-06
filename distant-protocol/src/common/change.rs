@@ -14,11 +14,48 @@ use strum::{EnumString, EnumVariantNames, VariantNames};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Change {
+    /// Unix timestamp (in seconds) when the server was notified of this change (not when the
+    /// change occurred)
+    #[serde(rename = "ts")]
+    pub timestamp: u64,
+
     /// Label describing the kind of change
     pub kind: ChangeKind,
 
     /// Paths that were changed
     pub paths: Vec<PathBuf>,
+
+    /// Additional details associated with the change
+    #[serde(default, skip_serializing_if = "ChangeDetails::is_empty")]
+    pub details: ChangeDetails,
+}
+
+/// Details about a change
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case", deny_unknown_fields)]
+pub struct ChangeDetails {
+    /// Clarity on type of attribute changes that have occurred (for kind == attribute)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<ChangeDetailsAttributes>,
+
+    /// Optional information about the change that is typically platform-specific
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<String>,
+}
+
+impl ChangeDetails {
+    /// Returns true if no details are contained within.
+    pub fn is_empty(&self) -> bool {
+        self.attributes.is_empty() && self.extra.is_none()
+    }
+}
+
+/// Specific details about modification
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ChangeDetailsAttributes {
+    Permissions,
+    Timestamp,
 }
 
 /// Represents a label attached to a [`Change`] that describes the kind of change.

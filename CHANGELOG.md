@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     change notification (will aggregate and merge changes)
   - `debounce_tick_rate = <secs>` to specify how long to wait between event
     aggregation loops
+- `distant-protocol` response for a change now supports these additional
+  fields:
+  - `timestamp` (serialized as `ts`) to communicate the seconds since unix
+    epoch when the event was received
+  - `details` containing `attributes` (clarify changes on attribute kind) and
+    `extra` (to convey arbitrary platform-specific extra information)
 
 ### Changed
 

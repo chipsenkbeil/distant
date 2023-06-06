@@ -263,12 +263,16 @@ mod tests {
                 req.id,
                 vec![
                     protocol::Response::Changed(Change {
+                        timestamp: 0,
                         kind: ChangeKind::Access,
                         paths: vec![test_path.to_path_buf()],
+                        details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
+                        timestamp: 1,
                         kind: ChangeKind::Modify,
                         paths: vec![test_path.to_path_buf()],
+                        details: Default::default(),
                     }),
                 ],
             ))
@@ -280,8 +284,10 @@ mod tests {
         assert_eq!(
             change,
             Change {
+                timestamp: 0,
                 kind: ChangeKind::Access,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             }
         );
 
@@ -289,8 +295,10 @@ mod tests {
         assert_eq!(
             change,
             Change {
+                timestamp: 1,
                 kind: ChangeKind::Modify,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             }
         );
     }
@@ -330,8 +338,10 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id.clone(),
                 protocol::Response::Changed(Change {
+                    timestamp: 0,
                     kind: ChangeKind::Access,
                     paths: vec![test_path.to_path_buf()],
+                    details: Default::default(),
                 }),
             ))
             .await
@@ -342,8 +352,10 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id.clone() + "1",
                 protocol::Response::Changed(Change {
+                    timestamp: 1,
                     kind: ChangeKind::Modify,
                     paths: vec![test_path.to_path_buf()],
+                    details: Default::default(),
                 }),
             ))
             .await
@@ -354,8 +366,10 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id,
                 protocol::Response::Changed(Change {
+                    timestamp: 2,
                     kind: ChangeKind::Delete,
                     paths: vec![test_path.to_path_buf()],
+                    details: Default::default(),
                 }),
             ))
             .await
@@ -366,8 +380,10 @@ mod tests {
         assert_eq!(
             change,
             Change {
+                timestamp: 0,
                 kind: ChangeKind::Access,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             }
         );
 
@@ -375,8 +391,10 @@ mod tests {
         assert_eq!(
             change,
             Change {
+                timestamp: 2,
                 kind: ChangeKind::Delete,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             }
         );
     }
@@ -414,16 +432,22 @@ mod tests {
                 req.id,
                 vec![
                     protocol::Response::Changed(Change {
+                        timestamp: 0,
                         kind: ChangeKind::Access,
                         paths: vec![test_path.to_path_buf()],
+                        details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
+                        timestamp: 1,
                         kind: ChangeKind::Modify,
                         paths: vec![test_path.to_path_buf()],
+                        details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
+                        timestamp: 2,
                         kind: ChangeKind::Delete,
                         paths: vec![test_path.to_path_buf()],
+                        details: Default::default(),
                     }),
                 ],
             ))
@@ -447,8 +471,10 @@ mod tests {
         assert_eq!(
             change,
             Change {
+                timestamp: 0,
                 kind: ChangeKind::Access,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             }
         );
 
@@ -470,8 +496,10 @@ mod tests {
             .write_frame_for(&Response::new(
                 req.id,
                 protocol::Response::Changed(Change {
+                    timestamp: 3,
                     kind: ChangeKind::Unknown,
                     paths: vec![test_path.to_path_buf()],
+                    details: Default::default(),
                 }),
             ))
             .await
@@ -482,15 +510,19 @@ mod tests {
         assert_eq!(
             watcher.lock().await.next().await,
             Some(Change {
+                timestamp: 1,
                 kind: ChangeKind::Modify,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             })
         );
         assert_eq!(
             watcher.lock().await.next().await,
             Some(Change {
+                timestamp: 2,
                 kind: ChangeKind::Delete,
-                paths: vec![test_path.to_path_buf()]
+                paths: vec![test_path.to_path_buf()],
+                details: Default::default(),
             })
         );
         assert_eq!(watcher.lock().await.next().await, None);

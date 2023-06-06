@@ -4,7 +4,7 @@ use std::{fmt, io};
 
 use distant_core::net::common::ConnectionId;
 use distant_core::net::server::Reply;
-use distant_core::protocol::{Change, ChangeKind, ChangeKindSet, Error, Response};
+use distant_core::protocol::{Change, ChangeKindSet, Error, Response};
 
 /// Represents a path registered with a watcher that includes relevant state including
 /// the ability to reply with
@@ -122,24 +122,17 @@ impl RegisteredPath {
     /// out any paths that are not applicable
     ///
     /// Returns true if message was sent, and false if not
-    pub async fn filter_and_send<T>(&self, kind: ChangeKind, paths: T) -> io::Result<bool>
-    where
-        T: IntoIterator,
-        T::Item: AsRef<Path>,
-    {
-        if !self.allowed().contains(&kind) {
+    pub async fn filter_and_send(&self, mut change: Change) -> io::Result<bool> {
+        if !self.allowed().contains(&change.kind) {
             return Ok(false);
         }
 
-        let paths: Vec<PathBuf> = paths
-            .into_iter()
-            .filter(|p| self.applies_to_path(p.as_ref()))
-            .map(|p| p.as_ref().to_path_buf())
-            .collect();
+        // filter the paths that are not applicable
+        change.paths.retain(|p| self.applies_to_path(p.as_path()));
 
-        if !paths.is_empty() {
+        if !change.paths.is_empty() {
             self.reply
-                .send(Response::Changed(Change { kind, paths }))
+                .send(Response::Changed(change))
                 .await
                 .map(|_| true)
         } else {

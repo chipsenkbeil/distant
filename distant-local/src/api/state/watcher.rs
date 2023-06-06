@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::io;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use distant_core::net::common::ConnectionId;
-use distant_core::protocol::ChangeKind;
+use distant_core::protocol::{Change, ChangeDetails, ChangeDetailsAttributes, ChangeKind};
 use log::*;
-use notify::event::{AccessKind, AccessMode, ModifyKind};
+use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
 use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
     Event as WatcherEvent, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
@@ -317,6 +317,11 @@ async fn watcher_task<W>(
                 }
             }
             InnerWatcherMsg::Event { ev } => {
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("System time before unix epoch")
+                    .as_secs();
+
                 let kind = match ev.kind {
                     EventKind::Access(AccessKind::Read) => ChangeKind::Access,
                     EventKind::Modify(ModifyKind::Metadata(_)) => ChangeKind::Attribute,
@@ -332,8 +337,27 @@ async fn watcher_task<W>(
                     _ => ChangeKind::Unknown,
                 };
 
+                let attributes = match ev.kind {
+                    EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime)) => {
+                        vec![ChangeDetailsAttributes::Timestamp]
+                    }
+                    EventKind::Modify(ModifyKind::Metadata(
+                        MetadataKind::Ownership | MetadataKind::Permissions,
+                    )) => vec![ChangeDetailsAttributes::Permissions],
+                    _ => Vec::new(),
+                };
+
                 for registered_path in registered_paths.iter() {
-                    match registered_path.filter_and_send(kind, &ev.paths).await {
+                    let change = Change {
+                        timestamp,
+                        kind,
+                        paths: ev.paths.clone(),
+                        details: ChangeDetails {
+                            attributes: attributes.clone(),
+                            extra: ev.info().map(ToString::to_string),
+                        },
+                    };
+                    match registered_path.filter_and_send(change).await {
                         Ok(_) => (),
                         Err(x) => error!(
                             "[Conn {}] Failed to forward changes to paths: {}",
