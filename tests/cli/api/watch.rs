@@ -63,8 +63,8 @@ async fn should_support_json_watching_single_file(mut api_process: CtxCommand<Ap
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
-        res["payload"]["paths"],
-        json!([file.to_path_buf().canonicalize().unwrap()]),
+        res["payload"]["path"],
+        json!(file.to_path_buf().canonicalize().unwrap()),
         "JSON: {res}"
     );
 }
@@ -121,8 +121,8 @@ async fn should_support_json_watching_directory_recursively(
         assert_eq!(res["origin_id"], id, "JSON: {res}");
         assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
         assert_eq!(
-            res["payload"]["paths"],
-            json!([dir.to_path_buf().canonicalize().unwrap()]),
+            res["payload"]["path"],
+            json!(dir.to_path_buf().canonicalize().unwrap()),
             "JSON: {res}"
         );
     }
@@ -137,8 +137,8 @@ async fn should_support_json_watching_directory_recursively(
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
-        res["payload"]["paths"],
-        json!([file.to_path_buf().canonicalize().unwrap()]),
+        res["payload"]["path"],
+        json!(file.to_path_buf().canonicalize().unwrap()),
         "JSON: {res}"
     );
 }
@@ -213,8 +213,8 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
     assert_eq!(res["origin_id"], id_1, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
-        res["payload"]["paths"],
-        json!([file1.to_path_buf().canonicalize().unwrap()]),
+        res["payload"]["path"],
+        json!(file1.to_path_buf().canonicalize().unwrap()),
         "JSON: {res}"
     );
 
@@ -245,8 +245,8 @@ async fn should_support_json_reporting_changes_using_correct_request_id(
     assert_eq!(res["origin_id"], id_2, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
     assert_eq!(
-        res["payload"]["paths"],
-        json!([file2.to_path_buf().canonicalize().unwrap()]),
+        res["payload"]["path"],
+        json!(file2.to_path_buf().canonicalize().unwrap()),
         "JSON: {res}"
     );
 }

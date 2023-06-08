@@ -1547,29 +1547,17 @@ mod tests {
     }
 
     /// Validates a response as being a series of changes that include the provided paths
-    fn validate_changed_paths(
-        data: &Response,
-        expected_paths: &[PathBuf],
-        should_panic: bool,
-    ) -> bool {
+    fn validate_changed_path(data: &Response, expected_path: &Path, should_panic: bool) -> bool {
         match data {
             Response::Changed(change) if should_panic => {
-                let paths: Vec<PathBuf> = change
-                    .paths
-                    .iter()
-                    .map(|x| x.canonicalize().unwrap())
-                    .collect();
-                assert_eq!(paths, expected_paths, "Wrong paths reported: {:?}", change);
+                let path = change.path.canonicalize().unwrap();
+                assert_eq!(path, expected_path, "Wrong path reported: {:?}", change);
 
                 true
             }
             Response::Changed(change) => {
-                let paths: Vec<PathBuf> = change
-                    .paths
-                    .iter()
-                    .map(|x| x.canonicalize().unwrap())
-                    .collect();
-                paths == expected_paths
+                let path = change.path.canonicalize().unwrap();
+                path == expected_path
             }
             x if should_panic => panic!("Unexpected response: {:?}", x),
             _ => false,
@@ -1602,9 +1590,9 @@ mod tests {
             .recv()
             .await
             .expect("Channel closed before we got change");
-        validate_changed_paths(
+        validate_changed_path(
             &data,
-            &[file.path().to_path_buf().canonicalize().unwrap()],
+            &file.path().to_path_buf().canonicalize().unwrap(),
             /* should_panic */ true,
         );
     }
@@ -1657,9 +1645,9 @@ mod tests {
 
         let path = file.path().to_path_buf();
         assert!(
-            responses.iter().any(|res| validate_changed_paths(
+            responses.iter().any(|res| validate_changed_path(
                 res,
-                &[file.path().to_path_buf().canonicalize().unwrap()],
+                &file.path().to_path_buf().canonicalize().unwrap(),
                 /* should_panic */ false,
             )),
             "Missing {:?} in {:?}",
@@ -1672,9 +1660,9 @@ mod tests {
 
         let path = nested_file.path().to_path_buf();
         assert!(
-            responses.iter().any(|res| validate_changed_paths(
+            responses.iter().any(|res| validate_changed_path(
                 res,
-                &[file.path().to_path_buf().canonicalize().unwrap()],
+                &file.path().to_path_buf().canonicalize().unwrap(),
                 /* should_panic */ false,
             )),
             "Missing {:?} in {:?}",
@@ -1740,9 +1728,9 @@ mod tests {
             .recv()
             .await
             .expect("Channel closed before we got change");
-        validate_changed_paths(
+        validate_changed_path(
             &data,
-            &[file_1.path().to_path_buf().canonicalize().unwrap()],
+            &file_1.path().to_path_buf().canonicalize().unwrap(),
             /* should_panic */ true,
         );
 
@@ -1752,9 +1740,9 @@ mod tests {
             .recv()
             .await
             .expect("Channel closed before we got change");
-        validate_changed_paths(
+        validate_changed_path(
             &data,
-            &[file_2.path().to_path_buf().canonicalize().unwrap()],
+            &file_2.path().to_path_buf().canonicalize().unwrap(),
             /* should_panic */ true,
         );
     }

@@ -646,6 +646,7 @@ mod tests {
                 path: PathBuf::from("path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
+                    renamed: Some(PathBuf::from("renamed")),
                     timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
@@ -661,6 +662,7 @@ mod tests {
                     "paths": ["path"],
                     "details": {
                         "attribute": "permissions",
+                        "renamed": "renamed",
                         "ts": u64::MAX,
                         "extra": "info",
                     },
@@ -698,6 +700,7 @@ mod tests {
                 "path": "path",
                 "details": {
                     "attribute": "permissions",
+                    "renamed": "renamed",
                     "ts": u64::MAX,
                     "extra": "info",
                 },
@@ -712,6 +715,7 @@ mod tests {
                     path: PathBuf::from("path"),
                     details: ChangeDetails {
                         attribute: Some(ChangeDetailsAttribute::Permissions),
+                        renamed: Some(PathBuf::from("renamed")),
                         timestamp: Some(u64::MAX),
                         extra: Some(String::from("info")),
                     },
@@ -743,6 +747,7 @@ mod tests {
                 path: PathBuf::from("path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
+                    renamed: Some(PathBuf::from("renamed")),
                     timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
@@ -793,6 +798,7 @@ mod tests {
                 path: PathBuf::from("path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
+                    renamed: Some(PathBuf::from("renamed")),
                     timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
@@ -808,6 +814,7 @@ mod tests {
                     path: PathBuf::from("path"),
                     details: ChangeDetails {
                         attribute: Some(ChangeDetailsAttribute::Permissions),
+                        renamed: Some(PathBuf::from("renamed")),
                         timestamp: Some(u64::MAX),
                         extra: Some(String::from("info")),
                     },

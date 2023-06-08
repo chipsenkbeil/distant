@@ -38,6 +38,11 @@ pub struct ChangeDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attribute: Option<ChangeDetailsAttribute>,
 
+    /// When event is renaming, this will be populated with the resulting name
+    /// when we know both the old and new names (for kind == rename)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renamed: Option<PathBuf>,
+
     /// Unix timestamps (in seconds) related to the change. For other platforms, their timestamps
     /// are converted into a Unix timestamp format.
     ///

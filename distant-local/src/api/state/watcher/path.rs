@@ -119,18 +119,16 @@ impl RegisteredPath {
     }
 
     /// Sends a reply for a change tied to this registered path, filtering
-    /// out any paths that are not applicable
+    /// out any changes that are not applicable.
     ///
-    /// Returns true if message was sent, and false if not
-    pub async fn filter_and_send(&self, mut change: Change) -> io::Result<bool> {
+    /// Returns true if message was sent, and false if not.
+    pub async fn filter_and_send(&self, change: Change) -> io::Result<bool> {
         if !self.allowed().contains(&change.kind) {
             return Ok(false);
         }
 
-        // filter the paths that are not applicable
-        change.paths.retain(|p| self.applies_to_path(p.as_path()));
-
-        if !change.paths.is_empty() {
+        // Only send if this registered path applies to the changed path
+        if self.applies_to_path(&change.path) {
             self.reply
                 .send(Response::Changed(change))
                 .await
@@ -141,9 +139,9 @@ impl RegisteredPath {
     }
 
     /// Sends an error message and includes paths if provided, skipping sending the message if
-    /// no paths match and `skip_if_no_paths` is true
+    /// no paths match and `skip_if_no_paths` is true.
     ///
-    /// Returns true if message was sent, and false if not
+    /// Returns true if message was sent, and false if not.
     pub async fn filter_and_send_error<T>(
         &self,
         msg: &str,

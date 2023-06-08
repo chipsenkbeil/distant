@@ -154,21 +154,16 @@ fn format_shell(state: &mut FormatterState, data: protocol::Response) -> Output 
         }
         protocol::Response::Changed(change) => Output::StdoutLine(
             format!(
-                "{}{}",
+                "{} {:?}",
                 match change.kind {
-                    ChangeKind::Create => "Following paths were created:\n",
-                    ChangeKind::Delete => "Following paths were removed:\n",
-                    x if x.is_access() => "Following paths were accessed:\n",
-                    x if x.is_modify() => "Following paths were modified:\n",
-                    x if x.is_rename() => "Following paths were renamed:\n",
-                    _ => "Following paths were affected:\n",
+                    ChangeKind::Create => "(Created)",
+                    ChangeKind::Delete => "(Removed)",
+                    x if x.is_access() => "(Accessed)",
+                    x if x.is_modify() => "(Modified)",
+                    x if x.is_rename() => "(Renamed)",
+                    _ => "(Affected)",
                 },
-                change
-                    .paths
-                    .into_iter()
-                    .map(|p| format!("* {}", p.to_string_lossy()))
-                    .collect::<Vec<String>>()
-                    .join("\n")
+                change.path
             )
             .into_bytes(),
         ),
