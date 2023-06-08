@@ -154,7 +154,7 @@ fn format_shell(state: &mut FormatterState, data: protocol::Response) -> Output 
         }
         protocol::Response::Changed(change) => Output::StdoutLine(
             format!(
-                "{} {:?}",
+                "{} {}",
                 match change.kind {
                     ChangeKind::Create => "(Created)",
                     ChangeKind::Delete => "(Removed)",
@@ -163,7 +163,7 @@ fn format_shell(state: &mut FormatterState, data: protocol::Response) -> Output 
                     x if x.is_rename() => "(Renamed)",
                     _ => "(Affected)",
                 },
-                change.path
+                change.path.to_string_lossy()
             )
             .into_bytes(),
         ),
