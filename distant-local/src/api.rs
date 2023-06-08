@@ -426,17 +426,17 @@ impl DistantApi for Api {
                 .accessed()
                 .ok()
                 .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
+                .map(|d| d.as_secs()),
             created: metadata
                 .created()
                 .ok()
                 .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
+                .map(|d| d.as_secs()),
             modified: metadata
                 .modified()
                 .ok()
                 .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis()),
+                .map(|d| d.as_secs()),
             len: metadata.len(),
             readonly: metadata.permissions().readonly(),
             file_type: if file_type.is_dir() {

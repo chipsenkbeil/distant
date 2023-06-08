@@ -655,8 +655,8 @@ impl DistantApi for SshDistantApi {
                 .permissions
                 .map(|x| !x.owner_write && !x.group_write && !x.other_write)
                 .unwrap_or(true),
-            accessed: metadata.accessed.map(u128::from),
-            modified: metadata.modified.map(u128::from),
+            accessed: metadata.accessed,
+            modified: metadata.modified,
             created: None,
             unix: metadata.permissions.as_ref().map(|p| UnixMetadata {
                 owner_read: p.owner_read,

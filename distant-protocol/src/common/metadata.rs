@@ -4,7 +4,6 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
 use crate::common::FileType;
-use crate::utils::{deserialize_u128_option, serialize_u128_option};
 
 /// Represents metadata about some path on a remote machine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,41 +22,20 @@ pub struct Metadata {
     /// Whether or not the file/directory/symlink is marked as unwriteable.
     pub readonly: bool,
 
-    /// Represents the last time (in milliseconds) when the file/directory/symlink was accessed;
+    /// Represents the last time (in seconds) when the file/directory/symlink was accessed;
     /// can be optional as certain systems don't support this.
-    ///
-    /// Note that this is represented as a string and not a number when serialized!
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_u128_option",
-        deserialize_with = "deserialize_u128_option"
-    )]
-    pub accessed: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accessed: Option<u64>,
 
-    /// Represents when (in milliseconds) the file/directory/symlink was created;
+    /// Represents when (in seconds) the file/directory/symlink was created;
     /// can be optional as certain systems don't support this.
-    ///
-    /// Note that this is represented as a string and not a number when serialized!
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_u128_option",
-        deserialize_with = "deserialize_u128_option"
-    )]
-    pub created: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
 
-    /// Represents the last time (in milliseconds) when the file/directory/symlink was modified;
+    /// Represents the last time (in seconds) when the file/directory/symlink was modified;
     /// can be optional as certain systems don't support this.
-    ///
-    /// Note that this is represented as a string and not a number when serialized!
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_u128_option",
-        deserialize_with = "deserialize_u128_option"
-    )]
-    pub modified: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<u64>,
 
     /// Represents metadata that is specific to a unix remote machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -369,9 +347,9 @@ mod tests {
                 file_type: FileType::Dir,
                 len: 999,
                 readonly: true,
-                accessed: Some(u128::MAX),
-                created: Some(u128::MAX),
-                modified: Some(u128::MAX),
+                accessed: Some(u64::MAX),
+                created: Some(u64::MAX),
+                modified: Some(u64::MAX),
                 unix: Some(UnixMetadata {
                     owner_read: true,
                     owner_write: false,
@@ -402,10 +380,6 @@ mod tests {
                 }),
             };
 
-            // NOTE: These values are too big to normally serialize, so we have to convert them to
-            // a string type, which is why the value here also needs to be a string.
-            let max_u128_str = u128::MAX.to_string();
-
             let value = serde_json::to_value(metadata).unwrap();
             assert_eq!(
                 value,
@@ -414,9 +388,9 @@ mod tests {
                     "file_type": "dir",
                     "len": 999,
                     "readonly": true,
-                    "accessed": max_u128_str,
-                    "created": max_u128_str,
-                    "modified": max_u128_str,
+                    "accessed": u64::MAX,
+                    "created": u64::MAX,
+                    "modified": u64::MAX,
                     "unix": {
                         "owner_read": true,
                         "owner_write": false,
@@ -476,18 +450,14 @@ mod tests {
 
         #[test]
         fn should_be_able_to_deserialize_full_metadata_from_json() {
-            // NOTE: These values are too big to normally serialize, so we have to convert them to
-            // a string type, which is why the value here also needs to be a string.
-            let max_u128_str = u128::MAX.to_string();
-
             let value = serde_json::json!({
                 "canonicalized_path": "test-dir",
                 "file_type": "dir",
                 "len": 999,
                 "readonly": true,
-                "accessed": max_u128_str,
-                "created": max_u128_str,
-                "modified": max_u128_str,
+                "accessed": u64::MAX,
+                "created": u64::MAX,
+                "modified": u64::MAX,
                 "unix": {
                     "owner_read": true,
                     "owner_write": false,
@@ -526,9 +496,9 @@ mod tests {
                     file_type: FileType::Dir,
                     len: 999,
                     readonly: true,
-                    accessed: Some(u128::MAX),
-                    created: Some(u128::MAX),
-                    modified: Some(u128::MAX),
+                    accessed: Some(u64::MAX),
+                    created: Some(u64::MAX),
+                    modified: Some(u64::MAX),
                     unix: Some(UnixMetadata {
                         owner_read: true,
                         owner_write: false,
@@ -589,9 +559,9 @@ mod tests {
                 file_type: FileType::Dir,
                 len: 999,
                 readonly: true,
-                accessed: Some(u128::MAX),
-                created: Some(u128::MAX),
-                modified: Some(u128::MAX),
+                accessed: Some(u64::MAX),
+                created: Some(u64::MAX),
+                modified: Some(u64::MAX),
                 unix: Some(UnixMetadata {
                     owner_read: true,
                     owner_write: false,
@@ -676,9 +646,9 @@ mod tests {
                 file_type: FileType::Dir,
                 len: 999,
                 readonly: true,
-                accessed: Some(u128::MAX),
-                created: Some(u128::MAX),
-                modified: Some(u128::MAX),
+                accessed: Some(u64::MAX),
+                created: Some(u64::MAX),
+                modified: Some(u64::MAX),
                 unix: Some(UnixMetadata {
                     owner_read: true,
                     owner_write: false,
@@ -718,9 +688,9 @@ mod tests {
                     file_type: FileType::Dir,
                     len: 999,
                     readonly: true,
-                    accessed: Some(u128::MAX),
-                    created: Some(u128::MAX),
-                    modified: Some(u128::MAX),
+                    accessed: Some(u64::MAX),
+                    created: Some(u64::MAX),
+                    modified: Some(u64::MAX),
                     unix: Some(UnixMetadata {
                         owner_read: true,
                         owner_write: false,

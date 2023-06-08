@@ -265,13 +265,13 @@ mod tests {
                     protocol::Response::Changed(Change {
                         timestamp: 0,
                         kind: ChangeKind::Access,
-                        paths: vec![test_path.to_path_buf()],
+                        path: test_path.to_path_buf(),
                         details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
                         timestamp: 1,
                         kind: ChangeKind::Modify,
-                        paths: vec![test_path.to_path_buf()],
+                        path: test_path.to_path_buf(),
                         details: Default::default(),
                     }),
                 ],
@@ -286,7 +286,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind: ChangeKind::Access,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             }
         );
@@ -297,7 +297,7 @@ mod tests {
             Change {
                 timestamp: 1,
                 kind: ChangeKind::Modify,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             }
         );
@@ -340,7 +340,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 0,
                     kind: ChangeKind::Access,
-                    paths: vec![test_path.to_path_buf()],
+                    path: test_path.to_path_buf(),
                     details: Default::default(),
                 }),
             ))
@@ -354,7 +354,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 1,
                     kind: ChangeKind::Modify,
-                    paths: vec![test_path.to_path_buf()],
+                    path: test_path.to_path_buf(),
                     details: Default::default(),
                 }),
             ))
@@ -368,7 +368,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 2,
                     kind: ChangeKind::Delete,
-                    paths: vec![test_path.to_path_buf()],
+                    path: test_path.to_path_buf(),
                     details: Default::default(),
                 }),
             ))
@@ -382,7 +382,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind: ChangeKind::Access,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             }
         );
@@ -393,7 +393,7 @@ mod tests {
             Change {
                 timestamp: 2,
                 kind: ChangeKind::Delete,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             }
         );
@@ -434,19 +434,19 @@ mod tests {
                     protocol::Response::Changed(Change {
                         timestamp: 0,
                         kind: ChangeKind::Access,
-                        paths: vec![test_path.to_path_buf()],
+                        path: test_path.to_path_buf(),
                         details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
                         timestamp: 1,
                         kind: ChangeKind::Modify,
-                        paths: vec![test_path.to_path_buf()],
+                        path: test_path.to_path_buf(),
                         details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
                         timestamp: 2,
                         kind: ChangeKind::Delete,
-                        paths: vec![test_path.to_path_buf()],
+                        path: test_path.to_path_buf(),
                         details: Default::default(),
                     }),
                 ],
@@ -473,7 +473,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind: ChangeKind::Access,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             }
         );
@@ -498,7 +498,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 3,
                     kind: ChangeKind::Unknown,
-                    paths: vec![test_path.to_path_buf()],
+                    path: test_path.to_path_buf(),
                     details: Default::default(),
                 }),
             ))
@@ -512,7 +512,7 @@ mod tests {
             Some(Change {
                 timestamp: 1,
                 kind: ChangeKind::Modify,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             })
         );
@@ -521,7 +521,7 @@ mod tests {
             Some(Change {
                 timestamp: 2,
                 kind: ChangeKind::Delete,
-                paths: vec![test_path.to_path_buf()],
+                path: test_path.to_path_buf(),
                 details: Default::default(),
             })
         );
