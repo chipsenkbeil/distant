@@ -16,7 +16,6 @@ use strum::{EnumString, EnumVariantNames, VariantNames};
 pub struct Change {
     /// Unix timestamp (in seconds) when the server was notified of this change (not when the
     /// change occurred)
-    #[serde(rename = "ts")]
     pub timestamp: u64,
 
     /// Label describing the kind of change
@@ -48,7 +47,7 @@ pub struct ChangeDetails {
     ///
     /// * For create events, this represents the `ctime` field from stat (or equivalent on other platforms).
     /// * For modify events, this represents the `mtime` field from stat (or equivalent on other platforms).
-    #[serde(rename = "ts", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<u64>,
 
     /// Optional information about the change that is typically platform-specific.
@@ -59,7 +58,10 @@ pub struct ChangeDetails {
 impl ChangeDetails {
     /// Returns true if no details are contained within.
     pub fn is_empty(&self) -> bool {
-        self.attribute.is_none() && self.timestamp.is_none() && self.extra.is_none()
+        self.attribute.is_none()
+            && self.renamed.is_none()
+            && self.timestamp.is_none()
+            && self.extra.is_none()
     }
 }
 
