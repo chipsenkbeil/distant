@@ -1,14 +1,19 @@
+use std::collections::HashMap;
 use std::io;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
+use distant_core::protocol::SearchQueryContentsMatch;
+use distant_core::protocol::SearchQueryMatch;
+use distant_core::protocol::SearchQueryPathMatch;
 use distant_core::protocol::{
-    self, Capabilities, ChangeKindSet, FileType, Permissions, SearchQuery, SetPermissionsOptions,
-    SystemInfo,
+    self, Capabilities, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
+    SetPermissionsOptions, SystemInfo,
 };
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
@@ -32,7 +37,7 @@ mod shell;
 use lsp::Lsp;
 use shell::Shell;
 
-use super::common::{Formatter, RemoteProcessLink};
+use super::common::RemoteProcessLink;
 
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
@@ -1049,7 +1054,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
-            let mut formatter = Formatter::shell();
             let query = SearchQuery {
                 target: target.into(),
                 condition,
@@ -1062,17 +1066,60 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .context("Failed to start search")?;
 
             // Continue to receive and process matches
+            let mut last_searched_path: Option<PathBuf> = None;
             while let Some(m) = searcher.next().await {
-                // TODO: Provide a cleaner way to print just a match
-                let res = Response::new(
-                    "".to_string(),
-                    protocol::Msg::Single(protocol::Response::SearchResults {
-                        id: 0,
-                        matches: vec![m],
-                    }),
-                );
+                let mut files: HashMap<_, Vec<String>> = HashMap::new();
+                let mut is_targeting_paths = false;
 
-                formatter.print(res).context("Failed to print match")?;
+                match m {
+                    SearchQueryMatch::Path(SearchQueryPathMatch { path, .. }) => {
+                        // Create the entry with no lines called out
+                        files.entry(path).or_default();
+                        is_targeting_paths = true;
+                    }
+
+                    SearchQueryMatch::Contents(SearchQueryContentsMatch {
+                        path,
+                        lines,
+                        line_number,
+                        ..
+                    }) => {
+                        let file_matches = files.entry(path).or_default();
+
+                        file_matches.push(format!(
+                            "{line_number}:{}",
+                            lines.to_string_lossy().trim_end()
+                        ));
+                    }
+                }
+
+                let mut output = String::new();
+                for (path, lines) in files {
+                    use std::fmt::Write;
+
+                    // If we are seeing a new path, print it out
+                    if last_searched_path.as_deref() != Some(path.as_path()) {
+                        // If we have already seen some path before, we would have printed it, and
+                        // we want to add a space between it and the current path, but only if we are
+                        // printing out file content matches and not paths
+                        if last_searched_path.is_some() && !is_targeting_paths {
+                            writeln!(&mut output).unwrap();
+                        }
+
+                        writeln!(&mut output, "{}", path.to_string_lossy()).unwrap();
+                    }
+
+                    for line in lines {
+                        writeln!(&mut output, "{line}").unwrap();
+                    }
+
+                    // Update our last seen path
+                    last_searched_path = Some(path);
+                }
+
+                if !output.is_empty() {
+                    print!("{}", output);
+                }
             }
         }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::SetPermissions {
@@ -1179,15 +1226,19 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             .with_context(|| format!("Failed to watch {path:?}"))?;
 
             // Continue to receive and process changes
-            let mut formatter = Formatter::shell();
             while let Some(change) = watcher.next().await {
-                // TODO: Provide a cleaner way to print just a change
-                let res = Response::new(
-                    "".to_string(),
-                    protocol::Msg::Single(protocol::Response::Changed(change)),
+                println!(
+                    "{} {}",
+                    match change.kind {
+                        ChangeKind::Create => "(Created)",
+                        ChangeKind::Delete => "(Removed)",
+                        x if x.is_access() => "(Accessed)",
+                        x if x.is_modify() => "(Modified)",
+                        x if x.is_rename() => "(Renamed)",
+                        _ => "(Affected)",
+                    },
+                    change.path.to_string_lossy()
                 );
-
-                formatter.print(res).context("Failed to print change")?;
             }
         }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Write {
