@@ -10,7 +10,7 @@ use derive_more::{Deref, DerefMut, IntoIterator};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, EnumVariantNames, VariantNames};
 
-/// Change to one or more paths on the filesystem.
+/// Change to a path on the filesystem.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Change {
@@ -22,23 +22,36 @@ pub struct Change {
     /// Label describing the kind of change
     pub kind: ChangeKind,
 
-    /// Paths that were changed
-    pub paths: Vec<PathBuf>,
+    /// Path that was changed
+    pub path: PathBuf,
 
     /// Additional details associated with the change
     #[serde(default, skip_serializing_if = "ChangeDetails::is_empty")]
     pub details: ChangeDetails,
 }
 
-/// Details about a change
+/// Optional details about a change.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case", deny_unknown_fields)]
 pub struct ChangeDetails {
-    /// Clarity on type of attribute changes that have occurred (for kind == attribute)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub attributes: Vec<ChangeDetailsAttributes>,
+    /// Clarity on type of attribute change that occurred (for kind == attribute).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<ChangeDetailsAttribute>,
 
-    /// Optional information about the change that is typically platform-specific
+    /// When event is renaming, this will be populated with the resulting name
+    /// when we know both the old and new names (for kind == rename)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renamed: Option<PathBuf>,
+
+    /// Unix timestamps (in seconds) related to the change. For other platforms, their timestamps
+    /// are converted into a Unix timestamp format.
+    ///
+    /// * For create events, this represents the `ctime` field from stat (or equivalent on other platforms).
+    /// * For modify events, this represents the `mtime` field from stat (or equivalent on other platforms).
+    #[serde(rename = "ts", skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<u64>,
+
+    /// Optional information about the change that is typically platform-specific.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<String>,
 }
@@ -46,14 +59,15 @@ pub struct ChangeDetails {
 impl ChangeDetails {
     /// Returns true if no details are contained within.
     pub fn is_empty(&self) -> bool {
-        self.attributes.is_empty() && self.extra.is_none()
+        self.attribute.is_none() && self.timestamp.is_none() && self.extra.is_none()
     }
 }
 
 /// Specific details about modification
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum ChangeDetailsAttributes {
+pub enum ChangeDetailsAttribute {
+    Ownership,
     Permissions,
     Timestamp,
 }

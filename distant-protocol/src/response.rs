@@ -615,14 +615,14 @@ mod tests {
         use std::path::PathBuf;
 
         use super::*;
-        use crate::common::{ChangeDetails, ChangeDetailsAttributes, ChangeKind};
+        use crate::common::{ChangeDetails, ChangeDetailsAttribute, ChangeKind};
 
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                paths: vec![PathBuf::from("path")],
+                path: PathBuf::from("path"),
                 details: ChangeDetails::default(),
             });
 
@@ -633,7 +633,7 @@ mod tests {
                     "type": "changed",
                     "ts": u64::MAX,
                     "kind": "access",
-                    "paths": ["path"],
+                    "path": "path",
                 })
             );
         }
@@ -643,9 +643,11 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                paths: vec![PathBuf::from("path")],
+                path: PathBuf::from("path"),
                 details: ChangeDetails {
-                    attributes: vec![ChangeDetailsAttributes::Permissions],
+                    attribute: Some(ChangeDetailsAttribute::Permissions),
+                    renamed: Some(PathBuf::from("renamed")),
+                    timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
             });
@@ -657,9 +659,11 @@ mod tests {
                     "type": "changed",
                     "ts": u64::MAX,
                     "kind": "access",
-                    "paths": ["path"],
+                    "path": "path",
                     "details": {
-                        "attributes": ["permissions"],
+                        "attribute": "permissions",
+                        "renamed": "renamed",
+                        "ts": u64::MAX,
                         "extra": "info",
                     },
                 })
@@ -672,7 +676,7 @@ mod tests {
                 "type": "changed",
                 "ts": u64::MAX,
                 "kind": "access",
-                "paths": ["path"],
+                "path": "path",
             });
 
             let payload: Response = serde_json::from_value(value).unwrap();
@@ -681,7 +685,7 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    paths: vec![PathBuf::from("path")],
+                    path: PathBuf::from("path"),
                     details: ChangeDetails::default(),
                 })
             );
@@ -693,9 +697,11 @@ mod tests {
                 "type": "changed",
                 "ts": u64::MAX,
                 "kind": "access",
-                "paths": ["path"],
+                "path": "path",
                 "details": {
-                    "attributes": ["permissions"],
+                    "attribute": "permissions",
+                    "renamed": "renamed",
+                    "ts": u64::MAX,
                     "extra": "info",
                 },
             });
@@ -706,9 +712,11 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    paths: vec![PathBuf::from("path")],
+                    path: PathBuf::from("path"),
                     details: ChangeDetails {
-                        attributes: vec![ChangeDetailsAttributes::Permissions],
+                        attribute: Some(ChangeDetailsAttribute::Permissions),
+                        renamed: Some(PathBuf::from("renamed")),
+                        timestamp: Some(u64::MAX),
                         extra: Some(String::from("info")),
                     },
                 })
@@ -720,7 +728,7 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                paths: vec![PathBuf::from("path")],
+                path: PathBuf::from("path"),
                 details: ChangeDetails::default(),
             });
 
@@ -736,9 +744,11 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                paths: vec![PathBuf::from("path")],
+                path: PathBuf::from("path"),
                 details: ChangeDetails {
-                    attributes: vec![ChangeDetailsAttributes::Permissions],
+                    attribute: Some(ChangeDetailsAttribute::Permissions),
+                    renamed: Some(PathBuf::from("renamed")),
+                    timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
             });
@@ -759,7 +769,7 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                paths: vec![PathBuf::from("path")],
+                path: PathBuf::from("path"),
                 details: ChangeDetails::default(),
             }))
             .unwrap();
@@ -770,7 +780,7 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    paths: vec![PathBuf::from("path")],
+                    path: PathBuf::from("path"),
                     details: ChangeDetails::default(),
                 })
             );
@@ -785,9 +795,11 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                paths: vec![PathBuf::from("path")],
+                path: PathBuf::from("path"),
                 details: ChangeDetails {
-                    attributes: vec![ChangeDetailsAttributes::Permissions],
+                    attribute: Some(ChangeDetailsAttribute::Permissions),
+                    renamed: Some(PathBuf::from("renamed")),
+                    timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
             }))
@@ -799,9 +811,11 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    paths: vec![PathBuf::from("path")],
+                    path: PathBuf::from("path"),
                     details: ChangeDetails {
-                        attributes: vec![ChangeDetailsAttributes::Permissions],
+                        attribute: Some(ChangeDetailsAttribute::Permissions),
+                        renamed: Some(PathBuf::from("renamed")),
+                        timestamp: Some(u64::MAX),
                         extra: Some(String::from("info")),
                     },
                 })
@@ -900,9 +914,9 @@ mod tests {
                 file_type: FileType::File,
                 len: u64::MAX,
                 readonly: true,
-                accessed: Some(u128::MAX),
-                created: Some(u128::MAX),
-                modified: Some(u128::MAX),
+                accessed: Some(u64::MAX),
+                created: Some(u64::MAX),
+                modified: Some(u64::MAX),
                 unix: Some(UnixMetadata {
                     owner_read: true,
                     owner_write: false,
@@ -933,10 +947,6 @@ mod tests {
                 }),
             });
 
-            // NOTE: These values are too big to normally serialize, so we have to convert them to
-            // a string type, which is why the value here also needs to be a string.
-            let u128_max_str = u128::MAX.to_string();
-
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
@@ -946,9 +956,9 @@ mod tests {
                     "file_type": "file",
                     "len": u64::MAX,
                     "readonly": true,
-                    "accessed": u128_max_str,
-                    "created": u128_max_str,
-                    "modified": u128_max_str,
+                    "accessed": u64::MAX,
+                    "created": u64::MAX,
+                    "modified": u64::MAX,
                     "unix": {
                         "owner_read": true,
                         "owner_write": false,
@@ -1009,16 +1019,15 @@ mod tests {
 
         #[test]
         fn should_be_able_to_deserialize_full_payload_from_json() {
-            let u128_max_str = u128::MAX.to_string();
             let value = serde_json::json!({
                 "type": "metadata",
                 "canonicalized_path": "path",
                 "file_type": "file",
                 "len": u64::MAX,
                 "readonly": true,
-                "accessed": u128_max_str,
-                "created": u128_max_str,
-                "modified": u128_max_str,
+                "accessed": u64::MAX,
+                "created": u64::MAX,
+                "modified": u64::MAX,
                 "unix": {
                     "owner_read": true,
                     "owner_write": false,
@@ -1057,9 +1066,9 @@ mod tests {
                     file_type: FileType::File,
                     len: u64::MAX,
                     readonly: true,
-                    accessed: Some(u128::MAX),
-                    created: Some(u128::MAX),
-                    modified: Some(u128::MAX),
+                    accessed: Some(u64::MAX),
+                    created: Some(u64::MAX),
+                    modified: Some(u64::MAX),
                     unix: Some(UnixMetadata {
                         owner_read: true,
                         owner_write: false,
@@ -1120,9 +1129,9 @@ mod tests {
                 file_type: FileType::File,
                 len: u64::MAX,
                 readonly: true,
-                accessed: Some(u128::MAX),
-                created: Some(u128::MAX),
-                modified: Some(u128::MAX),
+                accessed: Some(u64::MAX),
+                created: Some(u64::MAX),
+                modified: Some(u64::MAX),
                 unix: Some(UnixMetadata {
                     owner_read: true,
                     owner_write: false,
@@ -1207,9 +1216,9 @@ mod tests {
                 file_type: FileType::File,
                 len: u64::MAX,
                 readonly: true,
-                accessed: Some(u128::MAX),
-                created: Some(u128::MAX),
-                modified: Some(u128::MAX),
+                accessed: Some(u64::MAX),
+                created: Some(u64::MAX),
+                modified: Some(u64::MAX),
                 unix: Some(UnixMetadata {
                     owner_read: true,
                     owner_write: false,
@@ -1249,9 +1258,9 @@ mod tests {
                     file_type: FileType::File,
                     len: u64::MAX,
                     readonly: true,
-                    accessed: Some(u128::MAX),
-                    created: Some(u128::MAX),
-                    modified: Some(u128::MAX),
+                    accessed: Some(u64::MAX),
+                    created: Some(u64::MAX),
+                    modified: Some(u64::MAX),
                     unix: Some(UnixMetadata {
                         owner_read: true,
                         owner_write: false,

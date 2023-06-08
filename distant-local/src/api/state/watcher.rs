@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use distant_core::net::common::ConnectionId;
-use distant_core::protocol::{Change, ChangeDetails, ChangeDetailsAttributes, ChangeKind};
+use distant_core::protocol::{Change, ChangeDetails, ChangeDetailsAttribute, ChangeKind};
 use log::*;
-use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
+use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind, RenameMode};
 use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
     Event as WatcherEvent, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
@@ -337,33 +337,71 @@ async fn watcher_task<W>(
                     _ => ChangeKind::Unknown,
                 };
 
-                let attributes = match ev.kind {
-                    EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime)) => {
-                        vec![ChangeDetailsAttributes::Timestamp]
-                    }
-                    EventKind::Modify(ModifyKind::Metadata(
-                        MetadataKind::Ownership | MetadataKind::Permissions,
-                    )) => vec![ChangeDetailsAttributes::Permissions],
-                    _ => Vec::new(),
-                };
-
                 for registered_path in registered_paths.iter() {
-                    let change = Change {
-                        timestamp,
-                        kind,
-                        paths: ev.paths.clone(),
-                        details: ChangeDetails {
-                            attributes: attributes.clone(),
-                            extra: ev.info().map(ToString::to_string),
-                        },
-                    };
-                    match registered_path.filter_and_send(change).await {
-                        Ok(_) => (),
-                        Err(x) => error!(
-                            "[Conn {}] Failed to forward changes to paths: {}",
-                            registered_path.id(),
-                            x
+                    // For rename both, we assume the paths is a pair that represents before and
+                    // after, so we want to grab the before and use it!
+                    let (paths, renamed): (&[PathBuf], Option<PathBuf>) = match ev.kind {
+                        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => (
+                            &ev.paths[0..1],
+                            if ev.paths.len() > 1 {
+                                ev.paths.last().cloned()
+                            } else {
+                                None
+                            },
                         ),
+                        _ => (&ev.paths, None),
+                    };
+
+                    for path in paths {
+                        let attribute = match ev.kind {
+                            EventKind::Modify(ModifyKind::Metadata(MetadataKind::Ownership)) => {
+                                Some(ChangeDetailsAttribute::Ownership)
+                            }
+                            EventKind::Modify(ModifyKind::Metadata(MetadataKind::Permissions)) => {
+                                Some(ChangeDetailsAttribute::Permissions)
+                            }
+                            EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime)) => {
+                                Some(ChangeDetailsAttribute::Timestamp)
+                            }
+                            _ => None,
+                        };
+
+                        // Calculate a timestamp for creation & modification paths
+                        let details_timestamp = match ev.kind {
+                            EventKind::Create(_) => tokio::fs::symlink_metadata(path.as_path())
+                                .await
+                                .ok()
+                                .and_then(|m| m.created().ok())
+                                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs()),
+                            EventKind::Modify(_) => tokio::fs::symlink_metadata(path.as_path())
+                                .await
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs()),
+                            _ => None,
+                        };
+
+                        let change = Change {
+                            timestamp,
+                            kind,
+                            path: path.to_path_buf(),
+                            details: ChangeDetails {
+                                attribute,
+                                renamed: renamed.clone(),
+                                timestamp: details_timestamp,
+                                extra: ev.info().map(ToString::to_string),
+                            },
+                        };
+                        match registered_path.filter_and_send(change).await {
+                            Ok(_) => (),
+                            Err(x) => error!(
+                                "[Conn {}] Failed to forward changes to paths: {}",
+                                registered_path.id(),
+                                x
+                            ),
+                        }
                     }
                 }
             }
