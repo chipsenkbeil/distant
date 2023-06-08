@@ -633,7 +633,7 @@ mod tests {
                     "type": "changed",
                     "ts": u64::MAX,
                     "kind": "access",
-                    "paths": ["path"],
+                    "path": "path",
                 })
             );
         }
@@ -659,7 +659,7 @@ mod tests {
                     "type": "changed",
                     "ts": u64::MAX,
                     "kind": "access",
-                    "paths": ["path"],
+                    "path": "path",
                     "details": {
                         "attribute": "permissions",
                         "renamed": "renamed",
@@ -676,7 +676,7 @@ mod tests {
                 "type": "changed",
                 "ts": u64::MAX,
                 "kind": "access",
-                "paths": "path",
+                "path": "path",
             });
 
             let payload: Response = serde_json::from_value(value).unwrap();
