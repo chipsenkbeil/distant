@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `Change` structure now provides a single `path` instead of `paths` with the
+  `distant-local` implementation sending a separate `Changed` event per path
+- `ChangeDetails` now includes a `renamed` field to capture the new path name
+  when known
+
 ## [0.20.0-alpha.8]
 
 ### Added
