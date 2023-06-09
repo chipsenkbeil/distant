@@ -5,12 +5,16 @@ use derive_more::{Display, Error};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use super::{parse_msg_pack_str, write_str_msg_pack, Id};
+use super::{read_header_bytes, read_key_eq, read_str_bytes, Header, Id};
 use crate::common::utils;
 
 /// Represents a request to send
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request<T> {
+    /// Optional header data to include with request
+    #[serde(default, flatten, skip_serializing_if = "Header::is_empty")]
+    pub header: Header,
+
     /// Unique id associated with the request
     pub id: Id,
 
@@ -19,9 +23,10 @@ pub struct Request<T> {
 }
 
 impl<T> Request<T> {
-    /// Creates a new request with a random, unique id
+    /// Creates a new request with a random, unique id and no header data
     pub fn new(payload: T) -> Self {
         Self {
+            header: header!(),
             id: rand::random::<u64>().to_string(),
             payload,
         }
@@ -45,6 +50,11 @@ where
     /// Attempts to convert a typed request to an untyped request
     pub fn to_untyped_request(&self) -> io::Result<UntypedRequest> {
         Ok(UntypedRequest {
+            header: Cow::Owned(if !self.header.is_empty() {
+                utils::serialize_to_vec(&self.header)?
+            } else {
+                Vec::new()
+            }),
             id: Cow::Borrowed(&self.id),
             payload: Cow::Owned(self.to_payload_vec()?),
         })
@@ -73,13 +83,34 @@ pub enum UntypedRequestParseError {
     /// When the bytes do not represent a request
     WrongType,
 
+    /// When a header should be present, but the key is wrong
+    InvalidHeaderKey,
+
+    /// When a header should be present, but the header bytes are wrong
+    InvalidHeader,
+
+    /// When the key for the id is wrong
+    InvalidIdKey,
+
     /// When the id is not a valid UTF-8 string
     InvalidId,
+
+    /// When the key for the payload is wrong
+    InvalidPayloadKey,
+}
+
+#[inline]
+fn header_is_empty(header: &[u8]) -> bool {
+    header.is_empty()
 }
 
 /// Represents a request to send whose payload is bytes instead of a specific type
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UntypedRequest<'a> {
+    /// Header data associated with the request as bytes
+    #[serde(default, skip_serializing_if = "header_is_empty")]
+    pub header: Cow<'a, [u8]>,
+
     /// Unique id associated with the request
     pub id: Cow<'a, str>,
 
@@ -91,6 +122,11 @@ impl<'a> UntypedRequest<'a> {
     /// Attempts to convert an untyped request to a typed request
     pub fn to_typed_request<T: DeserializeOwned>(&self) -> io::Result<Request<T>> {
         Ok(Request {
+            header: if header_is_empty(&self.header) {
+                header!()
+            } else {
+                utils::deserialize_from_slice(&self.header)?
+            },
             id: self.id.to_string(),
             payload: utils::deserialize_from_slice(&self.payload)?,
         })
@@ -99,6 +135,10 @@ impl<'a> UntypedRequest<'a> {
     /// Convert into a borrowed version
     pub fn as_borrowed(&self) -> UntypedRequest<'_> {
         UntypedRequest {
+            header: match &self.header {
+                Cow::Borrowed(x) => Cow::Borrowed(x),
+                Cow::Owned(x) => Cow::Borrowed(x.as_slice()),
+            },
             id: match &self.id {
                 Cow::Borrowed(x) => Cow::Borrowed(x),
                 Cow::Owned(x) => Cow::Borrowed(x.as_str()),
@@ -113,6 +153,10 @@ impl<'a> UntypedRequest<'a> {
     /// Convert into an owned version
     pub fn into_owned(self) -> UntypedRequest<'static> {
         UntypedRequest {
+            header: match self.header {
+                Cow::Borrowed(x) => Cow::Owned(x.to_vec()),
+                Cow::Owned(x) => Cow::Owned(x),
+            },
             id: match self.id {
                 Cow::Borrowed(x) => Cow::Owned(x.to_string()),
                 Cow::Owned(x) => Cow::Owned(x),
@@ -124,6 +168,11 @@ impl<'a> UntypedRequest<'a> {
         }
     }
 
+    /// Updates the header of the request to the given `header`.
+    pub fn set_header(&mut self, header: impl IntoIterator<Item = u8>) {
+        self.header = Cow::Owned(header.into_iter().collect());
+    }
+
     /// Updates the id of the request to the given `id`.
     pub fn set_id(&mut self, id: impl Into<String>) {
         self.id = Cow::Owned(id.into());
@@ -131,61 +180,80 @@ impl<'a> UntypedRequest<'a> {
 
     /// Allocates a new collection of bytes representing the request.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![0x82];
+        let mut bytes = vec![];
 
-        write_str_msg_pack("id", &mut bytes);
-        write_str_msg_pack(&self.id, &mut bytes);
+        let has_header = !header_is_empty(&self.header);
+        if has_header {
+            rmp::encode::write_map_len(&mut bytes, 3).unwrap();
+        } else {
+            rmp::encode::write_map_len(&mut bytes, 2).unwrap();
+        }
 
-        write_str_msg_pack("payload", &mut bytes);
+        if has_header {
+            rmp::encode::write_str(&mut bytes, "header").unwrap();
+            bytes.extend_from_slice(&self.header);
+        }
+
+        rmp::encode::write_str(&mut bytes, "id").unwrap();
+        rmp::encode::write_str(&mut bytes, &self.id).unwrap();
+
+        rmp::encode::write_str(&mut bytes, "payload").unwrap();
         bytes.extend_from_slice(&self.payload);
 
         bytes
     }
 
     /// Parses a collection of bytes, returning a partial request if it can be potentially
-    /// represented as a [`Request`] depending on the payload, or the original bytes if it does not
-    /// represent a [`Request`]
+    /// represented as a [`Request`] depending on the payload.
     ///
     /// NOTE: This supports parsing an invalid request where the payload would not properly
     /// deserialize, but the bytes themselves represent a complete request of some kind.
     pub fn from_slice(input: &'a [u8]) -> Result<Self, UntypedRequestParseError> {
-        if input.len() < 2 {
+        if input.is_empty() {
             return Err(UntypedRequestParseError::WrongType);
         }
 
-        // MsgPack marks a fixmap using 0x80 - 0x8f to indicate the size (up to 15 elements).
-        //
-        // In the case of the request, there are only two elements: id and payload. So the first
-        // byte should ALWAYS be 0x82 (130).
-        if input[0] != 0x82 {
-            return Err(UntypedRequestParseError::WrongType);
-        }
+        let has_header = match rmp::Marker::from_u8(input[0]) {
+            rmp::Marker::FixMap(2) => false,
+            rmp::Marker::FixMap(3) => true,
+            _ => return Err(UntypedRequestParseError::WrongType),
+        };
 
-        // Skip the first byte representing the fixmap
+        // Advance position by marker
         let input = &input[1..];
 
-        // Validate that first field is id
-        let (input, id_key) =
-            parse_msg_pack_str(input).map_err(|_| UntypedRequestParseError::WrongType)?;
-        if id_key != "id" {
-            return Err(UntypedRequestParseError::WrongType);
-        }
+        // Parse the header if we have one
+        let (header, input) = if has_header {
+            let (_, input) = read_key_eq(input, "header")
+                .map_err(|_| UntypedRequestParseError::InvalidHeaderKey)?;
+
+            let (header, input) =
+                read_header_bytes(input).map_err(|_| UntypedRequestParseError::InvalidHeader)?;
+            (header, input)
+        } else {
+            ([0u8; 0].as_slice(), input)
+        };
+
+        // Validate that next field is id
+        let (_, input) =
+            read_key_eq(input, "id").map_err(|_| UntypedRequestParseError::InvalidIdKey)?;
 
         // Get the id itself
-        let (input, id) =
-            parse_msg_pack_str(input).map_err(|_| UntypedRequestParseError::InvalidId)?;
+        let (id, input) = read_str_bytes(input).map_err(|_| UntypedRequestParseError::InvalidId)?;
 
-        // Validate that second field is payload
-        let (input, payload_key) =
-            parse_msg_pack_str(input).map_err(|_| UntypedRequestParseError::WrongType)?;
-        if payload_key != "payload" {
-            return Err(UntypedRequestParseError::WrongType);
-        }
+        // Validate that final field is payload
+        let (_, input) = read_key_eq(input, "payload")
+            .map_err(|_| UntypedRequestParseError::InvalidPayloadKey)?;
 
+        let header = Cow::Borrowed(header);
         let id = Cow::Borrowed(id);
         let payload = Cow::Borrowed(input);
 
-        Ok(Self { id, payload })
+        Ok(Self {
+            header,
+            id,
+            payload,
+        })
     }
 }
 
@@ -204,12 +272,13 @@ mod tests {
     // fixstr of 7 bytes with str "payload"
     const PAYLOAD_FIELD_BYTES: &[u8] = &[0xa7, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64];
 
-    /// fixstr of 4 bytes with str "test"
+    // fixstr of 4 bytes with str "test"
     const TEST_STR_BYTES: &[u8] = &[0xa4, 0x74, 0x65, 0x73, 0x74];
 
     #[test]
     fn untyped_request_should_support_converting_to_bytes() {
         let bytes = Request {
+            header: header!(),
             id: "some id".to_string(),
             payload: true,
         }
@@ -221,8 +290,23 @@ mod tests {
     }
 
     #[test]
-    fn untyped_request_should_support_parsing_from_request_bytes_with_valid_payload() {
+    fn untyped_request_should_support_converting_to_bytes_with_header() {
         let bytes = Request {
+            header: header!("key" -> 123),
+            id: "some id".to_string(),
+            payload: true,
+        }
+        .to_vec()
+        .unwrap();
+
+        let untyped_request = UntypedRequest::from_slice(&bytes).unwrap();
+        assert_eq!(untyped_request.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn untyped_request_should_support_parsing_from_request_bytes_with_header() {
+        let bytes = Request {
+            header: header!("key" -> 123),
             id: "some id".to_string(),
             payload: true,
         }
@@ -232,6 +316,27 @@ mod tests {
         assert_eq!(
             UntypedRequest::from_slice(&bytes),
             Ok(UntypedRequest {
+                header: Cow::Owned(utils::serialize_to_vec(&header!("key" -> 123)).unwrap()),
+                id: Cow::Borrowed("some id"),
+                payload: Cow::Owned(vec![TRUE_BYTE]),
+            })
+        );
+    }
+
+    #[test]
+    fn untyped_request_should_support_parsing_from_request_bytes_with_valid_payload() {
+        let bytes = Request {
+            header: header!(),
+            id: "some id".to_string(),
+            payload: true,
+        }
+        .to_vec()
+        .unwrap();
+
+        assert_eq!(
+            UntypedRequest::from_slice(&bytes),
+            Ok(UntypedRequest {
+                header: Cow::Owned(vec![]),
                 id: Cow::Borrowed("some id"),
                 payload: Cow::Owned(vec![TRUE_BYTE]),
             })
@@ -242,6 +347,7 @@ mod tests {
     fn untyped_request_should_support_parsing_from_request_bytes_with_invalid_payload() {
         // Request with id < 32 bytes
         let mut bytes = Request {
+            header: header!(),
             id: "".to_string(),
             payload: true,
         }
@@ -255,6 +361,7 @@ mod tests {
         assert_eq!(
             UntypedRequest::from_slice(&bytes),
             Ok(UntypedRequest {
+                header: Cow::Owned(vec![]),
                 id: Cow::Owned("".to_string()),
                 payload: Cow::Owned(vec![TRUE_BYTE, NEVER_USED_BYTE]),
             })
@@ -284,7 +391,7 @@ mod tests {
         // Missing fields (corrupt data)
         assert_eq!(
             UntypedRequest::from_slice(&[0x82]),
-            Err(UntypedRequestParseError::WrongType)
+            Err(UntypedRequestParseError::InvalidIdKey)
         );
 
         // Missing id field (has valid data itself)
@@ -300,7 +407,7 @@ mod tests {
                 .concat()
                 .as_slice()
             ),
-            Err(UntypedRequestParseError::WrongType)
+            Err(UntypedRequestParseError::InvalidIdKey)
         );
 
         // Non-str id field value
@@ -348,7 +455,7 @@ mod tests {
                 .concat()
                 .as_slice()
             ),
-            Err(UntypedRequestParseError::WrongType)
+            Err(UntypedRequestParseError::InvalidPayloadKey)
         );
     }
 }

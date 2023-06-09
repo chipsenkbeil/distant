@@ -5,12 +5,16 @@ use derive_more::{Display, Error};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use super::{parse_msg_pack_str, write_str_msg_pack, Id};
+use super::{read_header_bytes, read_key_eq, read_str_bytes, Header, Id};
 use crate::common::utils;
 
 /// Represents a response received related to some response
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response<T> {
+    /// Optional header data to include with response
+    #[serde(default, flatten, skip_serializing_if = "Header::is_empty")]
+    pub header: Header,
+
     /// Unique id associated with the response
     pub id: Id,
 
@@ -22,9 +26,10 @@ pub struct Response<T> {
 }
 
 impl<T> Response<T> {
-    /// Creates a new response with a random, unique id
+    /// Creates a new response with a random, unique id and no header data
     pub fn new(origin_id: Id, payload: T) -> Self {
         Self {
+            header: header!(),
             id: rand::random::<u64>().to_string(),
             origin_id,
             payload,
@@ -49,6 +54,11 @@ where
     /// Attempts to convert a typed response to an untyped response
     pub fn to_untyped_response(&self) -> io::Result<UntypedResponse> {
         Ok(UntypedResponse {
+            header: Cow::Owned(if !self.header.is_empty() {
+                utils::serialize_to_vec(&self.header)?
+            } else {
+                Vec::new()
+            }),
             id: Cow::Borrowed(&self.id),
             origin_id: Cow::Borrowed(&self.origin_id),
             payload: Cow::Owned(self.to_payload_vec()?),
@@ -79,9 +89,18 @@ pub enum UntypedResponseParseError {
     InvalidOriginId,
 }
 
+#[inline]
+fn header_is_empty(header: &[u8]) -> bool {
+    header.is_empty()
+}
+
 /// Represents a response to send whose payload is bytes instead of a specific type
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct UntypedResponse<'a> {
+    /// Header data associated with the response as bytes
+    #[serde(default, skip_serializing_if = "header_is_empty")]
+    pub header: Cow<'a, [u8]>,
+
     /// Unique id associated with the response
     pub id: Cow<'a, str>,
 
@@ -93,9 +112,14 @@ pub struct UntypedResponse<'a> {
 }
 
 impl<'a> UntypedResponse<'a> {
-    /// Attempts to convert an untyped request to a typed request
+    /// Attempts to convert an untyped response to a typed response
     pub fn to_typed_response<T: DeserializeOwned>(&self) -> io::Result<Response<T>> {
         Ok(Response {
+            header: if header_is_empty(&self.header) {
+                header!()
+            } else {
+                utils::deserialize_from_slice(&self.header)?
+            },
             id: self.id.to_string(),
             origin_id: self.origin_id.to_string(),
             payload: utils::deserialize_from_slice(&self.payload)?,
@@ -105,6 +129,10 @@ impl<'a> UntypedResponse<'a> {
     /// Convert into a borrowed version
     pub fn as_borrowed(&self) -> UntypedResponse<'_> {
         UntypedResponse {
+            header: match &self.header {
+                Cow::Borrowed(x) => Cow::Borrowed(x),
+                Cow::Owned(x) => Cow::Borrowed(x.as_slice()),
+            },
             id: match &self.id {
                 Cow::Borrowed(x) => Cow::Borrowed(x),
                 Cow::Owned(x) => Cow::Borrowed(x.as_str()),
@@ -123,6 +151,10 @@ impl<'a> UntypedResponse<'a> {
     /// Convert into an owned version
     pub fn into_owned(self) -> UntypedResponse<'static> {
         UntypedResponse {
+            header: match self.header {
+                Cow::Borrowed(x) => Cow::Owned(x.to_vec()),
+                Cow::Owned(x) => Cow::Owned(x),
+            },
             id: match self.id {
                 Cow::Borrowed(x) => Cow::Owned(x.to_string()),
                 Cow::Owned(x) => Cow::Owned(x),
@@ -138,6 +170,11 @@ impl<'a> UntypedResponse<'a> {
         }
     }
 
+    /// Updates the header of the response to the given `header`.
+    pub fn set_header(&mut self, header: impl IntoIterator<Item = u8>) {
+        self.header = Cow::Owned(header.into_iter().collect());
+    }
+
     /// Updates the id of the response to the given `id`.
     pub fn set_id(&mut self, id: impl Into<String>) {
         self.id = Cow::Owned(id.into());
@@ -150,76 +187,90 @@ impl<'a> UntypedResponse<'a> {
 
     /// Allocates a new collection of bytes representing the response.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![0x83];
+        let mut bytes = vec![];
 
-        write_str_msg_pack("id", &mut bytes);
-        write_str_msg_pack(&self.id, &mut bytes);
+        let has_header = !header_is_empty(&self.header);
+        if has_header {
+            rmp::encode::write_map_len(&mut bytes, 4).unwrap();
+        } else {
+            rmp::encode::write_map_len(&mut bytes, 3).unwrap();
+        }
 
-        write_str_msg_pack("origin_id", &mut bytes);
-        write_str_msg_pack(&self.origin_id, &mut bytes);
+        if has_header {
+            rmp::encode::write_str(&mut bytes, "header").unwrap();
+            bytes.extend_from_slice(&self.header);
+        }
 
-        write_str_msg_pack("payload", &mut bytes);
+        rmp::encode::write_str(&mut bytes, "id").unwrap();
+        rmp::encode::write_str(&mut bytes, &self.id).unwrap();
+
+        rmp::encode::write_str(&mut bytes, "origin_id").unwrap();
+        rmp::encode::write_str(&mut bytes, &self.origin_id).unwrap();
+
+        rmp::encode::write_str(&mut bytes, "payload").unwrap();
         bytes.extend_from_slice(&self.payload);
 
         bytes
     }
 
     /// Parses a collection of bytes, returning an untyped response if it can be potentially
-    /// represented as a [`Response`] depending on the payload, or the original bytes if it does not
-    /// represent a [`Response`].
+    /// represented as a [`Response`] depending on the payload.
     ///
     /// NOTE: This supports parsing an invalid response where the payload would not properly
     /// deserialize, but the bytes themselves represent a complete response of some kind.
     pub fn from_slice(input: &'a [u8]) -> Result<Self, UntypedResponseParseError> {
-        if input.len() < 2 {
+        if input.is_empty() {
             return Err(UntypedResponseParseError::WrongType);
         }
 
-        // MsgPack marks a fixmap using 0x80 - 0x8f to indicate the size (up to 15 elements).
-        //
-        // In the case of the request, there are only three elements: id, origin_id, and payload.
-        // So the first byte should ALWAYS be 0x83 (131).
-        if input[0] != 0x83 {
-            return Err(UntypedResponseParseError::WrongType);
-        }
+        let has_header = match rmp::Marker::from_u8(input[0]) {
+            rmp::Marker::FixMap(3) => false,
+            rmp::Marker::FixMap(4) => true,
+            _ => return Err(UntypedResponseParseError::WrongType),
+        };
 
-        // Skip the first byte representing the fixmap
+        // Advance position by marker
         let input = &input[1..];
 
-        // Validate that first field is id
-        let (input, id_key) =
-            parse_msg_pack_str(input).map_err(|_| UntypedResponseParseError::WrongType)?;
-        if id_key != "id" {
-            return Err(UntypedResponseParseError::WrongType);
-        }
+        // Parse the header if we have one
+        let (header, input) = if has_header {
+            let (_, input) =
+                read_key_eq(input, "header").map_err(|_| UntypedResponseParseError::WrongType)?;
+
+            let (header, input) =
+                read_header_bytes(input).map_err(|_| UntypedResponseParseError::WrongType)?;
+            (header, input)
+        } else {
+            ([0u8; 0].as_slice(), input)
+        };
+
+        // Validate that next field is id
+        let (_, input) =
+            read_key_eq(input, "id").map_err(|_| UntypedResponseParseError::WrongType)?;
 
         // Get the id itself
-        let (input, id) =
-            parse_msg_pack_str(input).map_err(|_| UntypedResponseParseError::InvalidId)?;
+        let (id, input) =
+            read_str_bytes(input).map_err(|_| UntypedResponseParseError::InvalidId)?;
 
-        // Validate that second field is origin_id
-        let (input, origin_id_key) =
-            parse_msg_pack_str(input).map_err(|_| UntypedResponseParseError::WrongType)?;
-        if origin_id_key != "origin_id" {
-            return Err(UntypedResponseParseError::WrongType);
-        }
+        // Validate that next field is origin_id
+        let (_, input) =
+            read_key_eq(input, "origin_id").map_err(|_| UntypedResponseParseError::WrongType)?;
 
         // Get the origin_id itself
-        let (input, origin_id) =
-            parse_msg_pack_str(input).map_err(|_| UntypedResponseParseError::InvalidOriginId)?;
+        let (origin_id, input) =
+            read_str_bytes(input).map_err(|_| UntypedResponseParseError::InvalidOriginId)?;
 
-        // Validate that second field is payload
-        let (input, payload_key) =
-            parse_msg_pack_str(input).map_err(|_| UntypedResponseParseError::WrongType)?;
-        if payload_key != "payload" {
-            return Err(UntypedResponseParseError::WrongType);
-        }
+        // Validate that final field is payload
+        let (_, input) =
+            read_key_eq(input, "payload").map_err(|_| UntypedResponseParseError::WrongType)?;
 
+        let header = Cow::Borrowed(header);
         let id = Cow::Borrowed(id);
         let origin_id = Cow::Borrowed(origin_id);
         let payload = Cow::Borrowed(input);
 
         Ok(Self {
+            header,
             id,
             origin_id,
             payload,
@@ -252,6 +303,7 @@ mod tests {
     #[test]
     fn untyped_response_should_support_converting_to_bytes() {
         let bytes = Response {
+            header: header!(),
             id: "some id".to_string(),
             origin_id: "some origin id".to_string(),
             payload: true,
@@ -264,8 +316,24 @@ mod tests {
     }
 
     #[test]
-    fn untyped_response_should_support_parsing_from_response_bytes_with_valid_payload() {
+    fn untyped_response_should_support_converting_to_bytes_with_header() {
         let bytes = Response {
+            header: header!("key" -> 123),
+            id: "some id".to_string(),
+            origin_id: "some origin id".to_string(),
+            payload: true,
+        }
+        .to_vec()
+        .unwrap();
+
+        let untyped_response = UntypedResponse::from_slice(&bytes).unwrap();
+        assert_eq!(untyped_response.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn untyped_response_should_support_parsing_from_response_bytes_with_header() {
+        let bytes = Response {
+            header: header!("key" -> 123),
             id: "some id".to_string(),
             origin_id: "some origin id".to_string(),
             payload: true,
@@ -276,6 +344,29 @@ mod tests {
         assert_eq!(
             UntypedResponse::from_slice(&bytes),
             Ok(UntypedResponse {
+                header: Cow::Owned(utils::serialize_to_vec(&header!("key" -> 123)).unwrap()),
+                id: Cow::Borrowed("some id"),
+                origin_id: Cow::Borrowed("some origin id"),
+                payload: Cow::Owned(vec![TRUE_BYTE]),
+            })
+        );
+    }
+
+    #[test]
+    fn untyped_response_should_support_parsing_from_response_bytes_with_valid_payload() {
+        let bytes = Response {
+            header: header!(),
+            id: "some id".to_string(),
+            origin_id: "some origin id".to_string(),
+            payload: true,
+        }
+        .to_vec()
+        .unwrap();
+
+        assert_eq!(
+            UntypedResponse::from_slice(&bytes),
+            Ok(UntypedResponse {
+                header: Cow::Owned(vec![]),
                 id: Cow::Borrowed("some id"),
                 origin_id: Cow::Borrowed("some origin id"),
                 payload: Cow::Owned(vec![TRUE_BYTE]),
@@ -287,6 +378,7 @@ mod tests {
     fn untyped_response_should_support_parsing_from_response_bytes_with_invalid_payload() {
         // Response with id < 32 bytes
         let mut bytes = Response {
+            header: header!(),
             id: "".to_string(),
             origin_id: "".to_string(),
             payload: true,
@@ -301,6 +393,7 @@ mod tests {
         assert_eq!(
             UntypedResponse::from_slice(&bytes),
             Ok(UntypedResponse {
+                header: Cow::Owned(vec![]),
                 id: Cow::Owned("".to_string()),
                 origin_id: Cow::Owned("".to_string()),
                 payload: Cow::Owned(vec![TRUE_BYTE, NEVER_USED_BYTE]),
