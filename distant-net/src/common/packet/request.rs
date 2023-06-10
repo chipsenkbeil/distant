@@ -12,7 +12,7 @@ use crate::common::utils;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request<T> {
     /// Optional header data to include with request
-    #[serde(default, flatten, skip_serializing_if = "Header::is_empty")]
+    #[serde(default, skip_serializing_if = "Header::is_empty")]
     pub header: Header,
 
     /// Unique id associated with the request

@@ -252,3 +252,106 @@ fn read_key_eq<'a>(input: &'a [u8], key: &str) -> Result<((), &'a [u8]), &'a [u8
         _ => Err(input),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod read_str_bytes {
+        use super::*;
+        use test_log::test;
+
+        #[test]
+        fn should_fail_if_input_is_empty() {
+            let input = read_str_bytes(&[]).unwrap_err();
+            assert!(input.is_empty());
+        }
+
+        #[test]
+        fn should_fail_if_input_does_not_start_with_str() {
+            let input = read_str_bytes(&[0xff, 0xa5, b'h', b'e', b'l', b'l', b'o']).unwrap_err();
+            assert_eq!(input, [0xff, 0xa5, b'h', b'e', b'l', b'l', b'o']);
+        }
+
+        #[test]
+        fn should_succeed_if_input_starts_with_str() {
+            let (s, remaining) =
+                read_str_bytes(&[0xa5, b'h', b'e', b'l', b'l', b'o', 0xff]).unwrap();
+            assert_eq!(s, "hello");
+            assert_eq!(remaining, [0xff]);
+        }
+    }
+
+    mod read_key_eq {
+        use super::*;
+        use test_log::test;
+
+        #[test]
+        fn should_fail_if_input_is_empty() {
+            let input = read_key_eq(&[], "key").unwrap_err();
+            assert!(input.is_empty());
+        }
+
+        #[test]
+        fn should_fail_if_input_does_not_start_with_str() {
+            let input = &[
+                0xff,
+                rmp::Marker::FixStr(5).to_u8(),
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o',
+            ];
+            let remaining = read_key_eq(input, "key").unwrap_err();
+            assert_eq!(remaining, input);
+        }
+
+        #[test]
+        fn should_fail_if_read_key_does_not_match_specified_key() {
+            let input = &[
+                rmp::Marker::FixStr(5).to_u8(),
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o',
+                0xff,
+            ];
+            let remaining = read_key_eq(input, "key").unwrap_err();
+            assert_eq!(remaining, input);
+        }
+
+        #[test]
+        fn should_succeed_if_read_key_matches_specified_key() {
+            let input = &[
+                rmp::Marker::FixStr(5).to_u8(),
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o',
+                0xff,
+            ];
+            let (_, remaining) = read_key_eq(input, "hello").unwrap();
+            assert_eq!(remaining, [0xff]);
+        }
+    }
+
+    mod find_msgpack_byte_len {
+        use super::*;
+        use test_log::test;
+
+        #[test]
+        fn should_return_none_if_input_is_empty() {
+            let len = find_msgpack_byte_len(&[]);
+            assert_eq!(len, None);
+        }
+
+        #[test]
+        fn should_return_none_if_input_has_reserved_marker() {
+            let len = find_msgpack_byte_len(&[rmp::Marker::Reserved.to_u8()]);
+            assert_eq!(len, None);
+        }
+    }
+}

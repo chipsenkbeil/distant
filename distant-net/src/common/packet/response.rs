@@ -12,7 +12,7 @@ use crate::common::utils;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response<T> {
     /// Optional header data to include with response
-    #[serde(default, flatten, skip_serializing_if = "Header::is_empty")]
+    #[serde(default, skip_serializing_if = "Header::is_empty")]
     pub header: Header,
 
     /// Unique id associated with the response
@@ -82,11 +82,26 @@ pub enum UntypedResponseParseError {
     /// When the bytes do not represent a response
     WrongType,
 
+    /// When a header should be present, but the key is wrong
+    InvalidHeaderKey,
+
+    /// When a header should be present, but the header bytes are wrong
+    InvalidHeader,
+
+    /// When the key for the id is wrong
+    InvalidIdKey,
+
     /// When the id is not a valid UTF-8 string
     InvalidId,
 
+    /// When the key for the origin id is wrong
+    InvalidOriginIdKey,
+
     /// When the origin id is not a valid UTF-8 string
     InvalidOriginId,
+
+    /// When the key for the payload is wrong
+    InvalidPayloadKey,
 }
 
 #[inline]
@@ -234,11 +249,11 @@ impl<'a> UntypedResponse<'a> {
 
         // Parse the header if we have one
         let (header, input) = if has_header {
-            let (_, input) =
-                read_key_eq(input, "header").map_err(|_| UntypedResponseParseError::WrongType)?;
+            let (_, input) = read_key_eq(input, "header")
+                .map_err(|_| UntypedResponseParseError::InvalidHeaderKey)?;
 
             let (header, input) =
-                read_header_bytes(input).map_err(|_| UntypedResponseParseError::WrongType)?;
+                read_header_bytes(input).map_err(|_| UntypedResponseParseError::InvalidHeader)?;
             (header, input)
         } else {
             ([0u8; 0].as_slice(), input)
@@ -246,23 +261,23 @@ impl<'a> UntypedResponse<'a> {
 
         // Validate that next field is id
         let (_, input) =
-            read_key_eq(input, "id").map_err(|_| UntypedResponseParseError::WrongType)?;
+            read_key_eq(input, "id").map_err(|_| UntypedResponseParseError::InvalidIdKey)?;
 
         // Get the id itself
         let (id, input) =
             read_str_bytes(input).map_err(|_| UntypedResponseParseError::InvalidId)?;
 
         // Validate that next field is origin_id
-        let (_, input) =
-            read_key_eq(input, "origin_id").map_err(|_| UntypedResponseParseError::WrongType)?;
+        let (_, input) = read_key_eq(input, "origin_id")
+            .map_err(|_| UntypedResponseParseError::InvalidOriginIdKey)?;
 
         // Get the origin_id itself
         let (origin_id, input) =
             read_str_bytes(input).map_err(|_| UntypedResponseParseError::InvalidOriginId)?;
 
         // Validate that final field is payload
-        let (_, input) =
-            read_key_eq(input, "payload").map_err(|_| UntypedResponseParseError::WrongType)?;
+        let (_, input) = read_key_eq(input, "payload")
+            .map_err(|_| UntypedResponseParseError::InvalidPayloadKey)?;
 
         let header = Cow::Borrowed(header);
         let id = Cow::Borrowed(id);
@@ -424,7 +439,7 @@ mod tests {
         // Missing fields (corrupt data)
         assert_eq!(
             UntypedResponse::from_slice(&[0x83]),
-            Err(UntypedResponseParseError::WrongType)
+            Err(UntypedResponseParseError::InvalidIdKey)
         );
 
         // Missing id field (has valid data itself)
@@ -442,7 +457,7 @@ mod tests {
                 .concat()
                 .as_slice()
             ),
-            Err(UntypedResponseParseError::WrongType)
+            Err(UntypedResponseParseError::InvalidIdKey)
         );
 
         // Non-str id field value
@@ -496,7 +511,7 @@ mod tests {
                 .concat()
                 .as_slice()
             ),
-            Err(UntypedResponseParseError::WrongType)
+            Err(UntypedResponseParseError::InvalidOriginIdKey)
         );
 
         // Non-str origin_id field value
@@ -550,7 +565,7 @@ mod tests {
                 .concat()
                 .as_slice()
             ),
-            Err(UntypedResponseParseError::WrongType)
+            Err(UntypedResponseParseError::InvalidPayloadKey)
         );
     }
 }
