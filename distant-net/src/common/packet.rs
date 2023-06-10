@@ -57,6 +57,11 @@ fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
         // Advance forward past the key
         cursor.set_position(cursor.position() + key_len);
 
+        // If we would have advanced past our input, fail
+        if cursor.position() as usize > input.len() {
+            return Err(input);
+        }
+
         // Point locally to just past the str key so we can determine next byte len to skip
         let input = &input[cursor.position() as usize..];
 
@@ -65,9 +70,21 @@ fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
             Some(len) => cursor.set_position(cursor.position() + len),
             None => return Err(input),
         }
+
+        // If we would have advanced past our input, fail
+        if cursor.position() as usize > input.len() {
+            return Err(input);
+        }
     }
 
     let pos = cursor.position() as usize;
+
+    // Check if we've read beyond the input (being equal to len is okay
+    // because we could consume all of the remaining input this way)
+    if pos > input.len() {
+        return Err(input);
+    }
+
     Ok((&input[..pos], &input[pos..]))
 }
 
@@ -338,20 +355,331 @@ mod tests {
         }
     }
 
+    mod read_header_bytes {
+        use super::*;
+        use test_log::test;
+
+        #[test]
+        fn should_fail_if_not_a_map() {
+            todo!();
+        }
+
+        #[test]
+        fn should_fail_if_cannot_read_str_key_length() {
+            todo!();
+        }
+        #[test]
+        fn should_fail_if_key_length_exceeds_remaining_bytes() {
+            todo!();
+        }
+
+        #[test]
+        fn should_fail_if_missing_value_for_key() {
+            todo!();
+        }
+
+        #[test]
+        fn should_fail_if_unable_to_read_value_length() {
+            todo!();
+        }
+
+        #[test]
+        fn should_fail_if_value_length_exceeds_remaining_bytes() {
+            todo!();
+        }
+
+        #[test]
+        fn should_succeed_with_empty_map() {
+            todo!();
+        }
+
+        #[test]
+        fn should_succeed_with_single_key_value_map() {
+            todo!();
+        }
+
+        #[test]
+        fn should_succeed_with_nested_map() {
+            todo!();
+        }
+    }
+
     mod find_msgpack_byte_len {
         use super::*;
         use test_log::test;
 
         #[test]
         fn should_return_none_if_input_is_empty() {
-            let len = find_msgpack_byte_len(&[]);
-            assert_eq!(len, None);
+            let input = vec![];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
         }
 
         #[test]
         fn should_return_none_if_input_has_reserved_marker() {
-            let len = find_msgpack_byte_len(&[rmp::Marker::Reserved.to_u8()]);
-            assert_eq!(len, None);
+            let input = vec![rmp::Marker::Reserved.to_u8()];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_1_if_input_is_nil() {
+            let input = vec![0xc0];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_1_if_input_is_a_boolean() {
+            let input = vec![0xc2]; // false
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+
+            let input = vec![0xc3]; // true
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_integer() {
+            let input = vec![0x00]; // positive fixint (0)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+
+            let input = vec![0xff]; // negative fixint (-1)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+
+            let input = vec![0xcc, 0xff]; // unsigned 8-bit (255)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(2), "Wrong len for {input:X?}");
+
+            let input = vec![0xcd, 0xff, 0xff]; // unsigned 16-bit (65535)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3), "Wrong len for {input:X?}");
+
+            let input = vec![0xce, 0xff, 0xff, 0xff, 0xff]; // unsigned 32-bit (4294967295)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5), "Wrong len for {input:X?}");
+
+            let input = vec![0xcf, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]; // unsigned 64-bit (4294967296)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(9), "Wrong len for {input:X?}");
+
+            let input = vec![0xd0, 0x81]; // signed 8-bit (-127)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(2), "Wrong len for {input:X?}");
+
+            let input = vec![0xd1, 0x80, 0x01]; // signed 16-bit (-32767)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3), "Wrong len for {input:X?}");
+
+            let input = vec![0xd2, 0x80, 0x00, 0x00, 0x01]; // signed 32-bit (-2147483647)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5), "Wrong len for {input:X?}");
+
+            let input = vec![0xd3, 0xff, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00]; // signed 64-bit (-2147483648)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(9), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_float() {
+            let input = vec![0xca, 0x3d, 0xcc, 0xcc, 0xcd]; // f32 (0.1)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5), "Wrong len for {input:X?}");
+
+            let input = vec![0xcb, 0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a]; // f64 (0.1)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(9), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_str() {
+            // fixstr (31 bytes max)
+            let input = vec![0xa5, b'h', b'e', b'l', b'l', b'o'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5 + 1), "Wrong len for {input:X?}");
+
+            // str 8 will read second byte (u8) for size
+            let input = vec![0xd9, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u8::MAX as u64 + 2), "Wrong len for {input:X?}");
+
+            // str 16 will read second & third bytes (u16) for size
+            let input = vec![0xda, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u16::MAX as u64 + 3), "Wrong len for {input:X?}");
+
+            // str 32 will read second, third, fourth, & fifth bytes (u32) for size
+            let input = vec![0xdb, 0xff, 0xff, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u32::MAX as u64 + 5), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_bin() {
+            // bin 8 will read second byte (u8) for size
+            let input = vec![0xc4, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u8::MAX as u64 + 2), "Wrong len for {input:X?}");
+
+            // bin 16 will read second & third bytes (u16) for size
+            let input = vec![0xc5, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u16::MAX as u64 + 3), "Wrong len for {input:X?}");
+
+            // bin 32 will read second, third, fourth, & fifth bytes (u32) for size
+            let input = vec![0xc6, 0xff, 0xff, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u32::MAX as u64 + 5), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_array() {
+            // fixarray has a length up to 15 objects
+            //
+            // In this example, we have an array of 3 objects that are a str, integer, and bool
+            let input = vec![0x93, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 4 + 2 + 1), "Wrong len for {input:X?}");
+
+            // Invalid fixarray count should return none
+            let input = vec![0x93, 0xa3, b'a', b'b', b'c', 0xcc, 0xff];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // array 16 will read second & third bytes (u16) for object length
+            //
+            // In this example, we have an array of 3 objects that are a str, integer, and bool
+            let input = vec![0xdc, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3 + 4 + 2 + 1), "Wrong len for {input:X?}");
+
+            // Invalid array 16 count should return none
+            let input = vec![0xdc, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // array 32 will read second, third, fourth, & fifth bytes (u32) for object length
+            let input = vec![
+                0xdd, 0x00, 0x00, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2,
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5 + 4 + 2 + 1), "Wrong len for {input:X?}");
+
+            // Invalid array 32 count should return none
+            let input = vec![
+                0xdd, 0x00, 0x00, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff,
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_map() {
+            // fixmap has a length up to 2*15 objects
+            let input = vec![
+                0x83, // 3 objects /w keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, 0xc2, // true -> false
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 5 + 6 + 2), "Wrong len for {input:X?}");
+
+            // Invalid fixmap count should return none
+            let input = vec![
+                0x83, // 3 objects /w keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, // true -> ???
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // map 16 will read second & third bytes (u16) for object length
+            let input = vec![
+                0xde, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, 0xc2, // true -> false
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3 + 5 + 6 + 2), "Wrong len for {input:X?}");
+
+            // Invalid map 16 count should return none
+            let input = vec![
+                0xde, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, // true -> ???
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // map 32 will read second, third, fourth, & fifth bytes (u32) for object length
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, 0xc2, // true -> false
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5 + 5 + 6 + 2), "Wrong len for {input:X?}");
+
+            // Invalid map 32 count should return none
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, // true -> ???
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_ext() {
+            // fixext 1 claims single data byte (excluding type)
+            let input = vec![0xd4, 0x00, 0x12];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 1), "Wrong len for {input:X?}");
+
+            // fixext 2 claims two data bytes (excluding type)
+            let input = vec![0xd5, 0x00, 0x12, 0x34];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 2), "Wrong len for {input:X?}");
+
+            // fixext 4 claims four data bytes (excluding type)
+            let input = vec![0xd6, 0x00, 0x12, 0x34, 0x56, 0x78];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 4), "Wrong len for {input:X?}");
+
+            // fixext 8 claims eight data bytes (excluding type)
+            let input = vec![0xd7, 0x00, 0x12, 0x34, 0x56, 0x78];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 8), "Wrong len for {input:X?}");
+
+            // fixext 16 claims sixteen data bytes (excluding type)
+            let input = vec![0xd8, 0x00, 0x12, 0x34, 0x56, 0x78];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 16), "Wrong len for {input:X?}");
+
+            // ext 8 will read second byte (u8) for size (excluding type)
+            let input = vec![0xc7, 0xff, 0x00, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u8::MAX as u64 + 3), "Wrong len for {input:X?}");
+
+            // ext 16 will read second & third bytes (u16) for size (excluding type)
+            let input = vec![0xc8, 0xff, 0xff, 0x00, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u16::MAX as u64 + 4), "Wrong len for {input:X?}");
+
+            // ext 32 will read second, third, fourth, & fifth bytes (u32) for size (excluding type)
+            let input = vec![0xc9, 0xff, 0xff, 0xff, 0xff, 0x00, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u32::MAX as u64 + 6), "Wrong len for {input:X?}");
         }
     }
 }
