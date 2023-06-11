@@ -38,6 +38,7 @@ use std::io::Cursor;
 /// * If fails, returns existing bytes.
 fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
     let mut cursor = Cursor::new(input);
+    let input_len = input.len();
 
     // Determine size of header map in terms of total objects
     let len = match rmp::decode::read_map_len(&mut cursor) {
@@ -58,7 +59,7 @@ fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
         cursor.set_position(cursor.position() + key_len);
 
         // If we would have advanced past our input, fail
-        if cursor.position() as usize > input.len() {
+        if cursor.position() as usize > input_len {
             return Err(input);
         }
 
@@ -72,7 +73,7 @@ fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
         }
 
         // If we would have advanced past our input, fail
-        if cursor.position() as usize > input.len() {
+        if cursor.position() as usize > input_len {
             return Err(input);
         }
     }
@@ -81,7 +82,7 @@ fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
 
     // Check if we've read beyond the input (being equal to len is okay
     // because we could consume all of the remaining input this way)
-    if pos > input.len() {
+    if pos > input_len {
         return Err(input);
     }
 
