@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Request` and `Response` types from `distant-net` now support an optional
+  `Header` to send miscellaneous information
+
 ### Changed
 
 - `Change` structure now provides a single `path` instead of `paths` with the

@@ -935,6 +935,7 @@ dependencies = [
  "p256",
  "paste",
  "rand",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_bytes",

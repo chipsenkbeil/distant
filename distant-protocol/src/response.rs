@@ -631,7 +631,7 @@ mod tests {
                 value,
                 serde_json::json!({
                     "type": "changed",
-                    "ts": u64::MAX,
+                    "timestamp": u64::MAX,
                     "kind": "access",
                     "path": "path",
                 })
@@ -657,13 +657,13 @@ mod tests {
                 value,
                 serde_json::json!({
                     "type": "changed",
-                    "ts": u64::MAX,
+                    "timestamp": u64::MAX,
                     "kind": "access",
                     "path": "path",
                     "details": {
                         "attribute": "permissions",
                         "renamed": "renamed",
-                        "ts": u64::MAX,
+                        "timestamp": u64::MAX,
                         "extra": "info",
                     },
                 })
@@ -674,7 +674,7 @@ mod tests {
         fn should_be_able_to_deserialize_minimal_payload_from_json() {
             let value = serde_json::json!({
                 "type": "changed",
-                "ts": u64::MAX,
+                "timestamp": u64::MAX,
                 "kind": "access",
                 "path": "path",
             });
@@ -695,13 +695,13 @@ mod tests {
         fn should_be_able_to_deserialize_full_payload_from_json() {
             let value = serde_json::json!({
                 "type": "changed",
-                "ts": u64::MAX,
+                "timestamp": u64::MAX,
                 "kind": "access",
                 "path": "path",
                 "details": {
                     "attribute": "permissions",
                     "renamed": "renamed",
-                    "ts": u64::MAX,
+                    "timestamp": u64::MAX,
                     "extra": "info",
                 },
             });

@@ -1,628 +1,805 @@
-/// Represents a generic id type
-pub type Id = String;
-
+mod header;
 mod request;
 mod response;
 
+pub use header::*;
 pub use request::*;
 pub use response::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum MsgPackStrParseError {
-    InvalidFormat,
-    Utf8Error(std::str::Utf8Error),
-}
+use std::io::Cursor;
 
-/// Writes the given str to the end of `buf` as the str's msgpack representation.
-///
-/// # Panics
-///
-/// Panics if `s.len() >= 2 ^ 32` as the maximum str length for a msgpack str is `(2 ^ 32) - 1`.
-fn write_str_msg_pack(s: &str, buf: &mut Vec<u8>) {
-    assert!(
-        s.len() < 2usize.pow(32),
-        "str cannot be longer than (2^32)-1 bytes"
-    );
+/// Represents a generic id type
+pub type Id = String;
 
-    if s.len() < 32 {
-        buf.push(s.len() as u8 | 0b10100000);
-    } else if s.len() < 2usize.pow(8) {
-        buf.push(0xd9);
-        buf.push(s.len() as u8);
-    } else if s.len() < 2usize.pow(16) {
-        buf.push(0xda);
-        for b in (s.len() as u16).to_be_bytes() {
-            buf.push(b);
+/// Reads the header bytes from msgpack input, including the marker and len bytes.
+///
+/// * If succeeds, returns (header, remaining).
+/// * If fails, returns existing bytes.
+fn read_header_bytes(input: &[u8]) -> Result<(&[u8], &[u8]), &[u8]> {
+    let mut cursor = Cursor::new(input);
+    let input_len = input.len();
+
+    // Determine size of header map in terms of total objects
+    let len = match rmp::decode::read_map_len(&mut cursor) {
+        Ok(x) => x,
+        Err(_) => return Err(input),
+    };
+
+    // For each object, we have a corresponding key in front of it has a string,
+    // so we need to iterate, advancing by a string key and then the object
+    for _i in 0..len {
+        // Read just the length of the key to avoid copying the key itself
+        let key_len = match rmp::decode::read_str_len(&mut cursor) {
+            Ok(x) => x as u64,
+            Err(_) => return Err(input),
+        };
+
+        // Advance forward past the key
+        cursor.set_position(cursor.position() + key_len);
+
+        // If we would have advanced past our input, fail
+        if cursor.position() as usize > input_len {
+            return Err(input);
         }
-    } else {
-        buf.push(0xdb);
-        for b in (s.len() as u32).to_be_bytes() {
-            buf.push(b);
+
+        // Point locally to just past the str key so we can determine next byte len to skip
+        let input = &input[cursor.position() as usize..];
+
+        // Read the type of object and advance accordingly
+        match find_msgpack_byte_len(input) {
+            Some(len) => cursor.set_position(cursor.position() + len),
+            None => return Err(input),
+        }
+
+        // If we would have advanced past our input, fail
+        if cursor.position() as usize > input_len {
+            return Err(input);
         }
     }
 
-    buf.extend_from_slice(s.as_bytes());
-}
+    let pos = cursor.position() as usize;
 
-/// Parse msgpack str, returning remaining bytes and str on success, or error on failure.
-fn parse_msg_pack_str(input: &[u8]) -> Result<(&[u8], &str), MsgPackStrParseError> {
-    let ilen = input.len();
-    if ilen == 0 {
-        return Err(MsgPackStrParseError::InvalidFormat);
+    // Check if we've read beyond the input (being equal to len is okay
+    // because we could consume all of the remaining input this way)
+    if pos > input_len {
+        return Err(input);
     }
 
-    // * fixstr using 0xa0 - 0xbf to mark the start of the str where < 32 bytes
-    // * str 8 (0xd9) if up to (2^8)-1 bytes, using next byte for len
-    // * str 16 (0xda) if up to (2^16)-1 bytes, using next two bytes for len
-    // * str 32 (0xdb)  if up to (2^32)-1 bytes, using next four bytes for len
-    let (input, len): (&[u8], usize) = if input[0] >= 0xa0 && input[0] <= 0xbf {
-        (&input[1..], (input[0] & 0b00011111).into())
-    } else if input[0] == 0xd9 && ilen > 2 {
-        (&input[2..], input[1].into())
-    } else if input[0] == 0xda && ilen > 3 {
-        (&input[3..], u16::from_be_bytes([input[1], input[2]]).into())
-    } else if input[0] == 0xdb && ilen > 5 {
-        (
-            &input[5..],
-            u32::from_be_bytes([input[1], input[2], input[3], input[4]])
-                .try_into()
-                .unwrap(),
-        )
-    } else {
-        return Err(MsgPackStrParseError::InvalidFormat);
-    };
+    Ok((&input[..pos], &input[pos..]))
+}
 
-    let s = match std::str::from_utf8(&input[..len]) {
-        Ok(s) => s,
-        Err(x) => return Err(MsgPackStrParseError::Utf8Error(x)),
-    };
+/// Determines the length of the next object based on its marker. From the marker, some objects
+/// need to be traversed (e.g. map) in order to fully understand the total byte length.
+///
+/// This will include the marker bytes in the total byte len such that collecting all of the
+/// bytes up to len will yield a valid msgpack object in byte form.
+///
+/// If the first byte does not signify a valid marker, this method returns None.
+fn find_msgpack_byte_len(input: &[u8]) -> Option<u64> {
+    if input.is_empty() {
+        return None;
+    }
 
-    Ok((&input[len..], s))
+    macro_rules! read_len {
+        (u8: $input:expr $(, start = $start:expr)?) => {{
+            let input = $input;
+
+            $(
+                if input.len() < $start {
+                    return None;
+                }
+                let input = &input[$start..];
+            )?
+
+            if input.is_empty() {
+                return None;
+            } else {
+                input[0] as u64
+            }
+        }};
+        (u16: $input:expr $(, start = $start:expr)?) => {{
+            let input = $input;
+
+            $(
+                if input.len() < $start {
+                    return None;
+                }
+                let input = &input[$start..];
+            )?
+
+            if input.len() < 2 {
+                return None;
+            } else {
+                u16::from_be_bytes([input[0], input[1]]) as u64
+            }
+        }};
+        (u32: $input:expr $(, start = $start:expr)?) => {{
+            let input = $input;
+
+            $(
+                if input.len() < $start {
+                    return None;
+                }
+                let input = &input[$start..];
+            )?
+
+            if input.len() < 4 {
+                return None;
+            } else {
+                u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as u64
+            }
+        }};
+        ($cnt:expr => $input:expr $(, start = $start:expr)?) => {{
+            let input = $input;
+
+            $(
+                if input.len() < $start {
+                    return None;
+                }
+                let input = &input[$start..];
+            )?
+
+            let cnt = $cnt;
+            let mut len = 0;
+            for _i in 0..cnt {
+                if input.len() < len {
+                    return None;
+                }
+
+                let input = &input[len..];
+                match find_msgpack_byte_len(input) {
+                    Some(x) => len += x as usize,
+                    None => return None,
+                }
+            }
+            len as u64
+        }};
+    }
+
+    Some(match rmp::Marker::from_u8(input[0]) {
+        // Booleans and nil (aka null) are a combination of marker and value (single byte)
+        rmp::Marker::Null => 1,
+        rmp::Marker::True => 1,
+        rmp::Marker::False => 1,
+
+        // Integers are stored in 1, 2, 3, 5, or 9 bytes
+        rmp::Marker::FixPos(_) => 1,
+        rmp::Marker::FixNeg(_) => 1,
+        rmp::Marker::U8 => 2,
+        rmp::Marker::U16 => 3,
+        rmp::Marker::U32 => 5,
+        rmp::Marker::U64 => 9,
+        rmp::Marker::I8 => 2,
+        rmp::Marker::I16 => 3,
+        rmp::Marker::I32 => 5,
+        rmp::Marker::I64 => 9,
+
+        // Floats are stored in 5 or 9 bytes
+        rmp::Marker::F32 => 5,
+        rmp::Marker::F64 => 9,
+
+        // Str are stored in 1, 2, 3, or 5 bytes + the data buffer
+        rmp::Marker::FixStr(len) => 1 + len as u64,
+        rmp::Marker::Str8 => 2 + read_len!(u8: input, start = 1),
+        rmp::Marker::Str16 => 3 + read_len!(u16: input, start = 1),
+        rmp::Marker::Str32 => 5 + read_len!(u32: input, start = 1),
+
+        // Bin are stored in 2, 3, or 5 bytes + the data buffer
+        rmp::Marker::Bin8 => 2 + read_len!(u8: input, start = 1),
+        rmp::Marker::Bin16 => 3 + read_len!(u16: input, start = 1),
+        rmp::Marker::Bin32 => 5 + read_len!(u32: input, start = 1),
+
+        // Arrays are stored in 1, 3, or 5 bytes + N objects (where each object has its own len)
+        rmp::Marker::FixArray(cnt) => 1 + read_len!(cnt => input, start = 1),
+        rmp::Marker::Array16 => {
+            let cnt = read_len!(u16: input, start = 1);
+            3 + read_len!(cnt => input, start = 3)
+        }
+        rmp::Marker::Array32 => {
+            let cnt = read_len!(u32: input, start = 1);
+            5 + read_len!(cnt => input, start = 5)
+        }
+
+        // Maps are stored in 1, 3, or 5 bytes + 2*N objects (where each object has its own len)
+        rmp::Marker::FixMap(cnt) => 1 + read_len!(2 * cnt => input, start = 1),
+        rmp::Marker::Map16 => {
+            let cnt = read_len!(u16: input, start = 1);
+            3 + read_len!(2 * cnt => input, start = 3)
+        }
+        rmp::Marker::Map32 => {
+            let cnt = read_len!(u32: input, start = 1);
+            5 + read_len!(2 * cnt => input, start = 5)
+        }
+
+        // Ext are stored in an integer (8-bit, 16-bit, 32-bit), type (8-bit), and byte array
+        rmp::Marker::FixExt1 => 3,
+        rmp::Marker::FixExt2 => 4,
+        rmp::Marker::FixExt4 => 6,
+        rmp::Marker::FixExt8 => 10,
+        rmp::Marker::FixExt16 => 18,
+        rmp::Marker::Ext8 => 3 + read_len!(u8: input, start = 1),
+        rmp::Marker::Ext16 => 4 + read_len!(u16: input, start = 1),
+        rmp::Marker::Ext32 => 6 + read_len!(u32: input, start = 1),
+
+        // NOTE: This is marked in the msgpack spec as never being used, so we return none
+        //       as this is signfies something has gone wrong!
+        rmp::Marker::Reserved => return None,
+    })
+}
+
+/// Reads the str bytes from msgpack input, including the marker and len bytes.
+///
+/// * If succeeds, returns (str, remaining).
+/// * If fails, returns existing bytes.
+fn read_str_bytes(input: &[u8]) -> Result<(&str, &[u8]), &[u8]> {
+    match rmp::decode::read_str_from_slice(input) {
+        Ok(x) => Ok(x),
+        Err(_) => Err(input),
+    }
+}
+
+/// Reads a str key from msgpack input and checks if it matches `key`. If so, the input is
+/// advanced, otherwise the original input is returned.
+///
+/// * If key read successfully and matches, returns (unit, remaining).
+/// * Otherwise, returns existing bytes.
+fn read_key_eq<'a>(input: &'a [u8], key: &str) -> Result<((), &'a [u8]), &'a [u8]> {
+    match read_str_bytes(input) {
+        Ok((s, input)) if s == key => Ok(((), input)),
+        _ => Err(input),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    mod write_str_msg_pack {
+    mod read_str_bytes {
         use super::*;
+        use test_log::test;
 
         #[test]
-        fn should_support_fixstr() {
-            // 0-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("", &mut buf);
-            assert_eq!(buf, &[0xa0]);
-
-            // 1-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("a", &mut buf);
-            assert_eq!(buf, &[0xa1, b'a']);
-
-            // 2-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("ab", &mut buf);
-            assert_eq!(buf, &[0xa2, b'a', b'b']);
-
-            // 3-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abc", &mut buf);
-            assert_eq!(buf, &[0xa3, b'a', b'b', b'c']);
-
-            // 4-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcd", &mut buf);
-            assert_eq!(buf, &[0xa4, b'a', b'b', b'c', b'd']);
-
-            // 5-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcde", &mut buf);
-            assert_eq!(buf, &[0xa5, b'a', b'b', b'c', b'd', b'e']);
-
-            // 6-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdef", &mut buf);
-            assert_eq!(buf, &[0xa6, b'a', b'b', b'c', b'd', b'e', b'f']);
-
-            // 7-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefg", &mut buf);
-            assert_eq!(buf, &[0xa7, b'a', b'b', b'c', b'd', b'e', b'f', b'g']);
-
-            // 8-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefgh", &mut buf);
-            assert_eq!(buf, &[0xa8, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h']);
-
-            // 9-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghi", &mut buf);
-            assert_eq!(
-                buf,
-                &[0xa9, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i']
-            );
-
-            // 10-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghij", &mut buf);
-            assert_eq!(
-                buf,
-                &[0xaa, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j']
-            );
-
-            // 11-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijk", &mut buf);
-            assert_eq!(
-                buf,
-                &[0xab, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k']
-            );
-
-            // 12-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijkl", &mut buf);
-            assert_eq!(
-                buf,
-                &[0xac, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l']
-            );
-
-            // 13-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklm", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xad, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm'
-                ]
-            );
-
-            // 14-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmn", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xae, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n'
-                ]
-            );
-
-            // 15-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmno", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xaf, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o'
-                ]
-            );
-
-            // 16-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnop", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb0, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p'
-                ]
-            );
-
-            // 17-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopq", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb1, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q'
-                ]
-            );
-
-            // 18-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqr", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb2, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r'
-                ]
-            );
-
-            // 19-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrs", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb3, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's'
-                ]
-            );
-
-            // 20-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrst", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb4, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't'
-                ]
-            );
-
-            // 21-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstu", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb5, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u'
-                ]
-            );
-
-            // 22-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuv", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb6, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v'
-                ]
-            );
-
-            // 23-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvw", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb7, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w'
-                ]
-            );
-
-            // 24-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwx", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb8, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x'
-                ]
-            );
-
-            // 25-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxy", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xb9, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y'
-                ]
-            );
-
-            // 26-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xba, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
-                    b'z'
-                ]
-            );
-
-            // 27-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz0", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xbb, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
-                    b'z', b'0'
-                ]
-            );
-
-            // 28-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz01", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xbc, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
-                    b'z', b'0', b'1'
-                ]
-            );
-
-            // 29-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz012", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xbd, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
-                    b'z', b'0', b'1', b'2'
-                ]
-            );
-
-            // 30-byte str
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz0123", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xbe, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
-                    b'z', b'0', b'1', b'2', b'3'
-                ]
-            );
-
-            // 31-byte str is maximum len of fixstr
-            let mut buf = Vec::new();
-            write_str_msg_pack("abcdefghijklmnopqrstuvwxyz01234", &mut buf);
-            assert_eq!(
-                buf,
-                &[
-                    0xbf, b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l',
-                    b'm', b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y',
-                    b'z', b'0', b'1', b'2', b'3', b'4'
-                ]
-            );
+        fn should_fail_if_input_is_empty() {
+            let input = read_str_bytes(&[]).unwrap_err();
+            assert!(input.is_empty());
         }
 
         #[test]
-        fn should_support_str_8() {
-            let input = "a".repeat(32);
-            let mut buf = Vec::new();
-            write_str_msg_pack(&input, &mut buf);
-            assert_eq!(buf[0], 0xd9);
-            assert_eq!(buf[1], input.len() as u8);
-            assert_eq!(&buf[2..], input.as_bytes());
-
-            let input = "a".repeat(2usize.pow(8) - 1);
-            let mut buf = Vec::new();
-            write_str_msg_pack(&input, &mut buf);
-            assert_eq!(buf[0], 0xd9);
-            assert_eq!(buf[1], input.len() as u8);
-            assert_eq!(&buf[2..], input.as_bytes());
+        fn should_fail_if_input_does_not_start_with_str() {
+            let input = read_str_bytes(&[0xff, 0xa5, b'h', b'e', b'l', b'l', b'o']).unwrap_err();
+            assert_eq!(input, [0xff, 0xa5, b'h', b'e', b'l', b'l', b'o']);
         }
 
         #[test]
-        fn should_support_str_16() {
-            let input = "a".repeat(2usize.pow(8));
-            let mut buf = Vec::new();
-            write_str_msg_pack(&input, &mut buf);
-            assert_eq!(buf[0], 0xda);
-            assert_eq!(&buf[1..3], &(input.len() as u16).to_be_bytes());
-            assert_eq!(&buf[3..], input.as_bytes());
-
-            let input = "a".repeat(2usize.pow(16) - 1);
-            let mut buf = Vec::new();
-            write_str_msg_pack(&input, &mut buf);
-            assert_eq!(buf[0], 0xda);
-            assert_eq!(&buf[1..3], &(input.len() as u16).to_be_bytes());
-            assert_eq!(&buf[3..], input.as_bytes());
-        }
-
-        #[test]
-        fn should_support_str_32() {
-            let input = "a".repeat(2usize.pow(16));
-            let mut buf = Vec::new();
-            write_str_msg_pack(&input, &mut buf);
-            assert_eq!(buf[0], 0xdb);
-            assert_eq!(&buf[1..5], &(input.len() as u32).to_be_bytes());
-            assert_eq!(&buf[5..], input.as_bytes());
+        fn should_succeed_if_input_starts_with_str() {
+            let (s, remaining) =
+                read_str_bytes(&[0xa5, b'h', b'e', b'l', b'l', b'o', 0xff]).unwrap();
+            assert_eq!(s, "hello");
+            assert_eq!(remaining, [0xff]);
         }
     }
 
-    mod parse_msg_pack_str {
+    mod read_key_eq {
         use super::*;
+        use test_log::test;
 
         #[test]
-        fn should_be_able_to_parse_fixstr() {
-            // Empty str
-            let (input, s) = parse_msg_pack_str(&[0xa0]).unwrap();
+        fn should_fail_if_input_is_empty() {
+            let input = read_key_eq(&[], "key").unwrap_err();
             assert!(input.is_empty());
-            assert_eq!(s, "");
-
-            // Single character
-            let (input, s) = parse_msg_pack_str(&[0xa1, b'a']).unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, "a");
-
-            // 31 byte str
-            let (input, s) = parse_msg_pack_str(&[
-                0xbf, b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a',
-                b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a',
-                b'a', b'a', b'a', b'a',
-            ])
-            .unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-
-            // Verify that we only consume up to fixstr length
-            assert_eq!(parse_msg_pack_str(&[0xa0, b'a']).unwrap().0, b"a");
-            assert_eq!(
-                parse_msg_pack_str(&[
-                    0xbf, b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a',
-                    b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a',
-                    b'a', b'a', b'a', b'a', b'a', b'a', b'b'
-                ])
-                .unwrap()
-                .0,
-                b"b"
-            );
         }
 
         #[test]
-        fn should_be_able_to_parse_str_8() {
-            // 32 byte str
-            let (input, s) = parse_msg_pack_str(&[
-                0xd9, 32, b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a',
-                b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a', b'a',
-                b'a', b'a', b'a', b'a', b'a', b'a',
-            ])
-            .unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-
-            // 2^8 - 1 (255) byte str
-            let test_str = "a".repeat(2usize.pow(8) - 1);
-            let mut input = vec![0xd9, 255];
-            input.extend_from_slice(test_str.as_bytes());
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, test_str);
-
-            // Verify that we only consume up to 2^8 - 1 length
-            let mut input = vec![0xd9, 255];
-            input.extend_from_slice(test_str.as_bytes());
-            input.extend_from_slice(b"hello");
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert_eq!(input, b"hello");
-            assert_eq!(s, test_str);
+        fn should_fail_if_input_does_not_start_with_str() {
+            let input = &[
+                0xff,
+                rmp::Marker::FixStr(5).to_u8(),
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o',
+            ];
+            let remaining = read_key_eq(input, "key").unwrap_err();
+            assert_eq!(remaining, input);
         }
 
         #[test]
-        fn should_be_able_to_parse_str_16() {
-            // 2^8 byte str (256)
-            let test_str = "a".repeat(2usize.pow(8));
-            let mut input = vec![0xda, 1, 0];
-            input.extend_from_slice(test_str.as_bytes());
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, test_str);
-
-            // 2^16 - 1 (65535) byte str
-            let test_str = "a".repeat(2usize.pow(16) - 1);
-            let mut input = vec![0xda, 255, 255];
-            input.extend_from_slice(test_str.as_bytes());
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, test_str);
-
-            // Verify that we only consume up to 2^16 - 1 length
-            let mut input = vec![0xda, 255, 255];
-            input.extend_from_slice(test_str.as_bytes());
-            input.extend_from_slice(b"hello");
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert_eq!(input, b"hello");
-            assert_eq!(s, test_str);
+        fn should_fail_if_read_key_does_not_match_specified_key() {
+            let input = &[
+                rmp::Marker::FixStr(5).to_u8(),
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o',
+                0xff,
+            ];
+            let remaining = read_key_eq(input, "key").unwrap_err();
+            assert_eq!(remaining, input);
         }
 
         #[test]
-        fn should_be_able_to_parse_str_32() {
-            // 2^16 byte str
-            let test_str = "a".repeat(2usize.pow(16));
-            let mut input = vec![0xdb, 0, 1, 0, 0];
-            input.extend_from_slice(test_str.as_bytes());
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, test_str);
+        fn should_succeed_if_read_key_matches_specified_key() {
+            let input = &[
+                rmp::Marker::FixStr(5).to_u8(),
+                b'h',
+                b'e',
+                b'l',
+                b'l',
+                b'o',
+                0xff,
+            ];
+            let (_, remaining) = read_key_eq(input, "hello").unwrap();
+            assert_eq!(remaining, [0xff]);
+        }
+    }
 
-            // NOTE: We are not going to run the below tests, not because they aren't valid but
-            // because this generates a 4GB str which takes 20+ seconds to run
+    mod read_header_bytes {
+        use super::*;
+        use test_log::test;
 
-            // 2^32 - 1 byte str (4294967295 bytes)
-            /* let test_str = "a".repeat(2usize.pow(32) - 1);
-            let mut input = vec![0xdb, 255, 255, 255, 255];
-            input.extend_from_slice(test_str.as_bytes());
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert!(input.is_empty());
-            assert_eq!(s, test_str); */
-
-            // Verify that we only consume up to 2^32 - 1 length
-            /* let mut input = vec![0xdb, 255, 255, 255, 255];
-            input.extend_from_slice(test_str.as_bytes());
-            input.extend_from_slice(b"hello");
-            let (input, s) = parse_msg_pack_str(&input).unwrap();
-            assert_eq!(input, b"hello");
-            assert_eq!(s, test_str); */
+        #[test]
+        fn should_fail_if_input_is_empty() {
+            let input = vec![];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
-        fn should_fail_parsing_str_with_invalid_length() {
-            // Make sure that parse doesn't fail looking for bytes after str 8 len
-            assert_eq!(
-                parse_msg_pack_str(&[0xd9]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xd9, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-
-            // Make sure that parse doesn't fail looking for bytes after str 16 len
-            assert_eq!(
-                parse_msg_pack_str(&[0xda]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xda, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xda, 0, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-
-            // Make sure that parse doesn't fail looking for bytes after str 32 len
-            assert_eq!(
-                parse_msg_pack_str(&[0xdb]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xdb, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xdb, 0, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xdb, 0, 0, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
-            assert_eq!(
-                parse_msg_pack_str(&[0xdb, 0, 0, 0, 0]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
+        fn should_fail_if_not_a_map() {
+            // Provide an array instead of a map
+            let input = vec![0x93, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
-        fn should_fail_parsing_other_types() {
-            assert_eq!(
-                parse_msg_pack_str(&[0xc3]), // Boolean (true)
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
+        fn should_fail_if_cannot_read_str_key_length() {
+            let input = vec![
+                0x81, // valid map with 1 pair, but key is not a str
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+            ];
+            assert!(read_header_bytes(&input).is_err());
+        }
+        #[test]
+        fn should_fail_if_key_length_exceeds_remaining_bytes() {
+            let input = vec![
+                0x81, // valid map with 1 pair, but key length is too long
+                0xa8, b'a', b'b', b'c', // key: "abc" (but len is much greater)
+                0xa3, b'a', b'b', b'c', // value: "abc"
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
-        fn should_fail_if_empty_input() {
-            assert_eq!(
-                parse_msg_pack_str(&[]),
-                Err(MsgPackStrParseError::InvalidFormat)
-            );
+        fn should_fail_if_missing_value_for_key() {
+            let input = vec![
+                0x81, // valid map with 1 pair, but value is missing
+                0xa3, b'a', b'b', b'c', // key: "abc"
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
-        fn should_fail_if_str_is_not_utf8() {
-            assert!(matches!(
-                parse_msg_pack_str(&[0xa4, 0, 159, 146, 150]),
-                Err(MsgPackStrParseError::Utf8Error(_))
-            ));
+        fn should_fail_if_unable_to_read_value_length() {
+            let input = vec![
+                0x81, // valid map with 1 pair, but value is missing
+                0xa3, b'a', b'b', b'c', // key: "abc"
+                0xd9, // value: str 8 with missing length
+            ];
+            assert!(read_header_bytes(&input).is_err());
+        }
+
+        #[test]
+        fn should_fail_if_value_length_exceeds_remaining_bytes() {
+            let input = vec![
+                0x81, // valid map with 1 pair, but value is too long
+                0xa3, b'a', b'b', b'c', // key: "abc"
+                0xa2, b'd', // value: fixstr w/ len 1 too long
+            ];
+            assert!(read_header_bytes(&input).is_err());
+        }
+
+        #[test]
+        fn should_succeed_with_empty_map() {
+            // fixmap with 0 pairs
+            let input = vec![0x80];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 16 with 0 pairs
+            let input = vec![0xde, 0x00, 0x00];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 32 with 0 pairs
+            let input = vec![0xdf, 0x00, 0x00, 0x00, 0x00];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+        }
+
+        #[test]
+        fn should_succeed_with_single_key_value_map() {
+            // fixmap with single pair
+            let input = vec![
+                0x81, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 16 with single pair
+            let input = vec![
+                0xde, 0x00, 0x01, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 32 with single pair
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x01, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+        }
+
+        #[test]
+        fn should_succeed_with_multiple_key_value_map() {
+            // fixmap with single pair
+            let input = vec![
+                0x82, // valid map with 2 pairs
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa3, b'y', b'e', b'k', // key: "yek"
+                0x7b, // value: 123 (fixint)
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 16 with single pair
+            let input = vec![
+                0xde, 0x00, 0x02, // valid map with 2 pairs
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa3, b'y', b'e', b'k', // key: "yek"
+                0x7b, // value: 123 (fixint)
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 32 with single pair
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x02, // valid map with 2 pairs
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa3, b'y', b'e', b'k', // key: "yek"
+                0x7b, // value: 123 (fixint)
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+        }
+
+        #[test]
+        fn should_succeed_with_nested_map() {
+            // fixmap with single pair
+            let input = vec![
+                0x81, // valid map with 1 pair
+                0xa3, b'm', b'a', b'p', // key: "map"
+                0x81, // value: valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+        }
+
+        #[test]
+        fn should_only_consume_map_from_input() {
+            // fixmap with single pair
+            let input = vec![
+                0x81, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa4, b'm', b'o', b'r', b'e', // "more" (fixstr)
+            ];
+            let (header, remaining) = read_header_bytes(&input).unwrap();
+            assert_eq!(
+                header,
+                vec![
+                    0x81, // valid map with 1 pair
+                    0xa3, b'k', b'e', b'y', // key: "key"
+                    0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                ]
+            );
+            assert_eq!(
+                remaining,
+                vec![
+                0xa4, b'm', b'o', b'r', b'e', // "more" (fixstr)
+            ]
+            );
+        }
+    }
+
+    mod find_msgpack_byte_len {
+        use super::*;
+        use test_log::test;
+
+        #[test]
+        fn should_return_none_if_input_is_empty() {
+            let input = vec![];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_none_if_input_has_reserved_marker() {
+            let input = vec![rmp::Marker::Reserved.to_u8()];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_1_if_input_is_nil() {
+            let input = vec![0xc0];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_1_if_input_is_a_boolean() {
+            let input = vec![0xc2]; // false
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+
+            let input = vec![0xc3]; // true
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_integer() {
+            let input = vec![0x00]; // positive fixint (0)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+
+            let input = vec![0xff]; // negative fixint (-1)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1), "Wrong len for {input:X?}");
+
+            let input = vec![0xcc, 0xff]; // unsigned 8-bit (255)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(2), "Wrong len for {input:X?}");
+
+            let input = vec![0xcd, 0xff, 0xff]; // unsigned 16-bit (65535)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3), "Wrong len for {input:X?}");
+
+            let input = vec![0xce, 0xff, 0xff, 0xff, 0xff]; // unsigned 32-bit (4294967295)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5), "Wrong len for {input:X?}");
+
+            let input = vec![0xcf, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]; // unsigned 64-bit (4294967296)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(9), "Wrong len for {input:X?}");
+
+            let input = vec![0xd0, 0x81]; // signed 8-bit (-127)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(2), "Wrong len for {input:X?}");
+
+            let input = vec![0xd1, 0x80, 0x01]; // signed 16-bit (-32767)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3), "Wrong len for {input:X?}");
+
+            let input = vec![0xd2, 0x80, 0x00, 0x00, 0x01]; // signed 32-bit (-2147483647)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5), "Wrong len for {input:X?}");
+
+            let input = vec![0xd3, 0xff, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00]; // signed 64-bit (-2147483648)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(9), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_float() {
+            let input = vec![0xca, 0x3d, 0xcc, 0xcc, 0xcd]; // f32 (0.1)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5), "Wrong len for {input:X?}");
+
+            let input = vec![0xcb, 0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a]; // f64 (0.1)
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(9), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_str() {
+            // fixstr (31 bytes max)
+            let input = vec![0xa5, b'h', b'e', b'l', b'l', b'o'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5 + 1), "Wrong len for {input:X?}");
+
+            // str 8 will read second byte (u8) for size
+            let input = vec![0xd9, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u8::MAX as u64 + 2), "Wrong len for {input:X?}");
+
+            // str 16 will read second & third bytes (u16) for size
+            let input = vec![0xda, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u16::MAX as u64 + 3), "Wrong len for {input:X?}");
+
+            // str 32 will read second, third, fourth, & fifth bytes (u32) for size
+            let input = vec![0xdb, 0xff, 0xff, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u32::MAX as u64 + 5), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_bin() {
+            // bin 8 will read second byte (u8) for size
+            let input = vec![0xc4, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u8::MAX as u64 + 2), "Wrong len for {input:X?}");
+
+            // bin 16 will read second & third bytes (u16) for size
+            let input = vec![0xc5, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u16::MAX as u64 + 3), "Wrong len for {input:X?}");
+
+            // bin 32 will read second, third, fourth, & fifth bytes (u32) for size
+            let input = vec![0xc6, 0xff, 0xff, 0xff, 0xff, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u32::MAX as u64 + 5), "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_array() {
+            // fixarray has a length up to 15 objects
+            //
+            // In this example, we have an array of 3 objects that are a str, integer, and bool
+            let input = vec![0x93, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 4 + 2 + 1), "Wrong len for {input:X?}");
+
+            // Invalid fixarray count should return none
+            let input = vec![0x93, 0xa3, b'a', b'b', b'c', 0xcc, 0xff];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // array 16 will read second & third bytes (u16) for object length
+            //
+            // In this example, we have an array of 3 objects that are a str, integer, and bool
+            let input = vec![0xdc, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3 + 4 + 2 + 1), "Wrong len for {input:X?}");
+
+            // Invalid array 16 count should return none
+            let input = vec![0xdc, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // array 32 will read second, third, fourth, & fifth bytes (u32) for object length
+            let input = vec![
+                0xdd, 0x00, 0x00, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2,
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5 + 4 + 2 + 1), "Wrong len for {input:X?}");
+
+            // Invalid array 32 count should return none
+            let input = vec![
+                0xdd, 0x00, 0x00, 0x00, 0x03, 0xa3, b'a', b'b', b'c', 0xcc, 0xff,
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_map() {
+            // fixmap has a length up to 2*15 objects
+            let input = vec![
+                0x83, // 3 objects /w keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, 0xc2, // true -> false
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 5 + 6 + 2), "Wrong len for {input:X?}");
+
+            // Invalid fixmap count should return none
+            let input = vec![
+                0x83, // 3 objects /w keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, // true -> ???
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // map 16 will read second & third bytes (u16) for object length
+            let input = vec![
+                0xde, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, 0xc2, // true -> false
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(3 + 5 + 6 + 2), "Wrong len for {input:X?}");
+
+            // Invalid map 16 count should return none
+            let input = vec![
+                0xde, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, // true -> ???
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+
+            // map 32 will read second, third, fourth, & fifth bytes (u32) for object length
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, 0xc2, // true -> false
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(5 + 5 + 6 + 2), "Wrong len for {input:X?}");
+
+            // Invalid map 32 count should return none
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x03, // 3 objects w/ keys
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+                0xa3, b'a', b'b', b'c', 0xcc, 0xff, // "abc" -> 255
+                0xc3, // true -> ???
+            ];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, None, "Wrong len for {input:X?}");
+        }
+
+        #[test]
+        fn should_return_appropriate_len_if_input_is_some_ext() {
+            // fixext 1 claims single data byte (excluding type)
+            let input = vec![0xd4, 0x00, 0x12];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 1), "Wrong len for {input:X?}");
+
+            // fixext 2 claims two data bytes (excluding type)
+            let input = vec![0xd5, 0x00, 0x12, 0x34];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 2), "Wrong len for {input:X?}");
+
+            // fixext 4 claims four data bytes (excluding type)
+            let input = vec![0xd6, 0x00, 0x12, 0x34, 0x56, 0x78];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 4), "Wrong len for {input:X?}");
+
+            // fixext 8 claims eight data bytes (excluding type)
+            let input = vec![0xd7, 0x00, 0x12, 0x34, 0x56, 0x78];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 8), "Wrong len for {input:X?}");
+
+            // fixext 16 claims sixteen data bytes (excluding type)
+            let input = vec![0xd8, 0x00, 0x12, 0x34, 0x56, 0x78];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(1 + 1 + 16), "Wrong len for {input:X?}");
+
+            // ext 8 will read second byte (u8) for size (excluding type)
+            let input = vec![0xc7, 0xff, 0x00, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u8::MAX as u64 + 3), "Wrong len for {input:X?}");
+
+            // ext 16 will read second & third bytes (u16) for size (excluding type)
+            let input = vec![0xc8, 0xff, 0xff, 0x00, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u16::MAX as u64 + 4), "Wrong len for {input:X?}");
+
+            // ext 32 will read second, third, fourth, & fifth bytes (u32) for size (excluding type)
+            let input = vec![0xc9, 0xff, 0xff, 0xff, 0xff, 0x00, b'd', b'a', b't', b'a'];
+            let len = find_msgpack_byte_len(&input);
+            assert_eq!(len, Some(u32::MAX as u64 + 6), "Wrong len for {input:X?}");
         }
     }
 }
