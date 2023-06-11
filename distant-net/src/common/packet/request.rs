@@ -266,14 +266,28 @@ mod tests {
     const TRUE_BYTE: u8 = 0xc3;
     const NEVER_USED_BYTE: u8 = 0xc1;
 
+    // fixstr of 6 bytes with str "header"
+    const HEADER_FIELD_BYTES: &[u8] = &[0xa6, b'h', b'e', b'a', b'd', b'e', b'r'];
+
+    // fixmap of 2 objects with
+    // 1. key fixstr "key" and value fixstr "value"
+    // 1. key fixstr "num" and value fixint 123
+    const HEADER_BYTES: &[u8] = &[
+        0x82, // valid map with 2 pair
+        0xa3, b'k', b'e', b'y', // key: "key"
+        0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+        0xa3, b'n', b'u', b'm', // key: "num"
+        0x7b, // value: 123
+    ];
+
     // fixstr of 2 bytes with str "id"
-    const ID_FIELD_BYTES: &[u8] = &[0xa2, 0x69, 0x64];
+    const ID_FIELD_BYTES: &[u8] = &[0xa2, b'i', b'd'];
 
     // fixstr of 7 bytes with str "payload"
-    const PAYLOAD_FIELD_BYTES: &[u8] = &[0xa7, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64];
+    const PAYLOAD_FIELD_BYTES: &[u8] = &[0xa7, b'p', b'a', b'y', b'l', b'o', b'a', b'd'];
 
     // fixstr of 4 bytes with str "test"
-    const TEST_STR_BYTES: &[u8] = &[0xa4, 0x74, 0x65, 0x73, 0x74];
+    const TEST_STR_BYTES: &[u8] = &[0xa4, b't', b'e', b's', b't'];
 
     #[test]
     fn untyped_request_should_support_converting_to_bytes() {
@@ -369,6 +383,28 @@ mod tests {
     }
 
     #[test]
+    fn untyped_request_should_support_parsing_full_request() {
+        let input = [
+            &[0x83],
+            HEADER_FIELD_BYTES,
+            HEADER_BYTES,
+            ID_FIELD_BYTES,
+            TEST_STR_BYTES,
+            PAYLOAD_FIELD_BYTES,
+            &[TRUE_BYTE],
+        ]
+        .concat();
+
+        // Convert into typed so we can test
+        let untyped_request = UntypedRequest::from_slice(&input).unwrap();
+        let request: Request<bool> = untyped_request.to_typed_request().unwrap();
+
+        assert_eq!(request.header, header!("key" -> "value", "num" -> 123));
+        assert_eq!(request.id, "test");
+        assert!(request.payload);
+    }
+
+    #[test]
     fn untyped_request_should_fail_to_parse_if_given_bytes_not_representing_a_request() {
         // Empty byte slice
         assert_eq!(
@@ -386,6 +422,42 @@ mod tests {
         assert_eq!(
             UntypedRequest::from_slice(&[0x80]),
             Err(UntypedRequestParseError::WrongType)
+        );
+
+        // Invalid header key
+        assert_eq!(
+            UntypedRequest::from_slice(
+                [
+                    &[0x83],
+                    &[0xa0], // header key would be defined here, set to empty str
+                    HEADER_BYTES,
+                    ID_FIELD_BYTES,
+                    TEST_STR_BYTES,
+                    PAYLOAD_FIELD_BYTES,
+                    &[TRUE_BYTE],
+                ]
+                .concat()
+                .as_slice()
+            ),
+            Err(UntypedRequestParseError::InvalidHeaderKey)
+        );
+
+        // Invalid header bytes
+        assert_eq!(
+            UntypedRequest::from_slice(
+                [
+                    &[0x83],
+                    HEADER_FIELD_BYTES,
+                    &[0xa0], // header would be defined here, set to empty str
+                    ID_FIELD_BYTES,
+                    TEST_STR_BYTES,
+                    PAYLOAD_FIELD_BYTES,
+                    &[TRUE_BYTE],
+                ]
+                .concat()
+                .as_slice()
+            ),
+            Err(UntypedRequestParseError::InvalidHeader)
         );
 
         // Missing fields (corrupt data)
