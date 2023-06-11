@@ -238,18 +238,6 @@ fn read_str_bytes(input: &[u8]) -> Result<(&str, &[u8]), &[u8]> {
     }
 }
 
-/// Reads a str key from msgpack input and checks if it matches `key`. If so, the input is
-/// advanced, otherwise the original input is returned.
-///
-/// * If key read successfully and matches, returns (unit, remaining).
-/// * Otherwise, returns existing bytes.
-fn read_key_eq<'a>(input: &'a [u8], key: &str) -> Result<((), &'a [u8]), &'a [u8]> {
-    match read_str_bytes(input) {
-        Ok((s, input)) if s == key => Ok(((), input)),
-        _ => Err(input),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,62 +263,6 @@ mod tests {
             let (s, remaining) =
                 read_str_bytes(&[0xa5, b'h', b'e', b'l', b'l', b'o', 0xff]).unwrap();
             assert_eq!(s, "hello");
-            assert_eq!(remaining, [0xff]);
-        }
-    }
-
-    mod read_key_eq {
-        use super::*;
-        use test_log::test;
-
-        #[test]
-        fn should_fail_if_input_is_empty() {
-            let input = read_key_eq(&[], "key").unwrap_err();
-            assert!(input.is_empty());
-        }
-
-        #[test]
-        fn should_fail_if_input_does_not_start_with_str() {
-            let input = &[
-                0xff,
-                rmp::Marker::FixStr(5).to_u8(),
-                b'h',
-                b'e',
-                b'l',
-                b'l',
-                b'o',
-            ];
-            let remaining = read_key_eq(input, "key").unwrap_err();
-            assert_eq!(remaining, input);
-        }
-
-        #[test]
-        fn should_fail_if_read_key_does_not_match_specified_key() {
-            let input = &[
-                rmp::Marker::FixStr(5).to_u8(),
-                b'h',
-                b'e',
-                b'l',
-                b'l',
-                b'o',
-                0xff,
-            ];
-            let remaining = read_key_eq(input, "key").unwrap_err();
-            assert_eq!(remaining, input);
-        }
-
-        #[test]
-        fn should_succeed_if_read_key_matches_specified_key() {
-            let input = &[
-                rmp::Marker::FixStr(5).to_u8(),
-                b'h',
-                b'e',
-                b'l',
-                b'l',
-                b'o',
-                0xff,
-            ];
-            let (_, remaining) = read_key_eq(input, "hello").unwrap();
             assert_eq!(remaining, [0xff]);
         }
     }
