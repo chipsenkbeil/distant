@@ -1,7 +1,8 @@
-use crate::common::Value;
+use crate::common::{utils, Value};
 use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io;
 use std::ops::{Deref, DerefMut};
 
 /// Generates a new [`Header`] of key/value pairs based on literals.
@@ -51,6 +52,16 @@ impl Header {
     /// for more.
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) -> Option<Value> {
         self.0.insert(key.into(), value.into())
+    }
+
+    /// Serializes the header into bytes.
+    pub fn to_vec(&self) -> io::Result<Vec<u8>> {
+        utils::serialize_to_vec(self)
+    }
+
+    /// Deserializes the header from bytes.
+    pub fn from_slice(slice: &[u8]) -> io::Result<Self> {
+        utils::deserialize_from_slice(slice)
     }
 }
 
