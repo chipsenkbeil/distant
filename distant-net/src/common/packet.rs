@@ -360,47 +360,187 @@ mod tests {
         use test_log::test;
 
         #[test]
+        fn should_fail_if_input_is_empty() {
+            let input = vec![];
+            assert!(read_header_bytes(&input).is_err());
+        }
+
+        #[test]
         fn should_fail_if_not_a_map() {
-            todo!();
+            // Provide an array instead of a map
+            let input = vec![0x93, 0xa3, b'a', b'b', b'c', 0xcc, 0xff, 0xc2];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
         fn should_fail_if_cannot_read_str_key_length() {
-            todo!();
+            let input = vec![
+                0x81, // valid map with 1 pair, but key is not a str
+                0x03, 0xa3, b'a', b'b', b'c', // 3 -> "abc"
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
         #[test]
         fn should_fail_if_key_length_exceeds_remaining_bytes() {
-            todo!();
+            let input = vec![
+                0x81, // valid map with 1 pair, but key length is too long
+                0xa8, b'a', b'b', b'c', // key: "abc" (but len is much greater)
+                0xa3, b'a', b'b', b'c', // value: "abc"
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
         fn should_fail_if_missing_value_for_key() {
-            todo!();
+            let input = vec![
+                0x81, // valid map with 1 pair, but value is missing
+                0xa3, b'a', b'b', b'c', // key: "abc"
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
         fn should_fail_if_unable_to_read_value_length() {
-            todo!();
+            let input = vec![
+                0x81, // valid map with 1 pair, but value is missing
+                0xa3, b'a', b'b', b'c', // key: "abc"
+                0xd9, // value: str 8 with missing length
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
         fn should_fail_if_value_length_exceeds_remaining_bytes() {
-            todo!();
+            let input = vec![
+                0x81, // valid map with 1 pair, but value is too long
+                0xa3, b'a', b'b', b'c', // key: "abc"
+                0xa2, b'd', // value: fixstr w/ len 1 too long
+            ];
+            assert!(read_header_bytes(&input).is_err());
         }
 
         #[test]
         fn should_succeed_with_empty_map() {
-            todo!();
+            // fixmap with 0 pairs
+            let input = vec![0x80];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 16 with 0 pairs
+            let input = vec![0xde, 0x00, 0x00];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 32 with 0 pairs
+            let input = vec![0xdf, 0x00, 0x00, 0x00, 0x00];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
         }
 
         #[test]
         fn should_succeed_with_single_key_value_map() {
-            todo!();
+            // fixmap with single pair
+            let input = vec![
+                0x81, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 16 with single pair
+            let input = vec![
+                0xde, 0x00, 0x01, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 32 with single pair
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x01, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+        }
+
+        #[test]
+        fn should_succeed_with_multiple_key_value_map() {
+            // fixmap with single pair
+            let input = vec![
+                0x82, // valid map with 2 pairs
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa3, b'y', b'e', b'k', // key: "yek"
+                0x7b, // value: 123 (fixint)
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 16 with single pair
+            let input = vec![
+                0xde, 0x00, 0x02, // valid map with 2 pairs
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa3, b'y', b'e', b'k', // key: "yek"
+                0x7b, // value: 123 (fixint)
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+
+            // map 32 with single pair
+            let input = vec![
+                0xdf, 0x00, 0x00, 0x00, 0x02, // valid map with 2 pairs
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa3, b'y', b'e', b'k', // key: "yek"
+                0x7b, // value: 123 (fixint)
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
         }
 
         #[test]
         fn should_succeed_with_nested_map() {
-            todo!();
+            // fixmap with single pair
+            let input = vec![
+                0x81, // valid map with 1 pair
+                0xa3, b'm', b'a', b'p', // key: "map"
+                0x81, // value: valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+            ];
+            let (header, _) = read_header_bytes(&input).unwrap();
+            assert_eq!(header, input);
+        }
+
+        #[test]
+        fn should_only_consume_map_from_input() {
+            // fixmap with single pair
+            let input = vec![
+                0x81, // valid map with 1 pair
+                0xa3, b'k', b'e', b'y', // key: "key"
+                0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                0xa4, b'm', b'o', b'r', b'e', // "more" (fixstr)
+            ];
+            let (header, remaining) = read_header_bytes(&input).unwrap();
+            assert_eq!(
+                header,
+                vec![
+                    0x81, // valid map with 1 pair
+                    0xa3, b'k', b'e', b'y', // key: "key"
+                    0xa5, b'v', b'a', b'l', b'u', b'e', // value: "value"
+                ]
+            );
+            assert_eq!(
+                remaining,
+                vec![
+                0xa4, b'm', b'o', b'r', b'e', // "more" (fixstr)
+            ]
+            );
         }
     }
 
