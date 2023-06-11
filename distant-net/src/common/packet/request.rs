@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{read_header_bytes, read_key_eq, read_str_bytes, Header, Id};
 use crate::common::utils;
+use crate::header;
 
 /// Represents a request to send
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,36 +1,15 @@
-/// Represents a generic id type
-pub type Id = String;
-
-/// Represents a packet header for a request or response
-pub type Header = std::collections::HashMap<String, crate::common::Value>;
-
-/// Generates a new [`Header`] of key/value pairs based on literals.
-///
-/// ```
-/// use distant_net::header;
-///
-/// let _header = header!("key" -> "value", "key2" -> 123);
-/// ```
-#[macro_export]
-macro_rules! header {
-    ($($key:literal -> $value:expr),* $(,)?) => {{
-        let mut _header = ::std::collections::HashMap::new();
-
-        $(
-            _header.insert($key.to_string(), $crate::common::Value::from($value));
-        )*
-
-        _header
-    }};
-}
-
+mod header;
 mod request;
 mod response;
 
+pub use header::*;
 pub use request::*;
 pub use response::*;
 
 use std::io::Cursor;
+
+/// Represents a generic id type
+pub type Id = String;
 
 /// Reads the header bytes from msgpack input, including the marker and len bytes.
 ///
