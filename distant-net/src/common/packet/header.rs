@@ -14,31 +14,43 @@ use std::ops::{Deref, DerefMut};
 #[macro_export]
 macro_rules! header {
     ($($key:literal -> $value:expr),* $(,)?) => {{
-        let mut _header = ::std::collections::HashMap::new();
+        let mut _header = $crate::common::Header::default();
 
         $(
-            _header.insert($key.to_string(), $crate::common::Value::from($value));
+            _header.insert($key, $value);
         )*
 
-        $crate::common::Header::new(_header)
+        _header
     }};
 }
 
-/// Represents a packet header for a request or response
+/// Represents a packet header comprised of arbitrary data tied to string keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Header(HashMap<String, Value>);
 
 impl Header {
-    /// Creates a new [`Header`] newtype wrapper.
-    pub fn new(map: HashMap<String, Value>) -> Self {
-        Self(map)
+    /// Creates an empty [`Header`] newtype wrapper.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Exists purely to support serde serialization checks.
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Inserts a key-value pair into the map.
+    ///
+    /// If the map did not have this key present, [`None`] is returned.
+    ///
+    /// If the map did have this key present, the value is updated, and the old value is returned.
+    /// The key is not updated, though; this matters for types that can be `==` without being
+    /// identical. See the [module-level documentation](std::collections#insert-and-complex-keys)
+    /// for more.
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) -> Option<Value> {
+        self.0.insert(key.into(), value.into())
     }
 }
 
