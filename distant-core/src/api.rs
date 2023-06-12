@@ -27,7 +27,7 @@ pub struct DistantApiServerHandler<T, D>
 where
     T: DistantApi<LocalData = D>,
 {
-    api: T,
+    api: Arc<T>,
 }
 
 impl<T, D> DistantApiServerHandler<T, D>
@@ -35,7 +35,7 @@ where
     T: DistantApi<LocalData = D>,
 {
     pub fn new(api: T) -> Self {
-        Self { api }
+        Self { api: Arc::new(api) }
     }
 }
 
@@ -424,8 +424,8 @@ pub trait DistantApi {
 #[async_trait]
 impl<T, D> ServerHandler for DistantApiServerHandler<T, D>
 where
-    T: DistantApi<LocalData = D> + Send + Sync,
-    D: Send + Sync,
+    T: DistantApi<LocalData = D> + Send + Sync + 'static,
+    D: Send + Sync + 'static,
 {
     type LocalData = D;
     type Request = protocol::Msg<protocol::Request>;
@@ -457,7 +457,7 @@ where
                     local_data,
                 };
 
-                let data = handle_request(self, ctx, data).await;
+                let data = handle_request(Arc::clone(&self.api), ctx, data).await;
 
                 // Report outgoing errors in our debug logs
                 if let protocol::Response::Error(x) = &data {
@@ -466,7 +466,9 @@ where
 
                 protocol::Msg::Single(data)
             }
-            protocol::Msg::Batch(list) => {
+            protocol::Msg::Batch(list)
+                if matches!(request.header.get_as("sequence"), Some(Ok(true))) =>
+            {
                 let mut out = Vec::new();
 
                 for data in list {
@@ -476,13 +478,7 @@ where
                         local_data: Arc::clone(&local_data),
                     };
 
-                    // TODO: This does not run in parallel, meaning that the next item in the
-                    //       batch will not be queued until the previous item completes! This
-                    //       would be useful if we wanted to chain requests where the previous
-                    //       request feeds into the current request, but not if we just want
-                    //       to run everything together. So we should instead rewrite this
-                    //       to spawn a task per request and then await completion of all tasks
-                    let data = handle_request(self, ctx, data).await;
+                    let data = handle_request(Arc::clone(&self.api), ctx, data).await;
 
                     // Report outgoing errors in our debug logs
                     if let protocol::Response::Error(x) = &data {
@@ -492,6 +488,44 @@ where
                     out.push(data);
                 }
 
+                protocol::Msg::Batch(out)
+            }
+            protocol::Msg::Batch(list) => {
+                let mut tasks = Vec::new();
+
+                // If sequence specified as true, we want to process in order, otherwise we can
+                // process in any order
+
+                for data in list {
+                    let api = Arc::clone(&self.api);
+                    let ctx = DistantCtx {
+                        connection_id,
+                        reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
+                        local_data: Arc::clone(&local_data),
+                    };
+
+                    let task = tokio::spawn(async move {
+                        let data = handle_request(api, ctx, data).await;
+
+                        // Report outgoing errors in our debug logs
+                        if let protocol::Response::Error(x) = &data {
+                            debug!("[Conn {}] {}", connection_id, x);
+                        }
+
+                        data
+                    });
+
+                    tasks.push(task);
+                }
+
+                let out = futures::future::join_all(tasks)
+                    .await
+                    .into_iter()
+                    .map(|x| match x {
+                        Ok(x) => x,
+                        Err(x) => protocol::Response::Error(x.to_string().into()),
+                    })
+                    .collect();
                 protocol::Msg::Batch(out)
             }
         };
@@ -515,7 +549,7 @@ where
 
 /// Processes an incoming request
 async fn handle_request<T, D>(
-    server: &DistantApiServerHandler<T, D>,
+    api: Arc<T>,
     ctx: DistantCtx<D>,
     request: protocol::Request,
 ) -> protocol::Response
@@ -524,44 +558,37 @@ where
     D: Send + Sync,
 {
     match request {
-        protocol::Request::Version {} => server
-            .api
+        protocol::Request::Version {} => api
             .version(ctx)
             .await
             .map(protocol::Response::Version)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileRead { path } => server
-            .api
+        protocol::Request::FileRead { path } => api
             .read_file(ctx, path)
             .await
             .map(|data| protocol::Response::Blob { data })
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileReadText { path } => server
-            .api
+        protocol::Request::FileReadText { path } => api
             .read_file_text(ctx, path)
             .await
             .map(|data| protocol::Response::Text { data })
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileWrite { path, data } => server
-            .api
+        protocol::Request::FileWrite { path, data } => api
             .write_file(ctx, path, data)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileWriteText { path, text } => server
-            .api
+        protocol::Request::FileWriteText { path, text } => api
             .write_file_text(ctx, path, text)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileAppend { path, data } => server
-            .api
+        protocol::Request::FileAppend { path, data } => api
             .append_file(ctx, path, data)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileAppendText { path, text } => server
-            .api
+        protocol::Request::FileAppendText { path, text } => api
             .append_file_text(ctx, path, text)
             .await
             .map(|_| protocol::Response::Ok)
@@ -572,8 +599,7 @@ where
             absolute,
             canonicalize,
             include_root,
-        } => server
-            .api
+        } => api
             .read_dir(ctx, path, depth, absolute, canonicalize, include_root)
             .await
             .map(|(entries, errors)| protocol::Response::DirEntries {
@@ -581,26 +607,22 @@ where
                 errors: errors.into_iter().map(Error::from).collect(),
             })
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::DirCreate { path, all } => server
-            .api
+        protocol::Request::DirCreate { path, all } => api
             .create_dir(ctx, path, all)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::Remove { path, force } => server
-            .api
+        protocol::Request::Remove { path, force } => api
             .remove(ctx, path, force)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::Copy { src, dst } => server
-            .api
+        protocol::Request::Copy { src, dst } => api
             .copy(ctx, src, dst)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::Rename { src, dst } => server
-            .api
+        protocol::Request::Rename { src, dst } => api
             .rename(ctx, src, dst)
             .await
             .map(|_| protocol::Response::Ok)
@@ -610,20 +632,17 @@ where
             recursive,
             only,
             except,
-        } => server
-            .api
+        } => api
             .watch(ctx, path, recursive, only, except)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::Unwatch { path } => server
-            .api
+        protocol::Request::Unwatch { path } => api
             .unwatch(ctx, path)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::Exists { path } => server
-            .api
+        protocol::Request::Exists { path } => api
             .exists(ctx, path)
             .await
             .map(|value| protocol::Response::Exists { value })
@@ -632,8 +651,7 @@ where
             path,
             canonicalize,
             resolve_file_type,
-        } => server
-            .api
+        } => api
             .metadata(ctx, path, canonicalize, resolve_file_type)
             .await
             .map(protocol::Response::Metadata)
@@ -642,20 +660,17 @@ where
             path,
             permissions,
             options,
-        } => server
-            .api
+        } => api
             .set_permissions(ctx, path, permissions, options)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::Search { query } => server
-            .api
+        protocol::Request::Search { query } => api
             .search(ctx, query)
             .await
             .map(|id| protocol::Response::SearchStarted { id })
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::CancelSearch { id } => server
-            .api
+        protocol::Request::CancelSearch { id } => api
             .cancel_search(ctx, id)
             .await
             .map(|_| protocol::Response::Ok)
@@ -665,32 +680,27 @@ where
             environment,
             current_dir,
             pty,
-        } => server
-            .api
+        } => api
             .proc_spawn(ctx, cmd.into(), environment, current_dir, pty)
             .await
             .map(|id| protocol::Response::ProcSpawned { id })
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::ProcKill { id } => server
-            .api
+        protocol::Request::ProcKill { id } => api
             .proc_kill(ctx, id)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::ProcStdin { id, data } => server
-            .api
+        protocol::Request::ProcStdin { id, data } => api
             .proc_stdin(ctx, id, data)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::ProcResizePty { id, size } => server
-            .api
+        protocol::Request::ProcResizePty { id, size } => api
             .proc_resize_pty(ctx, id, size)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::SystemInfo {} => server
-            .api
+        protocol::Request::SystemInfo {} => api
             .system_info(ctx)
             .await
             .map(protocol::Response::SystemInfo)

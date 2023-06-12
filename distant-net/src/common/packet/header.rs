@@ -1,5 +1,6 @@
 use crate::common::{utils, Value};
 use derive_more::IntoIterator;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
@@ -52,6 +53,17 @@ impl Header {
     /// for more.
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) -> Option<Value> {
         self.0.insert(key.into(), value.into())
+    }
+
+    /// Retrieves a value from the header, attempting to convert it to the specified type `T`
+    /// by cloning the value and then converting it.
+    pub fn get_as<T>(&self, key: impl AsRef<str>) -> Option<io::Result<T>>
+    where
+        T: DeserializeOwned,
+    {
+        self.0
+            .get(key.as_ref())
+            .map(|value| value.clone().cast_as())
     }
 
     /// Serializes the header into bytes.

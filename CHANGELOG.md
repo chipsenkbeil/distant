@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `distant-local` implementation sending a separate `Changed` event per path
 - `ChangeDetails` now includes a `renamed` field to capture the new path name
   when known
+- `DistantApi` now handles batch requests in parallel, returning the results in
+  order. To achieve the previous sequential processing of batch requests, the
+  header value `sequence` needs to be set to true
 
 ## [0.20.0-alpha.8]
 

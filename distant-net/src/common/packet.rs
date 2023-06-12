@@ -1,10 +1,12 @@
 mod header;
 mod request;
 mod response;
+mod value;
 
 pub use header::*;
 pub use request::*;
 pub use response::*;
+pub use value::*;
 
 use std::io::Cursor;
 
