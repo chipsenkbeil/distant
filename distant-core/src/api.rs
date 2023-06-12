@@ -470,8 +470,18 @@ where
                 if matches!(request.header.get_as("sequence"), Some(Ok(true))) =>
             {
                 let mut out = Vec::new();
+                let mut has_failed = false;
 
                 for data in list {
+                    // Once we hit a failure, all remaining requests return interrupted
+                    if has_failed {
+                        out.push(protocol::Response::Error(protocol::Error {
+                            kind: protocol::ErrorKind::Interrupted,
+                            description: String::from("Canceled due to earlier error"),
+                        }));
+                        continue;
+                    }
+
                     let ctx = DistantCtx {
                         connection_id,
                         reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
@@ -480,9 +490,11 @@ where
 
                     let data = handle_request(Arc::clone(&self.api), ctx, data).await;
 
-                    // Report outgoing errors in our debug logs
+                    // Report outgoing errors in our debug logs and mark as failed
+                    // to cancel any future tasks being run
                     if let protocol::Response::Error(x) = &data {
                         debug!("[Conn {}] {}", connection_id, x);
+                        has_failed = true;
                     }
 
                     out.push(data);
