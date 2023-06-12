@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Request` and `Response` types from `distant-net` now support an optional
   `Header` to send miscellaneous information
+- New feature `tracing` provides https://github.com/tokio-rs/tracing support
+  as a new `--tracing` flag. Must be compiled with
+  `RUSTFLAGS="--cfg tokio_unstable"` to properly operate.
 
 ### Changed
 

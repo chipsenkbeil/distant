@@ -7,6 +7,12 @@ fn main() -> MainResult {
         Err(x) => return MainResult::from(x),
     };
     let _logger = cli.init_logger();
+
+    #[cfg(feature = "tracing")]
+    if cli.options.tracing {
+        console_subscriber::init();
+    }
+
     MainResult::from(cli.run())
 }
 
@@ -17,6 +23,11 @@ fn main() -> MainResult {
         Err(x) => return MainResult::from(x),
     };
     let _logger = cli.init_logger();
+
+    #[cfg(feature = "tracing")]
+    if cli.options.tracing {
+        console_subscriber::init();
+    }
 
     // If we are trying to listen as a manager, try as a service first
     if cli.is_manager_listen_command() {

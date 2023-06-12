@@ -28,6 +28,10 @@ pub struct Options {
     #[clap(flatten)]
     pub logging: LoggingSettings,
 
+    #[cfg(feature = "tracing")]
+    #[clap(long, global = true)]
+    pub tracing: bool,
+
     /// Configuration file to load instead of the default paths
     #[clap(short = 'c', long = "config", global = true, value_parser)]
     config_path: Option<PathBuf>,
