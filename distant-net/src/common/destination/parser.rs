@@ -69,7 +69,7 @@ fn parse_scheme(s: &str) -> PResult<&str> {
 
 fn parse_username_password(s: &str) -> PResult<(Option<&str>, Option<&str>)> {
     let (auth, remaining) = s.split_once('@').ok_or("Auth missing @")?;
-    let (auth, username) = maybe(parse_until(|c| !c.is_alphanumeric()))(auth)?;
+    let (auth, username) = maybe(parse_until(|c| !c.is_alphanumeric() && c != '-'))(auth)?;
     let (auth, password) = maybe(prefixed(
         parse_char(':'),
         parse_until(|c| !c.is_alphanumeric()),
@@ -328,6 +328,24 @@ mod tests {
                 let (s, username_password) = parse_username_password("username:password@").unwrap();
                 assert_eq!(s, "");
                 assert_eq!(username_password.0, Some("username"));
+                assert_eq!(username_password.1, Some("password"));
+            }
+
+            #[test]
+            fn should_return_username_with_hyphen_and_password() {
+                let (s, username_password) =
+                    parse_username_password("some-user:password@").unwrap();
+                assert_eq!(s, "");
+                assert_eq!(username_password.0, Some("some-user"));
+                assert_eq!(username_password.1, Some("password"));
+            }
+
+            #[test]
+            fn should_return_username_password_if_username_starts_or_ends_with_hyphen() {
+                let (s, username_password) =
+                    parse_username_password("-some-user-:password@").unwrap();
+                assert_eq!(s, "");
+                assert_eq!(username_password.0, Some("-some-user-"));
                 assert_eq!(username_password.1, Some("password"));
             }
 
@@ -648,6 +666,16 @@ mod tests {
             let destination = parse("username@example.com:22").unwrap();
             assert_eq!(destination.scheme, None);
             assert_eq!(destination.username.as_deref(), Some("username"));
+            assert_eq!(destination.password, None);
+            assert_eq!(destination.host, "example.com");
+            assert_eq!(destination.port, Some(22));
+        }
+
+        #[test]
+        fn parse_should_succeed_if_given_username_has_hyphen() {
+            let destination = parse("some-user@example.com:22").unwrap();
+            assert_eq!(destination.scheme, None);
+            assert_eq!(destination.username.as_deref(), Some("some-user"));
             assert_eq!(destination.password, None);
             assert_eq!(destination.host, "example.com");
             assert_eq!(destination.port, Some(22));
