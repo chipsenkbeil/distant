@@ -212,6 +212,9 @@ impl UntypedClient {
             //       down.
             let _shutdown_tx = shutdown_tx_2;
 
+            // Keep track of block status so we can log appropriately
+            let mut was_blocked = false;
+
             loop {
                 // If we have flagged that a reconnect is needed, attempt to do so
                 if needs_reconnect {
@@ -395,6 +398,18 @@ impl UntypedClient {
                 // If we did not read or write anything, sleep a bit to offload CPU usage
                 if read_blocked && write_blocked {
                     tokio::time::sleep(SLEEP_DURATION).await;
+
+                    if !was_blocked {
+                        trace!("Client entering blocked state");
+                    }
+
+                    was_blocked = true;
+                } else {
+                    if was_blocked {
+                        trace!("Client exiting blocked state");
+                    }
+
+                    was_blocked = false;
                 }
             }
         });

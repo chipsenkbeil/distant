@@ -462,6 +462,9 @@ where
         // Store our connection details
         state.connections.write().await.insert(id, connection_state);
 
+        // Keep track of block status so we can log appropriately
+        let mut was_blocked = false;
+
         debug!("[Conn {id}] Beginning read/write loop");
         loop {
             let ready = match await_or_shutdown!(
@@ -583,6 +586,18 @@ where
             // If we did not read or write anything, sleep a bit to offload CPU usage
             if read_blocked && write_blocked {
                 tokio::time::sleep(sleep_duration).await;
+
+                if !was_blocked {
+                    trace!("[Conn {id}] Entering blocked state");
+                }
+
+                was_blocked = true;
+            } else {
+                if was_blocked {
+                    trace!("[Conn {id}] Exiting blocked state");
+                }
+
+                was_blocked = false;
             }
         }
     }
