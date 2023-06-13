@@ -148,7 +148,7 @@ where
 {
     /// Consumes the server, starting a task to process connections from the `listener` and
     /// returning a [`ServerRef`] that can be used to control the active server instance.
-    pub fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
+    pub fn start<L>(self, listener: L) -> io::Result<ServerRef>
     where
         L: Listener + 'static,
         L::Output: Transport + 'static,
@@ -157,7 +157,7 @@ where
         let (tx, rx) = broadcast::channel(1);
         let task = tokio::spawn(self.task(Arc::clone(&state), listener, tx.clone(), rx));
 
-        Ok(Box::new(GenericServerRef { shutdown: tx, task }))
+        Ok(ServerRef { shutdown: tx, task })
     }
 
     /// Internal task that is run to receive connections and spawn connection tasks

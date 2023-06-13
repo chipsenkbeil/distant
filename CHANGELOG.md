@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DistantApi` now handles batch requests in parallel, returning the results in
   order. To achieve the previous sequential processing of batch requests, the
   header value `sequence` needs to be set to true
+- Rename `GenericServerRef` to `ServerRef` and remove `ServerRef` trait,
+  refactoring `TcpServerRef`, `UnixSocketServerRef`, and `WindowsPipeServerRef`
+  to use the struct instead of `Box<dyn ServerRef>`
 
 ## [0.20.0-alpha.8]
 

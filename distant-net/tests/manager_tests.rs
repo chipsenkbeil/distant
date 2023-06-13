@@ -37,7 +37,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_
             let (t1, t2) = InmemoryTransport::pair(100);
 
             // Spawn a server on one end and connect to it on the other
-            let _ = Server::new()
+            let _server = Server::new()
                 .handler(TestServerHandler)
                 .verifier(Verifier::none())
                 .start(OneshotListener::from_value(t2))?;

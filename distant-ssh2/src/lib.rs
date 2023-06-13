@@ -722,7 +722,7 @@ impl Ssh {
     }
 
     /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`ServerRef`] pair.
-    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, Box<dyn ServerRef>)> {
+    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, ServerRef)> {
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(

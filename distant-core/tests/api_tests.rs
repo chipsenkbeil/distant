@@ -13,7 +13,7 @@ use distant_net::server::{Server, ServerRef};
 /// Stands up an inmemory client and server using the given api.
 async fn setup(
     api: impl DistantApi<LocalData = ()> + Send + Sync + 'static,
-) -> (DistantClient, Box<dyn ServerRef>) {
+) -> (DistantClient, ServerRef) {
     let (t1, t2) = InmemoryTransport::pair(100);
 
     let server = Server::new()
