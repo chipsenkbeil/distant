@@ -1,7 +1,7 @@
 use indoc::indoc;
 use rstest::*;
 
-use crate::cli::fixtures::*;
+use crate::common::fixtures::*;
 
 const EXPECTED_TABLE: &str = indoc! {"
 +---------------+--------------------------------------------------------------+

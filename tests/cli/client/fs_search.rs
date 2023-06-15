@@ -3,7 +3,7 @@ use indoc::indoc;
 use predicates::Predicate;
 use rstest::*;
 
-use crate::cli::fixtures::*;
+use crate::common::fixtures::*;
 
 const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 .*?[\\/]file1.txt

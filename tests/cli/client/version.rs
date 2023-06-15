@@ -1,8 +1,8 @@
 use distant_core::protocol::PROTOCOL_VERSION;
 use rstest::*;
 
-use crate::cli::fixtures::*;
-use crate::cli::utils::TrimmedLinesMatchPredicate;
+use crate::common::fixtures::*;
+use crate::common::utils::TrimmedLinesMatchPredicate;
 
 #[rstest]
 #[test_log::test]

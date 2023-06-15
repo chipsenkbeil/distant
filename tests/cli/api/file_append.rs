@@ -3,7 +3,7 @@ use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::cli::fixtures::*;
+use crate::common::fixtures::*;
 
 const FILE_CONTENTS: &str = r#"
 some text
