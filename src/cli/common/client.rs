@@ -4,7 +4,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{
-    AuthHandler, AuthMethodHandler, PromptAuthMethodHandler, SingleAuthHandler,
+    AuthHandler, AuthMethodHandler, NoneAuthenticationMethod, PromptAuthMethodHandler,
+    SingleAuthHandler,
 };
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
 use distant_core::net::manager::ManagerClient;
@@ -145,11 +146,16 @@ impl<T: AuthHandler + Clone> Client<T> {
 pub struct JsonAuthHandler {
     tx: MsgSender,
     rx: MsgReceiver,
+    skip: bool,
 }
 
 impl JsonAuthHandler {
     pub fn new(tx: MsgSender, rx: MsgReceiver) -> Self {
-        Self { tx, rx }
+        Self {
+            tx,
+            rx,
+            skip: false,
+        }
     }
 }
 
@@ -165,6 +171,23 @@ impl AuthHandler for JsonAuthHandler {
         &mut self,
         initialization: Initialization,
     ) -> io::Result<InitializationResponse> {
+        // NOTE: This is a hack to skip the need for authentication prompting when a "none"
+        //       method is available as the server should then reply with the on_finished
+        //       status automatically.
+        if initialization
+            .methods
+            .iter()
+            .any(|id| id == NoneAuthenticationMethod::ID)
+        {
+            self.skip = true;
+
+            // NOTE: We only send back the none auth method to ensure that it is performed
+            //       first to avoid blocking waiting on failing a different method.
+            return Ok(InitializationResponse {
+                methods: vec![NoneAuthenticationMethod::ID.to_string()],
+            });
+        }
+
         self.tx
             .send_blocking(&Authentication::Initialization(initialization))?;
         let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
@@ -179,12 +202,20 @@ impl AuthHandler for JsonAuthHandler {
     }
 
     async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+        if self.skip {
+            return Ok(());
+        }
+
         self.tx
             .send_blocking(&Authentication::StartMethod(start_method))?;
         Ok(())
     }
 
     async fn on_finished(&mut self) -> io::Result<()> {
+        if self.skip {
+            return Ok(());
+        }
+
         self.tx.send_blocking(&Authentication::Finished)?;
         Ok(())
     }

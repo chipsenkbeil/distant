@@ -14,6 +14,8 @@ pub struct StaticKeyAuthenticationMethod<T> {
 }
 
 impl<T> StaticKeyAuthenticationMethod<T> {
+    pub const ID: &str = "static_key";
+
     #[inline]
     pub fn new(key: T) -> Self {
         Self { key }
@@ -26,7 +28,7 @@ where
     T: FromStr + PartialEq + Send + Sync,
 {
     fn id(&self) -> &'static str {
-        "static_key"
+        Self::ID
     }
 
     async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()> {
