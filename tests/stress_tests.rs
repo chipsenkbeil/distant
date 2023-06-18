@@ -1,5 +1,4 @@
 use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
 mod common;
@@ -32,20 +31,20 @@ fn should_handle_large_volume_of_requests(ctx: DistantManagerCtx) {
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_wide_spread_of_clients(ctx: DistantManagerCtx) {
+fn should_handle_wide_spread_of_clients(_ctx: DistantManagerCtx) {
     todo!();
 }
 
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_abrupt_client_disconnects(ctx: DistantManagerCtx) {
+fn should_handle_abrupt_client_disconnects(_ctx: DistantManagerCtx) {
     todo!();
 }
 
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_badly_killing_client_shell_with_interactive_process(ctx: DistantManagerCtx) {
+fn should_handle_badly_killing_client_shell_with_interactive_process(_ctx: DistantManagerCtx) {
     todo!();
 }
