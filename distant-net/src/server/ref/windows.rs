@@ -11,7 +11,7 @@ use super::ServerRef;
 /// Reference to a windows pipe server instance.
 pub struct WindowsPipeServerRef {
     pub(crate) addr: OsString,
-    pub(crate) inner: Box<dyn ServerRef>,
+    pub(crate) inner: ServerRef,
 }
 
 impl WindowsPipeServerRef {
