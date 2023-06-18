@@ -30,7 +30,6 @@ codegen-units = 1
 default = ["libssh", "ssh2"]
 libssh = ["distant-ssh2/libssh"]
 ssh2 = ["distant-ssh2/ssh2"]
-tracing = ["tokio/tracing", "console-subscriber"]
 
 [dependencies]
 anyhow = "1.0.71"
@@ -65,9 +64,6 @@ whoami = "1.4.0"
 
 # Optional native SSH functionality
 distant-ssh2 = { version = "=0.20.0-alpha.8", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
-
-# Optional tracing dependency
-console-subscriber = { version = "0.1.9", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.21"
