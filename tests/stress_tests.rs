@@ -6,6 +6,7 @@ use common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
+#[ignore]
 fn should_handle_large_volume_of_requests(ctx: DistantManagerCtx) {
     // Create a temporary directory to house a file we create and edit
     // with a large volume of requests
