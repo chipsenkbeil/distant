@@ -188,6 +188,7 @@ impl ServerHandler for ManagerServer {
     type Response = ManagerResponse;
 
     async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
+        debug!("manager::on_request({ctx:?})");
         let RequestCtx {
             connection_id,
             request,
@@ -195,113 +196,161 @@ impl ServerHandler for ManagerServer {
         } = ctx;
 
         let response = match request.payload {
-            ManagerRequest::Capabilities {} => match self.capabilities().await {
-                Ok(supported) => ManagerResponse::Capabilities { supported },
-                Err(x) => ManagerResponse::from(x),
-            },
+            ManagerRequest::Capabilities {} => {
+                debug!("Looking up capabilities");
+                match self.capabilities().await {
+                    Ok(supported) => ManagerResponse::Capabilities { supported },
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
             ManagerRequest::Launch {
                 destination,
                 options,
-            } => match self
-                .launch(
-                    *destination,
-                    options,
-                    ManagerAuthenticator {
-                        reply: reply.clone(),
-                        registry: Arc::clone(&self.registry),
-                    },
-                )
-                .await
-            {
-                Ok(destination) => ManagerResponse::Launched { destination },
-                Err(x) => ManagerResponse::from(x),
-            },
+            } => {
+                info!("Launching {destination} with {options}");
+                match self
+                    .launch(
+                        *destination,
+                        options,
+                        ManagerAuthenticator {
+                            reply: reply.clone(),
+                            registry: Arc::clone(&self.registry),
+                        },
+                    )
+                    .await
+                {
+                    Ok(destination) => ManagerResponse::Launched { destination },
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
             ManagerRequest::Connect {
                 destination,
                 options,
-            } => match self
-                .connect(
-                    *destination,
-                    options,
-                    ManagerAuthenticator {
-                        reply: reply.clone(),
-                        registry: Arc::clone(&self.registry),
-                    },
-                )
-                .await
-            {
-                Ok(id) => ManagerResponse::Connected { id },
-                Err(x) => ManagerResponse::from(x),
-            },
-            ManagerRequest::Authenticate { id, msg } => {
-                match self.registry.write().await.remove(&id) {
-                    Some(cb) => match cb.send(msg) {
-                        Ok(_) => return,
-                        Err(_) => ManagerResponse::Error {
-                            description: "Unable to forward authentication callback".to_string(),
+            } => {
+                info!("Connecting to {destination} with {options}");
+                match self
+                    .connect(
+                        *destination,
+                        options,
+                        ManagerAuthenticator {
+                            reply: reply.clone(),
+                            registry: Arc::clone(&self.registry),
                         },
-                    },
+                    )
+                    .await
+                {
+                    Ok(id) => ManagerResponse::Connected { id },
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
+            ManagerRequest::Authenticate { id, msg } => {
+                trace!("Retrieving authentication callback registry");
+                match self.registry.write().await.remove(&id) {
+                    Some(cb) => {
+                        trace!("Sending {msg:?} through authentication callback");
+                        match cb.send(msg) {
+                            Ok(_) => return,
+                            Err(_) => ManagerResponse::Error {
+                                description: "Unable to forward authentication callback"
+                                    .to_string(),
+                            },
+                        }
+                    }
                     None => ManagerResponse::from(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "Invalid authentication id",
                     )),
                 }
             }
-            ManagerRequest::OpenChannel { id } => match self.connections.read().await.get(&id) {
-                Some(connection) => match connection.open_channel(reply.clone()) {
-                    Ok(channel) => {
-                        debug!("[Conn {id}] Channel {} has been opened", channel.id());
-                        let id = channel.id();
-                        self.channels.write().await.insert(id, channel);
-                        ManagerResponse::ChannelOpened { id }
+            ManagerRequest::OpenChannel { id } => {
+                debug!("Attempting to retrieve connection {id}");
+                match self.connections.read().await.get(&id) {
+                    Some(connection) => {
+                        debug!("Opening channel through connection {id}");
+                        match connection.open_channel(reply.clone()) {
+                            Ok(channel) => {
+                                info!("[Conn {id}] Channel {} has been opened", channel.id());
+                                let id = channel.id();
+                                self.channels.write().await.insert(id, channel);
+                                ManagerResponse::ChannelOpened { id }
+                            }
+                            Err(x) => ManagerResponse::from(x),
+                        }
                     }
-                    Err(x) => ManagerResponse::from(x),
-                },
-                None => ManagerResponse::from(io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "Connection does not exist",
-                )),
-            },
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "Connection does not exist",
+                    )),
+                }
+            }
             ManagerRequest::Channel { id, request } => {
+                debug!("Attempting to retrieve channel {id}");
                 match self.channels.read().await.get(&id) {
                     // TODO: For now, we are NOT sending back a response to acknowledge
                     //       a successful channel send. We could do this in order for
                     //       the client to listen for a complete send, but is it worth it?
-                    Some(channel) => match channel.send(request) {
-                        Ok(_) => return,
-                        Err(x) => ManagerResponse::from(x),
-                    },
+                    Some(channel) => {
+                        debug!("Sending {request:?} through channel {id}");
+                        match channel.send(request) {
+                            Ok(_) => return,
+                            Err(x) => ManagerResponse::from(x),
+                        }
+                    }
                     None => ManagerResponse::from(io::Error::new(
                         io::ErrorKind::NotConnected,
                         "Channel is not open or does not exist",
                     )),
                 }
             }
-            ManagerRequest::CloseChannel { id } => match self.channels.write().await.remove(&id) {
-                Some(channel) => match channel.close() {
-                    Ok(_) => {
-                        debug!("Channel {id} has been closed");
-                        ManagerResponse::ChannelClosed { id }
+            ManagerRequest::CloseChannel { id } => {
+                debug!("Attempting to remove channel {id}");
+                match self.channels.write().await.remove(&id) {
+                    Some(channel) => {
+                        debug!("Removed channel {}", channel.id());
+                        match channel.close() {
+                            Ok(_) => {
+                                info!("Channel {id} has been closed");
+                                ManagerResponse::ChannelClosed { id }
+                            }
+                            Err(x) => ManagerResponse::from(x),
+                        }
+                    }
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "Channel is not open or does not exist",
+                    )),
+                }
+            }
+            ManagerRequest::Info { id } => {
+                debug!("Attempting to retrieve information for connection {id}");
+                match self.info(id).await {
+                    Ok(info) => {
+                        info!("Retrieved information for connection {id}");
+                        ManagerResponse::Info(info)
                     }
                     Err(x) => ManagerResponse::from(x),
-                },
-                None => ManagerResponse::from(io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "Channel is not open or does not exist",
-                )),
-            },
-            ManagerRequest::Info { id } => match self.info(id).await {
-                Ok(info) => ManagerResponse::Info(info),
-                Err(x) => ManagerResponse::from(x),
-            },
-            ManagerRequest::List => match self.list().await {
-                Ok(list) => ManagerResponse::List(list),
-                Err(x) => ManagerResponse::from(x),
-            },
-            ManagerRequest::Kill { id } => match self.kill(id).await {
-                Ok(()) => ManagerResponse::Killed,
-                Err(x) => ManagerResponse::from(x),
-            },
+                }
+            }
+            ManagerRequest::List => {
+                debug!("Attempting to retrieve the list of connections");
+                match self.list().await {
+                    Ok(list) => {
+                        info!("Retrieved list of connections");
+                        ManagerResponse::List(list)
+                    }
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
+            ManagerRequest::Kill { id } => {
+                debug!("Attempting to kill connection {id}");
+                match self.kill(id).await {
+                    Ok(()) => {
+                        info!("Killed connection {id}");
+                        ManagerResponse::Killed
+                    }
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
         };
 
         if let Err(x) = reply.send(response).await {

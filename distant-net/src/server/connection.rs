@@ -453,9 +453,6 @@ where
         // Store our connection details
         state.connections.write().await.insert(id, connection_state);
 
-        // Keep track of block status so we can log appropriately
-        let mut was_blocked = false;
-
         debug!("[Conn {id}] Beginning read/write loop");
         loop {
             let ready = match await_or_shutdown!(
@@ -477,10 +474,14 @@ where
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
                         Ok(request) => match request.to_typed_request() {
                             Ok(request) => {
-                                debug!(
-                                    "[Conn {id}] New request {} | header {}",
-                                    request.id, request.header
-                                );
+                                if log::log_enabled!(Level::Debug) {
+                                    let debug_header = if !request.header.is_empty() {
+                                        format!(" | header {}", request.header)
+                                    } else {
+                                        String::new()
+                                    };
+                                    debug!("[Conn {id}] New request {}{debug_header}", request.id);
+                                }
                                 let origin_id = request.id.clone();
                                 let ctx = RequestCtx {
                                     connection_id: id,
@@ -580,18 +581,6 @@ where
             // If we did not read or write anything, sleep a bit to offload CPU usage
             if read_blocked && write_blocked {
                 tokio::time::sleep(sleep_duration).await;
-
-                if !was_blocked {
-                    trace!("[Conn {id}] Entering blocked state");
-                }
-
-                was_blocked = true;
-            } else {
-                if was_blocked {
-                    trace!("[Conn {id}] Exiting blocked state");
-                }
-
-                was_blocked = false;
             }
         }
     }
