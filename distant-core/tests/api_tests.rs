@@ -31,8 +31,9 @@ async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, 
 }
 
 mod single {
-    use super::*;
     use test_log::test;
+
+    use super::*;
 
     #[test(tokio::test)]
     async fn should_support_single_request_returning_error() {
@@ -71,11 +72,13 @@ mod single {
 }
 
 mod batch_parallel {
-    use super::*;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
     use distant_net::common::Request;
     use distant_protocol::{Msg, Request as RequestPayload};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use test_log::test;
+
+    use super::*;
 
     #[test(tokio::test)]
     async fn should_support_multiple_requests_running_in_parallel() {
@@ -185,11 +188,13 @@ mod batch_parallel {
 }
 
 mod batch_sequence {
-    use super::*;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
     use distant_net::common::Request;
     use distant_protocol::{Msg, Request as RequestPayload};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use test_log::test;
+
+    use super::*;
 
     #[test(tokio::test)]
     async fn should_support_multiple_requests_running_in_sequence() {

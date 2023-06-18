@@ -1,11 +1,12 @@
-use crate::common::{utils, Value};
+use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+use std::{fmt, io};
+
 use derive_more::IntoIterator;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt;
-use std::io;
-use std::ops::{Deref, DerefMut};
+
+use crate::common::{utils, Value};
 
 /// Generates a new [`Header`] of key/value pairs based on literals.
 ///

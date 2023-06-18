@@ -3,12 +3,12 @@ mod request;
 mod response;
 mod value;
 
+use std::io::Cursor;
+
 pub use header::*;
 pub use request::*;
 pub use response::*;
 pub use value::*;
-
-use std::io::Cursor;
 
 /// Represents a generic id type
 pub type Id = String;
@@ -257,8 +257,9 @@ mod tests {
     use super::*;
 
     mod read_str_bytes {
-        use super::*;
         use test_log::test;
+
+        use super::*;
 
         #[test]
         fn should_fail_if_input_is_empty() {
@@ -282,8 +283,9 @@ mod tests {
     }
 
     mod read_key_eq {
-        use super::*;
         use test_log::test;
+
+        use super::*;
 
         #[test]
         fn should_fail_if_input_is_empty() {
@@ -338,8 +340,9 @@ mod tests {
     }
 
     mod read_header_bytes {
-        use super::*;
         use test_log::test;
+
+        use super::*;
 
         #[test]
         fn should_fail_if_input_is_empty() {
@@ -527,8 +530,9 @@ mod tests {
     }
 
     mod find_msgpack_byte_len {
-        use super::*;
         use test_log::test;
+
+        use super::*;
 
         #[test]
         fn should_return_none_if_input_is_empty() {

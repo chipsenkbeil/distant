@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::fmt;
-use std::io;
+use std::{fmt, io};
 
 use log::*;
 use tokio::sync::mpsc;

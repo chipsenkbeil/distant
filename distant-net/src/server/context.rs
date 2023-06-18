@@ -1,6 +1,7 @@
+use std::fmt;
+
 use super::ServerReply;
 use crate::common::{ConnectionId, Request};
-use std::fmt;
 
 /// Represents contextual information for working with an inbound request.
 pub struct RequestCtx<T, U> {
