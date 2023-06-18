@@ -76,7 +76,7 @@ mod tests {
     use super::*;
     use crate::client::Client;
     use crate::common::Request;
-    use crate::server::ServerCtx;
+    use crate::server::RequestCtx;
 
     pub struct TestServerHandler;
 
@@ -85,7 +85,7 @@ mod tests {
         type Request = String;
         type Response = String;
 
-        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response>) {
+        async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
             // Echo back what we received
             ctx.reply
                 .send(ctx.request.payload.to_string())
