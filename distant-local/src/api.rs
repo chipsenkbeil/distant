@@ -39,13 +39,7 @@ impl Api {
 
 #[async_trait]
 impl DistantApi for Api {
-    type LocalData = ();
-
-    async fn read_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-    ) -> io::Result<Vec<u8>> {
+    async fn read_file(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
         debug!(
             "[Conn {}] Reading bytes from file {:?}",
             ctx.connection_id, path
@@ -54,11 +48,7 @@ impl DistantApi for Api {
         tokio::fs::read(path).await
     }
 
-    async fn read_file_text(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-    ) -> io::Result<String> {
+    async fn read_file_text(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<String> {
         debug!(
             "[Conn {}] Reading text from file {:?}",
             ctx.connection_id, path
@@ -67,12 +57,7 @@ impl DistantApi for Api {
         tokio::fs::read_to_string(path).await
     }
 
-    async fn write_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn write_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Writing bytes to file {:?}",
             ctx.connection_id, path
@@ -83,7 +68,7 @@ impl DistantApi for Api {
 
     async fn write_file_text(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
@@ -95,12 +80,7 @@ impl DistantApi for Api {
         tokio::fs::write(path, data).await
     }
 
-    async fn append_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn append_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Appending bytes to file {:?}",
             ctx.connection_id, path
@@ -116,7 +96,7 @@ impl DistantApi for Api {
 
     async fn append_file_text(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
@@ -135,7 +115,7 @@ impl DistantApi for Api {
 
     async fn read_dir(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         depth: usize,
         absolute: bool,
@@ -228,12 +208,7 @@ impl DistantApi for Api {
         Ok((entries, errors))
     }
 
-    async fn create_dir(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        all: bool,
-    ) -> io::Result<()> {
+    async fn create_dir(&self, ctx: DistantCtx, path: PathBuf, all: bool) -> io::Result<()> {
         debug!(
             "[Conn {}] Creating directory {:?} {{all: {}}}",
             ctx.connection_id, path, all
@@ -245,12 +220,7 @@ impl DistantApi for Api {
         }
     }
 
-    async fn remove(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        force: bool,
-    ) -> io::Result<()> {
+    async fn remove(&self, ctx: DistantCtx, path: PathBuf, force: bool) -> io::Result<()> {
         debug!(
             "[Conn {}] Removing {:?} {{force: {}}}",
             ctx.connection_id, path, force
@@ -267,12 +237,7 @@ impl DistantApi for Api {
         }
     }
 
-    async fn copy(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        src: PathBuf,
-        dst: PathBuf,
-    ) -> io::Result<()> {
+    async fn copy(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         debug!(
             "[Conn {}] Copying {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -329,12 +294,7 @@ impl DistantApi for Api {
         Ok(())
     }
 
-    async fn rename(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        src: PathBuf,
-        dst: PathBuf,
-    ) -> io::Result<()> {
+    async fn rename(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         debug!(
             "[Conn {}] Renaming {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -344,7 +304,7 @@ impl DistantApi for Api {
 
     async fn watch(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         recursive: bool,
         only: Vec<ChangeKind>,
@@ -372,7 +332,7 @@ impl DistantApi for Api {
         Ok(())
     }
 
-    async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
+    async fn unwatch(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<()> {
         debug!("[Conn {}] Unwatching {:?}", ctx.connection_id, path);
 
         self.state
@@ -382,7 +342,7 @@ impl DistantApi for Api {
         Ok(())
     }
 
-    async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
+    async fn exists(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<bool> {
         debug!("[Conn {}] Checking if {:?} exists", ctx.connection_id, path);
 
         // Following experimental `std::fs::try_exists`, which checks the error kind of the
@@ -396,7 +356,7 @@ impl DistantApi for Api {
 
     async fn metadata(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -469,7 +429,7 @@ impl DistantApi for Api {
 
     async fn set_permissions(
         &self,
-        _ctx: DistantCtx<Self::LocalData>,
+        _ctx: DistantCtx,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
@@ -596,11 +556,7 @@ impl DistantApi for Api {
         }
     }
 
-    async fn search(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        query: SearchQuery,
-    ) -> io::Result<SearchId> {
+    async fn search(&self, ctx: DistantCtx, query: SearchQuery) -> io::Result<SearchId> {
         debug!(
             "[Conn {}] Performing search via {query:?}",
             ctx.connection_id,
@@ -609,11 +565,7 @@ impl DistantApi for Api {
         self.state.search.start(query, ctx.reply).await
     }
 
-    async fn cancel_search(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        id: SearchId,
-    ) -> io::Result<()> {
+    async fn cancel_search(&self, ctx: DistantCtx, id: SearchId) -> io::Result<()> {
         debug!("[Conn {}] Cancelling search {id}", ctx.connection_id,);
 
         self.state.search.cancel(id).await
@@ -621,7 +573,7 @@ impl DistantApi for Api {
 
     async fn proc_spawn(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
@@ -637,17 +589,12 @@ impl DistantApi for Api {
             .await
     }
 
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
         self.state.process.kill(id).await
     }
 
-    async fn proc_stdin(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        id: ProcessId,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn proc_stdin(&self, ctx: DistantCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Sending stdin to process {}",
             ctx.connection_id, id
@@ -657,7 +604,7 @@ impl DistantApi for Api {
 
     async fn proc_resize_pty(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         id: ProcessId,
         size: PtySize,
     ) -> io::Result<()> {
@@ -668,7 +615,7 @@ impl DistantApi for Api {
         self.state.process.resize_pty(id, size).await
     }
 
-    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+    async fn system_info(&self, ctx: DistantCtx) -> io::Result<SystemInfo> {
         debug!("[Conn {}] Reading system information", ctx.connection_id);
         Ok(SystemInfo {
             family: env::consts::FAMILY.to_string(),
@@ -685,7 +632,7 @@ impl DistantApi for Api {
         })
     }
 
-    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+    async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
         debug!("[Conn {}] Querying version", ctx.connection_id);
 
         Ok(Version {
@@ -698,11 +645,10 @@ impl DistantApi for Api {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::time::Duration;
 
     use assert_fs::prelude::*;
-    use distant_core::net::server::{ConnectionCtx, Reply};
+    use distant_core::net::server::Reply;
     use distant_core::protocol::Response;
     use once_cell::sync::Lazy;
     use predicates::prelude::*;
@@ -773,7 +719,7 @@ mod tests {
 
     const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
-    async fn setup(buffer: usize) -> (Api, DistantCtx<()>, mpsc::Receiver<Response>) {
+    async fn setup(buffer: usize) -> (Api, DistantCtx, mpsc::Receiver<Response>) {
         let api = Api::initialize(Config {
             watch: WatchConfig {
                 debounce_timeout: DEBOUNCE_TIMEOUT,
@@ -784,19 +730,10 @@ mod tests {
         let (reply, rx) = make_reply(buffer);
         let connection_id = rand::random();
 
-        DistantApi::on_accept(
-            &api,
-            ConnectionCtx {
-                connection_id,
-                local_data: &mut (),
-            },
-        )
-        .await
-        .unwrap();
+        DistantApi::on_connect(&api, connection_id).await.unwrap();
         let ctx = DistantCtx {
             connection_id,
             reply,
-            local_data: Arc::new(()),
         };
         (api, ctx, rx)
     }
@@ -1683,7 +1620,6 @@ mod tests {
             let ctx = DistantCtx {
                 connection_id: ctx_1.connection_id,
                 reply,
-                local_data: Arc::clone(&ctx_1.local_data),
             };
             (ctx, rx)
         };
@@ -2662,7 +2598,6 @@ mod tests {
             let ctx = DistantCtx {
                 connection_id: ctx_1.connection_id,
                 reply,
-                local_data: Arc::clone(&ctx_1.local_data),
             };
             (ctx, rx)
         };
@@ -2723,7 +2658,6 @@ mod tests {
             let ctx = DistantCtx {
                 connection_id: ctx_1.connection_id,
                 reply,
-                local_data: Arc::clone(&ctx_1.local_data),
             };
             (ctx, rx)
         };

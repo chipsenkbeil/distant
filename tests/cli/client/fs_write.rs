@@ -3,7 +3,7 @@ use indoc::indoc;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::cli::fixtures::*;
+use crate::common::fixtures::*;
 
 const FILE_CONTENTS: &str = indoc! {r#"
     some text

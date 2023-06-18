@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use distant_auth::{DummyAuthHandler, Verifier};
 use distant_net::client::Client;
 use distant_net::common::{InmemoryTransport, OneshotListener};
-use distant_net::server::{Server, ServerCtx, ServerHandler};
+use distant_net::server::{RequestCtx, Server, ServerHandler};
 use log::*;
 use test_log::test;
 
@@ -10,11 +10,10 @@ struct TestServerHandler;
 
 #[async_trait]
 impl ServerHandler for TestServerHandler {
-    type LocalData = ();
     type Request = (u8, String);
     type Response = String;
 
-    async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
+    async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
         let (cnt, msg) = ctx.request.payload;
 
         for i in 0..cnt {
@@ -30,7 +29,7 @@ impl ServerHandler for TestServerHandler {
 async fn should_be_able_to_send_and_receive_typed_payloads_between_client_and_server() {
     let (t1, t2) = InmemoryTransport::pair(100);
 
-    let _ = Server::new()
+    let _server = Server::new()
         .handler(TestServerHandler)
         .verifier(Verifier::none())
         .start(OneshotListener::from_value(t2))

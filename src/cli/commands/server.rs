@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use anyhow::Context;
 use distant_core::net::auth::Verifier;
 use distant_core::net::common::{Host, SecretKey32};
-use distant_core::net::server::{Server, ServerConfig as NetServerConfig, ServerRef};
+use distant_core::net::server::{Server, ServerConfig as NetServerConfig};
 use distant_core::DistantSingleKeyCredentials;
 use distant_local::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
 use log::*;
@@ -212,7 +212,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             }
 
             // Let our server run to completion
-            server.wait().await.context("Failed to wait on server")?;
+            server.await.context("Failed to wait on server")?;
             info!("Server is shutting down");
         }
     }

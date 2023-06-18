@@ -1,9 +1,11 @@
-use crate::common::utils;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io;
 use std::ops::{Deref, DerefMut};
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
+use crate::common::utils;
 
 /// Generic value type for data passed through header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

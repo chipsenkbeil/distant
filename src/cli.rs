@@ -13,7 +13,7 @@ pub(crate) use common::{Cache, Client, Manager};
 /// Represents the primary CLI entrypoint
 #[derive(Debug)]
 pub struct Cli {
-    options: Options,
+    pub options: Options,
 }
 
 impl Cli {

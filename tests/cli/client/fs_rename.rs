@@ -2,7 +2,7 @@ use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::cli::fixtures::*;
+use crate::common::fixtures::*;
 
 const FILE_CONTENTS: &str = r#"
 some text

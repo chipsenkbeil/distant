@@ -185,7 +185,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                     "global".to_string()
                 }
             );
-            let manager_ref = Manager {
+            let manager = Manager {
                 access,
                 config: NetManagerConfig {
                     user,
@@ -223,11 +223,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             .context("Failed to start manager")?;
 
             // Let our server run to completion
-            manager_ref
-                .as_ref()
-                .polling_wait()
-                .await
-                .context("Failed to wait on manager")?;
+            manager.await.context("Failed to wait on manager")?;
             info!("Manager is shutting down");
 
             Ok(())

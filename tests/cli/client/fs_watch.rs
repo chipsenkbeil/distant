@@ -4,8 +4,8 @@ use std::time::Duration;
 use assert_fs::prelude::*;
 use rstest::*;
 
-use crate::cli::fixtures::*;
-use crate::cli::utils::ThreadedReader;
+use crate::common::fixtures::*;
+use crate::common::utils::ThreadedReader;
 
 fn wait_a_bit() {
     wait_millis(250);

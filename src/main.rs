@@ -7,6 +7,7 @@ fn main() -> MainResult {
         Err(x) => return MainResult::from(x),
     };
     let _logger = cli.init_logger();
+
     MainResult::from(cli.run())
 }
 

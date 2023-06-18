@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::{broadcast, RwLock};
 
-use crate::common::{Listener, Response, Transport};
+use crate::common::{ConnectionId, Listener, Response, Transport};
 
 mod builder;
 pub use builder::*;
@@ -56,23 +56,21 @@ pub trait ServerHandler: Send {
     /// Type of data sent back by the server
     type Response;
 
-    /// Type of data to store locally tied to the specific connection
-    type LocalData: Send;
-
     /// Invoked upon a new connection becoming established.
-    ///
-    /// ### Note
-    ///
-    /// This can be useful in performing some additional initialization on the connection's local
-    /// data prior to it being used anywhere else.
     #[allow(unused_variables)]
-    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+    async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Invoked upon an existing connection getting dropped.
+    #[allow(unused_variables)]
+    async fn on_disconnect(&self, id: ConnectionId) -> io::Result<()> {
         Ok(())
     }
 
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.
-    async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>);
+    async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>);
 }
 
 impl Server<()> {
@@ -144,11 +142,10 @@ where
     T: ServerHandler + Sync + 'static,
     T::Request: DeserializeOwned + Send + Sync + 'static,
     T::Response: Serialize + Send + 'static,
-    T::LocalData: Default + Send + Sync + 'static,
 {
     /// Consumes the server, starting a task to process connections from the `listener` and
     /// returning a [`ServerRef`] that can be used to control the active server instance.
-    pub fn start<L>(self, listener: L) -> io::Result<Box<dyn ServerRef>>
+    pub fn start<L>(self, listener: L) -> io::Result<ServerRef>
     where
         L: Listener + 'static,
         L::Output: Transport + 'static,
@@ -157,7 +154,7 @@ where
         let (tx, rx) = broadcast::channel(1);
         let task = tokio::spawn(self.task(Arc::clone(&state), listener, tx.clone(), rx));
 
-        Ok(Box::new(GenericServerRef { shutdown: tx, task }))
+        Ok(ServerRef { shutdown: tx, task })
     }
 
     /// Internal task that is run to receive connections and spawn connection tasks
@@ -226,6 +223,9 @@ where
                     .verifier(Arc::downgrade(&verifier))
                     .spawn(),
             );
+
+            // Clean up current tasks being tracked
+            connection_tasks.retain(|task| !task.is_finished());
         }
 
         // Once we stop listening, we still want to wait until all connections have terminated
@@ -257,15 +257,10 @@ mod tests {
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
-        type LocalData = ();
         type Request = u16;
         type Response = String;
 
-        async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
-            Ok(())
-        }
-
-        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
+        async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
             // Always send back "hello"
             ctx.reply.send("hello".to_string()).await.unwrap();
         }

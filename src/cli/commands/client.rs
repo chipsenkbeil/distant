@@ -1,19 +1,16 @@
 use std::collections::HashMap;
 use std::io;
 use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
-use distant_core::protocol::SearchQueryContentsMatch;
-use distant_core::protocol::SearchQueryMatch;
-use distant_core::protocol::SearchQueryPathMatch;
 use distant_core::protocol::{
     self, Capabilities, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
-    SetPermissionsOptions, SystemInfo,
+    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
+    SystemInfo,
 };
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;

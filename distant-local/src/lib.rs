@@ -9,10 +9,10 @@ mod config;
 mod constants;
 pub use api::Api;
 pub use config::*;
-use distant_core::{DistantApi, DistantApiServerHandler};
+use distant_core::DistantApiServerHandler;
 
 /// Implementation of [`DistantApiServerHandler`] using [`Api`].
-pub type Handler = DistantApiServerHandler<Api, <Api as DistantApi>::LocalData>;
+pub type Handler = DistantApiServerHandler<Api>;
 
 /// Initializes a new [`Handler`].
 pub fn new_handler(config: Config) -> std::io::Result<Handler> {

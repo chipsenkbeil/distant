@@ -216,9 +216,7 @@ impl UntypedClient {
                 // If we have flagged that a reconnect is needed, attempt to do so
                 if needs_reconnect {
                     info!("Client encountered issue, attempting to reconnect");
-                    if log::log_enabled!(log::Level::Debug) {
-                        debug!("Using strategy {reconnect_strategy:?}");
-                    }
+                    debug!("Using strategy {reconnect_strategy:?}");
                     match reconnect_strategy.reconnect(&mut connection).await {
                         Ok(()) => {
                             info!("Client successfully reconnected!");
@@ -236,7 +234,7 @@ impl UntypedClient {
 
                 macro_rules! silence_needs_reconnect {
                     () => {{
-                        debug!(
+                        info!(
                             "Client exceeded {}s without server activity, so attempting to reconnect",
                             silence_duration.as_secs_f32(),
                         );
@@ -260,7 +258,7 @@ impl UntypedClient {
                 let ready = tokio::select! {
                     // NOTE: This should NEVER return None as we never allow the channel to close.
                     cb = shutdown_rx.recv() => {
-                        debug!("Client got shutdown signal, so exiting event loop");
+                        info!("Client got shutdown signal, so exiting event loop");
                         let cb = cb.expect("Impossible: shutdown channel closed!");
                         let _ = cb.send(Ok(()));
                         watcher_tx.send_replace(ConnectionState::Disconnected);
@@ -335,7 +333,7 @@ impl UntypedClient {
                         }
 
                         Ok(None) => {
-                            debug!("Connection closed");
+                            info!("Connection closed");
                             needs_reconnect = true;
                             watcher_tx.send_replace(ConnectionState::Reconnecting);
                             continue;

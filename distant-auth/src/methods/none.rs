@@ -5,11 +5,13 @@ use async_trait::async_trait;
 use crate::authenticator::Authenticator;
 use crate::methods::AuthenticationMethod;
 
-/// Authenticaton method for a static secret key
+/// Authenticaton method that skips authentication and approves anything.
 #[derive(Clone, Debug)]
 pub struct NoneAuthenticationMethod;
 
 impl NoneAuthenticationMethod {
+    pub const ID: &str = "none";
+
     #[inline]
     pub fn new() -> Self {
         Self
@@ -26,7 +28,7 @@ impl Default for NoneAuthenticationMethod {
 #[async_trait]
 impl AuthenticationMethod for NoneAuthenticationMethod {
     fn id(&self) -> &'static str {
-        "none"
+        Self::ID
     }
 
     async fn authenticate(&self, _: &mut dyn Authenticator) -> io::Result<()> {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use distant_net::common::ConnectionId;
-use distant_net::server::{ConnectionCtx, Reply, ServerCtx, ServerHandler};
+use distant_net::server::{Reply, RequestCtx, ServerHandler};
 use log::*;
 
 use crate::protocol::{
@@ -16,23 +16,22 @@ mod reply;
 use reply::DistantSingleReply;
 
 /// Represents the context provided to the [`DistantApi`] for incoming requests
-pub struct DistantCtx<T> {
+pub struct DistantCtx {
     pub connection_id: ConnectionId,
     pub reply: Box<dyn Reply<Data = protocol::Response>>,
-    pub local_data: Arc<T>,
 }
 
 /// Represents a [`ServerHandler`] that leverages an API compliant with `distant`
-pub struct DistantApiServerHandler<T, D>
+pub struct DistantApiServerHandler<T>
 where
-    T: DistantApi<LocalData = D>,
+    T: DistantApi,
 {
     api: Arc<T>,
 }
 
-impl<T, D> DistantApiServerHandler<T, D>
+impl<T> DistantApiServerHandler<T>
 where
-    T: DistantApi<LocalData = D>,
+    T: DistantApi,
 {
     pub fn new(api: T) -> Self {
         Self { api: Arc::new(api) }
@@ -51,12 +50,15 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 /// which can be used to build other servers that are compatible with distant
 #[async_trait]
 pub trait DistantApi {
-    type LocalData: Send + Sync;
-
-    /// Invoked whenever a new connection is established, providing a mutable reference to the
-    /// newly-created local data. This is a way to support modifying local data before it is used.
+    /// Invoked whenever a new connection is established.
     #[allow(unused_variables)]
-    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+    async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Invoked whenever an existing connection is dropped.
+    #[allow(unused_variables)]
+    async fn on_disconnect(&self, id: ConnectionId) -> io::Result<()> {
         Ok(())
     }
 
@@ -64,7 +66,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+    async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
         unsupported("version")
     }
 
@@ -74,11 +76,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-    ) -> io::Result<Vec<u8>> {
+    async fn read_file(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
         unsupported("read_file")
     }
 
@@ -88,11 +86,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_file_text(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-    ) -> io::Result<String> {
+    async fn read_file_text(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<String> {
         unsupported("read_file_text")
     }
 
@@ -103,12 +97,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn write_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn write_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         unsupported("write_file")
     }
 
@@ -121,7 +110,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn write_file_text(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
@@ -135,12 +124,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn append_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn append_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         unsupported("append_file")
     }
 
@@ -153,7 +137,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn append_file_text(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
@@ -172,7 +156,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn read_dir(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         depth: usize,
         absolute: bool,
@@ -189,12 +173,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn create_dir(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        all: bool,
-    ) -> io::Result<()> {
+    async fn create_dir(&self, ctx: DistantCtx, path: PathBuf, all: bool) -> io::Result<()> {
         unsupported("create_dir")
     }
 
@@ -205,12 +184,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn copy(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        src: PathBuf,
-        dst: PathBuf,
-    ) -> io::Result<()> {
+    async fn copy(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         unsupported("copy")
     }
 
@@ -221,12 +195,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn remove(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        force: bool,
-    ) -> io::Result<()> {
+    async fn remove(&self, ctx: DistantCtx, path: PathBuf, force: bool) -> io::Result<()> {
         unsupported("remove")
     }
 
@@ -237,12 +206,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn rename(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        src: PathBuf,
-        dst: PathBuf,
-    ) -> io::Result<()> {
+    async fn rename(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         unsupported("rename")
     }
 
@@ -257,7 +221,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn watch(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         recursive: bool,
         only: Vec<ChangeKind>,
@@ -272,7 +236,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn unwatch(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<()> {
+    async fn unwatch(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<()> {
         unsupported("unwatch")
     }
 
@@ -282,7 +246,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
+    async fn exists(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<bool> {
         unsupported("exists")
     }
 
@@ -296,7 +260,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn metadata(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -314,7 +278,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn set_permissions(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
@@ -328,11 +292,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn search(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        query: SearchQuery,
-    ) -> io::Result<SearchId> {
+    async fn search(&self, ctx: DistantCtx, query: SearchQuery) -> io::Result<SearchId> {
         unsupported("search")
     }
 
@@ -342,11 +302,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn cancel_search(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        id: SearchId,
-    ) -> io::Result<()> {
+    async fn cancel_search(&self, ctx: DistantCtx, id: SearchId) -> io::Result<()> {
         unsupported("cancel_search")
     }
 
@@ -361,7 +317,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn proc_spawn(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
@@ -376,7 +332,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx, id: ProcessId) -> io::Result<()> {
         unsupported("proc_kill")
     }
 
@@ -387,12 +343,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_stdin(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        id: ProcessId,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn proc_stdin(&self, ctx: DistantCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         unsupported("proc_stdin")
     }
 
@@ -405,7 +356,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn proc_resize_pty(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         id: ProcessId,
         size: PtySize,
     ) -> io::Result<()> {
@@ -416,32 +367,34 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+    async fn system_info(&self, ctx: DistantCtx) -> io::Result<SystemInfo> {
         unsupported("system_info")
     }
 }
 
 #[async_trait]
-impl<T, D> ServerHandler for DistantApiServerHandler<T, D>
+impl<T> ServerHandler for DistantApiServerHandler<T>
 where
-    T: DistantApi<LocalData = D> + Send + Sync + 'static,
-    D: Send + Sync + 'static,
+    T: DistantApi + Send + Sync + 'static,
 {
-    type LocalData = D;
     type Request = protocol::Msg<protocol::Request>;
     type Response = protocol::Msg<protocol::Response>;
 
-    /// Overridden to leverage [`DistantApi`] implementation of `on_accept`
-    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
-        T::on_accept(&self.api, ctx).await
+    /// Overridden to leverage [`DistantApi`] implementation of `on_connect`.
+    async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
+        T::on_connect(&self.api, id).await
     }
 
-    async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
-        let ServerCtx {
+    /// Overridden to leverage [`DistantApi`] implementation of `on_disconnect`.
+    async fn on_disconnect(&self, id: ConnectionId) -> io::Result<()> {
+        T::on_disconnect(&self.api, id).await
+    }
+
+    async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
+        let RequestCtx {
             connection_id,
             request,
             reply,
-            local_data,
         } = ctx;
 
         // Convert our reply to a queued reply so we can ensure that the result
@@ -454,7 +407,6 @@ where
                 let ctx = DistantCtx {
                     connection_id,
                     reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
-                    local_data,
                 };
 
                 let data = handle_request(Arc::clone(&self.api), ctx, data).await;
@@ -485,7 +437,6 @@ where
                     let ctx = DistantCtx {
                         connection_id,
                         reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
-                        local_data: Arc::clone(&local_data),
                     };
 
                     let data = handle_request(Arc::clone(&self.api), ctx, data).await;
@@ -513,7 +464,6 @@ where
                     let ctx = DistantCtx {
                         connection_id,
                         reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
-                        local_data: Arc::clone(&local_data),
                     };
 
                     let task = tokio::spawn(async move {
@@ -560,14 +510,13 @@ where
 }
 
 /// Processes an incoming request
-async fn handle_request<T, D>(
+async fn handle_request<T>(
     api: Arc<T>,
-    ctx: DistantCtx<D>,
+    ctx: DistantCtx,
     request: protocol::Request,
 ) -> protocol::Response
 where
-    T: DistantApi<LocalData = D> + Send + Sync,
-    D: Send + Sync,
+    T: DistantApi + Send + Sync,
 {
     match request {
         protocol::Request::Version {} => api

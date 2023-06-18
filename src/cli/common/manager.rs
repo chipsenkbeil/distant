@@ -15,7 +15,7 @@ pub struct Manager {
 
 impl Manager {
     /// Begin listening on the network interface specified within [`NetworkConfig`]
-    pub async fn listen(self) -> anyhow::Result<Box<dyn ServerRef>> {
+    pub async fn listen(self) -> anyhow::Result<ServerRef> {
         let user = self.config.user;
 
         #[cfg(unix)]
@@ -36,7 +36,7 @@ impl Manager {
                     .with_context(|| format!("Failed to create socket directory {parent:?}"))?;
             }
 
-            let boxed_ref = ManagerServer::new(self.config)
+            let server = ManagerServer::new(self.config)
                 .verifier(Verifier::none())
                 .start(
                     UnixSocketListener::bind_with_permissions(socket_path, self.access.into_mode())
@@ -45,7 +45,7 @@ impl Manager {
                 .with_context(|| format!("Failed to start manager at socket {socket_path:?}"))?;
 
             info!("Manager listening using unix socket @ {:?}", socket_path);
-            Ok(boxed_ref)
+            Ok(server)
         }
 
         #[cfg(windows)]
@@ -57,13 +57,13 @@ impl Manager {
                 global_paths::WINDOWS_PIPE_NAME.as_str()
             });
 
-            let boxed_ref = ManagerServer::new(self.config)
+            let server = ManagerServer::new(self.config)
                 .verifier(Verifier::none())
                 .start(WindowsPipeListener::bind_local(pipe_name)?)
                 .with_context(|| format!("Failed to start manager at pipe {pipe_name:?}"))?;
 
             info!("Manager listening using windows pipe @ {:?}", pipe_name);
-            Ok(boxed_ref)
+            Ok(server)
         }
     }
 }
