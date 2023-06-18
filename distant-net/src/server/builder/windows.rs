@@ -42,7 +42,6 @@ where
     T: ServerHandler + Sync + 'static,
     T::Request: DeserializeOwned + Send + Sync + 'static,
     T::Response: Serialize + Send + 'static,
-    T::LocalData: Default + Send + Sync + 'static,
 {
     /// Start a new server at the specified address using the given codec
     pub async fn start<A>(self, addr: A) -> io::Result<WindowsPipeServerRef>
@@ -83,11 +82,10 @@ mod tests {
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
-        type LocalData = ();
         type Request = String;
         type Response = String;
 
-        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
+        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response>) {
             // Echo back what we received
             ctx.reply
                 .send(ctx.request.payload.to_string())

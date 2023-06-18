@@ -174,7 +174,7 @@ impl AuthHandler for JsonAuthHandler {
         // NOTE: This is a hack to skip the need for authentication prompting when a "none"
         //       method is available as the server should then reply with the on_finished
         //       status automatically.
-        if initialization
+        /*if initialization
             .methods
             .iter()
             .any(|id| id == NoneAuthenticationMethod::ID)
@@ -186,7 +186,7 @@ impl AuthHandler for JsonAuthHandler {
             return Ok(InitializationResponse {
                 methods: vec![NoneAuthenticationMethod::ID.to_string()],
             });
-        }
+        }*/
 
         self.tx
             .send_blocking(&Authentication::Initialization(initialization))?;
@@ -202,9 +202,9 @@ impl AuthHandler for JsonAuthHandler {
     }
 
     async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        if self.skip {
+        /*if self.skip {
             return Ok(());
-        }
+        }*/
 
         self.tx
             .send_blocking(&Authentication::StartMethod(start_method))?;
@@ -212,9 +212,9 @@ impl AuthHandler for JsonAuthHandler {
     }
 
     async fn on_finished(&mut self) -> io::Result<()> {
-        if self.skip {
+        /*if self.skip {
             return Ok(());
-        }
+        }*/
 
         self.tx.send_blocking(&Authentication::Finished)?;
         Ok(())

@@ -6,7 +6,7 @@ use distant_net::boxed_connect_handler;
 use distant_net::client::Client;
 use distant_net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_net::manager::{Config, ManagerClient, ManagerServer};
-use distant_net::server::{Server, ServerCtx, ServerHandler};
+use distant_net::server::{RequestCtx, Server, ServerHandler};
 use log::*;
 use test_log::test;
 
@@ -14,11 +14,10 @@ struct TestServerHandler;
 
 #[async_trait]
 impl ServerHandler for TestServerHandler {
-    type LocalData = ();
     type Request = String;
     type Response = String;
 
-    async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
+    async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
         ctx.reply
             .send(format!("echo {}", ctx.request.payload))
             .await

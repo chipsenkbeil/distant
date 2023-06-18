@@ -12,7 +12,7 @@ use crate::manager::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
     ManagerRequest, ManagerResponse,
 };
-use crate::server::{Server, ServerCtx, ServerHandler};
+use crate::server::{RequestCtx, Server, ServerHandler};
 
 mod authentication;
 pub use authentication::*;
@@ -31,6 +31,10 @@ pub struct ManagerServer {
     /// Configuration settings for the server
     config: Config,
 
+    /// Holds on to open channels feeding data back from a server to some connected client,
+    /// enabling us to cancel the tasks on demand
+    channels: RwLock<HashMap<ManagerChannelId, ManagerChannel>>,
+
     /// Mapping of connection id -> connection
     connections: RwLock<HashMap<ConnectionId, ManagerConnection>>,
 
@@ -46,6 +50,7 @@ impl ManagerServer {
     pub fn new(config: Config) -> Server<Self> {
         Server::new().handler(Self {
             config,
+            channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             registry: Arc::new(RwLock::new(HashMap::new())),
         })
@@ -177,25 +182,16 @@ impl ManagerServer {
     }
 }
 
-#[derive(Default)]
-pub struct DistantManagerServerConnection {
-    /// Holds on to open channels feeding data back from a server to some connected client,
-    /// enabling us to cancel the tasks on demand
-    channels: RwLock<HashMap<ManagerChannelId, ManagerChannel>>,
-}
-
 #[async_trait]
 impl ServerHandler for ManagerServer {
-    type LocalData = DistantManagerServerConnection;
     type Request = ManagerRequest;
     type Response = ManagerResponse;
 
-    async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
-        let ServerCtx {
+    async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
+        let RequestCtx {
             connection_id,
             request,
             reply,
-            local_data,
         } = ctx;
 
         let response = match request.payload {
@@ -256,7 +252,7 @@ impl ServerHandler for ManagerServer {
                     Ok(channel) => {
                         debug!("[Conn {id}] Channel {} has been opened", channel.id());
                         let id = channel.id();
-                        local_data.channels.write().await.insert(id, channel);
+                        self.channels.write().await.insert(id, channel);
                         ManagerResponse::ChannelOpened { id }
                     }
                     Err(x) => ManagerResponse::from(x),
@@ -267,7 +263,7 @@ impl ServerHandler for ManagerServer {
                 )),
             },
             ManagerRequest::Channel { id, request } => {
-                match local_data.channels.read().await.get(&id) {
+                match self.channels.read().await.get(&id) {
                     // TODO: For now, we are NOT sending back a response to acknowledge
                     //       a successful channel send. We could do this in order for
                     //       the client to listen for a complete send, but is it worth it?
@@ -281,21 +277,19 @@ impl ServerHandler for ManagerServer {
                     )),
                 }
             }
-            ManagerRequest::CloseChannel { id } => {
-                match local_data.channels.write().await.remove(&id) {
-                    Some(channel) => match channel.close() {
-                        Ok(_) => {
-                            debug!("Channel {id} has been closed");
-                            ManagerResponse::ChannelClosed { id }
-                        }
-                        Err(x) => ManagerResponse::from(x),
-                    },
-                    None => ManagerResponse::from(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "Channel is not open or does not exist",
-                    )),
-                }
-            }
+            ManagerRequest::CloseChannel { id } => match self.channels.write().await.remove(&id) {
+                Some(channel) => match channel.close() {
+                    Ok(_) => {
+                        debug!("Channel {id} has been closed");
+                        ManagerResponse::ChannelClosed { id }
+                    }
+                    Err(x) => ManagerResponse::from(x),
+                },
+                None => ManagerResponse::from(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "Channel is not open or does not exist",
+                )),
+            },
             ManagerRequest::Info { id } => match self.info(id).await {
                 Ok(info) => ManagerResponse::Info(info),
                 Err(x) => ManagerResponse::from(x),
@@ -356,6 +350,7 @@ mod tests {
 
         let server = ManagerServer {
             config,
+            channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             registry,
         };

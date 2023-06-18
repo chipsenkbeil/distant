@@ -12,10 +12,7 @@ use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
 
-use super::{
-    ConnectionCtx, ConnectionState, ServerCtx, ServerHandler, ServerReply, ServerState,
-    ShutdownTimer,
-};
+use super::{ConnectionState, RequestCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
 use crate::common::{
     Backup, Connection, Frame, Interest, Keychain, Response, Transport, UntypedRequest,
 };
@@ -226,7 +223,6 @@ where
     H: ServerHandler + Sync + 'static,
     H::Request: DeserializeOwned + Send + Sync + 'static,
     H::Response: Serialize + Send + 'static,
-    H::LocalData: Default + Send + Sync + 'static,
     T: Transport + 'static,
 {
     pub fn spawn(self) -> ConnectionTask {
@@ -430,15 +426,10 @@ where
 
         // Create local data for the connection and then process it
         debug!("[Conn {id}] Officially accepting connection");
-        let mut local_data = H::LocalData::default();
-        if let Err(x) = await_or_shutdown!(handler.on_accept(ConnectionCtx {
-            connection_id: id,
-            local_data: &mut local_data
-        })) {
+        if let Err(x) = await_or_shutdown!(handler.on_connect(id)) {
             terminate_connection!(@fatal "[Conn {id}] Accepting connection failed: {x}");
         }
 
-        let local_data = Arc::new(local_data);
         let mut last_heartbeat = Instant::now();
 
         // Restore our connection's channels if we have them, otherwise make new ones
@@ -487,14 +478,13 @@ where
                         Ok(request) => match request.to_typed_request() {
                             Ok(request) => {
                                 let origin_id = request.id.clone();
-                                let ctx = ServerCtx {
+                                let ctx = RequestCtx {
                                     connection_id: id,
                                     request,
                                     reply: ServerReply {
                                         origin_id,
                                         tx: tx.clone(),
                                     },
-                                    local_data: Arc::clone(&local_data),
                                 };
 
                                 // Spawn a new task to run the request handler so we don't block
@@ -615,21 +605,16 @@ mod tests {
     use crate::common::{
         HeapSecretKey, InmemoryTransport, Ready, Reconnectable, Request, Response,
     };
-    use crate::server::Shutdown;
+    use crate::server::{ConnectionId, Shutdown};
 
     struct TestServerHandler;
 
     #[async_trait]
     impl ServerHandler for TestServerHandler {
-        type LocalData = ();
         type Request = u16;
         type Response = String;
 
-        async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
-            Ok(())
-        }
-
-        async fn on_request(&self, ctx: ServerCtx<Self::Request, Self::Response, Self::LocalData>) {
+        async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
             // Always send back "hello"
             ctx.reply.send("hello".to_string()).await.unwrap();
         }
@@ -750,18 +735,14 @@ mod tests {
 
         #[async_trait]
         impl ServerHandler for BadAcceptServerHandler {
-            type LocalData = ();
             type Request = u16;
             type Response = String;
 
-            async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
-                Err(io::Error::new(io::ErrorKind::Other, "bad accept"))
+            async fn on_connect(&self, _: ConnectionId) -> io::Result<()> {
+                Err(io::Error::new(io::ErrorKind::Other, "bad connect"))
             }
 
-            async fn on_request(
-                &self,
-                _: ServerCtx<Self::Request, Self::Response, Self::LocalData>,
-            ) {
+            async fn on_request(&self, _: RequestCtx<Self::Request, Self::Response>) {
                 unreachable!();
             }
         }
@@ -1042,20 +1023,16 @@ mod tests {
 
         #[async_trait]
         impl ServerHandler for HangingAcceptServerHandler {
-            type LocalData = ();
             type Request = ();
             type Response = ();
 
-            async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+            async fn on_connect(&self, _: ConnectionId) -> io::Result<()> {
                 // Wait "forever" so we can ensure that we fail at this step
                 tokio::time::sleep(Duration::MAX).await;
-                Err(io::Error::new(io::ErrorKind::Other, "bad accept"))
+                Err(io::Error::new(io::ErrorKind::Other, "bad connect"))
             }
 
-            async fn on_request(
-                &self,
-                _: ServerCtx<Self::Request, Self::Response, Self::LocalData>,
-            ) {
+            async fn on_request(&self, _: RequestCtx<Self::Request, Self::Response>) {
                 unreachable!();
             }
         }
@@ -1098,19 +1075,15 @@ mod tests {
 
         #[async_trait]
         impl ServerHandler for AcceptServerHandler {
-            type LocalData = ();
             type Request = ();
             type Response = ();
 
-            async fn on_accept(&self, _: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
+            async fn on_connect(&self, _: ConnectionId) -> io::Result<()> {
                 self.tx.send(()).await.unwrap();
                 Ok(())
             }
 
-            async fn on_request(
-                &self,
-                _: ServerCtx<Self::Request, Self::Response, Self::LocalData>,
-            ) {
+            async fn on_request(&self, _: RequestCtx<Self::Request, Self::Response>) {
                 unreachable!();
             }
         }

@@ -11,9 +11,7 @@ use distant_net::common::{InmemoryTransport, OneshotListener};
 use distant_net::server::{Server, ServerRef};
 
 /// Stands up an inmemory client and server using the given api.
-async fn setup(
-    api: impl DistantApi<LocalData = ()> + Send + Sync + 'static,
-) -> (DistantClient, ServerRef) {
+async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, ServerRef) {
     let (t1, t2) = InmemoryTransport::pair(100);
 
     let server = Server::new()
@@ -42,13 +40,7 @@ mod single {
 
         #[async_trait]
         impl DistantApi for TestDistantApi {
-            type LocalData = ();
-
-            async fn read_file(
-                &self,
-                _ctx: DistantCtx<Self::LocalData>,
-                _path: PathBuf,
-            ) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: DistantCtx, _path: PathBuf) -> io::Result<Vec<u8>> {
                 Err(io::Error::new(io::ErrorKind::NotFound, "test error"))
             }
         }
@@ -66,13 +58,7 @@ mod single {
 
         #[async_trait]
         impl DistantApi for TestDistantApi {
-            type LocalData = ();
-
-            async fn read_file(
-                &self,
-                _ctx: DistantCtx<Self::LocalData>,
-                _path: PathBuf,
-            ) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: DistantCtx, _path: PathBuf) -> io::Result<Vec<u8>> {
                 Ok(b"hello world".to_vec())
             }
         }
@@ -97,13 +83,7 @@ mod batch_parallel {
 
         #[async_trait]
         impl DistantApi for TestDistantApi {
-            type LocalData = ();
-
-            async fn read_file(
-                &self,
-                _ctx: DistantCtx<Self::LocalData>,
-                path: PathBuf,
-            ) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "slow" {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -155,13 +135,7 @@ mod batch_parallel {
 
         #[async_trait]
         impl DistantApi for TestDistantApi {
-            type LocalData = ();
-
-            async fn read_file(
-                &self,
-                _ctx: DistantCtx<Self::LocalData>,
-                path: PathBuf,
-            ) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "fail" {
                     return Err(io::Error::new(io::ErrorKind::Other, "test error"));
                 }
@@ -223,13 +197,7 @@ mod batch_sequence {
 
         #[async_trait]
         impl DistantApi for TestDistantApi {
-            type LocalData = ();
-
-            async fn read_file(
-                &self,
-                _ctx: DistantCtx<Self::LocalData>,
-                path: PathBuf,
-            ) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "slow" {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -284,13 +252,7 @@ mod batch_sequence {
 
         #[async_trait]
         impl DistantApi for TestDistantApi {
-            type LocalData = ();
-
-            async fn read_file(
-                &self,
-                _ctx: DistantCtx<Self::LocalData>,
-                path: PathBuf,
-            ) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "fail" {
                     return Err(io::Error::new(io::ErrorKind::Other, "test error"));
                 }

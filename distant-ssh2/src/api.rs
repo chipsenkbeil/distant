@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
@@ -7,7 +7,6 @@ use std::time::Duration;
 use async_compat::CompatExt;
 use async_once_cell::OnceCell;
 use async_trait::async_trait;
-use distant_core::net::server::ConnectionCtx;
 use distant_core::protocol::{
     Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, Permissions,
     ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata, Version, PROTOCOL_VERSION,
@@ -24,16 +23,6 @@ use crate::utils::{self, to_other_error};
 
 /// Time after copy completes to wait for stdout/stderr to close
 const COPY_COMPLETE_TIMEOUT: Duration = Duration::from_secs(1);
-
-#[derive(Default)]
-pub struct ConnectionState {
-    /// List of process ids that will be killed when the connection terminates
-    processes: Arc<RwLock<HashSet<ProcessId>>>,
-
-    /// Internal reference to global process list for removals
-    /// NOTE: Initialized during `on_accept` of [`DistantApi`]
-    global_processes: Weak<RwLock<HashMap<ProcessId, Process>>>,
-}
 
 struct Process {
     stdin_tx: mpsc::Sender<Vec<u8>>,
@@ -72,18 +61,7 @@ impl SshDistantApi {
 
 #[async_trait]
 impl DistantApi for SshDistantApi {
-    type LocalData = ConnectionState;
-
-    async fn on_accept(&self, ctx: ConnectionCtx<'_, Self::LocalData>) -> io::Result<()> {
-        ctx.local_data.global_processes = Arc::downgrade(&self.processes);
-        Ok(())
-    }
-
-    async fn read_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-    ) -> io::Result<Vec<u8>> {
+    async fn read_file(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
         debug!(
             "[Conn {}] Reading bytes from file {:?}",
             ctx.connection_id, path
@@ -103,11 +81,7 @@ impl DistantApi for SshDistantApi {
         Ok(contents.into_bytes())
     }
 
-    async fn read_file_text(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-    ) -> io::Result<String> {
+    async fn read_file_text(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<String> {
         debug!(
             "[Conn {}] Reading text from file {:?}",
             ctx.connection_id, path
@@ -127,12 +101,7 @@ impl DistantApi for SshDistantApi {
         Ok(contents)
     }
 
-    async fn write_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn write_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Writing bytes to file {:?}",
             ctx.connection_id, path
@@ -154,7 +123,7 @@ impl DistantApi for SshDistantApi {
 
     async fn write_file_text(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
@@ -177,12 +146,7 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn append_file(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn append_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Appending bytes to file {:?}",
             ctx.connection_id, path
@@ -213,7 +177,7 @@ impl DistantApi for SshDistantApi {
 
     async fn append_file_text(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         data: String,
     ) -> io::Result<()> {
@@ -247,7 +211,7 @@ impl DistantApi for SshDistantApi {
 
     async fn read_dir(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         depth: usize,
         absolute: bool,
@@ -375,12 +339,7 @@ impl DistantApi for SshDistantApi {
         Ok((entries, errors))
     }
 
-    async fn create_dir(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        all: bool,
-    ) -> io::Result<()> {
+    async fn create_dir(&self, ctx: DistantCtx, path: PathBuf, all: bool) -> io::Result<()> {
         debug!(
             "[Conn {}] Creating directory {:?} {{all: {}}}",
             ctx.connection_id, path, all
@@ -436,12 +395,7 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn remove(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        path: PathBuf,
-        force: bool,
-    ) -> io::Result<()> {
+    async fn remove(&self, ctx: DistantCtx, path: PathBuf, force: bool) -> io::Result<()> {
         debug!(
             "[Conn {}] Removing {:?} {{force: {}}}",
             ctx.connection_id, path, force
@@ -526,12 +480,7 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn copy(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        src: PathBuf,
-        dst: PathBuf,
-    ) -> io::Result<()> {
+    async fn copy(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         debug!(
             "[Conn {}] Copying {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -573,12 +522,7 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn rename(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        src: PathBuf,
-        dst: PathBuf,
-    ) -> io::Result<()> {
+    async fn rename(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         debug!(
             "[Conn {}] Renaming {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -594,7 +538,7 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn exists(&self, ctx: DistantCtx<Self::LocalData>, path: PathBuf) -> io::Result<bool> {
+    async fn exists(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<bool> {
         debug!("[Conn {}] Checking if {:?} exists", ctx.connection_id, path);
 
         // NOTE: SFTP does not provide a means to check if a path exists that can be performed
@@ -612,7 +556,7 @@ impl DistantApi for SshDistantApi {
 
     async fn metadata(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -676,7 +620,7 @@ impl DistantApi for SshDistantApi {
     #[allow(unreachable_code)]
     async fn set_permissions(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
@@ -805,7 +749,7 @@ impl DistantApi for SshDistantApi {
 
     async fn proc_spawn(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
@@ -817,12 +761,8 @@ impl DistantApi for SshDistantApi {
         );
 
         let global_processes = Arc::downgrade(&self.processes);
-        let local_processes = Arc::downgrade(&ctx.local_data.processes);
         let cleanup = |id: ProcessId| async move {
             if let Some(processes) = Weak::upgrade(&global_processes) {
-                processes.write().await.remove(&id);
-            }
-            if let Some(processes) = Weak::upgrade(&local_processes) {
                 processes.write().await.remove(&id);
             }
         };
@@ -874,7 +814,7 @@ impl DistantApi for SshDistantApi {
         Ok(id)
     }
 
-    async fn proc_kill(&self, ctx: DistantCtx<Self::LocalData>, id: ProcessId) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: DistantCtx, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
 
         if let Some(process) = self.processes.read().await.get(&id) {
@@ -892,12 +832,7 @@ impl DistantApi for SshDistantApi {
         ))
     }
 
-    async fn proc_stdin(
-        &self,
-        ctx: DistantCtx<Self::LocalData>,
-        id: ProcessId,
-        data: Vec<u8>,
-    ) -> io::Result<()> {
+    async fn proc_stdin(&self, ctx: DistantCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Sending stdin to process {}",
             ctx.connection_id, id
@@ -920,7 +855,7 @@ impl DistantApi for SshDistantApi {
 
     async fn proc_resize_pty(
         &self,
-        ctx: DistantCtx<Self::LocalData>,
+        ctx: DistantCtx,
         id: ProcessId,
         size: PtySize,
     ) -> io::Result<()> {
@@ -944,7 +879,7 @@ impl DistantApi for SshDistantApi {
         ))
     }
 
-    async fn system_info(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<SystemInfo> {
+    async fn system_info(&self, ctx: DistantCtx) -> io::Result<SystemInfo> {
         // We cache each of these requested values since they should not change for the
         // lifetime of the ssh connection
         static CURRENT_DIR: OnceCell<PathBuf> = OnceCell::new();
@@ -998,7 +933,7 @@ impl DistantApi for SshDistantApi {
         })
     }
 
-    async fn version(&self, ctx: DistantCtx<Self::LocalData>) -> io::Result<Version> {
+    async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
         debug!("[Conn {}] Querying capabilities", ctx.connection_id);
 
         let mut capabilities = Capabilities::all();
