@@ -425,7 +425,7 @@ where
         let id = connection.id();
 
         // Create local data for the connection and then process it
-        debug!("[Conn {id}] Officially accepting connection");
+        info!("[Conn {id}] Connection established");
         if let Err(x) = await_or_shutdown!(handler.on_connect(id)) {
             terminate_connection!(@fatal "[Conn {id}] Accepting connection failed: {x}");
         }
@@ -477,6 +477,10 @@ where
                     Ok(Some(frame)) => match UntypedRequest::from_slice(frame.as_item()) {
                         Ok(request) => match request.to_typed_request() {
                             Ok(request) => {
+                                debug!(
+                                    "[Conn {id}] New request {} | header {}",
+                                    request.id, request.header
+                                );
                                 let origin_id = request.id.clone();
                                 let ctx = RequestCtx {
                                     connection_id: id,
@@ -493,8 +497,8 @@ where
                                 tokio::spawn(async move { handler.on_request(ctx).await });
                             }
                             Err(x) => {
-                                if log::log_enabled!(Level::Trace) {
-                                    trace!(
+                                if log::log_enabled!(Level::Debug) {
+                                    error!(
                                         "[Conn {id}] Failed receiving {}",
                                         String::from_utf8_lossy(&request.payload),
                                     );

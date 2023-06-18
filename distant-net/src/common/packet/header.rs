@@ -3,6 +3,7 @@ use derive_more::IntoIterator;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::ops::{Deref, DerefMut};
 
@@ -88,5 +89,20 @@ impl Deref for Header {
 impl DerefMut for Header {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl fmt::Display for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{")?;
+
+        for (key, value) in self.0.iter() {
+            let value = serde_json::to_string(value).unwrap_or_else(|_| String::from("--"));
+            write!(f, "\"{key}\" = {value}")?;
+        }
+
+        write!(f, "}}")?;
+
+        Ok(())
     }
 }

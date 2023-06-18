@@ -223,6 +223,9 @@ where
                     .verifier(Arc::downgrade(&verifier))
                     .spawn(),
             );
+
+            // Clean up current tasks being tracked
+            connection_tasks.retain(|task| !task.is_finished());
         }
 
         // Once we stop listening, we still want to wait until all connections have terminated
