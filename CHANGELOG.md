@@ -11,9 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Request` and `Response` types from `distant-net` now support an optional
   `Header` to send miscellaneous information
-- New feature `tracing` provides https://github.com/tokio-rs/tracing support
-  as a new `--tracing` flag. Must be compiled with
-  `RUSTFLAGS="--cfg tokio_unstable"` to properly operate.
 
 ### Changed
 
@@ -30,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update `Reply` trait and associated implementations to be non-blocking &
   synchronous as opposed to asynchronous to avoid deadlocks and also be more
   performant
+
+### Fixed
+
+- Username and password now support full character sets outside of `@` for
+  passwords and `:` and `@` for usernames
 
 ## [0.20.0-alpha.8]
 

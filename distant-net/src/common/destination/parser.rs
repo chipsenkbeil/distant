@@ -69,11 +69,8 @@ fn parse_scheme(s: &str) -> PResult<&str> {
 
 fn parse_username_password(s: &str) -> PResult<(Option<&str>, Option<&str>)> {
     let (auth, remaining) = s.split_once('@').ok_or("Auth missing @")?;
-    let (auth, username) = maybe(parse_until(|c| !c.is_alphanumeric() && c != '-'))(auth)?;
-    let (auth, password) = maybe(prefixed(
-        parse_char(':'),
-        parse_until(|c| !c.is_alphanumeric()),
-    ))(auth)?;
+    let (auth, username) = maybe(parse_until(|c| c == ':'))(auth)?;
+    let (auth, password) = maybe(prefixed(parse_char(':'), |s| Ok(("", s))))(auth)?;
 
     if !auth.is_empty() {
         return Err("Dangling characters after username/password");
@@ -298,16 +295,6 @@ mod tests {
             }
 
             #[test]
-            fn should_fail_if_username_not_alphanumeric() {
-                let _ = parse_username_password("us\x1bername:password@").unwrap_err();
-            }
-
-            #[test]
-            fn should_fail_if_password_not_alphanumeric() {
-                let _ = parse_username_password("username:pas\x1bsword@").unwrap_err();
-            }
-
-            #[test]
             fn should_return_username_if_available() {
                 let (s, username_password) = parse_username_password("username@").unwrap();
                 assert_eq!(s, "");
@@ -350,12 +337,57 @@ mod tests {
             }
 
             #[test]
+            fn should_support_username_with_backslash() {
+                let (s, username_password) = parse_username_password(r#"orgname\myname@"#).unwrap();
+                assert_eq!(s, "");
+                assert_eq!(username_password.0, Some(r#"orgname\myname"#));
+                assert_eq!(username_password.1, None);
+
+                let (s, username_password) =
+                    parse_username_password(r#"orgname\myname:password@"#).unwrap();
+                assert_eq!(s, "");
+                assert_eq!(username_password.0, Some(r#"orgname\myname"#));
+                assert_eq!(username_password.1, Some("password"));
+            }
+
+            #[test]
+            fn should_support_username_and_password_with_arbitrary_characters() {
+                let (s, username_password) =
+                    parse_username_password("name1!#$%^&*()[]{{}}\x1b:pass1!#$%^&*()[]{{}}\x1b@")
+                        .unwrap();
+                assert_eq!(s, "");
+                assert_eq!(username_password.0, Some("name1!#$%^&*()[]{{}}\x1b"));
+                assert_eq!(username_password.1, Some("pass1!#$%^&*()[]{{}}\x1b"));
+            }
+
+            #[test]
+            fn should_support_colons_in_password() {
+                let (s, username_password) =
+                    parse_username_password("user:name:password@").unwrap();
+                assert_eq!(s, "");
+                assert_eq!(username_password.0, Some("user"));
+                assert_eq!(username_password.1, Some("name:password"));
+            }
+
+            #[test]
             fn should_consume_up_to_the_ending_sequence() {
                 let (s, username_password) =
                     parse_username_password("username:password@example.com").unwrap();
                 assert_eq!(s, "example.com");
                 assert_eq!(username_password.0, Some("username"));
                 assert_eq!(username_password.1, Some("password"));
+
+                let (s, username_password) =
+                    parse_username_password("user@name:password@").unwrap();
+                assert_eq!(s, "name:password@");
+                assert_eq!(username_password.0, Some("user"));
+                assert_eq!(username_password.1, None);
+
+                let (s, username_password) =
+                    parse_username_password("username:pass@word@").unwrap();
+                assert_eq!(s, "word@");
+                assert_eq!(username_password.0, Some("username"));
+                assert_eq!(username_password.1, Some("pass"));
             }
         }
 
