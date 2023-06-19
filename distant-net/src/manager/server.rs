@@ -353,7 +353,7 @@ impl ServerHandler for ManagerServer {
             }
         };
 
-        if let Err(x) = reply.send(response).await {
+        if let Err(x) = reply.send(response) {
             error!("[Conn {}] {}", connection_id, x);
         }
     }
@@ -392,7 +392,7 @@ mod tests {
         let authenticator = ManagerAuthenticator {
             reply: ServerReply {
                 origin_id: format!("{}", rand::random::<u8>()),
-                tx: mpsc::channel(1).0,
+                tx: mpsc::unbounded_channel().0,
             },
             registry: Arc::clone(&registry),
         };

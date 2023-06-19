@@ -20,7 +20,6 @@ impl ServerHandler for TestServerHandler {
     async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
         ctx.reply
             .send(format!("echo {}", ctx.request.payload))
-            .await
             .expect("Failed to send response")
     }
 }

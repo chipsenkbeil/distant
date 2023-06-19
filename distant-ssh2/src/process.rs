@@ -216,7 +216,7 @@ fn spawn_blocking_stdout_task(
                         id,
                         data: buf[..n].to_vec(),
                     };
-                    if reply.blocking_send(payload).is_err() {
+                    if reply.send(payload).is_err() {
                         error!("[Ssh | Proc {}] Stdout channel closed", id);
                         break;
                     }
@@ -247,7 +247,7 @@ fn spawn_nonblocking_stdout_task(
                         id,
                         data: buf[..n].to_vec(),
                     };
-                    if reply.send(payload).await.is_err() {
+                    if reply.send(payload).is_err() {
                         error!("[Ssh | Proc {}] Stdout channel closed", id);
                         break;
                     }
@@ -281,7 +281,7 @@ fn spawn_nonblocking_stderr_task(
                         id,
                         data: buf[..n].to_vec(),
                     };
-                    if reply.send(payload).await.is_err() {
+                    if reply.send(payload).is_err() {
                         error!("[Ssh | Proc {}] Stderr channel closed", id);
                         break;
                     }
@@ -423,7 +423,7 @@ where
             code: if success { Some(0) } else { None },
         };
 
-        if reply.send(payload).await.is_err() {
+        if reply.send(payload).is_err() {
             error!("[Ssh | Proc {}] Failed to send done", id,);
         }
     })

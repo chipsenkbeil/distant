@@ -719,7 +719,7 @@ mod tests {
 
     const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
-    async fn setup(buffer: usize) -> (Api, DistantCtx, mpsc::Receiver<Response>) {
+    async fn setup() -> (Api, DistantCtx, mpsc::UnboundedReceiver<Response>) {
         let api = Api::initialize(Config {
             watch: WatchConfig {
                 debounce_timeout: DEBOUNCE_TIMEOUT,
@@ -727,7 +727,7 @@ mod tests {
             },
         })
         .unwrap();
-        let (reply, rx) = make_reply(buffer);
+        let (reply, rx) = make_reply();
         let connection_id = rand::random();
 
         DistantApi::on_connect(&api, connection_id).await.unwrap();
@@ -738,14 +738,17 @@ mod tests {
         (api, ctx, rx)
     }
 
-    fn make_reply(buffer: usize) -> (Box<dyn Reply<Data = Response>>, mpsc::Receiver<Response>) {
-        let (tx, rx) = mpsc::channel(buffer);
+    fn make_reply() -> (
+        Box<dyn Reply<Data = Response>>,
+        mpsc::UnboundedReceiver<Response>,
+    ) {
+        let (tx, rx) = mpsc::unbounded_channel();
         (Box::new(tx), rx)
     }
 
     #[test(tokio::test)]
     async fn read_file_should_fail_if_file_missing() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
@@ -754,7 +757,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn read_file_should_send_blob_with_file_contents() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
@@ -766,7 +769,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn read_file_text_should_send_error_if_fails_to_read_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
@@ -776,7 +779,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn read_file_text_should_send_text_with_file_contents() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
@@ -791,7 +794,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn write_file_should_send_error_if_fails_to_write_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
@@ -809,7 +812,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn write_file_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Path should point to a file that does not exist, but all
         // other components leading up to it do
@@ -827,7 +830,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn write_file_text_should_send_error_if_fails_to_write_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
@@ -844,7 +847,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn write_file_text_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Path should point to a file that does not exist, but all
         // other components leading up to it do
@@ -862,7 +865,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn append_file_should_send_error_if_fails_to_create_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
@@ -883,7 +886,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn append_file_should_create_file_if_missing() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Don't create the file directly, but define path
         // where the file should be
@@ -907,7 +910,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn append_file_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create a temporary file and fill it with some contents
         let temp = assert_fs::TempDir::new().unwrap();
@@ -931,7 +934,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn append_file_text_should_send_error_if_fails_to_create_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create a temporary path and add to it to ensure that there are
         // extra components that don't exist to cause writing to fail
@@ -953,7 +956,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn append_file_text_should_create_file_if_missing() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Don't create the file directly, but define path
         // where the file should be
@@ -977,7 +980,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn append_file_text_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create a temporary file and fill it with some contents
         let temp = assert_fs::TempDir::new().unwrap();
@@ -1001,7 +1004,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn dir_read_should_send_error_if_directory_does_not_exist() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("test-dir");
@@ -1042,7 +1045,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn dir_read_should_support_depth_limits() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
@@ -1076,7 +1079,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn dir_read_should_support_unlimited_depth_using_zero() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
@@ -1114,7 +1117,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn dir_read_should_support_including_directory_in_returned_entries() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
@@ -1153,7 +1156,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn dir_read_should_support_returning_absolute_paths() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
@@ -1188,7 +1191,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn dir_read_should_support_returning_canonicalized_paths() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Create directory with some nested items
         let root_dir = setup_dir().await;
@@ -1223,7 +1226,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn create_dir_should_send_error_if_fails() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Make a path that has multiple non-existent components
         // so the creation will fail
@@ -1241,7 +1244,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn create_dir_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("new-dir");
 
@@ -1255,7 +1258,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn create_dir_should_support_creating_multiple_dir_components() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("nested").join("new-dir");
 
@@ -1269,7 +1272,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn remove_should_send_error_on_failure() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("missing-file");
 
@@ -1284,7 +1287,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn remove_should_support_deleting_a_directory() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
@@ -1299,7 +1302,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn remove_should_delete_nonempty_directory_if_force_is_true() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
@@ -1315,7 +1318,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn remove_should_support_deleting_a_single_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("some-file");
         file.touch().unwrap();
@@ -1330,7 +1333,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn copy_should_send_error_on_failure() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         let dst = temp.child("dst");
@@ -1346,7 +1349,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn copy_should_support_copying_an_entire_directory() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let src = temp.child("src");
@@ -1370,7 +1373,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn copy_should_support_copying_an_empty_directory() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         src.create_dir_all().unwrap();
@@ -1387,7 +1390,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn copy_should_support_copying_a_directory_that_only_contains_directories() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let src = temp.child("src");
@@ -1411,7 +1414,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn copy_should_support_copying_a_single_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         src.write_str("some text").unwrap();
@@ -1428,7 +1431,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn rename_should_fail_if_path_missing() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         let dst = temp.child("dst");
@@ -1444,7 +1447,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn rename_should_support_renaming_an_entire_directory() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let src = temp.child("src");
@@ -1468,7 +1471,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn rename_should_support_renaming_a_single_file() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let src = temp.child("src");
         src.write_str("some text").unwrap();
@@ -1504,7 +1507,7 @@ mod tests {
     #[test(tokio::test)]
     async fn watch_should_support_watching_a_single_file() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
-        let (api, ctx, mut rx) = setup(100).await;
+        let (api, ctx, mut rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let file = temp.child("file");
@@ -1537,7 +1540,7 @@ mod tests {
     #[test(tokio::test)]
     async fn watch_should_support_watching_a_directory_recursively() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
-        let (api, ctx, mut rx) = setup(100).await;
+        let (api, ctx, mut rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
 
         let file = temp.child("file");
@@ -1614,9 +1617,9 @@ mod tests {
     #[test(tokio::test)]
     async fn watch_should_report_changes_using_the_ctx_replies() {
         // NOTE: Supporting multiple replies being sent back as part of creating, modifying, etc.
-        let (api, ctx_1, mut rx_1) = setup(100).await;
+        let (api, ctx_1, mut rx_1) = setup().await;
         let (ctx_2, mut rx_2) = {
-            let (reply, rx) = make_reply(100);
+            let (reply, rx) = make_reply();
             let ctx = DistantCtx {
                 connection_id: ctx_1.connection_id,
                 reply,
@@ -1685,7 +1688,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn exists_should_send_true_if_path_exists() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.touch().unwrap();
@@ -1696,7 +1699,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn exists_should_send_false_if_path_does_not_exist() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
 
@@ -1706,7 +1709,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn metadata_should_send_error_on_failure() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
 
@@ -1723,7 +1726,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn metadata_should_send_back_metadata_on_file_if_exists() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1757,7 +1760,7 @@ mod tests {
     #[cfg(unix)]
     #[test(tokio::test)]
     async fn metadata_should_include_unix_specific_metadata_on_unix_platform() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1787,7 +1790,7 @@ mod tests {
     #[cfg(windows)]
     #[test(tokio::test)]
     async fn metadata_should_include_windows_specific_metadata_on_windows_platform() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1816,7 +1819,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn metadata_should_send_back_metadata_on_dir_if_exists() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
@@ -1848,7 +1851,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn metadata_should_send_back_metadata_on_symlink_if_exists() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1883,7 +1886,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn metadata_should_include_canonicalized_path_if_flag_specified() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1918,7 +1921,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1951,7 +1954,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn set_permissions_should_set_readonly_flag_if_specified() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -1988,7 +1991,7 @@ mod tests {
         {
             use std::os::unix::prelude::*;
 
-            let (api, ctx, _rx) = setup(1).await;
+            let (api, ctx, _rx) = setup().await;
             let temp = assert_fs::TempDir::new().unwrap();
             let file = temp.child("file");
             file.write_str("some text").unwrap();
@@ -2031,7 +2034,7 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(unix, ignore)]
     async fn set_permissions_should_set_readonly_flag_if_not_on_unix_platform() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2071,7 +2074,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn set_permissions_should_not_recurse_if_option_false() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2145,7 +2148,7 @@ mod tests {
     #[test(tokio::test)]
     async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled(
     ) {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2189,7 +2192,7 @@ mod tests {
     #[test(tokio::test)]
     async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled(
     ) {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2235,7 +2238,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2279,7 +2282,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn set_permissions_should_support_recursive_if_option_specified() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2330,7 +2333,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn set_permissions_should_support_following_explicit_symlink_if_option_specified() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
         file.write_str("some text").unwrap();
@@ -2390,7 +2393,7 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_error_on_failure() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let _ = api
             .proc_spawn(
@@ -2409,7 +2412,7 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_return_id_of_spawned_process() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let id = api
             .proc_spawn(
@@ -2434,7 +2437,7 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stdout_periodically_when_available() {
-        let (api, ctx, mut rx) = setup(1).await;
+        let (api, ctx, mut rx) = setup().await;
 
         let proc_id = api
             .proc_spawn(
@@ -2498,7 +2501,7 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stderr_periodically_when_available() {
-        let (api, ctx, mut rx) = setup(1).await;
+        let (api, ctx, mut rx) = setup().await;
 
         let proc_id = api
             .proc_spawn(
@@ -2562,7 +2565,7 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_done_signal_when_completed() {
-        let (api, ctx, mut rx) = setup(1).await;
+        let (api, ctx, mut rx) = setup().await;
 
         let proc_id = api
             .proc_spawn(
@@ -2592,9 +2595,9 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_clear_process_from_state_when_killed() {
-        let (api, ctx_1, mut rx) = setup(1).await;
+        let (api, ctx_1, mut rx) = setup().await;
         let (ctx_2, _rx) = {
-            let (reply, rx) = make_reply(1);
+            let (reply, rx) = make_reply();
             let ctx = DistantCtx {
                 connection_id: ctx_1.connection_id,
                 reply,
@@ -2630,7 +2633,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn proc_kill_should_fail_if_given_non_existent_process() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Send kill to a non-existent process
         let _ = api.proc_kill(ctx, 0xDEADBEEF).await.unwrap_err();
@@ -2638,7 +2641,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn proc_stdin_should_fail_if_given_non_existent_process() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         // Send stdin to a non-existent process
         let _ = api
@@ -2652,9 +2655,9 @@ mod tests {
     #[test(tokio::test)]
     #[cfg_attr(windows, ignore)]
     async fn proc_stdin_should_send_stdin_to_process() {
-        let (api, ctx_1, mut rx) = setup(1).await;
+        let (api, ctx_1, mut rx) = setup().await;
         let (ctx_2, _rx) = {
-            let (reply, rx) = make_reply(1);
+            let (reply, rx) = make_reply();
             let ctx = DistantCtx {
                 connection_id: ctx_1.connection_id,
                 reply,
@@ -2695,7 +2698,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn system_info_should_return_system_info_based_on_binary() {
-        let (api, ctx, _rx) = setup(1).await;
+        let (api, ctx, _rx) = setup().await;
 
         let system_info = api.system_info(ctx).await.unwrap();
         assert_eq!(

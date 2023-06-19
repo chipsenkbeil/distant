@@ -262,7 +262,7 @@ mod tests {
 
         async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
             // Always send back "hello"
-            ctx.reply.send("hello".to_string()).await.unwrap();
+            ctx.reply.send("hello".to_string()).unwrap();
         }
     }
 

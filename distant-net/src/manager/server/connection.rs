@@ -225,19 +225,9 @@ async fn action_task(
                         response: res,
                     };
 
-                    // TODO: This seems to get stuck at times with some change recently,
-                    //       so we kick this off in a new task instead. The better solution
-                    //       is to switch most of our mpsc usage to be unbounded so we
-                    //       don't need an async call. The only bounded ones should be those
-                    //       externally facing to the API user, if even that.
-                    //
-                    //       https://github.com/chipsenkbeil/distant/issues/205
-                    let reply = reply.clone();
-                    tokio::spawn(async move {
-                        if let Err(x) = reply.send(response).await {
-                            error!("[Conn {id}] {x}");
-                        }
-                    });
+                    if let Err(x) = reply.send(response) {
+                        error!("[Conn {id}] {x}");
+                    }
                 }
             }
             Action::Write { id, mut req } => {

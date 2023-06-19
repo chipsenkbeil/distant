@@ -19,7 +19,6 @@ impl ServerHandler for TestServerHandler {
         for i in 0..cnt {
             ctx.reply
                 .send(format!("echo {i} {msg}"))
-                .await
                 .expect("Failed to send response");
         }
     }
