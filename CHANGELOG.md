@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename `GenericServerRef` to `ServerRef` and remove `ServerRef` trait,
   refactoring `TcpServerRef`, `UnixSocketServerRef`, and `WindowsPipeServerRef`
   to use the struct instead of `Box<dyn ServerRef>`
+- Update `Reply` trait and associated implementations to be non-blocking &
+  synchronous as opposed to asynchronous to avoid deadlocks and also be more
+  performant
 
 ## [0.20.0-alpha.8]
 
