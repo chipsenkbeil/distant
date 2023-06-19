@@ -31,7 +31,7 @@ impl<T> Default for ServerState<T> {
 
 pub struct ConnectionState<T> {
     shutdown_tx: oneshot::Sender<()>,
-    task: JoinHandle<Option<(mpsc::Sender<T>, mpsc::Receiver<T>)>>,
+    task: JoinHandle<Option<(mpsc::UnboundedSender<T>, mpsc::UnboundedReceiver<T>)>>,
 }
 
 impl<T: Send + 'static> ConnectionState<T> {
@@ -40,7 +40,7 @@ impl<T: Send + 'static> ConnectionState<T> {
     #[allow(clippy::type_complexity)]
     pub fn channel() -> (
         oneshot::Receiver<()>,
-        oneshot::Sender<(mpsc::Sender<T>, mpsc::Receiver<T>)>,
+        oneshot::Sender<(mpsc::UnboundedSender<T>, mpsc::UnboundedReceiver<T>)>,
         Self,
     ) {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -65,7 +65,9 @@ impl<T: Send + 'static> ConnectionState<T> {
         self.task.is_finished()
     }
 
-    pub async fn shutdown_and_wait(self) -> Option<(mpsc::Sender<T>, mpsc::Receiver<T>)> {
+    pub async fn shutdown_and_wait(
+        self,
+    ) -> Option<(mpsc::UnboundedSender<T>, mpsc::UnboundedReceiver<T>)> {
         let _ = self.shutdown_tx.send(());
         self.task.await.unwrap()
     }

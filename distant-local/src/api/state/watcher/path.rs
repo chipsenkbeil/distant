@@ -122,17 +122,14 @@ impl RegisteredPath {
     /// out any changes that are not applicable.
     ///
     /// Returns true if message was sent, and false if not.
-    pub async fn filter_and_send(&self, change: Change) -> io::Result<bool> {
+    pub fn filter_and_send(&self, change: Change) -> io::Result<bool> {
         if !self.allowed().contains(&change.kind) {
             return Ok(false);
         }
 
         // Only send if this registered path applies to the changed path
         if self.applies_to_path(&change.path) {
-            self.reply
-                .send(Response::Changed(change))
-                .await
-                .map(|_| true)
+            self.reply.send(Response::Changed(change)).map(|_| true)
         } else {
             Ok(false)
         }
@@ -142,7 +139,7 @@ impl RegisteredPath {
     /// no paths match and `skip_if_no_paths` is true.
     ///
     /// Returns true if message was sent, and false if not.
-    pub async fn filter_and_send_error<T>(
+    pub fn filter_and_send_error<T>(
         &self,
         msg: &str,
         paths: T,
@@ -165,7 +162,6 @@ impl RegisteredPath {
                 } else {
                     Response::Error(Error::from(format!("{msg} about {paths:?}")))
                 })
-                .await
                 .map(|_| true)
         } else {
             Ok(false)

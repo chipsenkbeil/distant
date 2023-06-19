@@ -1,6 +1,4 @@
-use std::future::Future;
 use std::io;
-use std::pin::Pin;
 
 use distant_net::server::Reply;
 
@@ -19,12 +17,8 @@ impl From<Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>> for DistantS
 impl Reply for DistantSingleReply {
     type Data = protocol::Response;
 
-    fn send(&self, data: Self::Data) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+    fn send(&self, data: Self::Data) -> io::Result<()> {
         self.0.send(protocol::Msg::Single(data))
-    }
-
-    fn blocking_send(&self, data: Self::Data) -> io::Result<()> {
-        self.0.blocking_send(protocol::Msg::Single(data))
     }
 
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {

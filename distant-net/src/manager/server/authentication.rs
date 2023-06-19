@@ -29,19 +29,15 @@ impl ManagerAuthenticator {
         let id = rand::random();
 
         self.registry.write().await.insert(id, tx);
-        self.reply
-            .send(ManagerResponse::Authenticate { id, msg })
-            .await?;
+        self.reply.send(ManagerResponse::Authenticate { id, msg })?;
         rx.await
             .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
     }
 
     /// Sends an [`Authentication`] `msg` without expecting a reply. No callback is stored.
-    async fn fire(&self, msg: Authentication) -> io::Result<()> {
+    fn fire(&self, msg: Authentication) -> io::Result<()> {
         let id = rand::random();
-        self.reply
-            .send(ManagerResponse::Authenticate { id, msg })
-            .await?;
+        self.reply.send(ManagerResponse::Authenticate { id, msg })?;
         Ok(())
     }
 }
@@ -89,18 +85,18 @@ impl Authenticator for ManagerAuthenticator {
     }
 
     async fn info(&mut self, info: Info) -> io::Result<()> {
-        self.fire(Authentication::Info(info)).await
+        self.fire(Authentication::Info(info))
     }
 
     async fn error(&mut self, error: Error) -> io::Result<()> {
-        self.fire(Authentication::Error(error)).await
+        self.fire(Authentication::Error(error))
     }
 
     async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        self.fire(Authentication::StartMethod(start_method)).await
+        self.fire(Authentication::StartMethod(start_method))
     }
 
     async fn finished(&mut self) -> io::Result<()> {
-        self.fire(Authentication::Finished).await
+        self.fire(Authentication::Finished)
     }
 }

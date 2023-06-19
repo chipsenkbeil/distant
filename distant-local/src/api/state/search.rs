@@ -224,13 +224,10 @@ impl SearchQueryReporter {
             if let Some(len) = options.pagination {
                 if matches.len() as u64 >= len {
                     trace!("[Query {id}] Reached {len} paginated matches");
-                    if let Err(x) = reply
-                        .send(Response::SearchResults {
-                            id,
-                            matches: std::mem::take(&mut matches),
-                        })
-                        .await
-                    {
+                    if let Err(x) = reply.send(Response::SearchResults {
+                        id,
+                        matches: std::mem::take(&mut matches),
+                    }) {
                         error!("[Query {id}] Failed to send paginated matches: {x}");
                     }
                 }
@@ -240,14 +237,14 @@ impl SearchQueryReporter {
         // Send any remaining matches
         if !matches.is_empty() {
             trace!("[Query {id}] Sending {} remaining matches", matches.len());
-            if let Err(x) = reply.send(Response::SearchResults { id, matches }).await {
+            if let Err(x) = reply.send(Response::SearchResults { id, matches }) {
                 error!("[Query {id}] Failed to send final matches: {x}");
             }
         }
 
         // Report that we are done
         trace!("[Query {id}] Reporting as done");
-        if let Err(x) = reply.send(Response::SearchDone { id }).await {
+        if let Err(x) = reply.send(Response::SearchDone { id }) {
             error!("[Query {id}] Failed to send done status: {x}");
         }
     }
@@ -842,7 +839,7 @@ mod tests {
         let root = setup_dir(Vec::new());
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -869,7 +866,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -946,7 +943,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1021,7 +1018,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1089,7 +1086,7 @@ mod tests {
         let root = setup_dir(vec![("path/to/file.txt", "aa ab ac\nba bb bc\nca cb cc")]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1183,7 +1180,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1276,7 +1273,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1310,7 +1307,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1353,7 +1350,7 @@ mod tests {
             expected_paths: Vec<PathBuf>,
         ) {
             let state = SearchState::new();
-            let (reply, mut rx) = mpsc::channel(100);
+            let (reply, mut rx) = mpsc::unbounded_channel();
             let query = SearchQuery {
                 paths: vec![root.path().to_path_buf()],
                 target: SearchQueryTarget::Path,
@@ -1441,7 +1438,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1493,7 +1490,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1559,7 +1556,7 @@ mod tests {
             .unwrap();
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
         //       and checking for 0x9F (159)
@@ -1611,7 +1608,7 @@ mod tests {
             .unwrap();
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
         //       and checking for 0x9F (159)
@@ -1647,7 +1644,7 @@ mod tests {
             expected_paths: Vec<PathBuf>,
         ) {
             let state = SearchState::new();
-            let (reply, mut rx) = mpsc::channel(100);
+            let (reply, mut rx) = mpsc::unbounded_channel();
 
             let query = SearchQuery {
                 paths: vec![root.path().to_path_buf()],
@@ -1731,7 +1728,7 @@ mod tests {
             .unwrap();
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![root.path().to_path_buf()],
@@ -1786,7 +1783,7 @@ mod tests {
             .unwrap();
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         // NOTE: Following symlobic links on its own does nothing, but when combined with a file
         //       type filter, it will evaluate the underlying type of symbolic links and filter
@@ -1834,7 +1831,7 @@ mod tests {
         ]);
 
         let state = SearchState::new();
-        let (reply, mut rx) = mpsc::channel(100);
+        let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
             paths: vec![
@@ -1918,7 +1915,7 @@ mod tests {
             expected_paths: Vec<PathBuf>,
         ) {
             let state = SearchState::new();
-            let (reply, mut rx) = mpsc::channel(100);
+            let (reply, mut rx) = mpsc::unbounded_channel();
             let query = SearchQuery {
                 paths: vec![path],
                 target: SearchQueryTarget::Path,

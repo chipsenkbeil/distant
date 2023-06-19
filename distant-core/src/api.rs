@@ -495,12 +495,12 @@ where
         // Queue up our result to go before ANY of the other messages that might be sent.
         // This is important to avoid situations such as when a process is started, but before
         // the confirmation can be sent some stdout or stderr is captured and sent first.
-        if let Err(x) = reply.send_before(response).await {
+        if let Err(x) = reply.send_before(response) {
             error!("[Conn {}] Failed to send response: {}", connection_id, x);
         }
 
         // Flush out all of our replies thus far and toggle to no longer hold submissions
-        if let Err(x) = reply.flush(false).await {
+        if let Err(x) = reply.flush(false) {
             error!(
                 "[Conn {}] Failed to flush response queue: {}",
                 connection_id, x

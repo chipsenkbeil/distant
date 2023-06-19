@@ -76,10 +76,7 @@ mod tests {
 
         async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
             // Echo back what we received
-            ctx.reply
-                .send(ctx.request.payload.to_string())
-                .await
-                .unwrap();
+            ctx.reply.send(ctx.request.payload.to_string()).unwrap();
         }
     }
 

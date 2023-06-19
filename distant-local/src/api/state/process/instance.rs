@@ -173,7 +173,7 @@ async fn stdout_task(
     loop {
         match stdout.recv().await {
             Ok(Some(data)) => {
-                reply.send(Response::ProcStdout { id, data }).await?;
+                reply.send(Response::ProcStdout { id, data })?;
             }
             Ok(None) => return Ok(()),
             Err(x) => return Err(x),
@@ -189,7 +189,7 @@ async fn stderr_task(
     loop {
         match stderr.recv().await {
             Ok(Some(data)) => {
-                reply.send(Response::ProcStderr { id, data }).await?;
+                reply.send(Response::ProcStderr { id, data })?;
             }
             Ok(None) => return Ok(()),
             Err(x) => return Err(x),
@@ -205,15 +205,11 @@ async fn wait_task(
     let status = child.wait().await;
 
     match status {
-        Ok(status) => {
-            reply
-                .send(Response::ProcDone {
-                    id,
-                    success: status.success,
-                    code: status.code,
-                })
-                .await
-        }
-        Err(x) => reply.send(Response::from(x)).await,
+        Ok(status) => reply.send(Response::ProcDone {
+            id,
+            success: status.success,
+            code: status.code,
+        }),
+        Err(x) => reply.send(Response::from(x)),
     }
 }

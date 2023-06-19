@@ -394,7 +394,7 @@ async fn watcher_task<W>(
                                 extra: ev.info().map(ToString::to_string),
                             },
                         };
-                        match registered_path.filter_and_send(change).await {
+                        match registered_path.filter_and_send(change) {
                             Ok(_) => (),
                             Err(x) => error!(
                                 "[Conn {}] Failed to forward changes to paths: {}",
@@ -410,10 +410,11 @@ async fn watcher_task<W>(
                 error!("Watcher encountered an error {} for {:?}", msg, err.paths);
 
                 for registered_path in registered_paths.iter() {
-                    match registered_path
-                        .filter_and_send_error(&msg, &err.paths, !err.paths.is_empty())
-                        .await
-                    {
+                    match registered_path.filter_and_send_error(
+                        &msg,
+                        &err.paths,
+                        !err.paths.is_empty(),
+                    ) {
                         Ok(_) => (),
                         Err(x) => error!(
                             "[Conn {}] Failed to forward changes to paths: {}",

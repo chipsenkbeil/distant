@@ -441,12 +441,12 @@ where
                 }
                 None => {
                     warn!("[Conn {id}] Existing connection with id, but channels not saved");
-                    mpsc::channel::<Response<H::Response>>(1)
+                    mpsc::unbounded_channel::<Response<H::Response>>()
                 }
             },
             None => {
                 debug!("[Conn {id}] Marked as new connection");
-                mpsc::channel::<Response<H::Response>>(1)
+                mpsc::unbounded_channel::<Response<H::Response>>()
             }
         };
 
@@ -609,7 +609,7 @@ mod tests {
 
         async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
             // Always send back "hello"
-            ctx.reply.send("hello".to_string()).await.unwrap();
+            ctx.reply.send("hello".to_string()).unwrap();
         }
     }
 
