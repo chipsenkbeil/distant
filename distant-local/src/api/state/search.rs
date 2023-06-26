@@ -137,7 +137,11 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                     Ok(executor) => executor,
                     Err(x) => {
                         let _ = cb.send(Err(x));
-                        return;
+
+                        // NOTE: We do not want to exit our task! This processes all of our search
+                        //       requests, so if we exit, things have gone terrible. This is just a
+                        //       regular error, so we merely continue to wait for the next request.
+                        continue;
                     }
                 };
 

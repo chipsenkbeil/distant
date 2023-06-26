@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Failing to start a search will no longer cause the search task to exit when
+  using the local server, which would result in no more searches being able to
+  be executed
+
 ## [0.20.0-alpha.9]
 
 ### Added
