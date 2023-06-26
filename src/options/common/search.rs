@@ -55,6 +55,35 @@ pub struct CliSearchQueryOptions {
     /// include the remaining results even if less than pagination request
     #[clap(long)]
     pub pagination: Option<u64>,
+
+    /// If true, will skip searching hidden files.
+    #[clap(long)]
+    pub ignore_hidden: bool,
+
+    /// If true, will read `.ignore` files that are used by `ripgrep` and `The Silver Searcher`
+    /// to determine which files and directories to not search.
+    #[clap(long)]
+    pub use_ignore_files: bool,
+
+    /// If true, will read `.ignore` files from parent directories that are used by `ripgrep` and
+    /// `The Silver Searcher` to determine which files and directories to not search.
+    #[clap(long)]
+    pub use_parent_ignore_files: bool,
+
+    /// If true, will read `.gitignore` files to determine which files and directories to not
+    /// search.
+    #[clap(long)]
+    pub use_git_ignore_files: bool,
+
+    /// If true, will read global `.gitignore` files to determine which files and directories to
+    /// not search.
+    #[clap(long)]
+    pub use_global_git_ignore_files: bool,
+
+    /// If true, will read `.git/info/exclude` files to determine which files and directories to
+    /// not search.
+    #[clap(long)]
+    pub use_git_exclude_files: bool,
 }
 
 impl From<CliSearchQueryOptions> for SearchQueryOptions {
@@ -68,6 +97,12 @@ impl From<CliSearchQueryOptions> for SearchQueryOptions {
             limit: x.limit,
             max_depth: x.max_depth,
             pagination: x.pagination,
+            ignore_hidden: x.ignore_hidden,
+            use_ignore_files: x.use_ignore_files,
+            use_parent_ignore_files: x.use_parent_ignore_files,
+            use_git_ignore_files: x.use_git_ignore_files,
+            use_global_git_ignore_files: x.use_global_git_ignore_files,
+            use_git_exclude_files: x.use_git_exclude_files,
         }
     }
 }

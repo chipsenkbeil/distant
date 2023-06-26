@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `use_hidden`, `use_ignore_files`, `use_parent_ignore_files`,
+  `use_git_ignore`, `use_global_git_ignore`, and `use_git_exclude` as new
+  options for searching
+
+### Changed
+
+- Searching now disables all standard filters by default with re-introducing
+  the ability to set the filters by individual options
+
 ### Fixed
 
 - Failing to start a search will no longer cause the search task to exit when

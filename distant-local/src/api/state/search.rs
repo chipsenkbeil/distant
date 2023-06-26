@@ -345,6 +345,13 @@ impl SearchQueryExecutor {
                     .build()
                     .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
             )
+            .standard_filters(false)
+            .hidden(query.options.ignore_hidden)
+            .ignore(query.options.use_ignore_files)
+            .parents(query.options.use_parent_ignore_files)
+            .git_ignore(query.options.use_git_ignore_files)
+            .git_global(query.options.use_global_git_ignore_files)
+            .git_exclude(query.options.use_git_exclude_files)
             .skip_stdout(true);
 
         if query.options.upward {

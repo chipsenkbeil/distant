@@ -230,6 +230,35 @@ pub struct SearchQueryOptions {
     /// include the remaining results even if less than pagination request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<u64>,
+
+    /// If true, will skip searching hidden files.
+    #[serde(skip_serializing_if = "utils::is_false")]
+    pub ignore_hidden: bool,
+
+    /// If true, will read `.ignore` files that are used by `ripgrep` and `The Silver Searcher`
+    /// to determine which files and directories to not search.
+    #[serde(skip_serializing_if = "utils::is_false")]
+    pub use_ignore_files: bool,
+
+    /// If true, will read `.ignore` files from parent directories that are used by `ripgrep` and
+    /// `The Silver Searcher` to determine which files and directories to not search.
+    #[serde(skip_serializing_if = "utils::is_false")]
+    pub use_parent_ignore_files: bool,
+
+    /// If true, will read `.gitignore` files to determine which files and directories to not
+    /// search.
+    #[serde(skip_serializing_if = "utils::is_false")]
+    pub use_git_ignore_files: bool,
+
+    /// If true, will read global `.gitignore` files to determine which files and directories to
+    /// not search.
+    #[serde(skip_serializing_if = "utils::is_false")]
+    pub use_global_git_ignore_files: bool,
+
+    /// If true, will read `.git/info/exclude` files to determine which files and directories to
+    /// not search.
+    #[serde(skip_serializing_if = "utils::is_false")]
+    pub use_git_exclude_files: bool,
 }
 
 /// Represents a match for a search query
@@ -929,6 +958,12 @@ mod tests {
                 limit: None,
                 max_depth: None,
                 pagination: None,
+                ignore_hidden: false,
+                use_ignore_files: false,
+                use_parent_ignore_files: false,
+                use_git_ignore_files: false,
+                use_global_git_ignore_files: false,
+                use_git_exclude_files: false,
             };
 
             let value = serde_json::to_value(options).unwrap();
@@ -950,6 +985,12 @@ mod tests {
                 limit: Some(u64::MAX),
                 max_depth: Some(u64::MAX),
                 pagination: Some(u64::MAX),
+                ignore_hidden: true,
+                use_ignore_files: true,
+                use_parent_ignore_files: true,
+                use_git_ignore_files: true,
+                use_global_git_ignore_files: true,
+                use_git_exclude_files: true,
             };
 
             let value = serde_json::to_value(options).unwrap();
@@ -970,6 +1011,12 @@ mod tests {
                     "limit": u64::MAX,
                     "max_depth": u64::MAX,
                     "pagination": u64::MAX,
+                    "ignore_hidden": true,
+                    "use_ignore_files": true,
+                    "use_parent_ignore_files": true,
+                    "use_git_ignore_files": true,
+                    "use_global_git_ignore_files": true,
+                    "use_git_exclude_files": true,
                 })
             );
         }
@@ -990,6 +1037,12 @@ mod tests {
                     limit: None,
                     max_depth: None,
                     pagination: None,
+                    ignore_hidden: false,
+                    use_ignore_files: false,
+                    use_parent_ignore_files: false,
+                    use_git_ignore_files: false,
+                    use_global_git_ignore_files: false,
+                    use_git_exclude_files: false,
                 }
             );
         }
@@ -1011,6 +1064,12 @@ mod tests {
                 "limit": u64::MAX,
                 "max_depth": u64::MAX,
                 "pagination": u64::MAX,
+                "ignore_hidden": true,
+                "use_ignore_files": true,
+                "use_parent_ignore_files": true,
+                "use_git_ignore_files": true,
+                "use_global_git_ignore_files": true,
+                "use_git_exclude_files": true,
             });
 
             let options: SearchQueryOptions = serde_json::from_value(value).unwrap();
@@ -1029,6 +1088,12 @@ mod tests {
                     limit: Some(u64::MAX),
                     max_depth: Some(u64::MAX),
                     pagination: Some(u64::MAX),
+                    ignore_hidden: true,
+                    use_ignore_files: true,
+                    use_parent_ignore_files: true,
+                    use_git_ignore_files: true,
+                    use_global_git_ignore_files: true,
+                    use_git_exclude_files: true,
                 }
             );
         }
@@ -1044,6 +1109,12 @@ mod tests {
                 limit: None,
                 max_depth: None,
                 pagination: None,
+                ignore_hidden: false,
+                use_ignore_files: false,
+                use_parent_ignore_files: false,
+                use_git_ignore_files: false,
+                use_global_git_ignore_files: false,
+                use_git_exclude_files: false,
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -1068,6 +1139,12 @@ mod tests {
                 limit: Some(u64::MAX),
                 max_depth: Some(u64::MAX),
                 pagination: Some(u64::MAX),
+                ignore_hidden: true,
+                use_ignore_files: true,
+                use_parent_ignore_files: true,
+                use_git_ignore_files: true,
+                use_global_git_ignore_files: true,
+                use_git_exclude_files: true,
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -1092,6 +1169,12 @@ mod tests {
                 limit: None,
                 max_depth: None,
                 pagination: None,
+                ignore_hidden: false,
+                use_ignore_files: false,
+                use_parent_ignore_files: false,
+                use_git_ignore_files: false,
+                use_global_git_ignore_files: false,
+                use_git_exclude_files: false,
             })
             .unwrap();
 
@@ -1107,6 +1190,12 @@ mod tests {
                     limit: None,
                     max_depth: None,
                     pagination: None,
+                    ignore_hidden: false,
+                    use_ignore_files: false,
+                    use_parent_ignore_files: false,
+                    use_git_ignore_files: false,
+                    use_global_git_ignore_files: false,
+                    use_git_exclude_files: false,
                 }
             );
         }
@@ -1130,6 +1219,12 @@ mod tests {
                 limit: Some(u64::MAX),
                 max_depth: Some(u64::MAX),
                 pagination: Some(u64::MAX),
+                ignore_hidden: true,
+                use_ignore_files: true,
+                use_parent_ignore_files: true,
+                use_git_ignore_files: true,
+                use_global_git_ignore_files: true,
+                use_git_exclude_files: true,
             })
             .unwrap();
 
@@ -1149,6 +1244,12 @@ mod tests {
                     limit: Some(u64::MAX),
                     max_depth: Some(u64::MAX),
                     pagination: Some(u64::MAX),
+                    ignore_hidden: true,
+                    use_ignore_files: true,
+                    use_parent_ignore_files: true,
+                    use_git_ignore_files: true,
+                    use_global_git_ignore_files: true,
+                    use_git_exclude_files: true,
                 }
             );
         }
