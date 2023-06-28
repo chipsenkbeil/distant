@@ -28,12 +28,8 @@ pub struct Options {
     #[clap(flatten)]
     pub logging: LoggingSettings,
 
-    #[cfg(feature = "tracing")]
-    #[clap(long, global = true)]
-    pub tracing: bool,
-
     /// Configuration file to load instead of the default paths
-    #[clap(short = 'c', long = "config", global = true, value_parser)]
+    #[clap(long = "config", global = true, value_parser)]
     config_path: Option<PathBuf>,
 
     #[clap(subcommand)]
@@ -452,8 +448,17 @@ pub enum ClientSubcommand {
         #[clap(long, default_value_t)]
         environment: Map,
 
+        /// If present, commands are read from the provided string
+        #[clap(short = 'c', long = "cmd", conflicts_with = "CMD")]
+        cmd_str: Option<String>,
+
         /// Command to run
-        #[clap(name = "CMD", num_args = 1.., last = true)]
+        #[clap(
+            name = "CMD",
+            num_args = 1..,
+            last = true,
+            conflicts_with = "cmd_str"
+        )]
         cmd: Vec<String>,
     },
 
@@ -1857,6 +1862,7 @@ mod tests {
                 environment: map!(),
                 lsp: Some(None),
                 pty: true,
+                cmd_str: None,
                 cmd: vec![String::from("cmd")],
             }),
         };
@@ -1895,6 +1901,7 @@ mod tests {
                     environment: map!(),
                     lsp: Some(None),
                     pty: true,
+                    cmd_str: None,
                     cmd: vec![String::from("cmd")],
                 }),
             }
@@ -1920,6 +1927,7 @@ mod tests {
                 environment: map!(),
                 lsp: Some(None),
                 pty: true,
+                cmd_str: None,
                 cmd: vec![String::from("cmd")],
             }),
         };
@@ -1958,6 +1966,7 @@ mod tests {
                     environment: map!(),
                     lsp: Some(None),
                     pty: true,
+                    cmd_str: None,
                     cmd: vec![String::from("cmd")],
                 }),
             }

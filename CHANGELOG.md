@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CLI now supports `-c <STR>` and `--cmd <STR>` to use a given string as the
+  command as an alternative to `-- <CMD> <ARG> <ARG>`
+
+### Changed
+
+- Cli no longer uses `-c` as shorthand for specifying a config file
+
 ## [0.20.0-alpha.10]
 
 ### Added

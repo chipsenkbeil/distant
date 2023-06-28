@@ -364,6 +364,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             cache,
             connection,
             cmd,
+            cmd_str,
             current_dir,
             environment,
             lsp,
@@ -388,7 +389,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
             // Convert cmd into string
-            let cmd = cmd.join(" ");
+            let cmd = cmd_str.unwrap_or_else(|| cmd.join(" "));
 
             if let Some(scheme) = lsp {
                 debug!(
