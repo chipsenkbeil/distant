@@ -933,15 +933,16 @@ impl ClientFileSystemSubcommand {
 pub enum GenerateSubcommand {
     /// Generate configuration file with base settings
     Config {
-        /// Path to where the configuration file should be created
-        file: PathBuf,
+        /// Write output to a file instead of stdout
+        #[clap(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
     },
 
     // Generate completion info for CLI
     Completion {
-        /// If specified, will output to the file at the given path instead of stdout
-        #[clap(long)]
-        file: Option<PathBuf>,
+        /// Write output to a file instead of stdout
+        #[clap(long, value_name = "FILE")]
+        output: Option<PathBuf>,
 
         /// Specific shell to target for the generated output
         #[clap(value_enum, value_parser)]
@@ -3340,7 +3341,7 @@ mod tests {
                 log_level: None,
             },
             command: DistantSubcommand::Generate(GenerateSubcommand::Completion {
-                file: None,
+                output: None,
                 shell: ClapCompleteShell::Bash,
             }),
         };
@@ -3364,7 +3365,7 @@ mod tests {
                     log_level: Some(LogLevel::Trace),
                 },
                 command: DistantSubcommand::Generate(GenerateSubcommand::Completion {
-                    file: None,
+                    output: None,
                     shell: ClapCompleteShell::Bash,
                 }),
             }
@@ -3380,7 +3381,7 @@ mod tests {
                 log_level: Some(LogLevel::Info),
             },
             command: DistantSubcommand::Generate(GenerateSubcommand::Completion {
-                file: None,
+                output: None,
                 shell: ClapCompleteShell::Bash,
             }),
         };
@@ -3404,7 +3405,7 @@ mod tests {
                     log_level: Some(LogLevel::Info),
                 },
                 command: DistantSubcommand::Generate(GenerateSubcommand::Completion {
-                    file: None,
+                    output: None,
                     shell: ClapCompleteShell::Bash,
                 }),
             }

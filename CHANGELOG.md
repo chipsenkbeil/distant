@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Cli no longer uses `-c` as shorthand for specifying a config file
+- `--file` option for generating completion has been renamed to `--output`
+- CLI command to generate config files now defaults to printing to stdout with
+  `--output` providing the option to write to a file
 
 ## [0.20.0-alpha.10]
 

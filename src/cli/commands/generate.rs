@@ -14,15 +14,18 @@ pub fn run(cmd: GenerateSubcommand) -> CliResult {
 
 async fn async_run(cmd: GenerateSubcommand) -> CliResult {
     match cmd {
-        GenerateSubcommand::Config { file } => tokio::fs::write(file, Config::default_raw_str())
-            .await
-            .context("Failed to write default config to {file:?}")?,
+        GenerateSubcommand::Config { output } => match output {
+            Some(path) => tokio::fs::write(path, Config::default_raw_str())
+                .await
+                .context("Failed to write default config to {path:?}")?,
+            None => println!("{}", Config::default_raw_str()),
+        },
 
-        GenerateSubcommand::Completion { file, shell } => {
+        GenerateSubcommand::Completion { output, shell } => {
             let name = "distant";
             let mut cmd = Options::command();
 
-            if let Some(path) = file {
+            if let Some(path) = output {
                 clap_generate(
                     shell,
                     &mut cmd,
