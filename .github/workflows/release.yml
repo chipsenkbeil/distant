@@ -7,30 +7,30 @@ on:
       - v[0-9]+.[0-9]+.[0-9]+-**
       - latest
 
-# Targets:
+# Status of Targets:
 #
-# - x86_64-apple-darwin
-# - aarch64-apple-darwin
+# ✅ x86_64-apple-darwin
+# ✅ aarch64-apple-darwin
 #
-# - x86_64-pc-windows-msvc
-# - aarch64-pc-windows-msvc
+# ✅ x86_64-pc-windows-msvc
+# ✅ aarch64-pc-windows-msvc
 #
-# - x86_64-unknown-linux-gnu
-# - aarch64-unknown-linux-gnu
-# - aarch64-linux-android (fails due to termios)
-# - armv7-unknown-linux-gnueabihf
+# ✅ x86_64-unknown-linux-gnu
+# ✅ aarch64-unknown-linux-gnu
+# ❌ aarch64-linux-android (fails due to termios)
+# ✅ armv7-unknown-linux-gnueabihf
 #
-# - x86_64-unknown-linux-musl
-# - aarch64-unknown-linux-musl
+# ✅ x86_64-unknown-linux-musl
+# ✅ aarch64-unknown-linux-musl
 #
-# - x86_64-unknown-freebsd
-# - aarch64-unknown-freebsd (works manually, but cannot cross-compile)
+# ✅ x86_64-unknown-freebsd
+# ❓ aarch64-unknown-freebsd (works manually, but cannot cross-compile via CI)
 #
-# - x86_64-unknown-netbsd (???)
-# - aarch64-unknown-netbsd (???)
+# ❌ x86_64-unknown-netbsd (fails due to termios)
+# ❌ aarch64-unknown-netbsd (???)
 #
-# - x86_64-unknown-openbsd (???)
-# - aarch64-unknown-openbsd (fails due to openssl-src)
+# ❌ x86_64-unknown-openbsd (fails due to rustc internal error at end)
+# ❌ aarch64-unknown-openbsd (fails due to openssl-src)
 #
 
 jobs:
@@ -62,6 +62,29 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: ./distant-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 5
+
+  macos_unify:
+    name: "Build universal binary on MacOS"
+    needs: [macos]
+    runs-on: macos-11.0
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/download-artifact@v2
+      - name: Unify binaries
+        run: |
+          lipo -create -output distant-universal-apple-darwin \
+              ./x86_64-apple-darwin/distant-x86_64-apple-darwin \
+              ./aarch64-apple-darwin/distant-aarch64-apple-darwin
+          chmod +x ./distant-universal-apple-darwin
+      - name: Upload 
+        uses: actions/upload-artifact@v2
+        with:
+          name: universal-apple-darwin
+          path: ./distant-universal-apple-darwin
+          if-no-files-found: error
+          retention-days: 5
 
   windows:
     name: "Build release on Windows (${{ matrix.target }})"
@@ -91,6 +114,8 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: ./distant-${{ matrix.target }}.exe
+          if-no-files-found: error
+          retention-days: 5
 
   linux:
     name: "Build release on Linux (${{ matrix.target }})"
@@ -100,18 +125,32 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             build: --all-features
+            cargo: cargo
           - target: aarch64-unknown-linux-gnu
             build: --all-features
             deps: gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            cargo: cargo
           - target: armv7-unknown-linux-gnueabihf
             build: --all-features
             deps: gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
+            cargo: cargo
           - target: x86_64-unknown-linux-musl
             build: --no-default-features --features ssh2
             deps: musl-tools
+            cargo: cargo
           - target: aarch64-unknown-linux-musl
             build: --no-default-features --features ssh2
             deps: musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            cargo: cross
+            prepare: |
+              curl -L "https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz" |
+              tar xz -C $HOME/.cargo/bin
+          - target: x86_64-unknown-freebsd
+            build: --all-features
+            cargo: cross
+            prepare: |
+              curl -L "https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz" |
+              tar xz -C $HOME/.cargo/bin
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust (${{ matrix.target }})
@@ -127,9 +166,12 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.deps }}
+      - name: Preparing system
+        if: ${{ matrix.prepare }}
+        run: ${{ matrix.prepare }}
       - name: Build binary (${{ matrix.target }})
         run: |
-          cargo build --release ${{ matrix.build }} --target ${{ matrix.target }}
+          ${{ matrix.cargo }} build --release ${{ matrix.build }} --target ${{ matrix.target }}
           mv ./target/${{ matrix.target }}/release/distant ./distant-${{ matrix.target }}
           chmod +x ./distant-${{ matrix.target }}
       - name: Upload 
@@ -137,55 +179,76 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: ./distant-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 5
 
-  bsd:
-    name: "Build release on BSD (${{ matrix.os.target }})"
-    runs-on: ${{ matrix.os.host }} 
-    strategy:
-      matrix:
-        os:
-          - name: freebsd
-            architecture: x86-64
-            version: '13.2'
-            host: macos-12
-            target: x86_64-unknown-freebsd
-            build: --all-features
-            prepare: pkg install -y openssl gmake lang/rust devel/llvm-devel
-          - name: openbsd
-            architecture: x86-64
-            version: '7.3'
-            host: macos-12
-            target: x86_64-unknown-openbsd
-            build: --all-features
-            prepare: pkg_add -I gmake rust llvm
-    steps:
-      - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
-      - name: Build in FreeBSD
-        uses: cross-platform-actions/action@v0.15.0
-        with:
-          operating_system: ${{ matrix.os.name }}
-          architecture: ${{ matrix.os.architecture }}
-          version: ${{ matrix.os.version }}
-          shell: bash
-          run: |
-            ${{ matrix.os.prepare }}
-            cargo build --release ${{ matrix.os.build }} --target ${{ matrix.os.target }}
-            mv ./target/${{ matrix.os.target }}/release/distant ./distant-${{ matrix.os.target }}
-            chmod +x ./distant-${{ matrix.os.target }}
-      - name: Upload 
-        uses: actions/upload-artifact@v2
-        with:
-          name: ${{ matrix.os.target }}
-          path: ./distant-${{ matrix.os.target }}
+  # bsd:
+  #   name: "Build release on ${{ matrix.os.name }} (${{ matrix.os.target }})"
+  #   runs-on: ${{ matrix.os.host }} 
+  #   strategy:
+  #     matrix:
+  #       os:
+  #         - name: freebsd
+  #           architecture: x86-64
+  #           version: '13.2'
+  #           host: macos-12
+  #           target: x86_64-unknown-freebsd
+  #           build: --all-features
+  #           prepare: sudo pkg install -y openssl gmake lang/rust devel/llvm-devel
+  #         - name: netbsd
+  #           architecture: x86-64
+  #           version: '9.3'
+  #           host: macos-12
+  #           target: x86_64-unknown-netbsd
+  #           build: --all-features
+  #           prepare: |
+  #             PATH="/usr/pkg/sbin:/usr/pkg/bin:$PATH"
+  #             PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages"
+  #             PKG_PATH="$PKG_PATH/NetBSD/x86_64/9.3/All/"
+  #             export PATH PKG_PATH
+  #             sudo -E pkg_add -I gmake rust
+  #             cargo update --dry-run
+  #         - name: openbsd
+  #           architecture: x86-64
+  #           version: '7.3'
+  #           host: macos-12
+  #           target: x86_64-unknown-openbsd
+  #           build: --all-features
+  #           prepare: |
+  #             sudo pkg_add -I gmake rust llvm
+  #             sed -i 's/lto = true/lto = false/' Cargo.toml
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - uses: Swatinem/rust-cache@v2
+  #     - name: Build in VM
+  #       uses: cross-platform-actions/action@v0.15.0
+  #       env:
+  #         CARGO_INCREMENTAL: 0
+  #       with:
+  #         environment_variables: CARGO_INCREMENTAL
+  #         operating_system: ${{ matrix.os.name }}
+  #         architecture: ${{ matrix.os.architecture }}
+  #         version: ${{ matrix.os.version }}
+  #         shell: bash
+  #         run: |
+  #           ${{ matrix.os.prepare }}
+  #           cargo build --release ${{ matrix.os.build }} --target ${{ matrix.os.target }}
+  #           mv ./target/${{ matrix.os.target }}/release/distant ./distant-${{ matrix.os.target }}
+  #           chmod +x ./distant-${{ matrix.os.target }}
+  #     - name: Upload 
+  #       uses: actions/upload-artifact@v2
+  #       with:
+  #         name: ${{ matrix.os.target }}
+  #         path: ./distant-${{ matrix.os.target }}
+  #         if-no-files-found: error
+  #         retention-days: 5
 
   publish:
-    needs: [macos, windows, linux, bsd]
+    needs: [macos, macos_unify, windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v2
       - uses: actions/download-artifact@v2
       - name: Generate SHA256 checksums
         run: |
@@ -203,33 +266,46 @@ jobs:
         id: check-tag
         run: |
           if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-.*$ ]]; then
-              echo ::set-output name=match::true
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
           elif [[ ${{ github.ref }} =~ ^refs/tags/latest$ ]]; then
-              echo ::set-output name=latest::true
+              echo "is_latest=true" >> $GITHUB_OUTPUT
           fi
       - name: Print pre-release status
         run: |
-          echo "Is ${{ github.ref }} a pre-release: ${{ steps.check-tag.outputs.match }}"
-          echo "Is ${{ github.ref }} latest: ${{ steps.check-tag.outputs.latest }}"
+          echo "Is ${{ github.ref }} pre-release: ${{ steps.check-tag.outputs.is_prerelease }}"
+          echo "Is ${{ github.ref }} latest: ${{ steps.check-tag.outputs.is_latest }}"
       - name: Get Changelog Entry
         id: changelog
         uses: mindsers/changelog-reader-action@v2
         with:
           version: ${{ env.TAG_VERSION }}
           path: "./CHANGELOG.md"
-      - name: Publish
+        if: ${{ steps.check-tag.outputs.is_latest != 'true' }}
+      - name: Publish (latest)
+        if: ${{ steps.check-tag.outputs.is_latest == 'true' }}
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Latest Build
+          fail_on_unmatched_files: true
+          target_commitish: ${{ github.sha }}
+          draft: false
+          prerelease: true
+          files: |
+            **/distant-*
+          body: |
+            This is the latest commit (${{ github.sha }}) built for testing.
+            This is not guaranteed to pass all tests or even function properly.
+      - name: Publish (release)
+        if: ${{ steps.check-tag.outputs.is_latest != 'true' }}
         uses: softprops/action-gh-release@v1
         with:
           name: distant ${{ env.TAG_NAME }}
           fail_on_unmatched_files: true
           target_commitish: ${{ github.sha }}
           draft: false
-          prerelease: ${{ steps.check-tag.outputs.match == 'true' }}
+          prerelease: ${{ steps.check-tag.outputs.is_prerelease == 'true' }}
           files: |
             **/distant-*
-            **/*.sha256sum
           body: |
-            ## Latest
-
-            This is the latest commit (${{ github.sha }}) built for testing.
-            This is not guaranteed to pass all tests or even function properly.
+            ## Release Notes
+            ${{ steps.changelog.outputs.changes }}
