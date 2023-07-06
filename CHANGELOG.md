@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Minimum Rust version is now `1.70.0` due to bump in `grep-cli` minimum
+  requirement. This technically applied to v0.20.0-alpha.11, but wasn't caught
+  until the dependency updated
+
 ## [0.20.0-alpha.11]
 
 ### Added
