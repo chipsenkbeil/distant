@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0-alpha.11]
+
 ### Added
 
 - CLI now supports `-c <STR>` and `--cmd <STR>` to use a given string as the
   command as an alternative to `-- <CMD> <ARG> <ARG>`
+- Add build for FreeBSD
 
 ### Changed
 
@@ -18,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--file` option for generating completion has been renamed to `--output`
 - CLI command to generate config files now defaults to printing to stdout with
   `--output` providing the option to write to a file
+- Artifacts built now use format of `distant-<TRIPLE>`
 
 ## [0.20.0-alpha.10]
 
@@ -559,7 +563,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.10...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.11...HEAD
+[0.20.0-alpha.11]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.10...v0.20.0-alpha.11
 [0.20.0-alpha.10]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.9...v0.20.0-alpha.10
 [0.20.0-alpha.9]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.8...v0.20.0-alpha.9
 [0.20.0-alpha.8]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.7...v0.20.0-alpha.8
