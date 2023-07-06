@@ -6,6 +6,7 @@ pub struct ReadmeDoctests;
 
 use std::process::{ExitCode, Termination};
 
+use clap::error::ErrorKind;
 use derive_more::{Display, Error, From};
 
 mod cli;
@@ -16,7 +17,7 @@ mod options;
 pub mod win_service;
 
 pub use cli::Cli;
-pub use options::Options;
+pub use options::{Options, OptionsError};
 
 /// Wrapper around a [`CliResult`] that provides [`Termination`] support
 pub struct MainResult(CliResult);
@@ -28,6 +29,29 @@ impl MainResult {
 impl From<CliResult> for MainResult {
     fn from(res: CliResult) -> Self {
         Self(res)
+    }
+}
+
+impl From<OptionsError> for MainResult {
+    fn from(x: OptionsError) -> Self {
+        Self(match x {
+            OptionsError::Config(x) => Err(CliError::Error(x)),
+            OptionsError::Options(x) => match x.kind() {
+                // --help and --version should not actually exit with an error and instead display
+                // their related information while succeeding
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                    // NOTE: We're causing a side effect here in constructing the main result,
+                    //       but seems cleaner than returning an error with an exit code of 0
+                    //       and a message to try to print. Plus, we leverage automatic color
+                    //       handling in this approach.
+                    let _ = x.print();
+                    Ok(())
+                }
+
+                // Everything else is an actual error and should fail
+                _ => Err(CliError::Error(anyhow::anyhow!(x))),
+            },
+        })
     }
 }
 

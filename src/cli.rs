@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use crate::options::DistantSubcommand;
+use crate::options::{DistantSubcommand, OptionsError};
 use crate::{CliResult, Options};
 
 mod commands;
@@ -18,12 +18,12 @@ pub struct Cli {
 
 impl Cli {
     /// Creates a new CLI instance by parsing command-line arguments
-    pub fn initialize() -> anyhow::Result<Self> {
+    pub fn initialize() -> Result<Self, OptionsError> {
         Self::initialize_from(std::env::args_os())
     }
 
     /// Creates a new CLI instance by parsing providing arguments
-    pub fn initialize_from<I, T>(args: I) -> anyhow::Result<Self>
+    pub fn initialize_from<I, T>(args: I) -> Result<Self, OptionsError>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,

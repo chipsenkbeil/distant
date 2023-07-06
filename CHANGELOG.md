@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requirement. This technically applied to v0.20.0-alpha.11, but wasn't caught
   until the dependency updated
 
+### Fixed
+
+- `distant --help` will now return exit code of 0
+- `distant --version` will now return exit code of 0
+
 ## [0.20.0-alpha.11]
 
 ### Added

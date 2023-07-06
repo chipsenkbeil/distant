@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use clap::builder::TypedValueParser as _;
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
-use derive_more::IsVariant;
+use derive_more::{Display, Error, From, IsVariant};
 use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
 use distant_core::net::server::Shutdown;
 use distant_core::protocol::ChangeKind;
@@ -36,14 +36,24 @@ pub struct Options {
     pub command: DistantSubcommand,
 }
 
+/// Represents an error associated with parsing options.
+#[derive(Debug, Display, From, Error)]
+pub enum OptionsError {
+    // When configuration file fails to load
+    Config(#[error(not(source))] anyhow::Error),
+
+    // When parsing options fails (or is something like --version or --help)
+    Options(#[error(not(source))] clap::Error),
+}
+
 impl Options {
     /// Creates a new CLI instance by parsing command-line arguments
-    pub fn load() -> anyhow::Result<Self> {
+    pub fn load() -> Result<Self, OptionsError> {
         Self::load_from(std::env::args_os())
     }
 
     /// Creates a new CLI instance by parsing providing arguments
-    pub fn load_from<I, T>(args: I) -> anyhow::Result<Self>
+    pub fn load_from<I, T>(args: I) -> Result<Self, OptionsError>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
