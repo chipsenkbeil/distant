@@ -161,13 +161,13 @@ fn run_service() -> windows_service::Result<()> {
     let handle = thread::spawn({
         move || {
             debug!("Loading CLI using args from disk for {SERVICE_NAME}");
-            let config = Config::load()?;
+            let config = Config::load().expect("Failed to load config");
 
             debug!("Parsing CLI args from disk for {SERVICE_NAME}");
-            let cli = Cli::initialize_from(config.args)?;
+            let cli = Cli::initialize_from(config.args).expect("Failed to initialize CLI");
 
             debug!("Running CLI for {SERVICE_NAME}");
-            cli.run()
+            cli.run().expect("CLI failed during execution")
         }
     });
 
@@ -176,13 +176,7 @@ fn run_service() -> windows_service::Result<()> {
     let success = loop {
         if handle.is_finished() {
             match handle.join() {
-                Ok(result) => match result {
-                    Ok(_) => break true,
-                    Err(x) => {
-                        error!("{x:?}");
-                        break false;
-                    }
-                },
+                Ok(_) => break true,
                 Err(x) => {
                     error!("{x:?}");
                     break false;
