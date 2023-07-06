@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0-alpha.12]
+
 ### Changed
 
 - Minimum Rust version is now `1.70.0` due to bump in `grep-cli` minimum
@@ -574,7 +576,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.11...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.12...HEAD
+[0.20.0-alpha.12]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.11...v0.20.0-alpha.12
 [0.20.0-alpha.11]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.10...v0.20.0-alpha.11
 [0.20.0-alpha.10]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.9...v0.20.0-alpha.10
 [0.20.0-alpha.9]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.8...v0.20.0-alpha.9

@@ -2,7 +2,7 @@
 name = "distant-local"
 description = "Library implementing distant API for local interactions"
 categories = ["network-programming"]
-version = "0.20.0-alpha.11"
+version = "0.20.0-alpha.12"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -21,7 +21,7 @@ macos-kqueue = ["notify/macos_kqueue"]
 
 [dependencies]
 async-trait = "0.1.68"
-distant-core = { version = "=0.20.0-alpha.11", path = "../distant-core" }
+distant-core = { version = "=0.20.0-alpha.12", path = "../distant-core" }
 grep = "0.2.12"
 ignore = "0.4.20"
 log = "0.4.18"
