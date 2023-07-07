@@ -281,6 +281,19 @@ pub enum DistantSubcommand {
     Generate(GenerateSubcommand),
 }
 
+impl DistantSubcommand {
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        match self {
+            Self::Client(x) => x.format(),
+            Self::Manager(x) => x.format(),
+            Self::Server(x) => x.format(),
+            Self::Generate(x) => x.format(),
+        }
+    }
+}
+
 /// Subcommands for `distant client`.
 #[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ClientSubcommand {
@@ -537,6 +550,21 @@ impl ClientSubcommand {
             Self::Spawn { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
             Self::Version { network, .. } => network,
+        }
+    }
+
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        match self {
+            Self::Api { .. } => Format::Json,
+            Self::Connect { format, .. } => *format,
+            Self::FileSystem(fs) => fs.format(),
+            Self::Launch { format, .. } => *format,
+            Self::Shell { .. } => Format::Shell,
+            Self::Spawn { .. } => Format::Shell,
+            Self::SystemInfo { .. } => Format::Shell,
+            Self::Version { format, .. } => *format,
         }
     }
 }
@@ -936,6 +964,12 @@ impl ClientFileSystemSubcommand {
             Self::Write { network, .. } => network,
         }
     }
+
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        Format::Shell
+    }
 }
 
 /// Subcommands for `distant generate`.
@@ -958,6 +992,14 @@ pub enum GenerateSubcommand {
         #[clap(value_enum, value_parser)]
         shell: ClapCompleteShell,
     },
+}
+
+impl GenerateSubcommand {
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        Format::Shell
+    }
 }
 
 /// Subcommands for `distant manager`.
@@ -1054,6 +1096,22 @@ pub enum ManagerSubcommand {
 
         id: ConnectionId,
     },
+}
+
+impl ManagerSubcommand {
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        match self {
+            Self::Select { format, .. } => *format,
+            Self::Service(_) => Format::Shell,
+            Self::Listen { .. } => Format::Shell,
+            Self::Capabilities { format, .. } => *format,
+            Self::Info { format, .. } => *format,
+            Self::List { format, .. } => *format,
+            Self::Kill { format, .. } => *format,
+        }
+    }
 }
 
 /// Subcommands for `distant manager service`.
@@ -1170,6 +1228,14 @@ pub enum ServerSubcommand {
         #[clap(long, help = None, long_help = None)]
         output_to_local_pipe: Option<std::ffi::OsString>,
     },
+}
+
+impl ServerSubcommand {
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        Format::Shell
+    }
 }
 
 #[derive(Args, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use distant::{Cli, MainResult};
+use distant::{Cli, Format, MainResult};
 
 #[cfg(unix)]
 fn main() -> MainResult {
@@ -8,7 +8,12 @@ fn main() -> MainResult {
     };
     let _logger = cli.init_logger();
 
-    MainResult::from(cli.run())
+    let format = cli.options.command.format();
+    let result = MainResult::from(cli.run());
+    match format {
+        Format::Shell => result.shell(),
+        Format::Json => result.json(),
+    }
 }
 
 #[cfg(windows)]
@@ -18,6 +23,7 @@ fn main() -> MainResult {
         Err(x) => return MainResult::from(x),
     };
     let _logger = cli.init_logger();
+    let format = cli.options.command.format();
 
     // If we are trying to listen as a manager, try as a service first
     if cli.is_manager_listen_command() {
@@ -36,5 +42,9 @@ fn main() -> MainResult {
     }
 
     // Otherwise, execute as a non-service CLI
-    MainResult::from(cli.run())
+    let result = MainResult::from(cli.run());
+    match format {
+        Format::Shell => result.shell(),
+        Format::Json => result.json(),
+    }
 }

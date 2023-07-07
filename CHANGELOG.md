@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI commands like `distant manager select` will now output errors in a JSON
+  format when configured to communicate using JSON
+
 ## [0.20.0-alpha.12]
 
 ### Changed
