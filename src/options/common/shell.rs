@@ -20,7 +20,7 @@ impl Shell {
 
     /// Wraps a `cmd` such that it is invoked by this shell.
     ///
-    /// * For `cmd.exe`, this wraps in double quotes such that it can be invoked by `cmd.exe /S /K "..."`.
+    /// * For `cmd.exe`, this wraps in double quotes such that it can be invoked by `cmd.exe /S /C "..."`.
     /// * For `powershell.exe`, `rc`, and `elvish`, this wraps in single quotes and escapes single quotes by doubling them.
     ///     * For powershell, this results in `powershell.exe -Command '...'`.
     ///     * For rc and elvish, this uses `shell -c '...'`.
@@ -31,7 +31,7 @@ impl Shell {
         let path = self.path.as_str();
 
         match self.kind {
-            ShellKind::CmdExe => Ok(format!("{path} /S /K \"{cmd}\"")),
+            ShellKind::CmdExe => Ok(format!("{path} /S /C \"{cmd}\"")),
             ShellKind::PowerShell => Ok(format!("{path} -Command '{}'", cmd.replace('\'', "''"))),
             ShellKind::Rc | ShellKind::Elvish => {
                 Ok(format!("{path} -c '{}'", cmd.replace('\'', "''")))
