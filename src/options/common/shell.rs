@@ -34,12 +34,16 @@ impl Shell {
         match self.kind {
             ShellKind::CmdExe => Ok(format!("{path} /S /C \"{cmd}\"")),
 
-            // TODO: Powershell does not work because our splitting logic for arguments on
+            // NOTE: Powershell does not work directly because our splitting logic for arguments on
             //       distant-local does not handle single quotes. In fact, the splitting logic
-            //       isn't designed for powershell at all. We need distant-local to detect that the
-            //       command is powershell and alter parsing to something that works to split a
-            //       string into the command and arguments. How do we do that?
-            ShellKind::PowerShell => Ok(format!("{path} -Command '{}'", cmd.replace('\'', "''"))),
+            //       isn't designed for powershell at all. To get around that limitation, we are
+            //       using cmd.exe to invoke powershell, which fits closer to our parsing rules.
+            //       Crazy, I know! Eventually, we should switch to properly using powershell
+            //       and escaping single quotes by doubling them.
+            ShellKind::PowerShell => Ok(format!(
+                "cmd.exe /S /C \"{path} -Command {}\"",
+                cmd.replace('"', "\"\""),
+            )),
 
             ShellKind::Rc | ShellKind::Elvish => {
                 Ok(format!("{path} -c '{}'", cmd.replace('\'', "''")))
