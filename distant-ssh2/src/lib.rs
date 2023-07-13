@@ -16,7 +16,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use async_compat::CompatExt;
-use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, ClientConfig};
@@ -25,6 +24,7 @@ use distant_core::net::server::{Server, ServerRef};
 use distant_core::{DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials};
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
+use tokio::sync::Mutex;
 use wezterm_ssh::{
     ChildKiller, Config as WezConfig, MasterPty, PtySize, Session as WezSession,
     SessionEvent as WezSessionEvent,
@@ -325,17 +325,20 @@ impl SshAuthHandler for LocalSshAuthHandler {
     }
 }
 
-/// Represents an ssh2 client
+/// Represents an ssh2 client.
 pub struct Ssh {
     session: WezSession,
     events: SmolReceiver<WezSessionEvent>,
     host: String,
     port: u16,
     authenticated: bool,
+
+    /// Cached copy of the family representing the remote machine.
+    cached_family: Mutex<Option<SshFamily>>,
 }
 
 impl Ssh {
-    /// Connect to a remote TCP server using SSH
+    /// Connect to a remote TCP server using SSH.
     pub fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
         debug!(
             "Establishing ssh connection to {} using {:?}",
@@ -416,15 +419,16 @@ impl Ssh {
             host: host.as_ref().to_string(),
             port,
             authenticated: false,
+            cached_family: Mutex::new(None),
         })
     }
 
-    /// Host this client is connected to
+    /// Host this client is connected to.
     pub fn host(&self) -> &str {
         &self.host
     }
 
-    /// Port this client is connected to on remote host
+    /// Port this client is connected to on remote host.
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -434,7 +438,7 @@ impl Ssh {
         self.authenticated
     }
 
-    /// Authenticates the [`Ssh`] if not already authenticated
+    /// Authenticates the [`Ssh`] if not already authenticated.
     pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
         // If already authenticated, exit
         if self.authenticated {
@@ -499,10 +503,10 @@ impl Ssh {
         Ok(())
     }
 
-    /// Detects the family of operating system on the remote machine
+    /// Detects the family of operating system on the remote machine.
+    ///
+    /// Caches the result such that subsequent checks will return the same family.
     pub async fn detect_family(&self) -> io::Result<SshFamily> {
-        static INSTANCE: OnceCell<SshFamily> = OnceCell::new();
-
         // Exit early if not authenticated as this is a requirement
         if !self.authenticated {
             return Err(io::Error::new(
@@ -511,18 +515,23 @@ impl Ssh {
             ));
         }
 
-        INSTANCE
-            .get_or_try_init(async move {
-                let is_windows = utils::is_windows(&self.session).await?;
+        let mut family = self.cached_family.lock().await;
 
-                Ok(if is_windows {
-                    SshFamily::Windows
-                } else {
-                    SshFamily::Unix
-                })
-            })
-            .await
-            .copied()
+        // Family value is not present, so we retrieve it now and populate our cache
+        if family.is_none() {
+            // Check if we are windows, otherwise assume unix, returning an error if encountered,
+            // which will also drop our lock on the cache
+            let is_windows = utils::is_windows(&self.session).await?;
+
+            *family = Some(if is_windows {
+                SshFamily::Windows
+            } else {
+                SshFamily::Unix
+            });
+        }
+
+        // Cache should always be Some(...) by this point
+        Ok(family.unwrap())
     }
 
     /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote

@@ -463,6 +463,11 @@ pub enum ClientSubcommand {
         #[clap(long)]
         pty: bool,
 
+        /// If specified, will spawn the process in the specified shell, defaulting to the
+        /// user-configured shell.
+        #[clap(long, name = "SHELL")]
+        shell: Option<Option<Shell>>,
+
         /// Alternative current directory for the remote process
         #[clap(long)]
         current_dir: Option<PathBuf>,
@@ -1938,6 +1943,7 @@ mod tests {
                 current_dir: None,
                 environment: map!(),
                 lsp: Some(None),
+                shell: Some(None),
                 pty: true,
                 cmd_str: None,
                 cmd: vec![String::from("cmd")],
@@ -1977,6 +1983,7 @@ mod tests {
                     current_dir: None,
                     environment: map!(),
                     lsp: Some(None),
+                    shell: Some(None),
                     pty: true,
                     cmd_str: None,
                     cmd: vec![String::from("cmd")],
@@ -2003,6 +2010,7 @@ mod tests {
                 current_dir: None,
                 environment: map!(),
                 lsp: Some(None),
+                shell: Some(None),
                 pty: true,
                 cmd_str: None,
                 cmd: vec![String::from("cmd")],
@@ -2042,6 +2050,7 @@ mod tests {
                     current_dir: None,
                     environment: map!(),
                     lsp: Some(None),
+                    shell: Some(None),
                     pty: true,
                     cmd_str: None,
                     cmd: vec![String::from("cmd")],

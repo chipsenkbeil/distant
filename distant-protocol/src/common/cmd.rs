@@ -12,22 +12,6 @@ impl Cmd {
     pub fn new(cmd: impl Into<String>) -> Self {
         Self(cmd.into())
     }
-
-    /// Returns reference to the program portion of the command
-    pub fn program(&self) -> &str {
-        match self.0.split_once(' ') {
-            Some((program, _)) => program.trim(),
-            None => self.0.trim(),
-        }
-    }
-
-    /// Returns reference to the arguments portion of the command
-    pub fn arguments(&self) -> &str {
-        match self.0.split_once(' ') {
-            Some((_, arguments)) => arguments.trim(),
-            None => "",
-        }
-    }
 }
 
 impl Deref for Cmd {

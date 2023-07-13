@@ -85,6 +85,7 @@ impl ProcessInstance {
         let args = cmd_and_args.split_off(1);
         let cmd = cmd_and_args.into_iter().next().unwrap();
 
+        debug!("Spawning process: {cmd} {args:?}");
         let mut child: Box<dyn Process> = match pty {
             Some(size) => Box::new(PtyProcess::spawn(
                 cmd.clone(),

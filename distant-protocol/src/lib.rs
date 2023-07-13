@@ -17,7 +17,11 @@ pub use response::*;
 
 /// Protocol version indicated by the tuple of (major, minor, patch).
 ///
-/// This is different from the crate version, which matches that of the complete suite of distant
-/// crates. Rather, this verison is used to provide stability indicators when the protocol itself
-/// changes across crate versions.
-pub const PROTOCOL_VERSION: SemVer = (0, 1, 0);
+/// This should match the version of this crate such that any significant change to the crate
+/// version will also be reflected in this constant that can be used to verify compatibility across
+/// the wire.
+pub const PROTOCOL_VERSION: SemVer = (
+    const_str::parse!(env!("CARGO_PKG_VERSION_MAJOR"), u8),
+    const_str::parse!(env!("CARGO_PKG_VERSION_MINOR"), u8),
+    const_str::parse!(env!("CARGO_PKG_VERSION_PATCH"), u8),
+);

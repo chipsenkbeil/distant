@@ -17,6 +17,7 @@ tests = []
 
 [dependencies]
 bitflags = "2.3.1"
+const-str = "0.5.6"
 derive_more = { version = "0.99.17", default-features = false, features = ["deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant"] }
 regex = "1.8.3"
 serde = { version = "1.0.163", features = ["derive"] }
