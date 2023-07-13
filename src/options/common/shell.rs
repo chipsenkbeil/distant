@@ -21,8 +21,9 @@ impl Shell {
     /// Wraps a `cmd` such that it is invoked by this shell.
     ///
     /// * For `cmd.exe`, this wraps in double quotes such that it can be invoked by `cmd.exe /S /C "..."`.
-    /// * For `powershell.exe`, `rc`, and `elvish`, this wraps in single quotes and escapes single quotes by doubling them.
-    ///     * For powershell, this results in `powershell.exe -Command '...'`.
+    /// * For `powershell.exe`, this wraps in single quotes and escapes single quotes by doubling
+    ///   them such that it can be invoked by `powershell.exe -Command '...'`.
+    /// * For `rc` and `elvish`, this wraps in single quotes and escapes single quotes by doubling them.
     ///     * For rc and elvish, this uses `shell -c '...'`.
     /// * For **POSIX** shells, this wraps in single quotes and uses the trick of `'\''` to fake escape.
     /// * For `nu`, this wraps in single quotes or backticks where possible, but fails if the cmd contains single quotes and backticks.
@@ -32,10 +33,18 @@ impl Shell {
 
         match self.kind {
             ShellKind::CmdExe => Ok(format!("{path} /S /C \"{cmd}\"")),
+
+            // TODO: Powershell does not work because our splitting logic for arguments on
+            //       distant-local does not handle single quotes. In fact, the splitting logic
+            //       isn't designed for powershell at all. We need distant-local to detect that the
+            //       command is powershell and alter parsing to something that works to split a
+            //       string into the command and arguments. How do we do that?
             ShellKind::PowerShell => Ok(format!("{path} -Command '{}'", cmd.replace('\'', "''"))),
+
             ShellKind::Rc | ShellKind::Elvish => {
                 Ok(format!("{path} -c '{}'", cmd.replace('\'', "''")))
             }
+
             ShellKind::Nu => {
                 let has_single_quotes = cmd.contains('\'');
                 let has_backticks = cmd.contains('`');
