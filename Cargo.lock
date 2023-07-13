@@ -850,6 +850,7 @@ dependencies = [
  "test-log",
  "tokio",
  "toml_edit",
+ "typed-path",
  "which",
  "whoami",
  "windows-service",

@@ -25,7 +25,10 @@ use crate::cli::common::{
     Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
-use crate::options::{ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings};
+use crate::options::{
+    ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings, ParseShellError,
+    Shell as ShellOption,
+};
 use crate::{CliError, CliResult};
 
 mod lsp;
@@ -369,6 +372,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             environment,
             lsp,
             pty,
+            shell,
             network,
         } => {
             debug!("Connecting to manager");
@@ -383,20 +387,55 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
             debug!("Opening channel to connection {}", connection_id);
-            let channel = client
+            let mut channel: DistantChannel = client
                 .open_raw_channel(connection_id)
                 .await
-                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
+                .into_client()
+                .into_channel();
 
             // Convert cmd into string
             let cmd = cmd_str.unwrap_or_else(|| cmd.join(" "));
+
+            // Check if we should attempt to run the command in a shell
+            let cmd = match shell {
+                None => cmd,
+
+                // Use default shell, which we need to figure out
+                Some(None) => {
+                    let system_info = channel
+                        .system_info()
+                        .await
+                        .context("Failed to detect remote operating system")?;
+
+                    // If system reports a default shell, use it, otherwise pick a default based on the
+                    // operating system being windows or non-windows
+                    let shell: ShellOption = if !system_info.shell.is_empty() {
+                        system_info.shell.parse()
+                    } else if system_info.family.eq_ignore_ascii_case("windows") {
+                        "cmd.exe".parse()
+                    } else {
+                        "/bin/sh".parse()
+                    }
+                    .map_err(|x: ParseShellError| anyhow::anyhow!(x))?;
+
+                    shell
+                        .make_cmd_string(&cmd)
+                        .map_err(|x| anyhow::anyhow!(x))?
+                }
+
+                // Use explicit shell
+                Some(Some(shell)) => shell
+                    .make_cmd_string(&cmd)
+                    .map_err(|x| anyhow::anyhow!(x))?,
+            };
 
             if let Some(scheme) = lsp {
                 debug!(
                     "Spawning LSP server (pty = {}, cwd = {:?}): {}",
                     pty, current_dir, cmd
                 );
-                Lsp::new(channel.into_client().into_channel())
+                Lsp::new(channel)
                     .spawn(cmd, current_dir, scheme, pty, MAX_PIPE_CHUNK_SIZE)
                     .await?;
             } else if pty {
@@ -404,7 +443,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     "Spawning pty process (environment = {:?}, cwd = {:?}): {}",
                     environment, current_dir, cmd
                 );
-                Shell::new(channel.into_client().into_channel())
+                Shell::new(channel)
                     .spawn(
                         cmd,
                         environment.into_map(),
@@ -421,7 +460,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     .environment(environment.into_map())
                     .current_dir(current_dir)
                     .pty(None)
-                    .spawn(channel.into_client().into_channel(), &cmd)
+                    .spawn(channel, &cmd)
                     .await
                     .with_context(|| format!("Failed to spawn {cmd}"))?;
 

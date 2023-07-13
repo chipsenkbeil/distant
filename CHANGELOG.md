@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support for `--shell` with optional path to an explicit shell as an option
+  when executing `distant spawn` in order to run the command within a shell
+  rather than directly
+
 ### Changed
 
 - `distant_protocol::PROTOCOL_VERSION` now uses the crate's major, minor, and
