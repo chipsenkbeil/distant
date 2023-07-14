@@ -11,8 +11,9 @@ use distant_core::net::auth::{
     StaticKeyAuthMethodHandler,
 };
 use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
-use distant_core::net::common::{Destination, Map, SecretKey32};
+use distant_core::net::common::{Destination, Map, SecretKey32, Version};
 use distant_core::net::manager::{ConnectHandler, LaunchHandler};
+use distant_core::protocol::PROTOCOL_VERSION;
 use log::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -247,6 +248,11 @@ impl DistantConnectHandler {
                     ..Default::default()
                 })
                 .connect_timeout(Duration::from_secs(180))
+                .version(Version::new(
+                    PROTOCOL_VERSION.major,
+                    PROTOCOL_VERSION.minor,
+                    PROTOCOL_VERSION.patch,
+                ))
                 .connect_untyped()
                 .await
             {
