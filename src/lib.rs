@@ -122,7 +122,7 @@ impl Termination for MainResult {
                 CliError::Exit(code) => ExitCode::from(code),
                 CliError::Error(x) => {
                     match self.format {
-                        Format::Shell => eprintln!("{x}"),
+                        Format::Shell => eprintln!("{x:?}"),
                         Format::Json => println!(
                             "{}",
                             serde_json::to_string(&serde_json::json!({

@@ -114,3 +114,19 @@ impl fmt::Display for Version {
         write!(f, "{}", self.inner)
     }
 }
+
+impl From<semver::Version> for Version {
+    /// Creates a new [`Version`] using the major, minor, and patch information from
+    /// [`semver::Version`].
+    fn from(version: semver::Version) -> Self {
+        let mut this = Self::new(version.major, version.minor, version.patch);
+        this.inner = version;
+        this
+    }
+}
+
+impl From<Version> for semver::Version {
+    fn from(version: Version) -> Self {
+        version.inner
+    }
+}
