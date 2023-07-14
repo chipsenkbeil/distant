@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when executing `distant spawn` in order to run the command within a shell
   rather than directly
 - `semver` crate to be used for version information in protocol and manager
+- `is_compatible_with` function to root of `distant-protocol` crate that checks
+  if a provided version is compatible with the protocol
 
 ### Changed
 
