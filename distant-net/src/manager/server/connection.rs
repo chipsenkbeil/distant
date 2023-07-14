@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::{fmt, io};
 
 use log::*;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::client::{Mailbox, UntypedClient};
@@ -62,10 +62,16 @@ impl ManagerConnection {
     pub async fn spawn(
         spawn: Destination,
         options: Map,
-        client: UntypedClient,
+        mut client: UntypedClient,
     ) -> io::Result<Self> {
         let connection_id = rand::random();
         let (tx, rx) = mpsc::unbounded_channel();
+
+        // NOTE: Ensure that the connection is severed when the client is dropped; otherwise, when
+        // the connection is terminated via aborting it or the connection being dropped, the
+        // connection will persist which can cause problems such as lonely shutdown of the server
+        // never triggering!
+        client.shutdown_on_drop(true);
 
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let action_task = tokio::spawn(action_task(connection_id, rx, request_tx));
@@ -105,13 +111,38 @@ impl ManagerConnection {
             tx: self.tx.clone(),
         })
     }
+
+    pub async fn channel_ids(&self) -> io::Result<Vec<ManagerChannelId>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Action::GetRegistered { cb: tx })
+            .map_err(|x| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("channel_ids failed: {x}"),
+                )
+            })?;
+
+        let channel_ids = rx.await.map_err(|x| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("channel_ids callback dropped: {x}"),
+            )
+        })?;
+        Ok(channel_ids)
+    }
+
+    /// Aborts the tasks used to engage with the connection.
+    pub fn abort(&self) {
+        self.action_task.abort();
+        self.request_task.abort();
+        self.response_task.abort();
+    }
 }
 
 impl Drop for ManagerConnection {
     fn drop(&mut self) {
-        self.action_task.abort();
-        self.request_task.abort();
-        self.response_task.abort();
+        self.abort();
     }
 }
 
@@ -123,6 +154,10 @@ enum Action {
 
     Unregister {
         id: ManagerChannelId,
+    },
+
+    GetRegistered {
+        cb: oneshot::Sender<Vec<ManagerChannelId>>,
     },
 
     Read {
@@ -140,6 +175,7 @@ impl fmt::Debug for Action {
         match self {
             Self::Register { id, .. } => write!(f, "Action::Register {{ id: {id}, .. }}"),
             Self::Unregister { id } => write!(f, "Action::Unregister {{ id: {id} }}"),
+            Self::GetRegistered { .. } => write!(f, "Action::GetRegistered {{ .. }}"),
             Self::Read { .. } => write!(f, "Action::Read {{ .. }}"),
             Self::Write { id, .. } => write!(f, "Action::Write {{ id: {id}, .. }}"),
         }
@@ -203,6 +239,9 @@ async fn action_task(
             }
             Action::Unregister { id } => {
                 registered.remove(&id);
+            }
+            Action::GetRegistered { cb } => {
+                let _ = cb.send(registered.keys().copied().collect());
             }
             Action::Read { mut res } => {
                 // Split {channel id}_{request id} back into pieces and

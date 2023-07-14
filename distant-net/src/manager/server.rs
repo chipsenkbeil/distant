@@ -175,7 +175,25 @@ impl ManagerServer {
     /// Kills the connection to the server with the specified `id`
     async fn kill(&self, id: ConnectionId) -> io::Result<()> {
         match self.connections.write().await.remove(&id) {
-            Some(_) => Ok(()),
+            Some(connection) => {
+                // Close any open channels
+                if let Ok(ids) = connection.channel_ids().await {
+                    let mut channels_lock = self.channels.write().await;
+                    for id in ids {
+                        if let Some(channel) = channels_lock.remove(&id) {
+                            if let Err(x) = channel.close() {
+                                error!("[Conn {id}] {x}");
+                            }
+                        }
+                    }
+                }
+
+                // Make sure the connection is aborted so nothing new can happen
+                debug!("[Conn {id}] Aborting");
+                connection.abort();
+
+                Ok(())
+            }
             None => Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "No connection found",

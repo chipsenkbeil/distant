@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- When terminating a connection using `distant manager kill`, the connection is
+  now properly dropped, resulting servers waiting to terminate due to
+  `--shutdown lonely=N` to now shutdown accordingly
+
 ## [0.20.0-alpha.13]
 
 ### Added
