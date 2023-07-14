@@ -762,11 +762,6 @@ impl Ssh {
             .auth_handler(DummyAuthHandler)
             .config(ClientConfig::default().with_maximum_silence_duration())
             .connector(t1)
-            .version(Version::new(
-                PROTOCOL_VERSION.major,
-                PROTOCOL_VERSION.minor,
-                PROTOCOL_VERSION.patch,
-            ))
             .connect()
             .await?;
         Ok((client, server))

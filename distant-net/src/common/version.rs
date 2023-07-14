@@ -1,11 +1,12 @@
-use semver::{Comparator, Op, Prerelease, Version as SemVer, VersionReq};
+use semver::{Comparator, Op, Prerelease, Version as SemVer};
 use std::fmt;
 
 /// Represents a version and compatibility rules.
 #[derive(Clone, Debug)]
 pub struct Version {
     inner: SemVer,
-    rules: VersionReq,
+    lower: Comparator,
+    upper: Comparator,
 }
 
 impl Version {
@@ -44,38 +45,34 @@ impl Version {
     /// assert!(!a.is_compatible_with(&b));
     /// assert!(!b.is_compatible_with(&a));
     /// ```
-    pub fn new(major: u64, minor: u64, patch: u64) -> Self {
+    pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
         Self {
             inner: SemVer::new(major, minor, patch),
-            rules: VersionReq {
-                comparators: vec![
-                    Comparator {
-                        op: Op::GreaterEq,
-                        major,
-                        minor: Some(minor),
-                        patch: Some(patch),
-                        pre: Prerelease::EMPTY,
-                    },
-                    Comparator {
-                        op: Op::Less,
-                        major: if major == 0 { 0 } else { major + 1 },
-                        minor: if major == 0 { Some(minor + 1) } else { None },
-                        patch: None,
-                        pre: Prerelease::EMPTY,
-                    },
-                ],
+            lower: Comparator {
+                op: Op::GreaterEq,
+                major,
+                minor: Some(minor),
+                patch: Some(patch),
+                pre: Prerelease::EMPTY,
+            },
+            upper: Comparator {
+                op: Op::Less,
+                major: if major == 0 { 0 } else { major + 1 },
+                minor: if major == 0 { Some(minor + 1) } else { None },
+                patch: None,
+                pre: Prerelease::EMPTY,
             },
         }
     }
 
     /// Returns true if this version is compatible with another version.
     pub fn is_compatible_with(&self, other: &Self) -> bool {
-        self.rules.matches(&other.inner)
+        self.lower.matches(&other.inner) && self.upper.matches(&other.inner)
     }
 
     /// Converts from a collection of bytes into a version using the byte form major/minor/patch
     /// using big endian.
-    pub fn from_be_bytes(bytes: [u8; 24]) -> Self {
+    pub const fn from_be_bytes(bytes: [u8; 24]) -> Self {
         Self::new(
             u64::from_be_bytes([
                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
