@@ -9,6 +9,7 @@ mod packet;
 mod port;
 mod transport;
 pub(crate) mod utils;
+mod version;
 
 pub use any::*;
 pub(crate) use connection::Connection;
@@ -21,3 +22,4 @@ pub use map::*;
 pub use packet::*;
 pub use port::*;
 pub use transport::*;
+pub use version::*;

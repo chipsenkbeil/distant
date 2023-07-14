@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio::sync::{broadcast, RwLock};
 
-use crate::common::{ConnectionId, Listener, Response, Transport};
+use crate::common::{ConnectionId, Listener, Response, Transport, Version};
 
 mod builder;
 pub use builder::*;
@@ -45,6 +45,9 @@ pub struct Server<T> {
 
     /// Performs authentication using various methods
     verifier: Verifier,
+
+    /// Version associated with the server used by clients to verify compatibility
+    version: Version,
 }
 
 /// Interface for a handler that receives connections and requests
@@ -81,6 +84,7 @@ impl Server<()> {
             config: Default::default(),
             handler: (),
             verifier: Verifier::empty(),
+            version: Default::default(),
         }
     }
 
@@ -115,6 +119,7 @@ impl<T> Server<T> {
             config,
             handler: self.handler,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -124,6 +129,7 @@ impl<T> Server<T> {
             config: self.config,
             handler,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -133,6 +139,17 @@ impl<T> Server<T> {
             config: self.config,
             handler: self.handler,
             verifier,
+            version: self.version,
+        }
+    }
+
+    /// Consumes the current server, replacing its version with `version` and returning it.
+    pub fn version(self, version: Version) -> Self {
+        Self {
+            config: self.config,
+            handler: self.handler,
+            verifier: self.verifier,
+            version,
         }
     }
 }
@@ -172,6 +189,7 @@ where
             config,
             handler,
             verifier,
+            version,
         } = self;
 
         let handler = Arc::new(handler);
@@ -221,6 +239,7 @@ where
                     .sleep_duration(config.connection_sleep)
                     .heartbeat_duration(config.connection_heartbeat)
                     .verifier(Arc::downgrade(&verifier))
+                    .version(version.clone())
                     .spawn(),
             );
 
@@ -253,6 +272,12 @@ mod tests {
     use super::*;
     use crate::common::{Connection, InmemoryTransport, MpscListener, Request, Response};
 
+    macro_rules! server_version {
+        () => {
+            Version::new(1, 2, 3)
+        };
+    }
+
     pub struct TestServerHandler;
 
     #[async_trait]
@@ -275,6 +300,7 @@ mod tests {
             config,
             handler: TestServerHandler,
             verifier: Verifier::new(methods),
+            version: server_version!(),
         }
     }
 
@@ -304,7 +330,7 @@ mod tests {
             .expect("Failed to start server");
 
         // Perform handshake and authentication with the server before beginning to send data
-        let mut connection = Connection::client(transport, DummyAuthHandler)
+        let mut connection = Connection::client(transport, DummyAuthHandler, server_version!())
             .await
             .expect("Failed to connect to server");
 

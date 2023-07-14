@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 
 use super::{ConnectionState, RequestCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
 use crate::common::{
-    Backup, Connection, Frame, Interest, Keychain, Response, Transport, UntypedRequest,
+    Backup, Connection, Frame, Interest, Keychain, Response, Transport, UntypedRequest, Version,
 };
 
 pub type ServerKeychain = Keychain<oneshot::Receiver<Backup>>;
@@ -65,6 +65,7 @@ pub(super) struct ConnectionTaskBuilder<H, S, T> {
     sleep_duration: Duration,
     heartbeat_duration: Duration,
     verifier: Weak<Verifier>,
+    version: Version,
 }
 
 impl ConnectionTaskBuilder<(), (), ()> {
@@ -80,6 +81,7 @@ impl ConnectionTaskBuilder<(), (), ()> {
             sleep_duration: SLEEP_DURATION,
             heartbeat_duration: MINIMUM_HEARTBEAT_DURATION,
             verifier: Weak::new(),
+            version: Version::default(),
         }
     }
 }
@@ -96,6 +98,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -110,6 +113,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -124,6 +128,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -138,6 +143,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -152,6 +158,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -169,6 +176,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -183,6 +191,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -200,6 +209,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration,
             verifier: self.verifier,
+            version: self.version,
         }
     }
 
@@ -214,6 +224,22 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
             verifier,
+            version: self.version,
+        }
+    }
+
+    pub fn version(self, version: Version) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
+            handler: self.handler,
+            state: self.state,
+            keychain: self.keychain,
+            transport: self.transport,
+            shutdown: self.shutdown,
+            shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
+            verifier: self.verifier,
+            version,
         }
     }
 }
@@ -240,6 +266,7 @@ where
             sleep_duration,
             heartbeat_duration,
             verifier,
+            version,
         } = self;
 
         // NOTE: This exists purely to make the compiler happy for macro_rules declaration order.
@@ -408,7 +435,8 @@ where
                 match await_or_shutdown!(Box::pin(Connection::server(
                     transport,
                     verifier.as_ref(),
-                    keychain
+                    keychain,
+                    version
                 ))) {
                     Ok(connection) => connection,
                     Err(x) => {
@@ -627,6 +655,12 @@ mod tests {
         }};
     }
 
+    macro_rules! server_version {
+        () => {
+            Version::new(1, 2, 3)
+        };
+    }
+
     #[test(tokio::test)]
     async fn should_terminate_if_fails_access_verifier() {
         let handler = Arc::new(TestServerHandler);
@@ -671,11 +705,12 @@ mod tests {
             .transport(t1)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side
         tokio::spawn(async move {
-            let _client = Connection::client(t2, DummyAuthHandler)
+            let _client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
         });
@@ -704,11 +739,12 @@ mod tests {
             .transport(t1)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side
         tokio::spawn(async move {
-            let _client = Connection::client(t2, DummyAuthHandler)
+            let _client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
         });
@@ -754,12 +790,13 @@ mod tests {
             .transport(t1)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side, and then closes to
         // trigger the server-side to close
         tokio::spawn(async move {
-            let _client = Connection::client(t2, DummyAuthHandler)
+            let _client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
         });
@@ -828,12 +865,13 @@ mod tests {
             })
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side, set ready to fail
         // for the server-side after client connection completes, and wait a bit
         tokio::spawn(async move {
-            let _client = Connection::client(t2, DummyAuthHandler)
+            let _client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
 
@@ -872,12 +910,13 @@ mod tests {
             .transport(t1)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side, and then closes to
         // trigger the server-side to close
         tokio::spawn(async move {
-            let _client = Connection::client(t2, DummyAuthHandler)
+            let _client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
         });
@@ -902,11 +941,12 @@ mod tests {
             .transport(t1)
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side
         let task = tokio::spawn(async move {
-            let mut client = Connection::client(t2, DummyAuthHandler)
+            let mut client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
 
@@ -939,11 +979,12 @@ mod tests {
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .heartbeat_duration(Duration::from_millis(200))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle establishing connection from client-side
         let task = tokio::spawn(async move {
-            let mut client = Connection::client(t2, DummyAuthHandler)
+            let mut client = Connection::client(t2, DummyAuthHandler, server_version!())
                 .await
                 .expect("Fail to establish client-side connection");
 
@@ -1047,10 +1088,12 @@ mod tests {
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .heartbeat_duration(Duration::from_millis(200))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle the client-side establishment of a full connection
-        let _client_task = tokio::spawn(Connection::client(t2, DummyAuthHandler));
+        let _client_task =
+            tokio::spawn(Connection::client(t2, DummyAuthHandler, server_version!()));
 
         // Shutdown server connection task while it is accepting the connection, verifying that we
         // do not get an error in return
@@ -1099,10 +1142,12 @@ mod tests {
             .shutdown_timer(Arc::downgrade(&shutdown_timer))
             .heartbeat_duration(Duration::from_millis(200))
             .verifier(Arc::downgrade(&verifier))
+            .version(server_version!())
             .spawn();
 
         // Spawn a task to handle the client-side establishment of a full connection
-        let _client_task = tokio::spawn(Connection::client(t2, DummyAuthHandler));
+        let _client_task =
+            tokio::spawn(Connection::client(t2, DummyAuthHandler, server_version!()));
 
         // Wait to ensure we complete the accept call first
         let _ = rx.recv().await;

@@ -19,8 +19,9 @@ use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, ClientConfig};
-use distant_core::net::common::{Host, InmemoryTransport, OneshotListener};
+use distant_core::net::common::{Host, InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
+use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::{DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials};
 use log::*;
 use smol::channel::Receiver as SmolReceiver;
@@ -588,6 +589,11 @@ impl Ssh {
             match Client::tcp(addr)
                 .auth_handler(AuthHandlerMap::new().with_static_key(key.clone()))
                 .connect_timeout(timeout)
+                .version(Version::new(
+                    PROTOCOL_VERSION.major,
+                    PROTOCOL_VERSION.minor,
+                    PROTOCOL_VERSION.patch,
+                ))
                 .connect()
                 .await
             {
@@ -756,6 +762,11 @@ impl Ssh {
             .auth_handler(DummyAuthHandler)
             .config(ClientConfig::default().with_maximum_silence_duration())
             .connector(t1)
+            .version(Version::new(
+                PROTOCOL_VERSION.major,
+                PROTOCOL_VERSION.minor,
+                PROTOCOL_VERSION.patch,
+            ))
             .connect()
             .await?;
         Ok((client, server))

@@ -7,8 +7,9 @@ use distant_core::{
 };
 use distant_net::auth::{DummyAuthHandler, Verifier};
 use distant_net::client::Client;
-use distant_net::common::{InmemoryTransport, OneshotListener};
+use distant_net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_net::server::{Server, ServerRef};
+use distant_protocol::PROTOCOL_VERSION;
 
 /// Stands up an inmemory client and server using the given api.
 async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, ServerRef) {
@@ -17,12 +18,22 @@ async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, 
     let server = Server::new()
         .handler(DistantApiServerHandler::new(api))
         .verifier(Verifier::none())
+        .version(Version::new(
+            PROTOCOL_VERSION.major,
+            PROTOCOL_VERSION.minor,
+            PROTOCOL_VERSION.patch,
+        ))
         .start(OneshotListener::from_value(t2))
         .expect("Failed to start server");
 
     let client: DistantClient = Client::build()
         .auth_handler(DummyAuthHandler)
         .connector(t1)
+        .version(Version::new(
+            PROTOCOL_VERSION.major,
+            PROTOCOL_VERSION.minor,
+            PROTOCOL_VERSION.patch,
+        ))
         .connect()
         .await
         .expect("Failed to connect to server");
