@@ -1,4 +1,3 @@
-mod capabilities;
 mod change;
 mod cmd;
 mod error;
@@ -10,7 +9,6 @@ mod search;
 mod system;
 mod version;
 
-pub use capabilities::*;
 pub use change::*;
 pub use cmd::*;
 pub use error::*;
@@ -24,6 +22,3 @@ pub use version::*;
 
 /// Id for a remote process
 pub type ProcessId = u32;
-
-/// Version indicated by the tuple of (major, minor, patch).
-pub type SemVer = (u8, u8, u8);

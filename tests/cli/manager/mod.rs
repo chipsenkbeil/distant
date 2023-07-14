@@ -1,1 +1,1 @@
-mod capabilities;
+mod version;

@@ -7,9 +7,10 @@ use std::time::Duration;
 use async_compat::CompatExt;
 use async_once_cell::OnceCell;
 use async_trait::async_trait;
+use distant_core::protocol::semver;
 use distant_core::protocol::{
-    Capabilities, CapabilityKind, DirEntry, Environment, FileType, Metadata, Permissions,
-    ProcessId, PtySize, SetPermissionsOptions, SystemInfo, UnixMetadata, Version, PROTOCOL_VERSION,
+    DirEntry, Environment, FileType, Metadata, Permissions, ProcessId, PtySize,
+    SetPermissionsOptions, SystemInfo, UnixMetadata, Version, PROTOCOL_VERSION,
 };
 use distant_core::{DistantApi, DistantCtx};
 use log::*;
@@ -936,18 +937,33 @@ impl DistantApi for SshDistantApi {
     async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
         debug!("[Conn {}] Querying capabilities", ctx.connection_id);
 
-        let mut capabilities = Capabilities::all();
+        let capabilities = vec![
+            Version::CAP_EXEC.to_string(),
+            Version::CAP_FS_IO.to_string(),
+            Version::CAP_SYS_INFO.to_string(),
+        ];
 
-        // Searching is not supported by ssh implementation
-        // TODO: Could we have external search using ripgrep's JSON lines API?
-        capabilities.take(CapabilityKind::Search);
-        capabilities.take(CapabilityKind::CancelSearch);
+        // Parse our server's version
+        let mut server_version: semver::Version = env!("CARGO_PKG_VERSION")
+            .parse()
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
 
-        // Broken via wezterm-ssh, so not supported right now
-        capabilities.take(CapabilityKind::SetPermissions);
+        // Add the package name to the version information
+        if server_version.build.is_empty() {
+            server_version.build = semver::BuildMetadata::new(env!("CARGO_PKG_NAME"))
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        } else {
+            let raw_build_str = format!(
+                "{}.{}",
+                server_version.build.as_str(),
+                env!("CARGO_PKG_NAME")
+            );
+            server_version.build = semver::BuildMetadata::new(&raw_build_str)
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        }
 
         Ok(Version {
-            server_version: format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+            server_version,
             protocol_version: PROTOCOL_VERSION,
             capabilities,
         })

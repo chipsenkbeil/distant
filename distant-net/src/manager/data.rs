@@ -1,8 +1,6 @@
 pub type ManagerChannelId = u32;
 pub type ManagerAuthenticationId = u32;
-
-mod capabilities;
-pub use capabilities::*;
+pub use semver::Version as SemVer;
 
 mod info;
 pub use info::*;

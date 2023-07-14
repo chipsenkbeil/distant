@@ -228,41 +228,24 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
             Ok(())
         }
-        ManagerSubcommand::Capabilities { format, network } => {
+        ManagerSubcommand::Version { format, network } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network).await?;
 
-            debug!("Getting list of capabilities");
-            let caps = client
-                .capabilities()
-                .await
-                .context("Failed to get list of capabilities")?;
-            debug!("Got capabilities: {caps:?}");
+            debug!("Getting version");
+            let version = client.version().await.context("Failed to get version")?;
+            debug!("Got version: {version}");
 
             match format {
                 Format::Json => {
                     println!(
                         "{}",
-                        serde_json::to_string(&caps)
-                            .context("Failed to format capabilities as json")?
+                        serde_json::to_string(&version)
+                            .context("Failed to format version as json")?
                     );
                 }
                 Format::Shell => {
-                    #[derive(Tabled)]
-                    struct CapabilityRow {
-                        kind: String,
-                        description: String,
-                    }
-
-                    println!(
-                        "{}",
-                        Table::new(caps.into_sorted_vec().into_iter().map(|cap| {
-                            CapabilityRow {
-                                kind: cap.kind,
-                                description: cap.description,
-                            }
-                        }))
-                    );
+                    println!("{version}");
                 }
             }
 

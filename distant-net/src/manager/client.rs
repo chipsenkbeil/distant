@@ -7,7 +7,7 @@ use log::*;
 use crate::client::Client;
 use crate::common::{ConnectionId, Destination, Map, Request};
 use crate::manager::data::{
-    ConnectionInfo, ConnectionList, ManagerCapabilities, ManagerRequest, ManagerResponse,
+    ConnectionInfo, ConnectionList, ManagerRequest, ManagerResponse, SemVer,
 };
 
 mod channel;
@@ -231,12 +231,12 @@ impl ManagerClient {
         RawChannel::spawn(connection_id, self).await
     }
 
-    /// Retrieves a list of supported capabilities
-    pub async fn capabilities(&mut self) -> io::Result<ManagerCapabilities> {
-        trace!("capabilities()");
-        let res = self.send(ManagerRequest::Capabilities).await?;
+    /// Retrieves the version of the  manager.
+    pub async fn version(&mut self) -> io::Result<SemVer> {
+        trace!("version()");
+        let res = self.send(ManagerRequest::Version).await?;
         match res.payload {
-            ManagerResponse::Capabilities { supported } => Ok(supported),
+            ManagerResponse::Version(version) => Ok(version),
             ManagerResponse::Error { description } => {
                 Err(io::Error::new(io::ErrorKind::Other, description))
             }

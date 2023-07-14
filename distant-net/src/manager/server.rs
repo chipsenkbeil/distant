@@ -9,8 +9,8 @@ use tokio::sync::{oneshot, RwLock};
 
 use crate::common::{ConnectionId, Destination, Map};
 use crate::manager::{
-    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
-    ManagerRequest, ManagerResponse,
+    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, ManagerRequest,
+    ManagerResponse, SemVer,
 };
 use crate::server::{RequestCtx, Server, ServerHandler};
 
@@ -138,9 +138,11 @@ impl ManagerServer {
         Ok(id)
     }
 
-    /// Retrieves the list of supported capabilities for this manager
-    async fn capabilities(&self) -> io::Result<ManagerCapabilities> {
-        Ok(ManagerCapabilities::all())
+    /// Retrieves the manager's version.
+    async fn version(&self) -> io::Result<SemVer> {
+        env!("CARGO_PKG_VERSION")
+            .parse()
+            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
     }
 
     /// Retrieves information about the connection to the server with the specified `id`
@@ -196,10 +198,10 @@ impl ServerHandler for ManagerServer {
         } = ctx;
 
         let response = match request.payload {
-            ManagerRequest::Capabilities {} => {
-                debug!("Looking up capabilities");
-                match self.capabilities().await {
-                    Ok(supported) => ManagerResponse::Capabilities { supported },
+            ManagerRequest::Version {} => {
+                debug!("Looking up version");
+                match self.version().await {
+                    Ok(version) => ManagerResponse::Version(version),
                     Err(x) => ManagerResponse::from(x),
                 }
             }

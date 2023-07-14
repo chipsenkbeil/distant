@@ -12,12 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for `--shell` with optional path to an explicit shell as an option
   when executing `distant spawn` in order to run the command within a shell
   rather than directly
+- `semver` crate to be used for version information in protocol and manager
 
 ### Changed
 
 - `distant_protocol::PROTOCOL_VERSION` now uses the crate's major, minor, and
   patch version at compile-time (parsed via `const-str` crate) to streamline
   version handling between crate and protocol
+- Protocol and manager now supply a version request instead of capabilities and
+  the capabilities of protocol are now a `Vec<String>` to contain a set of more
+  broad capabilities instead of every possible request type
 
 ### Fixed
 
@@ -30,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Cmd::program` and `Cmd::arguments` functions as they were misleading (didn't
   do what `distant-local` or `distant-ssh2` do)
+- Removed `Capability` and `Capabilities` from protocol and manager
 
 ## [0.20.0-alpha.12]
 
