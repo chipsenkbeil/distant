@@ -240,7 +240,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 Format::Json => {
                     println!(
                         "{}",
-                        serde_json::to_string(&version)
+                        serde_json::to_string(&serde_json::json!({ "version": version }))
                             .context("Failed to format version as json")?
                     );
                 }

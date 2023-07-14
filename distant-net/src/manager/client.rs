@@ -236,7 +236,7 @@ impl ManagerClient {
         trace!("version()");
         let res = self.send(ManagerRequest::Version).await?;
         match res.payload {
-            ManagerResponse::Version(version) => Ok(version),
+            ManagerResponse::Version { version } => Ok(version),
             ManagerResponse::Error { description } => {
                 Err(io::Error::new(io::ErrorKind::Other, description))
             }

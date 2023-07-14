@@ -14,7 +14,7 @@ pub enum ManagerResponse {
     Error { description: String },
 
     /// Information about the manager's version.
-    Version(SemVer),
+    Version { version: SemVer },
 
     /// Confirmation of a server being launched
     Launched {

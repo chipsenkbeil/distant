@@ -201,7 +201,7 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::Version {} => {
                 debug!("Looking up version");
                 match self.version().await {
-                    Ok(version) => ManagerResponse::Version(version),
+                    Ok(version) => ManagerResponse::Version { version },
                     Err(x) => ManagerResponse::from(x),
                 }
             }
