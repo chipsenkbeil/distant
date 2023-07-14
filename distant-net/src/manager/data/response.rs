@@ -1,9 +1,7 @@
 use distant_auth::msg::Authentication;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerCapabilities, ManagerChannelId,
-};
+use super::{ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, SemVer};
 use crate::common::{ConnectionId, Destination, UntypedResponse};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -15,8 +13,8 @@ pub enum ManagerResponse {
     /// Indicates that some error occurred during a request
     Error { description: String },
 
-    /// Response to retrieving information about the manager's capabilities
-    Capabilities { supported: ManagerCapabilities },
+    /// Information about the manager's version.
+    Version { version: SemVer },
 
     /// Confirmation of a server being launched
     Launched {

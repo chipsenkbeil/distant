@@ -7,10 +7,10 @@ use std::time::Duration;
 use anyhow::Context;
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
+use distant_core::protocol::semver;
 use distant_core::protocol::{
-    self, Capabilities, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
-    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
-    SystemInfo,
+    self, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery, SearchQueryContentsMatch,
+    SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions, SystemInfo, Version,
 };
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
@@ -581,32 +581,51 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             match format {
                 Format::Shell => {
-                    let (major, minor, patch) = distant_core::protocol::PROTOCOL_VERSION;
+                    let mut client_version: semver::Version = env!("CARGO_PKG_VERSION")
+                        .parse()
+                        .context("Failed to parse client version")?;
+
+                    // Add the package name to the version information
+                    if client_version.build.is_empty() {
+                        client_version.build = semver::BuildMetadata::new(env!("CARGO_PKG_NAME"))
+                            .context("Failed to define client build metadata")?;
+                    } else {
+                        let raw_build_str = format!(
+                            "{}.{}",
+                            client_version.build.as_str(),
+                            env!("CARGO_PKG_NAME")
+                        );
+                        client_version.build = semver::BuildMetadata::new(&raw_build_str)
+                            .context("Failed to define client build metadata")?;
+                    }
+
                     println!(
-                        "Client: {} {} (Protocol {major}.{minor}.{patch})",
-                        env!("CARGO_PKG_NAME"),
-                        env!("CARGO_PKG_VERSION")
+                        "Client: {client_version} (Protocol {})",
+                        distant_core::protocol::PROTOCOL_VERSION
                     );
 
-                    let (major, minor, patch) = version.protocol_version;
                     println!(
-                        "Server: {} (Protocol {major}.{minor}.{patch})",
-                        version.server_version
+                        "Server: {} (Protocol {})",
+                        version.server_version, version.protocol_version
                     );
 
                     // Build a complete set of capabilities to show which ones we support
-                    let client_capabilities = Capabilities::all();
-                    let server_capabilities = version.capabilities;
-                    let mut capabilities: Vec<String> = client_capabilities
-                        .union(server_capabilities.as_ref())
-                        .map(|cap| {
-                            let kind = &cap.kind;
-                            if client_capabilities.contains(kind)
-                                && server_capabilities.contains(kind)
-                            {
-                                format!("+{kind}")
+                    let mut capabilities: HashMap<String, u8> = Version::capabilities()
+                        .iter()
+                        .map(|cap| (cap.to_string(), 1))
+                        .collect();
+
+                    for cap in version.capabilities {
+                        *capabilities.entry(cap).or_default() += 1;
+                    }
+
+                    let mut capabilities: Vec<String> = capabilities
+                        .into_iter()
+                        .map(|(cap, cnt)| {
+                            if cnt > 1 {
+                                format!("+{cap}")
                             } else {
-                                format!("-{kind}")
+                                format!("-{cap}")
                             }
                         })
                         .collect();

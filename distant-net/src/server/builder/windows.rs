@@ -5,7 +5,7 @@ use distant_auth::Verifier;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::common::WindowsPipeListener;
+use crate::common::{Version, WindowsPipeListener};
 use crate::server::{Server, ServerConfig, ServerHandler, WindowsPipeServerRef};
 
 pub struct WindowsPipeServerBuilder<T>(Server<T>);
@@ -34,6 +34,10 @@ impl<T> WindowsPipeServerBuilder<T> {
 
     pub fn verifier(self, verifier: Verifier) -> Self {
         Self(self.0.verifier(verifier))
+    }
+
+    pub fn version(self, version: Version) -> Self {
+        Self(self.0.version(version))
     }
 }
 

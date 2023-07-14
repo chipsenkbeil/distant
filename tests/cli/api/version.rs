@@ -1,4 +1,5 @@
-use distant_core::protocol::{Capabilities, Capability, SemVer, PROTOCOL_VERSION};
+use distant_core::protocol::semver::Version as SemVer;
+use distant_core::protocol::{Version, PROTOCOL_VERSION};
 use rstest::*;
 use serde_json::json;
 use test_log::test;
@@ -25,17 +26,17 @@ async fn should_support_json_capabilities(mut api_process: CtxCommand<ApiProcess
         serde_json::from_value(res["payload"]["protocol_version"].clone()).unwrap();
     assert_eq!(protocol_version, PROTOCOL_VERSION);
 
-    let capabilities: Capabilities = res["payload"]["capabilities"]
+    let capabilities: Vec<String> = res["payload"]["capabilities"]
         .as_array()
-        .expect("Field 'supported' was not an array")
+        .expect("Field 'capabilities' was not an array")
         .iter()
         .map(|value| {
-            serde_json::from_value::<Capability>(value.clone())
-                .expect("Could not read array value as capability")
+            serde_json::from_value::<String>(value.clone())
+                .expect("Could not read array value as string")
         })
         .collect();
 
     // NOTE: Our local server api should always support all capabilities since it is the reference
     //       implementation for our api
-    assert_eq!(capabilities, Capabilities::all());
+    assert_eq!(capabilities, Version::capabilities());
 }

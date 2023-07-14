@@ -1,6 +1,6 @@
 use anyhow::Context;
 use distant_core::net::auth::Verifier;
-use distant_core::net::manager::{Config as ManagerConfig, ManagerServer};
+use distant_core::net::manager::{Config as ManagerConfig, ManagerServer, PROTOCOL_VERSION};
 use distant_core::net::server::ServerRef;
 use log::*;
 
@@ -17,6 +17,9 @@ impl Manager {
     /// Begin listening on the network interface specified within [`NetworkConfig`]
     pub async fn listen(self) -> anyhow::Result<ServerRef> {
         let user = self.config.user;
+
+        // Version we'll use to report compatibility in talking to the manager
+        let version = PROTOCOL_VERSION;
 
         #[cfg(unix)]
         {
@@ -38,6 +41,7 @@ impl Manager {
 
             let server = ManagerServer::new(self.config)
                 .verifier(Verifier::none())
+                .version(version)
                 .start(
                     UnixSocketListener::bind_with_permissions(socket_path, self.access.into_mode())
                         .await?,
@@ -59,6 +63,7 @@ impl Manager {
 
             let server = ManagerServer::new(self.config)
                 .verifier(Verifier::none())
+                .version(version)
                 .start(WindowsPipeListener::bind_local(pipe_name)?)
                 .with_context(|| format!("Failed to start manager at pipe {pipe_name:?}"))?;
 

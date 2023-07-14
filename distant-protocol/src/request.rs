@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
-use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 use crate::common::{
     ChangeKind, Cmd, Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions,
@@ -14,26 +13,10 @@ use crate::utils;
 pub type Environment = HashMap<String, String>;
 
 /// Represents the payload of a request to be performed on the remote machine
-#[derive(Clone, Debug, PartialEq, Eq, EnumDiscriminants, IsVariant, Serialize, Deserialize)]
-#[strum_discriminants(derive(
-    AsRefStr,
-    strum::Display,
-    EnumIter,
-    EnumMessage,
-    EnumString,
-    Hash,
-    PartialOrd,
-    Ord,
-    IsVariant,
-    Serialize,
-    Deserialize
-))]
-#[strum_discriminants(name(RequestKind))]
-#[strum_discriminants(strum(serialize_all = "snake_case"))]
+#[derive(Clone, Debug, PartialEq, Eq, IsVariant, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
 pub enum Request {
     /// Reads a file from the specified path on the remote machine
-    #[strum_discriminants(strum(message = "Supports reading binary file"))]
     FileRead {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -41,7 +24,6 @@ pub enum Request {
 
     /// Reads a file from the specified path on the remote machine
     /// and treats the contents as text
-    #[strum_discriminants(strum(message = "Supports reading text file"))]
     FileReadText {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -49,7 +31,6 @@ pub enum Request {
 
     /// Writes a file, creating it if it does not exist, and overwriting any existing content
     /// on the remote machine
-    #[strum_discriminants(strum(message = "Supports writing binary file"))]
     FileWrite {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -61,7 +42,6 @@ pub enum Request {
 
     /// Writes a file using text instead of bytes, creating it if it does not exist,
     /// and overwriting any existing content on the remote machine
-    #[strum_discriminants(strum(message = "Supports writing text file"))]
     FileWriteText {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -71,7 +51,6 @@ pub enum Request {
     },
 
     /// Appends to a file, creating it if it does not exist, on the remote machine
-    #[strum_discriminants(strum(message = "Supports appending to binary file"))]
     FileAppend {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -82,7 +61,6 @@ pub enum Request {
     },
 
     /// Appends text to a file, creating it if it does not exist, on the remote machine
-    #[strum_discriminants(strum(message = "Supports appending to text file"))]
     FileAppendText {
         /// The path to the file on the remote machine
         path: PathBuf,
@@ -92,7 +70,6 @@ pub enum Request {
     },
 
     /// Reads a directory from the specified path on the remote machine
-    #[strum_discriminants(strum(message = "Supports reading directory"))]
     DirRead {
         /// The path to the directory on the remote machine
         path: PathBuf,
@@ -126,7 +103,6 @@ pub enum Request {
     },
 
     /// Creates a directory on the remote machine
-    #[strum_discriminants(strum(message = "Supports creating directory"))]
     DirCreate {
         /// The path to the directory on the remote machine
         path: PathBuf,
@@ -137,7 +113,6 @@ pub enum Request {
     },
 
     /// Removes a file or directory on the remote machine
-    #[strum_discriminants(strum(message = "Supports removing files, directories, and symlinks"))]
     Remove {
         /// The path to the file or directory on the remote machine
         path: PathBuf,
@@ -149,7 +124,6 @@ pub enum Request {
     },
 
     /// Copies a file or directory on the remote machine
-    #[strum_discriminants(strum(message = "Supports copying files, directories, and symlinks"))]
     Copy {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -159,7 +133,6 @@ pub enum Request {
     },
 
     /// Moves/renames a file or directory on the remote machine
-    #[strum_discriminants(strum(message = "Supports renaming files, directories, and symlinks"))]
     Rename {
         /// The path to the file or directory on the remote machine
         src: PathBuf,
@@ -169,7 +142,6 @@ pub enum Request {
     },
 
     /// Watches a path for changes
-    #[strum_discriminants(strum(message = "Supports watching filesystem for changes"))]
     Watch {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
@@ -189,23 +161,18 @@ pub enum Request {
     },
 
     /// Unwatches a path for changes, meaning no additional changes will be reported
-    #[strum_discriminants(strum(message = "Supports unwatching filesystem for changes"))]
     Unwatch {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
     },
 
     /// Checks whether the given path exists
-    #[strum_discriminants(strum(message = "Supports checking if a path exists"))]
     Exists {
         /// The path to the file or directory on the remote machine
         path: PathBuf,
     },
 
     /// Retrieves filesystem metadata for the specified path on the remote machine
-    #[strum_discriminants(strum(
-        message = "Supports retrieving metadata about a file, directory, or symlink"
-    ))]
     Metadata {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
@@ -222,9 +189,6 @@ pub enum Request {
     },
 
     /// Sets permissions on a file, directory, or symlink on the remote machine
-    #[strum_discriminants(strum(
-        message = "Supports setting permissions on a file, directory, or symlink"
-    ))]
     SetPermissions {
         /// The path to the file, directory, or symlink on the remote machine
         path: PathBuf,
@@ -238,23 +202,18 @@ pub enum Request {
     },
 
     /// Searches filesystem using the provided query
-    #[strum_discriminants(strum(message = "Supports searching filesystem using queries"))]
     Search {
         /// Query to perform against the filesystem
         query: SearchQuery,
     },
 
     /// Cancels an active search being run against the filesystem
-    #[strum_discriminants(strum(
-        message = "Supports canceling an active search against the filesystem"
-    ))]
     CancelSearch {
         /// Id of the search to cancel
         id: SearchId,
     },
 
     /// Spawns a new process on the remote machine
-    #[strum_discriminants(strum(message = "Supports spawning a process"))]
     ProcSpawn {
         /// The full command to run including arguments
         cmd: Cmd,
@@ -273,14 +232,12 @@ pub enum Request {
     },
 
     /// Kills a process running on the remote machine
-    #[strum_discriminants(strum(message = "Supports killing a spawned process"))]
     ProcKill {
         /// Id of the actively-running process
         id: ProcessId,
     },
 
     /// Sends additional data to stdin of running process
-    #[strum_discriminants(strum(message = "Supports sending stdin to a spawned process"))]
     ProcStdin {
         /// Id of the actively-running process to send stdin data
         id: ProcessId,
@@ -291,7 +248,6 @@ pub enum Request {
     },
 
     /// Resize pty of remote process
-    #[strum_discriminants(strum(message = "Supports resizing the pty of a spawned process"))]
     ProcResizePty {
         /// Id of the actively-running process whose pty to resize
         id: ProcessId,
@@ -301,11 +257,9 @@ pub enum Request {
     },
 
     /// Retrieve information about the server and the system it is on
-    #[strum_discriminants(strum(message = "Supports retrieving system information"))]
     SystemInfo {},
 
     /// Retrieve information about the server's protocol version
-    #[strum_discriminants(strum(message = "Supports retrieving version"))]
     Version {},
 }
 

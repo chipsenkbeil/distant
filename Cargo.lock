@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "distant-auth"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "async-trait",
  "derive_more",
@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "async-trait",
  "bitflags 2.3.1",
@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "distant-local"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "assert_fs",
  "async-trait",
@@ -926,11 +926,12 @@ dependencies = [
 
 [[package]]
 name = "distant-net"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "async-trait",
  "bytes",
  "chacha20poly1305",
+ "const-str",
  "derive_more",
  "distant-auth",
  "dyn-clone",
@@ -944,6 +945,7 @@ dependencies = [
  "rand",
  "rmp",
  "rmp-serde",
+ "semver 1.0.17",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -956,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "distant-protocol"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "bitflags 2.3.1",
  "const-str",
@@ -964,6 +966,7 @@ dependencies = [
  "regex",
  "rmp",
  "rmp-serde",
+ "semver 1.0.17",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -972,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh2"
-version = "0.20.0-alpha.12"
+version = "0.20.0-alpha.13"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -2776,6 +2779,9 @@ name = "semver"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bebd363326d05ec3e2f532ab7660680f3b02130d780c299bca73469d521bc0ed"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "semver-parser"

@@ -171,7 +171,7 @@ impl Options {
             DistantSubcommand::Manager(cmd) => {
                 update_logging!(manager);
                 match cmd {
-                    ManagerSubcommand::Capabilities { network, .. } => {
+                    ManagerSubcommand::Version { network, .. } => {
                         network.merge(config.manager.network);
                     }
                     ManagerSubcommand::Info { network, .. } => {
@@ -1054,7 +1054,7 @@ pub enum ManagerSubcommand {
     },
 
     /// Retrieve a list of capabilities that the manager supports
-    Capabilities {
+    Version {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
@@ -1111,7 +1111,7 @@ impl ManagerSubcommand {
             Self::Select { format, .. } => *format,
             Self::Service(_) => Format::Shell,
             Self::Listen { .. } => Format::Shell,
-            Self::Capabilities { format, .. } => *format,
+            Self::Version { format, .. } => *format,
             Self::Info { format, .. } => *format,
             Self::List { format, .. } => *format,
             Self::Kill { format, .. } => *format,
@@ -3505,7 +3505,7 @@ mod tests {
                 log_file: None,
                 log_level: None,
             },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Capabilities {
+            command: DistantSubcommand::Manager(ManagerSubcommand::Version {
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: None,
@@ -3537,7 +3537,7 @@ mod tests {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
                 },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Capabilities {
+                command: DistantSubcommand::Manager(ManagerSubcommand::Version {
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
@@ -3556,7 +3556,7 @@ mod tests {
                 log_file: Some(PathBuf::from("cli-log-file")),
                 log_level: Some(LogLevel::Info),
             },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Capabilities {
+            command: DistantSubcommand::Manager(ManagerSubcommand::Version {
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -3588,7 +3588,7 @@ mod tests {
                     log_file: Some(PathBuf::from("cli-log-file")),
                     log_level: Some(LogLevel::Info),
                 },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Capabilities {
+                command: DistantSubcommand::Manager(ManagerSubcommand::Version {
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),

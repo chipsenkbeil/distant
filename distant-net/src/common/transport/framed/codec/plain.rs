@@ -8,7 +8,7 @@ pub struct PlainCodec;
 
 impl PlainCodec {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 

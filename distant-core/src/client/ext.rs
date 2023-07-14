@@ -44,7 +44,11 @@ pub trait DistantChannelExt {
     /// Creates a remote directory, optionally creating all parent components if specified
     fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> AsyncReturn<'_, ()>;
 
+    /// Checks whether the `path` exists on the remote machine
     fn exists(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, bool>;
+
+    /// Checks whether this client is compatible with the remote server
+    fn is_compatible(&mut self) -> AsyncReturn<'_, bool>;
 
     /// Retrieves metadata about a path on a remote machine
     fn metadata(
@@ -135,6 +139,9 @@ pub trait DistantChannelExt {
 
     /// Retrieves server version information
     fn version(&mut self) -> AsyncReturn<'_, Version>;
+
+    /// Returns version of protocol that the client uses
+    fn protocol_version(&self) -> protocol::semver::Version;
 
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
@@ -230,6 +237,15 @@ impl DistantChannelExt
                 _ => Err(mismatched_response()),
             }
         )
+    }
+
+    fn is_compatible(&mut self) -> AsyncReturn<'_, bool> {
+        make_body!(self, protocol::Request::Version {}, |data| match data {
+            protocol::Response::Version(version) =>
+                Ok(protocol::is_compatible_with(&version.protocol_version)),
+            protocol::Response::Error(x) => Err(io::Error::from(x)),
+            _ => Err(mismatched_response()),
+        })
     }
 
     fn metadata(
@@ -451,6 +467,10 @@ impl DistantChannelExt
             protocol::Response::Error(x) => Err(io::Error::from(x)),
             _ => Err(mismatched_response()),
         })
+    }
+
+    fn protocol_version(&self) -> protocol::semver::Version {
+        protocol::PROTOCOL_VERSION
     }
 
     fn write_file(

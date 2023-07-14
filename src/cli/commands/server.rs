@@ -2,8 +2,9 @@ use std::io::{self, Read, Write};
 
 use anyhow::Context;
 use distant_core::net::auth::Verifier;
-use distant_core::net::common::{Host, SecretKey32};
+use distant_core::net::common::{Host, SecretKey32, Version};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig};
+use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::DistantSingleKeyCredentials;
 use distant_local::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
 use log::*;
@@ -159,6 +160,11 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                 })
                 .handler(handler)
                 .verifier(Verifier::static_key(key.clone()))
+                .version(Version::new(
+                    PROTOCOL_VERSION.major,
+                    PROTOCOL_VERSION.minor,
+                    PROTOCOL_VERSION.patch,
+                ))
                 .start(addr, port)
                 .await
                 .with_context(|| format!("Failed to start server @ {addr} with {port}"))?;

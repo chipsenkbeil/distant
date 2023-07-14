@@ -7,7 +7,7 @@ use distant_core::net::auth::{
     AuthHandler, AuthMethodHandler, PromptAuthMethodHandler, SingleAuthHandler,
 };
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
-use distant_core::net::manager::ManagerClient;
+use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
 use log::*;
 
 use crate::cli::common::{MsgReceiver, MsgSender};
@@ -71,6 +71,7 @@ impl<T: AuthHandler + Clone> Client<T> {
                         },
                         ..Default::default()
                     })
+                    .version(PROTOCOL_VERSION)
                     .connect()
                     .await
                 {
@@ -113,6 +114,7 @@ impl<T: AuthHandler + Clone> Client<T> {
                         },
                         ..Default::default()
                     })
+                    .version(PROTOCOL_VERSION)
                     .connect()
                     .await
                 {

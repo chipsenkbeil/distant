@@ -20,7 +20,7 @@ pub use windows::*;
 
 use super::ClientConfig;
 use crate::client::{Client, UntypedClient};
-use crate::common::{Connection, Transport};
+use crate::common::{Connection, Transport, Version};
 
 /// Interface that performs the connection to produce a [`Transport`] for use by the [`Client`].
 #[async_trait]
@@ -46,6 +46,7 @@ pub struct ClientBuilder<H, C> {
     connector: C,
     config: ClientConfig,
     connect_timeout: Option<Duration>,
+    version: Version,
 }
 
 impl<H, C> ClientBuilder<H, C> {
@@ -56,6 +57,7 @@ impl<H, C> ClientBuilder<H, C> {
             config: self.config,
             connector: self.connector,
             connect_timeout: self.connect_timeout,
+            version: self.version,
         }
     }
 
@@ -66,6 +68,7 @@ impl<H, C> ClientBuilder<H, C> {
             config,
             connector: self.connector,
             connect_timeout: self.connect_timeout,
+            version: self.version,
         }
     }
 
@@ -76,6 +79,7 @@ impl<H, C> ClientBuilder<H, C> {
             config: self.config,
             connector,
             connect_timeout: self.connect_timeout,
+            version: self.version,
         }
     }
 
@@ -86,6 +90,18 @@ impl<H, C> ClientBuilder<H, C> {
             config: self.config,
             connector: self.connector,
             connect_timeout: connect_timeout.into(),
+            version: self.version,
+        }
+    }
+
+    /// Configure the version of the client.
+    pub fn version(self, version: Version) -> Self {
+        Self {
+            auth_handler: self.auth_handler,
+            config: self.config,
+            connector: self.connector,
+            connect_timeout: self.connect_timeout,
+            version,
         }
     }
 }
@@ -97,6 +113,7 @@ impl ClientBuilder<(), ()> {
             config: Default::default(),
             connector: (),
             connect_timeout: None,
+            version: Default::default(),
         }
     }
 }
@@ -119,6 +136,7 @@ where
         let auth_handler = self.auth_handler;
         let config = self.config;
         let connect_timeout = self.connect_timeout;
+        let version = self.version;
 
         let f = async move {
             let transport = match connect_timeout {
@@ -128,7 +146,7 @@ where
                     .and_then(convert::identity)?,
                 None => self.connector.connect().await?,
             };
-            let connection = Connection::client(transport, auth_handler).await?;
+            let connection = Connection::client(transport, auth_handler, version).await?;
             Ok(UntypedClient::spawn(connection, config))
         };
 

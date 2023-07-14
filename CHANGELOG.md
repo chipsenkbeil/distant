@@ -7,17 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0-alpha.13]
+
 ### Added
 
 - Support for `--shell` with optional path to an explicit shell as an option
   when executing `distant spawn` in order to run the command within a shell
   rather than directly
+- `semver` crate to be used for version information in protocol and manager
+- `is_compatible_with` function to root of `distant-protocol` crate that checks
+  if a provided version is compatible with the protocol
 
 ### Changed
 
 - `distant_protocol::PROTOCOL_VERSION` now uses the crate's major, minor, and
   patch version at compile-time (parsed via `const-str` crate) to streamline
   version handling between crate and protocol
+- Protocol and manager now supply a version request instead of capabilities and
+  the capabilities of protocol are now a `Vec<String>` to contain a set of more
+  broad capabilities instead of every possible request type
 
 ### Fixed
 
@@ -30,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Cmd::program` and `Cmd::arguments` functions as they were misleading (didn't
   do what `distant-local` or `distant-ssh2` do)
+- Removed `Capability` and `Capabilities` from protocol and manager
 
 ## [0.20.0-alpha.12]
 
@@ -600,7 +609,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pending upon full channel and no longer locks up
 - stdout, stderr, and stdin of `RemoteProcess` no longer cause deadlock
 
-[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.12...HEAD
+[Unreleased]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.13...HEAD
+[0.20.0-alpha.13]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.12...v0.20.0-alpha.13
 [0.20.0-alpha.12]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.11...v0.20.0-alpha.12
 [0.20.0-alpha.11]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.10...v0.20.0-alpha.11
 [0.20.0-alpha.10]: https://github.com/chipsenkbeil/distant/compare/v0.20.0-alpha.9...v0.20.0-alpha.10

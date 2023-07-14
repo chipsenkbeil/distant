@@ -122,18 +122,27 @@ impl Termination for MainResult {
                 CliError::Exit(code) => ExitCode::from(code),
                 CliError::Error(x) => {
                     match self.format {
-                        Format::Shell => eprintln!("{x}"),
+                        // For anyhow, we want to print with debug information, which includes the
+                        // full stack of information that anyhow collects; otherwise, we would only
+                        // include the top-level context.
+                        Format::Shell => eprintln!("{x:?}"),
+
                         Format::Json => println!(
                             "{}",
                             serde_json::to_string(&serde_json::json!({
                                 "type": "error",
-                                "msg": x.to_string(),
+                                "msg": format!("{x:?}"),
                             }),)
                             .expect("Failed to format error to JSON")
                         ),
                     }
+
+                    // For anyhow, we want to log with debug information, which includes the full
+                    // stack of information that anyhow collects; otherwise, we would only include
+                    // the top-level context.
                     ::log::error!("{x:?}");
                     ::log::logger().flush();
+
                     ExitCode::FAILURE
                 }
             },

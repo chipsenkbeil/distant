@@ -2013,19 +2013,14 @@ mod tests {
 
     mod version {
         use super::*;
-        use crate::common::{Capabilities, Capability};
+        use crate::semver::Version as SemVer;
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Response::Version(Version {
-                server_version: String::from("some version"),
-                protocol_version: (1, 2, 3),
-                capabilities: [Capability {
-                    kind: String::from("some kind"),
-                    description: String::from("some description"),
-                }]
-                .into_iter()
-                .collect(),
+                server_version: "123.456.789-rc+build".parse().unwrap(),
+                protocol_version: SemVer::new(1, 2, 3),
+                capabilities: vec![String::from("cap")],
             });
 
             let value = serde_json::to_value(payload).unwrap();
@@ -2033,12 +2028,9 @@ mod tests {
                 value,
                 serde_json::json!({
                     "type": "version",
-                    "server_version": "some version",
-                    "protocol_version": [1, 2, 3],
-                    "capabilities": [{
-                        "kind": "some kind",
-                        "description": "some description",
-                    }],
+                    "server_version": "123.456.789-rc+build",
+                    "protocol_version": "1.2.3",
+                    "capabilities": ["cap"],
                 })
             );
         }
@@ -2047,18 +2039,18 @@ mod tests {
         fn should_be_able_to_deserialize_from_json() {
             let value = serde_json::json!({
                 "type": "version",
-                "server_version": "some version",
-                "protocol_version": [1, 2, 3],
-                "capabilities": Capabilities::all(),
+                "server_version": "123.456.789-rc+build",
+                "protocol_version": "1.2.3",
+                "capabilities": ["cap"],
             });
 
             let payload: Response = serde_json::from_value(value).unwrap();
             assert_eq!(
                 payload,
                 Response::Version(Version {
-                    server_version: String::from("some version"),
-                    protocol_version: (1, 2, 3),
-                    capabilities: Capabilities::all(),
+                    server_version: "123.456.789-rc+build".parse().unwrap(),
+                    protocol_version: SemVer::new(1, 2, 3),
+                    capabilities: vec![String::from("cap")],
                 })
             );
         }
@@ -2066,9 +2058,9 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Response::Version(Version {
-                server_version: String::from("some version"),
-                protocol_version: (1, 2, 3),
-                capabilities: Capabilities::all(),
+                server_version: "123.456.789-rc+build".parse().unwrap(),
+                protocol_version: SemVer::new(1, 2, 3),
+                capabilities: vec![String::from("cap")],
             });
 
             // NOTE: We don't actually check the errput here because it's an implementation detail
@@ -2085,9 +2077,9 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Response::Version(Version {
-                server_version: String::from("some version"),
-                protocol_version: (1, 2, 3),
-                capabilities: Capabilities::all(),
+                server_version: "123.456.789-rc+build".parse().unwrap(),
+                protocol_version: SemVer::new(1, 2, 3),
+                capabilities: vec![String::from("cap")],
             }))
             .unwrap();
 
@@ -2095,9 +2087,9 @@ mod tests {
             assert_eq!(
                 payload,
                 Response::Version(Version {
-                    server_version: String::from("some version"),
-                    protocol_version: (1, 2, 3),
-                    capabilities: Capabilities::all(),
+                    server_version: "123.456.789-rc+build".parse().unwrap(),
+                    protocol_version: SemVer::new(1, 2, 3),
+                    capabilities: vec![String::from("cap")],
                 })
             );
         }
