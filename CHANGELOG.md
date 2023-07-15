@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When terminating a connection using `distant manager kill`, the connection is
   now properly dropped, resulting servers waiting to terminate due to
   `--shutdown lonely=N` to now shutdown accordingly
+- Zombies from spawned servers via `distant launch manager://localhost` are now
+  properly terminated by checking the exit status of processes
 
 ## [0.20.0-alpha.13]
 
