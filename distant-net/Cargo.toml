@@ -3,7 +3,7 @@ name = "distant-net"
 description = "Network library for distant, providing implementations to support client/server architecture"
 categories = ["network-programming"]
 keywords = ["api", "async"]
-version = "0.20.0-alpha.13"
+version = "0.20.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -17,7 +17,7 @@ bytes = "1.4.0"
 chacha20poly1305 = "0.10.1"
 const-str = "0.5.6"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
-distant-auth = { version = "=0.20.0-alpha.13", path = "../distant-auth" }
+distant-auth = { version = "=0.20.0", path = "../distant-auth" }
 dyn-clone = "1.0.11"
 flate2 = "1.0.26"
 hex = "0.4.3"
@@ -37,7 +37,7 @@ strum = { version = "0.24.1", features = ["derive"] }
 tokio = { version = "1.28.2", features = ["full"] }
 
 [dev-dependencies]
-distant-auth = { version = "=0.20.0-alpha.13", path = "../distant-auth", features = ["tests"] }
+distant-auth = { version = "=0.20.0", path = "../distant-auth", features = ["tests"] }
 env_logger = "0.10.0"
 serde_json = "1.0.96"
 tempfile = "3.5.0"

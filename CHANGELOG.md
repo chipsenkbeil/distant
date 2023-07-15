@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0]
+
+All changes described in these alpha releases:
+
+- [Alpha 13](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.13)
+- [Alpha 12](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.12)
+- [Alpha 11](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.11)
+- [Alpha 10](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.10)
+- [Alpha 9](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.9)
+- [Alpha 8](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.8)
+- [Alpha 7](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.7)
+- [Alpha 6](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.6)
+- [Alpha 5](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.5)
+- [Alpha 4](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.4)
+- [Alpha 3](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.3)
+- [Alpha 2](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.2)
+- [Alpha 1](https://github.com/chipsenkbeil/distant/releases/tag/v0.20.0-alpha.1)
+
 ### Fixed
 
 - When terminating a connection using `distant manager kill`, the connection is
