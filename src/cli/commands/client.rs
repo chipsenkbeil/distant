@@ -1187,29 +1187,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             mode,
             path,
         }) => {
-            debug!("Parsing {mode:?} into a proper set of permissions");
-            let permissions = {
-                if mode.trim().eq_ignore_ascii_case("readonly") {
-                    Permissions::readonly()
-                } else if mode.trim().eq_ignore_ascii_case("notreadonly") {
-                    Permissions::writable()
-                } else {
-                    // Attempt to parse an octal number (chmod absolute), falling back to
-                    // parsing the mode string similar to chmod's symbolic mode
-                    let mode = match u32::from_str_radix(&mode, 8) {
-                        Ok(absolute) => file_mode::Mode::from(absolute),
-                        Err(_) => {
-                            let mut new_mode = file_mode::Mode::empty();
-                            new_mode
-                                .set_str(&mode)
-                                .context("Failed to parse mode string")?;
-                            new_mode
-                        }
-                    };
-                    Permissions::from_unix_mode(mode.mode())
-                }
-            };
-
             debug!("Connecting to manager");
             let mut client = Client::new(network)
                 .using_prompt_auth_handler()
@@ -1222,10 +1199,76 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
             debug!("Opening channel to connection {}", connection_id);
-            let channel = client
+            let mut channel: DistantChannel = client
                 .open_raw_channel(connection_id)
                 .await
-                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
+                .into_client()
+                .into_channel();
+
+            debug!("Parsing {mode:?} into a proper set of permissions");
+            let permissions = {
+                if mode.trim().eq_ignore_ascii_case("readonly") {
+                    Permissions::readonly()
+                } else if mode.trim().eq_ignore_ascii_case("notreadonly") {
+                    Permissions::writable()
+                } else {
+                    // Attempt to parse an octal number (chmod absolute), falling back to
+                    // parsing the mode string similar to chmod's symbolic mode
+                    match u32::from_str_radix(&mode, 8) {
+                        Ok(absolute) => {
+                            Permissions::from_unix_mode(file_mode::Mode::from(absolute).mode())
+                        }
+                        Err(_) => {
+                            // The way parsing works, we need to parse and apply to two different
+                            // situations
+                            //
+                            // 1. A mode that is all 1s so we can see if the mask would remove
+                            //    permission to some of the bits
+                            // 2. A mode that is all 0s so we can see if the mask would add
+                            //    permission to some of the bits
+                            let mut removals = file_mode::Mode::from(0o777);
+                            removals
+                                .set_str(&mode)
+                                .context("Failed to parse mode string")?;
+                            let removals_mask = !removals.mode();
+
+                            let mut additions = file_mode::Mode::empty();
+                            additions
+                                .set_str(&mode)
+                                .context("Failed to parse mode string")?;
+                            let additions_mask = additions.mode();
+
+                            macro_rules! get_mode {
+                                ($mask:expr) => {{
+                                    let is_false = removals_mask & $mask > 0;
+                                    let is_true = additions_mask & $mask > 0;
+                                    match (is_true, is_false) {
+                                        (true, false) => Some(true),
+                                        (false, true) => Some(false),
+                                        (false, false) => None,
+                                        (true, true) => {
+                                            unreachable!("Mask cannot be adding and removing")
+                                        }
+                                    }
+                                }};
+                            }
+
+                            Permissions {
+                                owner_read: get_mode!(0o400),
+                                owner_write: get_mode!(0o200),
+                                owner_exec: get_mode!(0o100),
+                                group_read: get_mode!(0o040),
+                                group_write: get_mode!(0o020),
+                                group_exec: get_mode!(0o010),
+                                other_read: get_mode!(0o004),
+                                other_write: get_mode!(0o002),
+                                other_exec: get_mode!(0o001),
+                            }
+                        }
+                    }
+                }
+            };
 
             let options = SetPermissionsOptions {
                 recursive,
@@ -1234,8 +1277,6 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             };
             debug!("Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})");
             channel
-                .into_client()
-                .into_channel()
                 .set_permissions(path.as_path(), permissions, options)
                 .await
                 .with_context(|| {

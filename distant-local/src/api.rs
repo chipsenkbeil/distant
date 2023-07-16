@@ -451,9 +451,11 @@ impl DistantApi for Api {
                 })?
                 .permissions();
 
-            // Apply the readonly flag for all platforms
-            if let Some(readonly) = permissions.is_readonly() {
-                std_permissions.set_readonly(readonly);
+            // Apply the readonly flag for all platforms but junix
+            if !cfg!(unix) {
+                if let Some(readonly) = permissions.is_readonly() {
+                    std_permissions.set_readonly(readonly);
+                }
             }
 
             // On Unix platforms, we can apply a bitset change
@@ -462,7 +464,9 @@ impl DistantApi for Api {
                 use std::os::unix::prelude::*;
                 let mut current = Permissions::from(std_permissions.clone());
                 current.apply_from(permissions);
-                std_permissions.set_mode(current.to_unix_mode());
+
+                let mode = current.to_unix_mode();
+                std_permissions.set_mode(mode);
             }
 
             Ok(std_permissions)

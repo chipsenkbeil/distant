@@ -296,7 +296,7 @@ impl Permissions {
 
     /// Converts a Unix `mode` into the permission set.
     pub fn from_unix_mode(mode: u32) -> Self {
-        let flags = UnixFilePermissionFlags::from_bits_truncate(mode);
+        let flags = UnixFilePermissionFlags::from_bits_truncate(mode & 0o777);
         Self {
             owner_read: Some(flags.contains(UnixFilePermissionFlags::OWNER_READ)),
             owner_write: Some(flags.contains(UnixFilePermissionFlags::OWNER_WRITE)),
@@ -426,21 +426,379 @@ impl From<Permissions> for std::fs::Permissions {
 
 bitflags! {
     struct UnixFilePermissionFlags: u32 {
-        const OWNER_READ = 0o400;
-        const OWNER_WRITE = 0o200;
-        const OWNER_EXEC = 0o100;
-        const GROUP_READ = 0o40;
-        const GROUP_WRITE = 0o20;
-        const GROUP_EXEC = 0o10;
-        const OTHER_READ = 0o4;
-        const OTHER_WRITE = 0o2;
-        const OTHER_EXEC = 0o1;
+        const OWNER_READ    = 0o400;
+        const OWNER_WRITE   = 0o200;
+        const OWNER_EXEC    = 0o100;
+        const GROUP_READ    = 0o040;
+        const GROUP_WRITE   = 0o020;
+        const GROUP_EXEC    = 0o010;
+        const OTHER_READ    = 0o004;
+        const OTHER_WRITE   = 0o002;
+        const OTHER_EXEC    = 0o001;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_properly_parse_unix_mode_into_permissions() {
+        let permissions = Permissions::from_unix_mode(0o400);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(true),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o200);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(true),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o100);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(true),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o040);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(true),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o020);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(true),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o010);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(true),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o004);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(true),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o002);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(true),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o001);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(true),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o000);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+        );
+
+        let permissions = Permissions::from_unix_mode(0o777);
+        assert_eq!(
+            permissions,
+            Permissions {
+                owner_read: Some(true),
+                owner_write: Some(true),
+                owner_exec: Some(true),
+                group_read: Some(true),
+                group_write: Some(true),
+                group_exec: Some(true),
+                other_read: Some(true),
+                other_write: Some(true),
+                other_exec: Some(true),
+            }
+        );
+    }
+
+    #[test]
+    fn should_properly_convert_into_unix_mode() {
+        assert_eq!(
+            Permissions {
+                owner_read: Some(true),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o400
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(true),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o200
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(true),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o100
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(true),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o040
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(true),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o020
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(true),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o010
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(true),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o004
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(true),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o002
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(true),
+            }
+            .to_unix_mode(),
+            0o001
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(false),
+                owner_write: Some(false),
+                owner_exec: Some(false),
+                group_read: Some(false),
+                group_write: Some(false),
+                group_exec: Some(false),
+                other_read: Some(false),
+                other_write: Some(false),
+                other_exec: Some(false),
+            }
+            .to_unix_mode(),
+            0o000
+        );
+
+        assert_eq!(
+            Permissions {
+                owner_read: Some(true),
+                owner_write: Some(true),
+                owner_exec: Some(true),
+                group_read: Some(true),
+                group_write: Some(true),
+                group_exec: Some(true),
+                other_read: Some(true),
+                other_write: Some(true),
+                other_exec: Some(true),
+            }
+            .to_unix_mode(),
+            0o777
+        );
+    }
 
     #[test]
     fn should_be_able_to_serialize_minimal_permissions_to_json() {

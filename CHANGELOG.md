@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bug in `distant fs set-permissions` where partial permissions such as `go-w`
+  would result in clearing all permissions
+- Bug in `distant-local` implementation of `SetPermissions` where read-only
+  status was being set/cleared prior to Unix permissions being applied,
+  resulting in applying an invalid change to the permissions
+
 ## [0.20.0]
 
 All changes described in these alpha releases:
