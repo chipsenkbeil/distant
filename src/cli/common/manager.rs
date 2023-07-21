@@ -31,6 +31,7 @@ impl Manager {
                     global_paths::UNIX_SOCKET_PATH.as_path()
                 }
             });
+            debug!("Manager wants to use unix socket @ {:?}", socket_path);
 
             // Ensure that the path to the socket exists
             if let Some(parent) = socket_path.parent() {
@@ -60,6 +61,7 @@ impl Manager {
             } else {
                 global_paths::WINDOWS_PIPE_NAME.as_str()
             });
+            debug!("Manager wants to use windows pipe @ {:?}", pipe_name);
 
             let server = ManagerServer::new(self.config)
                 .verifier(Verifier::none())
