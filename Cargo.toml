@@ -28,9 +28,9 @@ codegen-units = 1
 strip = true
 
 [features]
-default = ["libssh", "ssh2"]
-libssh = ["distant-ssh2/libssh"]
-ssh2 = ["distant-ssh2/ssh2"]
+default = ["vendored-openssl"]
+openssl = ["distant-ssh2/openssl"]
+vendored-openssl = ["distant-ssh2/vendored-openssl"]
 
 [dependencies]
 anyhow = "1.0.71"
@@ -65,7 +65,7 @@ winsplit = "0.1.0"
 whoami = "1.4.0"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.20.0", path = "distant-ssh2", default-features = false, features = ["serde"], optional = true }
+distant-ssh2 = { version = "=0.20.0", path = "distant-ssh2", features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.21"

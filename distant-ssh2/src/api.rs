@@ -15,9 +15,6 @@ use distant_core::protocol::{
 use distant_core::{DistantApi, DistantCtx};
 use log::*;
 use tokio::sync::{mpsc, RwLock};
-use wezterm_ssh::{
-    FilePermissions, OpenFileType, OpenOptions, Session as WezSession, Utf8PathBuf, WriteMode,
-};
 
 use crate::process::{spawn_pty, spawn_simple, SpawnResult};
 use crate::utils::{self, to_other_error};
