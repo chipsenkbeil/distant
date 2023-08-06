@@ -45,7 +45,7 @@ See https://distant.dev/getting-started/installation/windows/ for more details.
 
 ```sh
 # Start a manager in the background
-distant manager listen &
+distant manager listen --daemon
 
 # SSH into a server, start distant, and connect to the distant server
 distant launch ssh://example.com
