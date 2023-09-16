@@ -27,7 +27,7 @@
 curl -L https://sh.distant.dev | sh
 
 # Can also use wget to the same result
-wget https://sh.distant.dev | sh
+wget -q -O- https://sh.distant.dev | sh
 ```
 
 See https://distant.dev/getting-started/installation/unix/ for more details.
