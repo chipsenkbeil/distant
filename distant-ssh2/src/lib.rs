@@ -4,9 +4,6 @@
 #[cfg(doctest)]
 pub struct ReadmeDoctests;
 
-#[cfg(not(any(feature = "libssh", feature = "ssh2")))]
-compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{self, Write};
@@ -15,7 +12,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use async_compat::CompatExt;
 use async_trait::async_trait;
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, ClientConfig};
@@ -24,7 +20,6 @@ use distant_core::net::server::{Server, ServerRef};
 use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::{DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials};
 use log::*;
-use smol::channel::Receiver as SmolReceiver;
 use tokio::sync::Mutex;
 
 mod api;
