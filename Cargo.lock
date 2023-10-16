@@ -2820,9 +2820,9 @@ dependencies = [
 
 [[package]]
 name = "russh-sftp"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e759d56570f82b9ea53d9cecb284e0b7c43dccc9990052cfedaf006cf68e66d7"
+checksum = "efa4a52f06fa98725b841e678aca7d0936aae4dbe4a74b7e29b3f893856c31b6"
 dependencies = [
  "async-trait",
  "bitflags 2.4.0",
