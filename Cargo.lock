@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -786,8 +786,8 @@ dependencies = [
  "dialoguer",
  "directories",
  "distant-core",
- "distant-local",
- "distant-ssh2",
+ "distant-plugin-local",
+ "distant-plugin-ssh",
  "env_logger",
  "file-mode",
  "flexi_logger",
@@ -818,28 +818,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-auth"
-version = "0.20.0"
-dependencies = [
- "async-trait",
- "derive_more",
- "env_logger",
- "log",
- "serde",
- "test-log",
- "tokio",
-]
-
-[[package]]
 name = "distant-core"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "async-trait",
  "bitflags 2.4.0",
  "bytes",
  "derive_more",
- "distant-net",
- "distant-protocol",
+ "distant-core-net",
+ "distant-core-plugin",
+ "distant-core-protocol",
  "env_logger",
  "futures",
  "hex",
@@ -857,8 +845,74 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-local"
-version = "0.20.0"
+name = "distant-core-auth"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "derive_more",
+ "env_logger",
+ "log",
+ "serde",
+ "test-log",
+ "tokio",
+]
+
+[[package]]
+name = "distant-core-net"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chacha20poly1305",
+ "const-str",
+ "derive_more",
+ "distant-core-auth",
+ "dyn-clone",
+ "env_logger",
+ "flate2",
+ "hex",
+ "hkdf",
+ "log",
+ "p256",
+ "paste",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "semver 1.0.17",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2 0.10.6",
+ "strum",
+ "tempfile",
+ "test-log",
+ "tokio",
+]
+
+[[package]]
+name = "distant-core-plugin"
+version = "0.21.0"
+
+[[package]]
+name = "distant-core-protocol"
+version = "0.21.0"
+dependencies = [
+ "bitflags 2.4.0",
+ "const-str",
+ "derive_more",
+ "regex",
+ "rmp",
+ "rmp-serde",
+ "semver 1.0.17",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "strum",
+]
+
+[[package]]
+name = "distant-plugin-local"
+version = "0.21.0"
 dependencies = [
  "assert_fs",
  "async-trait",
@@ -885,57 +939,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-net"
-version = "0.20.0"
-dependencies = [
- "async-trait",
- "bytes",
- "chacha20poly1305",
- "const-str",
- "derive_more",
- "distant-auth",
- "dyn-clone",
- "env_logger",
- "flate2",
- "hex",
- "hkdf",
- "log",
- "p256",
- "paste",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "semver 1.0.17",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2 0.10.6",
- "strum",
- "tempfile",
- "test-log",
- "tokio",
-]
-
-[[package]]
-name = "distant-protocol"
-version = "0.20.0"
-dependencies = [
- "bitflags 2.4.0",
- "const-str",
- "derive_more",
- "regex",
- "rmp",
- "rmp-serde",
- "semver 1.0.17",
- "serde",
- "serde_bytes",
- "serde_json",
- "strum",
-]
-
-[[package]]
-name = "distant-ssh2"
-version = "0.20.0"
+name = "distant-plugin-ssh"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -3493,9 +3498,9 @@ dependencies = [
 
 [[package]]
 name = "typed-path"
-version = "0.3.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b26db9a2991a51e1e805820c2cabfc974f625ad6457be8a3eaba4c78361484e"
+checksum = "bbb9d13b8242894ff21f9990082b90a6410a43dcc6029ac4227a1467853ba781"
 
 [[package]]
 name = "typenum"

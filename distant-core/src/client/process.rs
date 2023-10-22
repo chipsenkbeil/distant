@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use distant_net::client::Mailbox;
-use distant_net::common::{Request, Response};
+use distant_core_net::client::Mailbox;
+use distant_core_net::common::{Request, Response};
 use log::*;
 use tokio::io;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
@@ -590,8 +590,8 @@ mod errors {
 mod tests {
     use std::time::Duration;
 
-    use distant_net::common::{FramedTransport, InmemoryTransport, Response};
-    use distant_net::Client;
+    use distant_core_net::common::{FramedTransport, InmemoryTransport, Response};
+    use distant_core_net::Client;
     use test_log::test;
 
     use super::*;

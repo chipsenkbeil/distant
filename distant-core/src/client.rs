@@ -1,5 +1,5 @@
-use distant_net::client::Channel;
-use distant_net::Client;
+use distant_core_net::client::Channel;
+use distant_core_net::Client;
 
 use crate::protocol;
 

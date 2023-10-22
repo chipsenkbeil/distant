@@ -1,6 +1,6 @@
 use std::{fmt, io};
 
-use distant_net::common::Request;
+use distant_core_net::common::Request;
 use log::*;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -193,8 +193,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use distant_net::common::{FramedTransport, InmemoryTransport, Response};
-    use distant_net::Client;
+    use distant_core_net::common::{FramedTransport, InmemoryTransport, Response};
+    use distant_core_net::Client;
     use test_log::test;
     use tokio::sync::Mutex;
 

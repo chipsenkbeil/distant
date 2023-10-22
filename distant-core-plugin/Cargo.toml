@@ -1,0 +1,12 @@
+[package]
+name = "distant-core-plugin"
+description = "Core plugin library for distant that provides everything needed to build a plugin"
+categories = []
+keywords = []
+version = "0.21.0"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2021"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"

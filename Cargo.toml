@@ -3,7 +3,7 @@ name = "distant"
 description = "Operate on a remote computer through file and process manipulation"
 categories = ["command-line-utilities"]
 keywords = ["cli"]
-version = "0.20.0"
+version = "0.21.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -13,12 +13,13 @@ license = "MIT OR Apache-2.0"
 
 [workspace]
 members = [
-    "distant-auth", 
     "distant-core", 
-    "distant-local", 
-    "distant-net", 
-    "distant-protocol", 
-    "distant-ssh2",
+    "distant-core-auth", 
+    "distant-core-net", 
+    "distant-core-plugin", 
+    "distant-core-protocol", 
+    "distant-plugin-local", 
+    "distant-plugin-ssh",
 ]
 
 [profile.release]
@@ -29,8 +30,8 @@ strip = true
 
 [features]
 default = ["vendored-openssl"]
-openssl = ["distant-ssh2/openssl"]
-vendored-openssl = ["distant-ssh2/vendored-openssl"]
+openssl = ["distant-plugin-ssh/openssl"]
+vendored-openssl = ["distant-plugin-ssh/vendored-openssl"]
 
 [dependencies]
 anyhow = "1.0.71"
@@ -40,8 +41,8 @@ clap_complete = "4.3.0"
 config = { version = "0.13.3", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.4", default-features = false }
-distant-core = { version = "=0.20.0", path = "distant-core" }
-distant-local = { version = "=0.20.0", path = "distant-local" }
+distant-core = { version = "=0.21.0", path = "distant-core" }
+distant-plugin-local = { version = "=0.21.0", path = "distant-plugin-local" }
 directories = "5.0.1"
 file-mode = "0.1.2"
 flexi_logger = "0.25.5"
@@ -59,13 +60,13 @@ tokio = { version = "1.28.2", features = ["full"] }
 toml_edit = { version = "0.19.10", features = ["serde"] }
 terminal_size = "0.2.6"
 termwiz = "0.20.0"
-typed-path = "0.3.2"
+typed-path = "0.6.0"
 which = "4.4.0"
 winsplit = "0.1.0"
 whoami = "1.4.0"
 
 # Optional native SSH functionality
-distant-ssh2 = { version = "=0.20.0", path = "distant-ssh2", optional = true }
+distant-plugin-ssh = { version = "=0.21.0", path = "distant-plugin-ssh", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.21"

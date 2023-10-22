@@ -6,7 +6,7 @@ use distant_core::net::common::{Host, SecretKey32, Version};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig};
 use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::DistantSingleKeyCredentials;
-use distant_local::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
+use distant_plugin_local::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
 use log::*;
 
 use crate::options::ServerSubcommand;
@@ -143,7 +143,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                     "using an ephemeral port".to_string()
                 }
             );
-            let handler = distant_local::new_handler(LocalConfig {
+            let handler = distant_plugin_local::new_handler(LocalConfig {
                 watch: LocalWatchConfig {
                     native: !watch.watch_polling,
                     poll_interval: watch.watch_poll_interval.map(Into::into),
