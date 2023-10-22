@@ -1,10 +1,9 @@
-use std::collections::hash_map::Entry;
+use std::collections::hash_map::{Entry, IntoIter, Iter, IterMut};
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
-use derive_more::{Display, Error, From, IntoIterator};
 use serde::de::Deserializer;
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -12,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::common::utils::{deserialize_from_str, serialize_to_str};
 
 /// Contains map information for connections and other use cases
-#[derive(Clone, Debug, From, IntoIterator, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Map(HashMap<String, String>);
 
 impl Map {
@@ -112,17 +111,63 @@ impl fmt::Display for Map {
     }
 }
 
-#[derive(Clone, Debug, Display, Error)]
+impl From<HashMap<String, String>> for Map {
+    fn from(map: HashMap<String, String>) -> Self {
+        Self(map)
+    }
+}
+
+impl<'a> IntoIterator for &'a Map {
+    type Item = (&'a String, &'a String);
+    type IntoIter = Iter<'a, String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Map {
+    type Item = (&'a String, &'a mut String);
+    type IntoIter = IterMut<'a, String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl IntoIterator for Map {
+    type Item = (String, String);
+    type IntoIter = IntoIter<String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum MapParseError {
-    #[display(fmt = "Missing = after key ('{key}')")]
     MissingEqualsAfterKey { key: String },
-
-    #[display(fmt = "Key ('{key}') must start with alphabetic character")]
     KeyMustStartWithAlphabeticCharacter { key: String },
-
-    #[display(fmt = "Missing closing \" for value")]
     MissingClosingQuoteForValue,
 }
+
+impl fmt::Display for MapParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingEqualsAfterKey { key } => {
+                write!(f, "Missing = after key ('{key}')")
+            }
+            Self::KeyMustStartWithAlphabeticCharacter { key } => {
+                write!(f, "Key ('{key}') must start with alphabetic character")
+            }
+            Self::MissingClosingQuoteForValue => {
+                write!(f, "Missing closing \" for value")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MapParseError {}
 
 impl FromStr for Map {
     type Err = MapParseError;

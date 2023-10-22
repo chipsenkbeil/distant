@@ -10,3 +10,9 @@ homepage = "https://github.com/chipsenkbeil/distant"
 repository = "https://github.com/chipsenkbeil/distant"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
+
+[dependencies]
+async-trait = "0.1.68"
+distant-core-auth = { version = "=0.21.0", path = "../distant-core-auth" }
+distant-core-protocol = { version = "=0.21.0", path = "../distant-core-protocol" }
+serde = { version = "1.0.163", features = ["derive"] }

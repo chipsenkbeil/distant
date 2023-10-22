@@ -892,6 +892,12 @@ dependencies = [
 [[package]]
 name = "distant-core-plugin"
 version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "distant-core-auth",
+ "distant-core-protocol",
+ "serde",
+]
 
 [[package]]
 name = "distant-core-protocol"

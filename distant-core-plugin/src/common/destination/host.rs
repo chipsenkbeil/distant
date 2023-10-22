@@ -2,7 +2,6 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
-use derive_more::{Display, Error, From};
 use serde::de::Deserializer;
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -10,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{deserialize_from_str, serialize_to_str};
 
 /// Represents the host of a destination
-#[derive(Clone, Debug, From, Display, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Host {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
@@ -69,7 +68,41 @@ impl From<IpAddr> for Host {
     }
 }
 
-#[derive(Copy, Clone, Debug, Error, Hash, PartialEq, Eq)]
+impl From<Ipv4Addr> for Host {
+    fn from(addr: Ipv4Addr) -> Self {
+        Self::Ipv4(addr)
+    }
+}
+
+impl From<Ipv6Addr> for Host {
+    fn from(addr: Ipv6Addr) -> Self {
+        Self::Ipv6(addr)
+    }
+}
+
+impl<'a> From<&'a str> for Host {
+    fn from(name: &'a str) -> Self {
+        Self::Name(name.to_string())
+    }
+}
+
+impl From<String> for Host {
+    fn from(name: String) -> Self {
+        Self::Name(name)
+    }
+}
+
+impl fmt::Display for Host {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ipv4(addr) => write!(f, "{addr}"),
+            Self::Ipv6(addr) => write!(f, "{addr}"),
+            Self::Name(name) => write!(f, "{name}"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum HostParseError {
     EmptyLabel,
     EndsWithHyphen,
@@ -102,6 +135,8 @@ impl fmt::Display for HostParseError {
         write!(f, "{}", self.into_static_str())
     }
 }
+
+impl std::error::Error for HostParseError {}
 
 impl FromStr for Host {
     type Err = HostParseError;
