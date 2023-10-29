@@ -15,8 +15,11 @@ license = "MIT OR Apache-2.0"
 members = [
     "distant-core", 
     "distant-core-auth", 
+    "distant-core-client", 
+    "distant-core-manager", 
     "distant-core-net", 
     "distant-core-protocol", 
+    "distant-core-server", 
     "distant-plugin", 
     "distant-plugin-local", 
     "distant-plugin-ssh",

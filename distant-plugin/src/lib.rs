@@ -5,6 +5,7 @@
 pub struct ReadmeDoctests;
 
 pub mod api;
+pub mod client;
 pub mod common;
 pub mod handlers;
 

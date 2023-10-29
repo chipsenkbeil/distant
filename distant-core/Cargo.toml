@@ -17,6 +17,9 @@ bitflags = "2.3.1"
 bytes = "1.4.0"
 derive_more = { version = "0.99.17", default-features = false, features = ["as_mut", "as_ref", "deref", "deref_mut", "display", "from", "error", "into", "into_iterator", "is_variant", "try_into"] }
 distant-core-net = { version = "=0.21.0", path = "../distant-core-net" }
+distant-core-client = { version = "=0.21.0", path = "../distant-core-client" }
+distant-core-manager = { version = "=0.21.0", path = "../distant-core-manager" }
+distant-core-server = { version = "=0.21.0", path = "../distant-core-server" }
 distant-plugin = { version = "=0.21.0", path = "../distant-plugin" }
 distant-core-protocol = { version = "=0.21.0", path = "../distant-core-protocol" }
 futures = "0.3.28"

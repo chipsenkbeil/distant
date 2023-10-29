@@ -825,8 +825,11 @@ dependencies = [
  "bitflags 2.4.0",
  "bytes",
  "derive_more",
+ "distant-core-client",
+ "distant-core-manager",
  "distant-core-net",
  "distant-core-protocol",
+ "distant-core-server",
  "distant-plugin",
  "env_logger",
  "futures",
@@ -846,6 +849,32 @@ dependencies = [
 
 [[package]]
 name = "distant-core-auth"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "derive_more",
+ "env_logger",
+ "log",
+ "serde",
+ "test-log",
+ "tokio",
+]
+
+[[package]]
+name = "distant-core-client"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "derive_more",
+ "env_logger",
+ "log",
+ "serde",
+ "test-log",
+ "tokio",
+]
+
+[[package]]
+name = "distant-core-manager"
 version = "0.21.0"
 dependencies = [
  "async-trait",
@@ -904,6 +933,19 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "strum",
+]
+
+[[package]]
+name = "distant-core-server"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "derive_more",
+ "env_logger",
+ "log",
+ "serde",
+ "test-log",
+ "tokio",
 ]
 
 [[package]]
