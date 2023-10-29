@@ -8,16 +8,16 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 #[cfg(test)]
-use crate::common::InmemoryTransport;
-use crate::common::{
+use crate::InmemoryTransport;
+use crate::{
     Backup, FramedTransport, HeapSecretKey, Keychain, KeychainResult, Reconnectable, Transport,
     TransportExt, Version,
 };
 
-/// Id of the connection
+/// Id of the connection.
 pub type ConnectionId = u32;
 
-/// Represents a connection from either the client or server side
+/// Represents a connection from either the client or server side.
 #[derive(Debug)]
 pub enum Connection<T> {
     /// Connection from the client side
@@ -179,7 +179,7 @@ where
     }
 }
 
-/// Type of connection to perform
+/// Type of connection to perform.
 #[derive(Debug, Serialize, Deserialize)]
 enum ConnectType {
     /// Indicates that the connection from client to server is no and not a reconnection

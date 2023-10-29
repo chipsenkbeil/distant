@@ -79,7 +79,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::common::TransportExt;
+    use crate::TransportExt;
 
     async fn find_ephemeral_addr() -> SocketAddr {
         // Start a listener on a distinct port, get its port, and kill it

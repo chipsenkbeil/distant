@@ -866,6 +866,7 @@ version = "0.21.0"
 dependencies = [
  "async-trait",
  "derive_more",
+ "distant-core-net",
  "env_logger",
  "log",
  "serde",
@@ -879,6 +880,7 @@ version = "0.21.0"
 dependencies = [
  "async-trait",
  "derive_more",
+ "distant-core-net",
  "env_logger",
  "log",
  "serde",
@@ -941,6 +943,7 @@ version = "0.21.0"
 dependencies = [
  "async-trait",
  "derive_more",
+ "distant-core-net",
  "env_logger",
  "log",
  "serde",

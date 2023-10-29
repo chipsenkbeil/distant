@@ -4,6 +4,7 @@ use std::io;
 use async_trait::async_trait;
 use distant_core_auth::Authenticator;
 
+use crate::client::Client;
 use crate::common::{Destination, Map};
 
 /// Boxed [`LaunchHandler`].
@@ -96,21 +97,21 @@ pub trait ConnectHandler: Send + Sync {
         destination: &Destination,
         options: &Map,
         authenticator: &mut dyn Authenticator,
-    ) -> io::Result<UntypedClient>;
+    ) -> io::Result<Box<dyn Client>>;
 }
 
 #[async_trait]
 impl<F, R> ConnectHandler for F
 where
     F: Fn(&Destination, &Map, &mut dyn Authenticator) -> R + Send + Sync + 'static,
-    R: Future<Output = io::Result<UntypedClient>> + Send + 'static,
+    R: Future<Output = io::Result<Box<dyn Client>>> + Send + 'static,
 {
     async fn connect(
         &self,
         destination: &Destination,
         options: &Map,
         authenticator: &mut dyn Authenticator,
-    ) -> io::Result<UntypedClient> {
+    ) -> io::Result<Box<dyn Client>> {
         self(destination, options, authenticator).await
     }
 }
@@ -156,10 +157,10 @@ macro_rules! boxed_connect_handler {
 
 #[cfg(test)]
 mod tests {
+    use distant_core_auth::*;
     use test_log::test;
 
     use super::*;
-    use crate::common::FramedTransport;
 
     #[inline]
     fn test_destination() -> Destination {
@@ -171,9 +172,48 @@ mod tests {
         Map::default()
     }
 
+    /// Creates an authenticator that does nothing.
     #[inline]
     fn test_authenticator() -> impl Authenticator {
-        FramedTransport::pair(1).0
+        struct __TestAuthenticator;
+
+        impl Authenticator for __TestAuthenticator {
+            async fn initialize(
+                &mut self,
+                initialization: Initialization,
+            ) -> io::Result<InitializationResponse> {
+                unimplemented!()
+            }
+
+            async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+                unimplemented!()
+            }
+
+            async fn verify(
+                &mut self,
+                verification: Verification,
+            ) -> io::Result<VerificationResponse> {
+                unimplemented!()
+            }
+
+            async fn info(&mut self, info: Info) -> io::Result<()> {
+                unimplemented!()
+            }
+
+            async fn error(&mut self, error: Error) -> io::Result<()> {
+                unimplemented!()
+            }
+
+            async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+                unimplemented!()
+            }
+
+            async fn finished(&mut self) -> io::Result<()> {
+                unimplemented!()
+            }
+        }
+
+        __TestAuthenticator
     }
 
     #[test(tokio::test)]

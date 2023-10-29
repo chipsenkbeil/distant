@@ -69,7 +69,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::common::TransportExt;
+    use crate::TransportExt;
 
     async fn start_and_run_server(tx: oneshot::Sender<PathBuf>) -> io::Result<()> {
         // Generate a socket path and delete the file after so there is nothing there

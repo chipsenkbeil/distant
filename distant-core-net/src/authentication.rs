@@ -5,7 +5,7 @@ use distant_core_auth::msg::*;
 use distant_core_auth::{AuthHandler, Authenticate, Authenticator};
 use log::*;
 
-use crate::common::{utils, FramedTransport, Transport};
+use crate::{utils, FramedTransport, Transport};
 
 macro_rules! write_frame {
     ($transport:expr, $data:expr) => {{

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio::net::TcpListener as TokioTcpListener;
 
 use super::Listener;
-use crate::common::{PortRange, TcpTransport};
+use crate::{PortRange, TcpTransport};
 
 /// Represents a [`Listener`] for incoming connections over TCP
 pub struct TcpListener {

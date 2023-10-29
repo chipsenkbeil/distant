@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::common::HeapSecretKey;
+use crate::HeapSecretKey;
 
 /// Represents the result of a request to the database.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

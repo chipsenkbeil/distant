@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
 use super::Listener;
-use crate::common::{NamedPipe, WindowsPipeTransport};
+use crate::{NamedPipe, WindowsPipeTransport};
 
 /// Represents a [`Listener`] for incoming connections over a named windows pipe
 pub struct WindowsPipeListener {

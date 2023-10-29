@@ -6,7 +6,7 @@ use derive_more::IntoIterator;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{utils, Value};
+use crate::{utils, Value};
 
 /// Generates a new [`Header`] of key/value pairs based on literals.
 ///
@@ -18,7 +18,7 @@ use crate::common::{utils, Value};
 #[macro_export]
 macro_rules! header {
     ($($key:literal -> $value:expr),* $(,)?) => {{
-        let mut _header = $crate::common::Header::default();
+        let mut _header = $crate::Header::default();
 
         $(
             _header.insert($key, $value);

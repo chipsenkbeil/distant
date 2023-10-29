@@ -1,8 +1,8 @@
 [package]
 name = "distant-core-net"
-description = "Core network library for distant, providing implementations to support client/server architecture"
+description = "Core network library for distant, providing primitives for use in network communication"
 categories = ["network-programming"]
-keywords = ["api", "async"]
+keywords = ["api", "async", "network", "primitives"]
 version = "0.21.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2021"

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use tokio::net::{UnixListener, UnixStream};
 
 use super::Listener;
-use crate::common::UnixSocketTransport;
+use crate::UnixSocketTransport;
 
 /// Represents a [`Listener`] for incoming connections over a Unix socket
 pub struct UnixSocketListener {

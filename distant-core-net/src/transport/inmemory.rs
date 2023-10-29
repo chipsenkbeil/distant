@@ -203,7 +203,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::common::TransportExt;
+    use crate::TransportExt;
 
     #[test]
     fn is_rx_closed_should_properly_reflect_if_internal_rx_channel_is_closed() {

@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::common::utils;
+use crate::utils;
 
 /// Generic value type for data passed through header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

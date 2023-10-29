@@ -4,14 +4,28 @@
 #[cfg(doctest)]
 pub struct ReadmeDoctests;
 
+mod any;
 mod authentication;
-pub mod client;
-pub mod common;
-pub mod manager;
-pub mod server;
+mod connection;
+mod key;
+mod keychain;
+mod listener;
+mod packet;
+mod port;
+mod transport;
+pub(crate) mod utils;
+mod version;
 
-pub use client::{Client, ReconnectStrategy};
+pub use any::*;
+pub use connection::*;
+pub use key::*;
+pub use keychain::*;
+pub use listener::*;
+pub use packet::*;
+pub use port::*;
+pub use transport::*;
+pub use version::*;
+
 /// Authentication functionality tied to network operations.
 pub use distant_core_auth as auth;
-pub use server::Server;
 pub use {log, paste};
