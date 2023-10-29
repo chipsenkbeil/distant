@@ -1,6 +1,6 @@
 [package]
-name = "distant-core-plugin"
-description = "Core plugin library for distant that provides everything needed to build a plugin"
+name = "distant-plugin"
+description = "Plugin library for distant that provides everything needed to build a plugin"
 categories = []
 keywords = []
 version = "0.21.0"

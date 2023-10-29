@@ -16,8 +16,8 @@ members = [
     "distant-core", 
     "distant-core-auth", 
     "distant-core-net", 
-    "distant-core-plugin", 
     "distant-core-protocol", 
+    "distant-plugin", 
     "distant-plugin-local", 
     "distant-plugin-ssh",
 ]

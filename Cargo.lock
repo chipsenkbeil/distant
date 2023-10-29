@@ -826,8 +826,8 @@ dependencies = [
  "bytes",
  "derive_more",
  "distant-core-net",
- "distant-core-plugin",
  "distant-core-protocol",
+ "distant-plugin",
  "env_logger",
  "futures",
  "hex",
@@ -890,16 +890,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-core-plugin"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "distant-core-auth",
- "distant-core-protocol",
- "serde",
-]
-
-[[package]]
 name = "distant-core-protocol"
 version = "0.21.0"
 dependencies = [
@@ -914,6 +904,16 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "strum",
+]
+
+[[package]]
+name = "distant-plugin"
+version = "0.21.0"
+dependencies = [
+ "async-trait",
+ "distant-core-auth",
+ "distant-core-protocol",
+ "serde",
 ]
 
 [[package]]
