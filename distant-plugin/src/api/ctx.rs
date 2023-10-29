@@ -1,6 +1,7 @@
 use std::io;
 
 use async_trait::async_trait;
+use distant_core_protocol::Response;
 
 /// Type abstraction of a boxed [`Ctx`].
 pub type BoxedCtx = Box<dyn Ctx>;
@@ -16,5 +17,5 @@ pub trait Ctx: Send {
     fn clone_ctx(&self) -> BoxedCtx;
 
     /// Sends some response back.
-    fn send(&self, data: Vec<u8>) -> io::Result<()>;
+    fn send(&self, response: Response) -> io::Result<()>;
 }

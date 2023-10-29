@@ -1,58 +1,55 @@
-use std::any::TypeId;
 use std::io;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 use distant_core_protocol::*;
 
+mod checker;
 mod ctx;
+mod unsupported;
+
+pub use checker::*;
 pub use ctx::*;
+pub use unsupported::*;
 
 /// Full API that represents a distant-compatible server.
 #[async_trait]
 pub trait Api {
+    /// Specific implementation of [`FileSystemApi`] associated with this [`Api`].
     type FileSystem: FileSystemApi;
+
+    /// Specific implementation of [`ProcessApi`] associated with this [`Api`].
     type Process: ProcessApi;
+
+    /// Specific implementation of [`SearchApi`] associated with this [`Api`].
     type Search: SearchApi;
+
+    /// Specific implementation of [`SystemInfoApi`] associated with this [`Api`].
     type SystemInfo: SystemInfoApi;
+
+    /// Specific implementation of [`VersionApi`] associated with this [`Api`].
     type Version: VersionApi;
+
+    /// Specific implementation of [`WatchApi`] associated with this [`Api`].
     type Watch: WatchApi;
 
-    /// Returns true if [`FileSystemApi`] is supported. This is checked by ensuring that the
-    /// implementation of the associated trait is not [`Unsupported`].
-    fn is_file_system_api_supported() -> bool {
-        TypeId::of::<Self::FileSystem>() != TypeId::of::<Unsupported>()
-    }
+    /// Returns a reference to the [`FileSystemApi`] implementation tied to this [`Api`].
+    fn file_system(&self) -> &Self::FileSystem;
 
-    /// Returns true if [`ProcessApi`] is supported. This is checked by ensuring that the
-    /// implementation of the associated trait is not [`Unsupported`].
-    fn is_process_api_supported() -> bool {
-        TypeId::of::<Self::Process>() != TypeId::of::<Unsupported>()
-    }
+    /// Returns a reference to the [`ProcessApi`] implementation tied to this [`Api`].
+    fn process(&self) -> &Self::Process;
 
-    /// Returns true if [`SearchApi`] is supported. This is checked by ensuring that the
-    /// implementation of the associated trait is not [`Unsupported`].
-    fn is_search_api_supported() -> bool {
-        TypeId::of::<Self::Search>() != TypeId::of::<Unsupported>()
-    }
+    /// Returns a reference to the [`SearchApi`] implementation tied to this [`Api`].
+    fn search(&self) -> &Self::Search;
 
-    /// Returns true if [`SystemInfoApi`] is supported. This is checked by ensuring that the
-    /// implementation of the associated trait is not [`Unsupported`].
-    fn is_system_info_api_supported() -> bool {
-        TypeId::of::<Self::SystemInfo>() != TypeId::of::<Unsupported>()
-    }
+    /// Returns a reference to the [`SystemInfoApi`] implementation tied to this [`Api`].
+    fn system_info(&self) -> &Self::SystemInfo;
 
-    /// Returns true if [`VersionApi`] is supported. This is checked by ensuring that the
-    /// implementation of the associated trait is not [`Unsupported`].
-    fn is_version_api_supported() -> bool {
-        TypeId::of::<Self::Version>() != TypeId::of::<Unsupported>()
-    }
+    /// Returns a reference to the [`VersionApi`] implementation tied to this [`Api`].
+    fn version(&self) -> &Self::Version;
 
-    /// Returns true if [`WatchApi`] is supported. This is checked by ensuring that the
-    /// implementation of the associated trait is not [`Unsupported`].
-    fn is_watch_api_supported() -> bool {
-        TypeId::of::<Self::Watch>() != TypeId::of::<Unsupported>()
-    }
+    /// Returns a reference to the [`WatchApi`] implementation tied to this [`Api`].
+    fn watch(&self) -> &Self::Watch;
 }
 
 /// API supporting filesystem operations.
@@ -251,195 +248,4 @@ pub trait WatchApi {
     ///
     /// * `path` - the path to the file or directory
     async fn unwatch(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<()>;
-}
-
-pub use unsupported::Unsupported;
-
-mod unsupported {
-    use super::*;
-
-    #[inline]
-    fn unsupported<T>(label: &str) -> io::Result<T> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("{label} is unsupported"),
-        ))
-    }
-
-    /// Generic struct that implements all APIs as unsupported.
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-    pub struct Unsupported;
-
-    #[async_trait]
-    impl Api for Unsupported {
-        type FileSystem = Self;
-        type Process = Self;
-        type Search = Self;
-        type SystemInfo = Self;
-        type Version = Self;
-        type Watch = Self;
-    }
-
-    #[async_trait]
-    impl FileSystemApi for Unsupported {
-        async fn read_file(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<Vec<u8>> {
-            unsupported("read_file")
-        }
-
-        async fn read_file_text(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<String> {
-            unsupported("read_file_text")
-        }
-
-        async fn write_file(&self, ctx: BoxedCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
-            unsupported("write_file")
-        }
-
-        async fn write_file_text(
-            &self,
-            ctx: BoxedCtx,
-            path: PathBuf,
-            data: String,
-        ) -> io::Result<()> {
-            unsupported("write_file_text")
-        }
-
-        async fn append_file(&self, ctx: BoxedCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
-            unsupported("append_file")
-        }
-
-        async fn append_file_text(
-            &self,
-            ctx: BoxedCtx,
-            path: PathBuf,
-            data: String,
-        ) -> io::Result<()> {
-            unsupported("append_file_text")
-        }
-
-        async fn read_dir(
-            &self,
-            ctx: BoxedCtx,
-            path: PathBuf,
-            depth: usize,
-            absolute: bool,
-            canonicalize: bool,
-            include_root: bool,
-        ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
-            unsupported("read_dir")
-        }
-
-        async fn create_dir(&self, ctx: BoxedCtx, path: PathBuf, all: bool) -> io::Result<()> {
-            unsupported("create_dir")
-        }
-
-        async fn copy(&self, ctx: BoxedCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
-            unsupported("copy")
-        }
-
-        async fn remove(&self, ctx: BoxedCtx, path: PathBuf, force: bool) -> io::Result<()> {
-            unsupported("remove")
-        }
-
-        async fn rename(&self, ctx: BoxedCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
-            unsupported("rename")
-        }
-
-        async fn exists(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<bool> {
-            unsupported("exists")
-        }
-
-        async fn metadata(
-            &self,
-            ctx: BoxedCtx,
-            path: PathBuf,
-            canonicalize: bool,
-            resolve_file_type: bool,
-        ) -> io::Result<Metadata> {
-            unsupported("metadata")
-        }
-
-        async fn set_permissions(
-            &self,
-            ctx: BoxedCtx,
-            path: PathBuf,
-            permissions: Permissions,
-            options: SetPermissionsOptions,
-        ) -> io::Result<()> {
-            unsupported("set_permissions")
-        }
-    }
-
-    #[async_trait]
-    impl ProcessApi for Unsupported {
-        async fn proc_spawn(
-            &self,
-            ctx: BoxedCtx,
-            cmd: String,
-            environment: Environment,
-            current_dir: Option<PathBuf>,
-            pty: Option<PtySize>,
-        ) -> io::Result<ProcessId> {
-            unsupported("proc_spawn")
-        }
-
-        async fn proc_kill(&self, ctx: BoxedCtx, id: ProcessId) -> io::Result<()> {
-            unsupported("proc_kill")
-        }
-
-        async fn proc_stdin(&self, ctx: BoxedCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
-            unsupported("proc_stdin")
-        }
-
-        async fn proc_resize_pty(
-            &self,
-            ctx: BoxedCtx,
-            id: ProcessId,
-            size: PtySize,
-        ) -> io::Result<()> {
-            unsupported("proc_resize_pty")
-        }
-    }
-
-    #[async_trait]
-    impl SearchApi for Unsupported {
-        async fn search(&self, ctx: BoxedCtx, query: SearchQuery) -> io::Result<SearchId> {
-            unsupported("search")
-        }
-
-        async fn cancel_search(&self, ctx: BoxedCtx, id: SearchId) -> io::Result<()> {
-            unsupported("cancel_search")
-        }
-    }
-
-    #[async_trait]
-    impl SystemInfoApi for Unsupported {
-        async fn system_info(&self, ctx: BoxedCtx) -> io::Result<SystemInfo> {
-            unsupported("system_info")
-        }
-    }
-
-    #[async_trait]
-    impl VersionApi for Unsupported {
-        async fn version(&self, ctx: BoxedCtx) -> io::Result<Version> {
-            unsupported("version")
-        }
-    }
-
-    #[async_trait]
-    impl WatchApi for Unsupported {
-        async fn watch(
-            &self,
-            ctx: BoxedCtx,
-            path: PathBuf,
-            recursive: bool,
-            only: Vec<ChangeKind>,
-            except: Vec<ChangeKind>,
-        ) -> io::Result<()> {
-            unsupported("watch")
-        }
-
-        async fn unwatch(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<()> {
-            unsupported("unwatch")
-        }
-    }
 }
