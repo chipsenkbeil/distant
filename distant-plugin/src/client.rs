@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use distant_core_protocol::{Error, Request, Response};
 
 use crate::api::{
-    Api, BoxedCtx, Ctx, FileSystemApi, ProcessApi, SearchApi, SystemInfoApi, VersionApi, WatchApi,
+    Api, Ctx, FileSystemApi, ProcessApi, SearchApi, SystemInfoApi, VersionApi, WatchApi,
 };
 
 pub type BoxedClient = Box<dyn Client>;
@@ -33,17 +33,19 @@ pub trait Client {
 /// This can be used to run an Api implementation locally, such as when you want to translate some
 /// other platform (e.g. ssh, docker) into a distant-compatible form.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClientBridge<T: Api>(Arc<T>);
+pub struct ClientBridge<T: Api> {
+    api: Arc<T>,
+}
 
 impl<T: Api> ClientBridge<T> {
     /// Creates a new bridge wrapping around the provided api.
     pub fn new(api: T) -> Self {
-        Self(Arc::new(api))
+        Self { api: Arc::new(api) }
     }
 }
 
 #[async_trait]
-impl<T: Api + Send + Sync> Client for ClientBridge<T> {
+impl<T: Api> Client for ClientBridge<T> {
     async fn fire(&mut self, request: Request) -> io::Result<()> {
         let _ = self.send(request).await?;
         Ok(())
@@ -58,7 +60,7 @@ impl<T: Api + Send + Sync> Client for ClientBridge<T> {
                 self.0
             }
 
-            fn clone_ctx(&self) -> BoxedCtx {
+            fn clone_ctx(&self) -> Box<dyn Ctx> {
                 Box::new(__Ctx(self.0, self.1.clone()))
             }
 
@@ -69,13 +71,20 @@ impl<T: Api + Send + Sync> Client for ClientBridge<T> {
             }
         }
 
+        // TODO: Do we give this some unique id? We could randomize it, but would need the
+        // random crate to do so. Is that even necessary given this represents a "connection"
+        // and the likelihood that someone creates multiple bridges to the same api is minimal?
         let (tx, rx) = mpsc::channel();
         let ctx = Box::new(__Ctx(0, tx));
 
         // TODO: This is blocking! How can we make this async? Do we REALLY need to import tokio?
         //
         // We would need to import tokio to spawn a task to run this...
-        let _response = handle_request(Arc::clone(&self.0), ctx, request).await;
+        //
+        // Alternatively, we could make some sort of trait that is a task queuer that is
+        // also passed to the bridge and is used to abstract the tokio spawn. Tokio itself
+        // can implement that trait by creating some newtype that just uses tokio spawn underneath
+        let _response = handle_request(Arc::clone(&self.api), ctx, request).await;
 
         Ok(rx)
     }
@@ -84,15 +93,19 @@ impl<T: Api + Send + Sync> Client for ClientBridge<T> {
         let rx = self.mail(request).await?;
 
         // TODO: This is blocking! How can we make this async? Do we REALLY need to import tokio?
+        //
+        // If we abstract the mpsc::Receiver to be async, we can make this async without using
+        // tokio runtime directly. The mail function would return a boxed version of this trait
+        // and we can await on it like usual
         rx.recv()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Bridge has closed"))
     }
 }
 
 /// Processes an incoming request.
-async fn handle_request<T>(api: Arc<T>, ctx: BoxedCtx, request: Request) -> Response
+async fn handle_request<T>(api: Arc<T>, ctx: Box<dyn Ctx>, request: Request) -> Response
 where
-    T: Api + Send,
+    T: Api,
 {
     match request {
         Request::Version {} => {

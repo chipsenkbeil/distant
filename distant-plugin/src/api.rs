@@ -14,7 +14,7 @@ pub use unsupported::*;
 
 /// Full API that represents a distant-compatible server.
 #[async_trait]
-pub trait Api {
+pub trait Api: Send + Sync {
     /// Specific implementation of [`FileSystemApi`] associated with this [`Api`].
     type FileSystem: FileSystemApi;
 
@@ -54,7 +54,7 @@ pub trait Api {
 
 /// API supporting filesystem operations.
 #[async_trait]
-pub trait FileSystemApi {
+pub trait FileSystemApi: Send + Sync {
     /// Reads bytes from a file.
     ///
     /// * `path` - the path to the file
@@ -164,7 +164,7 @@ pub trait FileSystemApi {
 
 /// API supporting process creation and manipulation.
 #[async_trait]
-pub trait ProcessApi {
+pub trait ProcessApi: Send + Sync {
     /// Spawns a new process, returning its id.
     ///
     /// * `cmd` - the full command to run as a new process (including arguments)
@@ -200,7 +200,7 @@ pub trait ProcessApi {
 
 /// API supporting searching through the remote system.
 #[async_trait]
-pub trait SearchApi {
+pub trait SearchApi: Send + Sync {
     /// Searches files for matches based on a query.
     ///
     /// * `query` - the specific query to perform
@@ -214,21 +214,21 @@ pub trait SearchApi {
 
 /// API supporting retrieval of information about the remote system.
 #[async_trait]
-pub trait SystemInfoApi {
+pub trait SystemInfoApi: Send + Sync {
     /// Retrieves information about the system.
     async fn system_info(&self, ctx: BoxedCtx) -> io::Result<SystemInfo>;
 }
 
 /// API supporting retrieval of the server's version.
 #[async_trait]
-pub trait VersionApi {
+pub trait VersionApi: Send + Sync {
     /// Retrieves information about the server's capabilities.
     async fn version(&self, ctx: BoxedCtx) -> io::Result<Version>;
 }
 
 /// API supporting watching of changes to the remote filesystem.
 #[async_trait]
-pub trait WatchApi {
+pub trait WatchApi: Send + Sync {
     /// Watches a file or directory for changes.
     ///
     /// * `path` - the path to the file or directory
