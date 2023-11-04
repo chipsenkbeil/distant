@@ -58,36 +58,46 @@ pub trait FileSystemApi: Send + Sync {
     /// Reads bytes from a file.
     ///
     /// * `path` - the path to the file
-    async fn read_file(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<Vec<u8>>;
+    async fn read_file(&self, ctx: Box<dyn Ctx>, path: PathBuf) -> io::Result<Vec<u8>>;
 
     /// Reads bytes from a file as text.
     ///
     /// * `path` - the path to the file
-    async fn read_file_text(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<String>;
+    async fn read_file_text(&self, ctx: Box<dyn Ctx>, path: PathBuf) -> io::Result<String>;
 
     /// Writes bytes to a file, overwriting the file if it exists.
     ///
     /// * `path` - the path to the file
     /// * `data` - the data to write
-    async fn write_file(&self, ctx: BoxedCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()>;
+    async fn write_file(&self, ctx: Box<dyn Ctx>, path: PathBuf, data: Vec<u8>) -> io::Result<()>;
 
     /// Writes text to a file, overwriting the file if it exists.
     ///
     /// * `path` - the path to the file
     /// * `data` - the data to write
-    async fn write_file_text(&self, ctx: BoxedCtx, path: PathBuf, data: String) -> io::Result<()>;
+    async fn write_file_text(
+        &self,
+        ctx: Box<dyn Ctx>,
+        path: PathBuf,
+        data: String,
+    ) -> io::Result<()>;
 
     /// Writes bytes to the end of a file, creating it if it is missing.
     ///
     /// * `path` - the path to the file
     /// * `data` - the data to append
-    async fn append_file(&self, ctx: BoxedCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()>;
+    async fn append_file(&self, ctx: Box<dyn Ctx>, path: PathBuf, data: Vec<u8>) -> io::Result<()>;
 
     /// Writes bytes to the end of a file, creating it if it is missing.
     ///
     /// * `path` - the path to the file
     /// * `data` - the data to append
-    async fn append_file_text(&self, ctx: BoxedCtx, path: PathBuf, data: String) -> io::Result<()>;
+    async fn append_file_text(
+        &self,
+        ctx: Box<dyn Ctx>,
+        path: PathBuf,
+        data: String,
+    ) -> io::Result<()>;
 
     /// Reads entries from a directory.
     ///
@@ -98,7 +108,7 @@ pub trait FileSystemApi: Send + Sync {
     /// * `include_root` - if true, will include the directory specified in the entries
     async fn read_dir(
         &self,
-        ctx: BoxedCtx,
+        ctx: Box<dyn Ctx>,
         path: PathBuf,
         depth: usize,
         absolute: bool,
@@ -110,30 +120,30 @@ pub trait FileSystemApi: Send + Sync {
     ///
     /// * `path` - the path to the directory
     /// * `all` - if true, will create all missing parent components
-    async fn create_dir(&self, ctx: BoxedCtx, path: PathBuf, all: bool) -> io::Result<()>;
+    async fn create_dir(&self, ctx: Box<dyn Ctx>, path: PathBuf, all: bool) -> io::Result<()>;
 
     /// Copies some file or directory.
     ///
     /// * `src` - the path to the file or directory to copy
     /// * `dst` - the path where the copy will be placed
-    async fn copy(&self, ctx: BoxedCtx, src: PathBuf, dst: PathBuf) -> io::Result<()>;
+    async fn copy(&self, ctx: Box<dyn Ctx>, src: PathBuf, dst: PathBuf) -> io::Result<()>;
 
     /// Removes some file or directory.
     ///
     /// * `path` - the path to a file or directory
     /// * `force` - if true, will remove non-empty directories
-    async fn remove(&self, ctx: BoxedCtx, path: PathBuf, force: bool) -> io::Result<()>;
+    async fn remove(&self, ctx: Box<dyn Ctx>, path: PathBuf, force: bool) -> io::Result<()>;
 
     /// Renames some file or directory.
     ///
     /// * `src` - the path to the file or directory to rename
     /// * `dst` - the new name for the file or directory
-    async fn rename(&self, ctx: BoxedCtx, src: PathBuf, dst: PathBuf) -> io::Result<()>;
+    async fn rename(&self, ctx: Box<dyn Ctx>, src: PathBuf, dst: PathBuf) -> io::Result<()>;
 
     /// Checks if the specified path exists.
     ///
     /// * `path` - the path to the file or directory
-    async fn exists(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<bool>;
+    async fn exists(&self, ctx: Box<dyn Ctx>, path: PathBuf) -> io::Result<bool>;
 
     /// Reads metadata for a file or directory.
     ///
@@ -142,7 +152,7 @@ pub trait FileSystemApi: Send + Sync {
     /// * `resolve_file_type` - if true, will resolve symlinks to underlying type (file or dir)
     async fn metadata(
         &self,
-        ctx: BoxedCtx,
+        ctx: Box<dyn Ctx>,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -155,7 +165,7 @@ pub trait FileSystemApi: Send + Sync {
     /// * `permissions` - the new permissions to apply
     async fn set_permissions(
         &self,
-        ctx: BoxedCtx,
+        ctx: Box<dyn Ctx>,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
@@ -173,7 +183,7 @@ pub trait ProcessApi: Send + Sync {
     /// * `pty` - if provided, will run the process within a PTY of the given size
     async fn proc_spawn(
         &self,
-        ctx: BoxedCtx,
+        ctx: Box<dyn Ctx>,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
@@ -183,19 +193,24 @@ pub trait ProcessApi: Send + Sync {
     /// Kills a running process by its id.
     ///
     /// * `id` - the unique id of the process
-    async fn proc_kill(&self, ctx: BoxedCtx, id: ProcessId) -> io::Result<()>;
+    async fn proc_kill(&self, ctx: Box<dyn Ctx>, id: ProcessId) -> io::Result<()>;
 
     /// Sends data to the stdin of the process with the specified id.
     ///
     /// * `id` - the unique id of the process
     /// * `data` - the bytes to send to stdin
-    async fn proc_stdin(&self, ctx: BoxedCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()>;
+    async fn proc_stdin(&self, ctx: Box<dyn Ctx>, id: ProcessId, data: Vec<u8>) -> io::Result<()>;
 
     /// Resizes the PTY of the process with the specified id.
     ///
     /// * `id` - the unique id of the process
     /// * `size` - the new size of the pty
-    async fn proc_resize_pty(&self, ctx: BoxedCtx, id: ProcessId, size: PtySize) -> io::Result<()>;
+    async fn proc_resize_pty(
+        &self,
+        ctx: Box<dyn Ctx>,
+        id: ProcessId,
+        size: PtySize,
+    ) -> io::Result<()>;
 }
 
 /// API supporting searching through the remote system.
@@ -204,26 +219,26 @@ pub trait SearchApi: Send + Sync {
     /// Searches files for matches based on a query.
     ///
     /// * `query` - the specific query to perform
-    async fn search(&self, ctx: BoxedCtx, query: SearchQuery) -> io::Result<SearchId>;
+    async fn search(&self, ctx: Box<dyn Ctx>, query: SearchQuery) -> io::Result<SearchId>;
 
     /// Cancels an actively-ongoing search.
     ///
     /// * `id` - the id of the search to cancel
-    async fn cancel_search(&self, ctx: BoxedCtx, id: SearchId) -> io::Result<()>;
+    async fn cancel_search(&self, ctx: Box<dyn Ctx>, id: SearchId) -> io::Result<()>;
 }
 
 /// API supporting retrieval of information about the remote system.
 #[async_trait]
 pub trait SystemInfoApi: Send + Sync {
     /// Retrieves information about the system.
-    async fn system_info(&self, ctx: BoxedCtx) -> io::Result<SystemInfo>;
+    async fn system_info(&self, ctx: Box<dyn Ctx>) -> io::Result<SystemInfo>;
 }
 
 /// API supporting retrieval of the server's version.
 #[async_trait]
 pub trait VersionApi: Send + Sync {
     /// Retrieves information about the server's capabilities.
-    async fn version(&self, ctx: BoxedCtx) -> io::Result<Version>;
+    async fn version(&self, ctx: Box<dyn Ctx>) -> io::Result<Version>;
 }
 
 /// API supporting watching of changes to the remote filesystem.
@@ -237,7 +252,7 @@ pub trait WatchApi: Send + Sync {
     /// * `except` - if non-empty, will limit reported changes to those not included in this list
     async fn watch(
         &self,
-        ctx: BoxedCtx,
+        ctx: Box<dyn Ctx>,
         path: PathBuf,
         recursive: bool,
         only: Vec<ChangeKind>,
@@ -247,5 +262,5 @@ pub trait WatchApi: Send + Sync {
     /// Removes a file or directory from being watched.
     ///
     /// * `path` - the path to the file or directory
-    async fn unwatch(&self, ctx: BoxedCtx, path: PathBuf) -> io::Result<()>;
+    async fn unwatch(&self, ctx: Box<dyn Ctx>, path: PathBuf) -> io::Result<()>;
 }

@@ -958,7 +958,11 @@ dependencies = [
  "async-trait",
  "distant-core-auth",
  "distant-core-protocol",
+ "env_logger",
+ "rand 0.8.5",
  "serde",
+ "test-log",
+ "tokio",
 ]
 
 [[package]]

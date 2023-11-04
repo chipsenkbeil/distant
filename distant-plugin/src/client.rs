@@ -1,8 +1,9 @@
 use std::io;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use distant_core_protocol::{Error, Request, Response};
+use tokio::sync::mpsc;
 
 use crate::api::{
     Api, Ctx, FileSystemApi, ProcessApi, SearchApi, SystemInfoApi, VersionApi, WatchApi,
@@ -13,18 +14,25 @@ pub type BoxedClient = Box<dyn Client>;
 /// Full API for a distant-compatible client.
 #[async_trait]
 pub trait Client {
-    /// Sends a request without waiting for a response; this method is able to be used even
-    /// if the session's receiving line to the remote server has been severed.
-    async fn fire(&mut self, request: Request) -> io::Result<()>;
-
-    /// Sends a request and returns a mailbox that can receive one or more responses, failing if
-    /// unable to send a request or if the session's receiving line to the remote server has
-    /// already been severed.
-    async fn mail(&mut self, request: Request) -> io::Result<mpsc::Receiver<Response>>;
+    /// Sends a request and returns a stream of responses, failing if unable to send a request or
+    /// if the session's receiving line to the remote server has already been severed.
+    async fn mail(&mut self, request: Request) -> io::Result<mpsc::UnboundedReceiver<Response>>;
 
     /// Sends a request and waits for a response, failing if unable to send a request or if
-    /// the session's receiving line to the remote server has already been severed
-    async fn send(&mut self, request: Request) -> io::Result<Response>;
+    /// the session's receiving line to the remote server has already been severed.
+    async fn send(&mut self, request: Request) -> io::Result<Response> {
+        let mut rx = self.mail(request).await?;
+        rx.recv()
+            .await
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Channel has closed"))
+    }
+
+    /// Sends a request without waiting for a response; this method is able to be used even
+    /// if the session's receiving line to the remote server has been severed.
+    async fn fire(&mut self, request: Request) -> io::Result<()> {
+        let _ = self.send(request).await?;
+        Ok(())
+    }
 }
 
 /// Represents a bridge between a [`Client`] and an [`Api`] implementation that maps requests to
@@ -45,15 +53,10 @@ impl<T: Api> ClientBridge<T> {
 }
 
 #[async_trait]
-impl<T: Api> Client for ClientBridge<T> {
-    async fn fire(&mut self, request: Request) -> io::Result<()> {
-        let _ = self.send(request).await?;
-        Ok(())
-    }
-
-    async fn mail(&mut self, request: Request) -> io::Result<mpsc::Receiver<Response>> {
+impl<T: Api + 'static> Client for ClientBridge<T> {
+    async fn mail(&mut self, request: Request) -> io::Result<mpsc::UnboundedReceiver<Response>> {
         #[derive(Clone, Debug)]
-        struct __Ctx(u32, mpsc::Sender<Response>);
+        struct __Ctx(u32, mpsc::UnboundedSender<Response>);
 
         impl Ctx for __Ctx {
             fn connection(&self) -> u32 {
@@ -71,34 +74,22 @@ impl<T: Api> Client for ClientBridge<T> {
             }
         }
 
-        // TODO: Do we give this some unique id? We could randomize it, but would need the
-        // random crate to do so. Is that even necessary given this represents a "connection"
-        // and the likelihood that someone creates multiple bridges to the same api is minimal?
-        let (tx, rx) = mpsc::channel();
-        let ctx = Box::new(__Ctx(0, tx));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let ctx = Box::new(__Ctx(rand::random(), tx));
 
-        // TODO: This is blocking! How can we make this async? Do we REALLY need to import tokio?
-        //
-        // We would need to import tokio to spawn a task to run this...
-        //
-        // Alternatively, we could make some sort of trait that is a task queuer that is
-        // also passed to the bridge and is used to abstract the tokio spawn. Tokio itself
-        // can implement that trait by creating some newtype that just uses tokio spawn underneath
-        let _response = handle_request(Arc::clone(&self.api), ctx, request).await;
+        tokio::task::spawn({
+            let api = Arc::clone(&self.api);
+            async move {
+                let response = {
+                    let ctx = ctx.clone_ctx();
+                    handle_request(api, ctx, request).await
+                };
+
+                let _ = ctx.send(response);
+            }
+        });
 
         Ok(rx)
-    }
-
-    async fn send(&mut self, request: Request) -> io::Result<Response> {
-        let rx = self.mail(request).await?;
-
-        // TODO: This is blocking! How can we make this async? Do we REALLY need to import tokio?
-        //
-        // If we abstract the mpsc::Receiver to be async, we can make this async without using
-        // tokio runtime directly. The mail function would return a boxed version of this trait
-        // and we can await on it like usual
-        rx.recv()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Bridge has closed"))
     }
 }
 

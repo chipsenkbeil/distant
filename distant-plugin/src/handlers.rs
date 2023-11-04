@@ -50,7 +50,7 @@ where
 /// ### Examples
 ///
 /// ```
-/// use distant_core_plugin::boxed_launch_handler;
+/// use distant_plugin::boxed_launch_handler;
 ///
 /// let _handler = boxed_launch_handler!(|destination, options, authenticator| {
 ///     todo!("Implement handler logic.");
@@ -121,7 +121,7 @@ where
 /// ### Examples
 ///
 /// ```
-/// use distant_core_plugin::boxed_connect_handler;
+/// use distant_plugin::boxed_connect_handler;
 ///
 /// let _handler = boxed_connect_handler!(|destination, options, authenticator| {
 ///     todo!("Implement handler logic.");
@@ -157,7 +157,7 @@ macro_rules! boxed_connect_handler {
 
 #[cfg(test)]
 mod tests {
-    use distant_core_auth::*;
+    use distant_core_auth::msg::*;
     use test_log::test;
 
     use super::*;
@@ -177,34 +177,35 @@ mod tests {
     fn test_authenticator() -> impl Authenticator {
         struct __TestAuthenticator;
 
+        #[async_trait]
         impl Authenticator for __TestAuthenticator {
             async fn initialize(
                 &mut self,
-                initialization: Initialization,
+                _initialization: Initialization,
             ) -> io::Result<InitializationResponse> {
                 unimplemented!()
             }
 
-            async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
+            async fn challenge(&mut self, _challenge: Challenge) -> io::Result<ChallengeResponse> {
                 unimplemented!()
             }
 
             async fn verify(
                 &mut self,
-                verification: Verification,
+                _verification: Verification,
             ) -> io::Result<VerificationResponse> {
                 unimplemented!()
             }
 
-            async fn info(&mut self, info: Info) -> io::Result<()> {
+            async fn info(&mut self, _info: Info) -> io::Result<()> {
                 unimplemented!()
             }
 
-            async fn error(&mut self, error: Error) -> io::Result<()> {
+            async fn error(&mut self, _error: Error) -> io::Result<()> {
                 unimplemented!()
             }
 
-            async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
+            async fn start_method(&mut self, _start_method: StartMethod) -> io::Result<()> {
                 unimplemented!()
             }
 
@@ -221,66 +222,66 @@ mod tests {
         let handler = boxed_launch_handler!(|_destination, _options, _authenticator| {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .launch(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .launch(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Launch succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
 
         let handler = boxed_launch_handler!(|_destination, _options, _authenticator| async {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .launch(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .launch(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Launch succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
 
         let handler = boxed_launch_handler!(move |_destination, _options, _authenticator| {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .launch(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .launch(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Launch succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
 
         let handler = boxed_launch_handler!(move |_destination, _options, _authenticator| async {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .launch(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .launch(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Launch succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 
     #[test(tokio::test)]
@@ -288,65 +289,65 @@ mod tests {
         let handler = boxed_connect_handler!(|_destination, _options, _authenticator| {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .connect(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .connect(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Connect succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
 
         let handler = boxed_connect_handler!(|_destination, _options, _authenticator| async {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .connect(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .connect(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Connect succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
 
         let handler = boxed_connect_handler!(move |_destination, _options, _authenticator| {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .connect(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .connect(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Connect succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
 
         let handler = boxed_connect_handler!(move |_destination, _options, _authenticator| async {
             Err(io::Error::from(io::ErrorKind::Other))
         });
-        assert_eq!(
-            handler
-                .connect(
-                    &test_destination(),
-                    &test_options(),
-                    &mut test_authenticator()
-                )
-                .await
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::Other
-        );
+
+        let Err(err) = handler
+            .connect(
+                &test_destination(),
+                &test_options(),
+                &mut test_authenticator(),
+            )
+            .await
+        else {
+            panic!("Connect succeeded unexpectedly");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 }

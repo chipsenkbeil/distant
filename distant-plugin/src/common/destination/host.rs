@@ -146,7 +146,7 @@ impl FromStr for Host {
     /// ### Examples
     ///
     /// ```
-    /// # use distant_core_net::common::Host;
+    /// # use distant_plugin::common::Host;
     /// # use std::net::{Ipv4Addr, Ipv6Addr};
     /// // IPv4 address
     /// assert_eq!("127.0.0.1".parse(), Ok(Host::Ipv4(Ipv4Addr::new(127, 0, 0, 1))));

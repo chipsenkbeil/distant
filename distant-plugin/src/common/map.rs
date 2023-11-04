@@ -33,7 +33,7 @@ impl Map {
     /// Keeping the value will result in `x` retaining the `a` key's original value:
     ///
     /// ```rust
-    /// use distant_core_net::map;
+    /// use distant_plugin::map;
     ///
     /// let mut x = map!("a" -> "hello", "b" -> "world");
     /// let y = map!("a" -> "foo", "c" -> "bar");
@@ -46,7 +46,7 @@ impl Map {
     /// Not keeping the value will result in `x` replacing the `a` key's value:
     ///
     /// ```rust
-    /// use distant_core_net::map;
+    /// use distant_plugin::map;
     ///
     /// let mut x = map!("a" -> "hello", "b" -> "world");
     /// let y = map!("a" -> "foo", "c" -> "bar");
@@ -292,7 +292,7 @@ impl<'de> Deserialize<'de> for Map {
 /// Generates a new [`Map`] of key/value pairs based on literals.
 ///
 /// ```
-/// use distant_core_net::map;
+/// use distant_plugin::map;
 ///
 /// let _map = map!("key" -> "value", "key2" -> "value2");
 /// ```
