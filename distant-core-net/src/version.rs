@@ -15,7 +15,7 @@ impl Version {
     /// major version is `0`.
     ///
     /// ```
-    /// use distant_core_net::common::Version;
+    /// use distant_core_net::Version;
     ///
     /// // Matching versions are compatible
     /// let a = Version::new(1, 2, 3);

@@ -511,7 +511,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::common::Frame;
+    use crate::Frame;
 
     macro_rules! server_version {
         () => {

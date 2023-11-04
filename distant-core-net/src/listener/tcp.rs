@@ -74,7 +74,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::common::TransportExt;
+    use crate::TransportExt;
 
     #[test(tokio::test)]
     async fn should_fail_to_bind_if_port_already_bound() {

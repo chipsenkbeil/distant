@@ -100,7 +100,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::common::TransportExt;
+    use crate::TransportExt;
 
     #[test(tokio::test)]
     async fn should_succeed_to_bind_if_file_exists_at_path_but_nothing_listening() {

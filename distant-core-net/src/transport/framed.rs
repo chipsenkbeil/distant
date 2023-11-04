@@ -915,7 +915,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::common::TestTransport;
+    use crate::TestTransport;
 
     /// Codec that always succeeds without altering the frame
     #[derive(Clone, Debug, PartialEq, Eq)]
