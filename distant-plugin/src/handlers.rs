@@ -7,12 +7,6 @@ use distant_core_auth::Authenticator;
 use crate::client::Client;
 use crate::common::{Destination, Map};
 
-/// Boxed [`LaunchHandler`].
-pub type BoxedLaunchHandler = Box<dyn LaunchHandler>;
-
-/// Boxed [`ConnectHandler`].
-pub type BoxedConnectHandler = Box<dyn ConnectHandler>;
-
 /// Interface for a handler to launch a server, returning the destination to the server.
 #[async_trait]
 pub trait LaunchHandler: Send + Sync {
@@ -67,7 +61,7 @@ where
 #[macro_export]
 macro_rules! boxed_launch_handler {
     (|$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
-        let x: $crate::handlers::BoxedLaunchHandler = Box::new(
+        let x: Box<dyn $crate::handlers::LaunchHandler> = Box::new(
             |$destination: &$crate::common::Destination,
              $options: &$crate::common::Map,
              $authenticator: &mut dyn $crate::auth::Authenticator| async { $body },
@@ -75,7 +69,7 @@ macro_rules! boxed_launch_handler {
         x
     }};
     (move |$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
-        let x: $crate::handlers::BoxedLaunchHandler = Box::new(
+        let x: Box<dyn $crate::handlers::LaunchHandler> = Box::new(
             move |$destination: &$crate::common::Destination,
                   $options: &$crate::common::Map,
                   $authenticator: &mut dyn $crate::auth::Authenticator| async move { $body },
@@ -138,7 +132,7 @@ where
 #[macro_export]
 macro_rules! boxed_connect_handler {
     (|$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
-        let x: $crate::handlers::BoxedConnectHandler = Box::new(
+        let x: Box<dyn $crate::handlers::ConnectHandler> = Box::new(
             |$destination: &$crate::common::Destination,
              $options: &$crate::common::Map,
              $authenticator: &mut dyn $crate::auth::Authenticator| async { $body },
@@ -146,7 +140,7 @@ macro_rules! boxed_connect_handler {
         x
     }};
     (move |$destination:ident, $options:ident, $authenticator:ident| $(async)? $body:block) => {{
-        let x: $crate::handlers::BoxedConnectHandler = Box::new(
+        let x: Box<dyn $crate::handlers::ConnectHandler> = Box::new(
             move |$destination: &$crate::common::Destination,
                   $options: &$crate::common::Map,
                   $authenticator: &mut dyn $crate::auth::Authenticator| async move { $body },
