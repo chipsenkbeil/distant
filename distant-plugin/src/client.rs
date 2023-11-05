@@ -8,27 +8,29 @@ use tokio::sync::mpsc;
 use crate::api::{
     Api, Ctx, FileSystemApi, ProcessApi, SearchApi, SystemInfoApi, VersionApi, WatchApi,
 };
+use crate::common::Stream;
 
 /// Full API for a distant-compatible client.
 #[async_trait]
 pub trait Client {
     /// Sends a request and returns a stream of responses, failing if unable to send a request or
     /// if the session's receiving line to the remote server has already been severed.
-    async fn mail(&mut self, request: Request) -> io::Result<mpsc::UnboundedReceiver<Response>>;
+    async fn send(&mut self, request: Request) -> io::Result<Box<dyn Stream<Item = Response>>>;
 
-    /// Sends a request and waits for a response, failing if unable to send a request or if
+    /// Sends a request and waits for a single response, failing if unable to send a request or if
     /// the session's receiving line to the remote server has already been severed.
-    async fn send(&mut self, request: Request) -> io::Result<Response> {
-        let mut rx = self.mail(request).await?;
-        rx.recv()
+    async fn send_once(&mut self, request: Request) -> io::Result<Response> {
+        self.send(request)
+            .await?
+            .next()
             .await
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Channel has closed"))
     }
 
-    /// Sends a request without waiting for a response; this method is able to be used even
+    /// Sends a request without waiting for any response; this method is able to be used even
     /// if the session's receiving line to the remote server has been severed.
     async fn fire(&mut self, request: Request) -> io::Result<()> {
-        let _ = self.send(request).await?;
+        let _ = self.send_once(request).await?;
         Ok(())
     }
 }
@@ -52,7 +54,7 @@ impl<T: Api> ClientBridge<T> {
 
 #[async_trait]
 impl<T: Api + 'static> Client for ClientBridge<T> {
-    async fn mail(&mut self, request: Request) -> io::Result<mpsc::UnboundedReceiver<Response>> {
+    async fn send(&mut self, request: Request) -> io::Result<Box<dyn Stream<Item = Response>>> {
         #[derive(Clone, Debug)]
         struct __Ctx(u32, mpsc::UnboundedSender<Response>);
 
@@ -87,7 +89,7 @@ impl<T: Api + 'static> Client for ClientBridge<T> {
             }
         });
 
-        Ok(rx)
+        Ok(Box::new(rx))
     }
 }
 
