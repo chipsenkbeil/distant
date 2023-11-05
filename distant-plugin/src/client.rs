@@ -9,8 +9,6 @@ use crate::api::{
     Api, Ctx, FileSystemApi, ProcessApi, SearchApi, SystemInfoApi, VersionApi, WatchApi,
 };
 
-pub type BoxedClient = Box<dyn Client>;
-
 /// Full API for a distant-compatible client.
 #[async_trait]
 pub trait Client {
