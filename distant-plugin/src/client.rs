@@ -24,7 +24,7 @@ pub trait Client {
             .await?
             .next()
             .await
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Channel has closed"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Stream has closed"))
     }
 
     /// Sends a request without waiting for any response; this method is able to be used even
@@ -55,7 +55,6 @@ impl<T: Api> ClientBridge<T> {
 #[async_trait]
 impl<T: Api + 'static> Client for ClientBridge<T> {
     async fn send(&mut self, request: Request) -> io::Result<Box<dyn Stream<Item = Response>>> {
-        #[derive(Clone, Debug)]
         struct __Ctx(u32, mpsc::UnboundedSender<Response>);
 
         impl Ctx for __Ctx {
@@ -77,6 +76,9 @@ impl<T: Api + 'static> Client for ClientBridge<T> {
         let (tx, rx) = mpsc::unbounded_channel();
         let ctx = Box::new(__Ctx(rand::random(), tx));
 
+        // Spawn a task that will perform the request using the api. We use a task to allow the
+        // async engine to not get blocked awaiting immediately for the response to arrive before
+        // returning the stream of responses.
         tokio::task::spawn({
             let api = Arc::clone(&self.api);
             async move {
