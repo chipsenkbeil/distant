@@ -19,7 +19,7 @@ pub trait Client {
 
     /// Sends a request and waits for a single response, failing if unable to send a request or if
     /// the session's receiving line to the remote server has already been severed.
-    async fn send_once(&mut self, request: Request) -> io::Result<Response> {
+    async fn ask(&mut self, request: Request) -> io::Result<Response> {
         self.send(request)
             .await?
             .next()
@@ -30,7 +30,7 @@ pub trait Client {
     /// Sends a request without waiting for any response; this method is able to be used even
     /// if the session's receiving line to the remote server has been severed.
     async fn fire(&mut self, request: Request) -> io::Result<()> {
-        let _ = self.send_once(request).await?;
+        let _ = self.ask(request).await?;
         Ok(())
     }
 }
