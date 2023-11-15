@@ -2,7 +2,7 @@ use std::io;
 
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
-use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
+use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString, IntoStaticStr};
 
 use crate::common::{
     Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch, SystemInfo, Version,
@@ -10,7 +10,16 @@ use crate::common::{
 
 /// Represents the payload of a successful response
 #[derive(
-    Clone, Debug, PartialEq, Eq, AsRefStr, IsVariant, EnumDiscriminants, Serialize, Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    AsRefStr,
+    IsVariant,
+    EnumDiscriminants,
+    Serialize,
+    Deserialize,
+    IntoStaticStr,
 )]
 #[strum_discriminants(derive(
     AsRefStr,
@@ -21,6 +30,7 @@ use crate::common::{
     Hash,
     PartialOrd,
     Ord,
+    IntoStaticStr,
     IsVariant,
     Serialize,
     Deserialize

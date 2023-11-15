@@ -23,7 +23,7 @@ regex = "1.8.3"
 semver = { version = "1.0.17", features = ["serde"] }
 serde = { version = "1.0.163", features = ["derive"] }
 serde_bytes = "0.11.9"
-strum = { version = "0.24.1", features = ["derive"] }
+strum = { version = "0.25.0", features = ["derive"] }
 
 [dev-dependencies]
 rmp = "0.8.11"

@@ -2,13 +2,19 @@ use std::io;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use distant_core_protocol::{Error, Request, Response};
 use tokio::sync::mpsc;
 
 use crate::api::{
     Api, Ctx, FileSystemApi, ProcessApi, SearchApi, SystemInfoApi, VersionApi, WatchApi,
 };
-use crate::common::Stream;
+use crate::common::{Request, Response, Stream};
+use crate::protocol;
+
+mod err;
+mod ext;
+
+pub use err::{ClientError, ClientResult};
+pub use ext::ClientExt;
 
 /// Full API for a distant-compatible client.
 #[async_trait]
@@ -66,9 +72,9 @@ impl<T: Api + 'static> Client for ClientBridge<T> {
                 Box::new(__Ctx(self.0, self.1.clone()))
             }
 
-            fn send(&self, response: Response) -> io::Result<()> {
+            fn send(&self, msg: protocol::Msg<protocol::Response>) -> io::Result<()> {
                 self.1
-                    .send(response)
+                    .send(msg)
                     .map_err(|_| io::Error::new(io::ErrorKind::Other, "Bridge has closed"))
             }
         }
@@ -95,62 +101,102 @@ impl<T: Api + 'static> Client for ClientBridge<T> {
     }
 }
 
-/// Processes an incoming request.
 async fn handle_request<T>(api: Arc<T>, ctx: Box<dyn Ctx>, request: Request) -> Response
 where
     T: Api,
 {
+    let origin = request.id;
+    let sequence = request.flags.sequence;
+
+    Response {
+        id: rand::random(),
+        origin,
+        payload: match request.payload {
+            protocol::Msg::Single(request) => {
+                protocol::Msg::Single(handle_protocol_request(api, ctx, request).await)
+            }
+            protocol::Msg::Batch(requests) if sequence => {
+                let mut responses = Vec::new();
+                for request in requests {
+                    responses.push(
+                        handle_protocol_request(Arc::clone(&api), ctx.clone_ctx(), request).await,
+                    );
+                }
+                protocol::Msg::Batch(responses)
+            }
+            protocol::Msg::Batch(requests) => {
+                let mut responses = Vec::new();
+                for request in requests {
+                    responses.push(
+                        handle_protocol_request(Arc::clone(&api), ctx.clone_ctx(), request).await,
+                    );
+                }
+                protocol::Msg::Batch(responses)
+            }
+        },
+    }
+}
+
+/// Processes a singular protocol request using the provided api and ctx.
+async fn handle_protocol_request<T>(
+    api: Arc<T>,
+    ctx: Box<dyn Ctx>,
+    request: protocol::Request,
+) -> protocol::Response
+where
+    T: Api,
+{
     match request {
-        Request::Version {} => {
+        protocol::Request::Version {} => {
             let api = api.version();
             api.version(ctx)
                 .await
-                .map(Response::Version)
-                .unwrap_or_else(Response::from)
+                .map(protocol::Response::Version)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::FileRead { path } => {
+        protocol::Request::FileRead { path } => {
             let api = api.file_system();
             api.read_file(ctx, path)
                 .await
-                .map(|data| Response::Blob { data })
-                .unwrap_or_else(Response::from)
+                .map(|data| protocol::Response::Blob { data })
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::FileReadText { path } => {
+        protocol::Request::FileReadText { path } => {
             let api = api.file_system();
             api.read_file_text(ctx, path)
                 .await
-                .map(|data| Response::Text { data })
-                .unwrap_or_else(Response::from)
+                .map(|data| protocol::Response::Text { data })
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::FileWrite { path, data } => {
+        protocol::Request::FileWrite { path, data } => {
             let api = api.file_system();
             api.write_file(ctx, path, data)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::FileWriteText { path, text } => {
+        protocol::Request::FileWriteText { path, text } => {
             let api = api.file_system();
             api.write_file_text(ctx, path, text)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::FileAppend { path, data } => {
+        protocol::Request::FileAppend { path, data } => {
             let api = api.file_system();
             api.append_file(ctx, path, data)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::FileAppendText { path, text } => {
+        protocol::Request::FileAppendText { path, text } => {
             let api = api.file_system();
             api.append_file_text(ctx, path, text)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::DirRead {
+        protocol::Request::DirRead {
             path,
             depth,
             absolute,
@@ -160,41 +206,41 @@ where
             let api = api.file_system();
             api.read_dir(ctx, path, depth, absolute, canonicalize, include_root)
                 .await
-                .map(|(entries, errors)| Response::DirEntries {
+                .map(|(entries, errors)| protocol::Response::DirEntries {
                     entries,
-                    errors: errors.into_iter().map(Error::from).collect(),
+                    errors: errors.into_iter().map(protocol::Error::from).collect(),
                 })
-                .unwrap_or_else(Response::from)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::DirCreate { path, all } => {
+        protocol::Request::DirCreate { path, all } => {
             let api = api.file_system();
             api.create_dir(ctx, path, all)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Remove { path, force } => {
+        protocol::Request::Remove { path, force } => {
             let api = api.file_system();
             api.remove(ctx, path, force)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Copy { src, dst } => {
+        protocol::Request::Copy { src, dst } => {
             let api = api.file_system();
             api.copy(ctx, src, dst)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Rename { src, dst } => {
+        protocol::Request::Rename { src, dst } => {
             let api = api.file_system();
             api.rename(ctx, src, dst)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Watch {
+        protocol::Request::Watch {
             path,
             recursive,
             only,
@@ -203,24 +249,24 @@ where
             let api = api.watch();
             api.watch(ctx, path, recursive, only, except)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Unwatch { path } => {
+        protocol::Request::Unwatch { path } => {
             let api = api.watch();
             api.unwatch(ctx, path)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Exists { path } => {
+        protocol::Request::Exists { path } => {
             let api = api.file_system();
             api.exists(ctx, path)
                 .await
-                .map(|value| Response::Exists { value })
-                .unwrap_or_else(Response::from)
+                .map(|value| protocol::Response::Exists { value })
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Metadata {
+        protocol::Request::Metadata {
             path,
             canonicalize,
             resolve_file_type,
@@ -228,10 +274,10 @@ where
             let api = api.file_system();
             api.metadata(ctx, path, canonicalize, resolve_file_type)
                 .await
-                .map(Response::Metadata)
-                .unwrap_or_else(Response::from)
+                .map(protocol::Response::Metadata)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::SetPermissions {
+        protocol::Request::SetPermissions {
             path,
             permissions,
             options,
@@ -239,24 +285,24 @@ where
             let api = api.file_system();
             api.set_permissions(ctx, path, permissions, options)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::Search { query } => {
+        protocol::Request::Search { query } => {
             let api = api.search();
             api.search(ctx, query)
                 .await
-                .map(|id| Response::SearchStarted { id })
-                .unwrap_or_else(Response::from)
+                .map(|id| protocol::Response::SearchStarted { id })
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::CancelSearch { id } => {
+        protocol::Request::CancelSearch { id } => {
             let api = api.search();
             api.cancel_search(ctx, id)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::ProcSpawn {
+        protocol::Request::ProcSpawn {
             cmd,
             environment,
             current_dir,
@@ -265,36 +311,36 @@ where
             let api = api.process();
             api.proc_spawn(ctx, cmd.into(), environment, current_dir, pty)
                 .await
-                .map(|id| Response::ProcSpawned { id })
-                .unwrap_or_else(Response::from)
+                .map(|id| protocol::Response::ProcSpawned { id })
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::ProcKill { id } => {
+        protocol::Request::ProcKill { id } => {
             let api = api.process();
             api.proc_kill(ctx, id)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::ProcStdin { id, data } => {
+        protocol::Request::ProcStdin { id, data } => {
             let api = api.process();
             api.proc_stdin(ctx, id, data)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::ProcResizePty { id, size } => {
+        protocol::Request::ProcResizePty { id, size } => {
             let api = api.process();
             api.proc_resize_pty(ctx, id, size)
                 .await
-                .map(|_| Response::Ok)
-                .unwrap_or_else(Response::from)
+                .map(|_| protocol::Response::Ok)
+                .unwrap_or_else(protocol::Response::from)
         }
-        Request::SystemInfo {} => {
+        protocol::Request::SystemInfo {} => {
             let api = api.system_info();
             api.system_info(ctx)
                 .await
-                .map(Response::SystemInfo)
-                .unwrap_or_else(Response::from)
+                .map(protocol::Response::SystemInfo)
+                .unwrap_or_else(protocol::Response::from)
         }
     }
 }

@@ -1,7 +1,8 @@
 use std::io;
 
 use async_trait::async_trait;
-use distant_core_protocol::Response;
+
+use crate::protocol;
 
 /// Represents a context associated when an API request is being executed, supporting the ability
 /// to send responses back asynchronously.
@@ -14,5 +15,5 @@ pub trait Ctx: Send {
     fn clone_ctx(&self) -> Box<dyn Ctx>;
 
     /// Sends some response back.
-    fn send(&self, response: Response) -> io::Result<()>;
+    fn send(&self, msg: protocol::Msg<protocol::Response>) -> io::Result<()>;
 }

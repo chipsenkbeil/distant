@@ -112,7 +112,8 @@ impl PluginRegistry {
 
 impl std::fmt::Debug for PluginRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PluginHandlerRegistry")
+        f.debug_struct("PluginRegistry")
+            .field("loaded", &self.loaded)
             .field("launch_handlers", &self.launch_handlers.keys())
             .field("connect_handlers", &self.connect_handlers.keys())
             .finish()
