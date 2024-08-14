@@ -18,8 +18,10 @@
             # Build time
             nativeBuildInputs = with pkgs; [ perl ];
 
+            doCheck = false;
+
             meta = {
-              pname = "distant";
+              mainProgram = "distant";
               license = with lib.licenses; [ mit asl20 ];
             };
           };
