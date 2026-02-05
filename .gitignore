@@ -3,3 +3,4 @@
 /distant-core/Cargo.lock
 /distant-ssh2/Cargo.lock
 **/*.un~
+.aider*
