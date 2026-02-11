@@ -196,7 +196,6 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                             Box::new(handlers::ManagerLaunchHandler::new()),
                         );
 
-                        #[cfg(any(feature = "libssh", feature = "ssh2"))]
                         handlers.insert("ssh".to_string(), Box::new(handlers::SshLaunchHandler));
 
                         handlers
@@ -209,7 +208,6 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                             Box::new(handlers::DistantConnectHandler),
                         );
 
-                        #[cfg(any(feature = "libssh", feature = "ssh2"))]
                         handlers.insert("ssh".to_string(), Box::new(handlers::SshConnectHandler));
 
                         handlers

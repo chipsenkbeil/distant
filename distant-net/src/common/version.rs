@@ -1,5 +1,6 @@
-use semver::{Comparator, Op, Prerelease, Version as SemVer};
 use std::fmt;
+
+use semver::{Comparator, Op, Prerelease, Version as SemVer};
 
 /// Represents a version and compatibility rules.
 #[derive(Clone, Debug)]

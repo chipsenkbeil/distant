@@ -1,3 +1,3 @@
-mod ssh2;
+mod ssh;
 mod sshd;
 mod utils;

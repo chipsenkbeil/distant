@@ -3,10 +3,10 @@ use std::time::SystemTime;
 use std::{env, io};
 
 use async_trait::async_trait;
-use distant_core::protocol::semver;
 use distant_core::protocol::{
-    ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, Permissions, ProcessId,
-    PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version, PROTOCOL_VERSION,
+    semver, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, Permissions,
+    ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    PROTOCOL_VERSION,
 };
 use distant_core::{DistantApi, DistantCtx};
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
