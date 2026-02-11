@@ -161,7 +161,7 @@ jobs:
         shell: bash
         if: matrix.os == 'windows-latest'
       - name: Ensure /run/sshd exists on Unix
-        run: mkdir -p /run/sshd
+        run: sudo mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
       - name: Run all workspace tests (all features)
         run: cargo nextest run --profile ci --release --all-features --workspace
