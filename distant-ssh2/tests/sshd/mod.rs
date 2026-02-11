@@ -670,7 +670,7 @@ async fn load_ssh_client(sshd: &Sshd) -> Ssh {
 
     for addr in addrs {
         let addr_string = addr.to_string();
-        match Ssh::connect(&addr_string, opts.clone()) {
+        match Ssh::connect(&addr_string, opts.clone()).await {
             Ok(mut ssh_client) => {
                 let res = ssh_client.authenticate(MockSshAuthHandler).await;
 

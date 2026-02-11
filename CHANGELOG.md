@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0]
+
+### Changed
+
+- **BREAKING**: Migrated `distant-ssh2` from `wezterm-ssh` to pure Rust SSH libraries (`russh`, `russh-sftp`)
+  - Removed `libssh` and `ssh2` backend feature flags - now uses pure Rust implementation only
+  - Removed `SshBackend` enum - no longer needed as only one backend is supported
+  - Improved reliability and removed dependency on bug-ridden C libraries (libssh-rs, ssh2-rs)
+
+### Added
+
+- Full `russh-sftp` integration with lazy session caching for 10-40x performance improvement
+- SSH config file parsing via `ssh2-config-rs` for automatic host configuration
+- Proper PTY support with window resizing capability
+- Support for both simple (non-PTY) and PTY process spawning over SSH
+
+### Fixed
+
+- `set_permissions` now works correctly over SSH (was broken in wezterm-ssh)
+- Process termination over SSH now works reliably (proc_kill)
+- Improved error handling and reporting throughout SSH operations
+
+### Removed
+
+- Dependency on `wezterm-ssh`, `async-compat`, `smol`
+- `libssh` and `ssh2` feature flags and backend selection
+- C library dependencies (libssh, ssh2)
+
+### Notes
+
+- Search and file watching features are not supported over SSH (return `Unsupported` error)
+- Users can implement custom search/watch functionality using `proc_spawn` with shell commands
+- MSRV remains at 1.70.0
+
+## [0.20.0]
+
 ### Fixed
 
 - Bug in `distant fs set-permissions` where partial permissions such as `go-w`
