@@ -66,7 +66,7 @@ pub async fn spawn_simple(
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
         let mut got_eof = false;
-        
+
         while let Some(msg) = read_half.wait().await {
             match msg {
                 ChannelMsg::Data { ref data } => {
@@ -87,13 +87,15 @@ pub async fn spawn_simple(
                 ChannelMsg::Eof => {
                     got_eof = true;
                 }
-                ChannelMsg::ExitStatus { exit_status: status } => {
+                ChannelMsg::ExitStatus {
+                    exit_status: status,
+                } => {
                     exit_status = Some(status);
                 }
                 _ => {}
             }
         }
-        
+
         // Send final exit status
         let killed = *was_killed_clone.lock().await;
         let _ = exit_reply.send(Response::ProcDone {
@@ -206,7 +208,7 @@ pub async fn spawn_pty(
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
         let mut got_eof = false;
-        
+
         while let Some(msg) = read_half.wait().await {
             match msg {
                 ChannelMsg::Data { ref data } => {
@@ -218,13 +220,15 @@ pub async fn spawn_pty(
                 ChannelMsg::Eof => {
                     got_eof = true;
                 }
-                ChannelMsg::ExitStatus { exit_status: status } => {
+                ChannelMsg::ExitStatus {
+                    exit_status: status,
+                } => {
                     exit_status = Some(status);
                 }
                 _ => {}
             }
         }
-        
+
         // Send final exit status
         let killed = *was_killed_clone.lock().await;
         let _ = exit_reply.send(Response::ProcDone {

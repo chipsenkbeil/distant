@@ -5,7 +5,8 @@
 pub struct ReadmeDoctests;
 
 use std::collections::BTreeMap;
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,8 +21,6 @@ use log::*;
 use russh::client::{self, Handle};
 use russh::keys::PrivateKey;
 use ssh2_config_rs::{HostParams, ParseRule, SshConfig};
-use std::fs::File;
-use std::io::BufReader;
 use tokio::sync::Mutex;
 
 mod api;
@@ -282,16 +281,13 @@ impl Ssh {
 
         // Parse SSH config
         let ssh_config = Self::parse_ssh_config(host.as_ref())?;
-        
+
         // Build russh configuration
         let config = Self::build_russh_config(&opts, &ssh_config)?;
-        
+
         // Determine port
-        let port = opts
-            .port
-            .or(ssh_config.port)
-            .unwrap_or(22);
-        
+        let port = opts.port.or(ssh_config.port).unwrap_or(22);
+
         // Determine user
         let user = opts
             .user
@@ -301,13 +297,9 @@ impl Ssh {
 
         // Connect using russh
         let handler = ClientHandler;
-        let handle = russh::client::connect(
-            Arc::new(config),
-            (host.as_ref(), port),
-            handler,
-        )
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
+        let handle = russh::client::connect(Arc::new(config), (host.as_ref(), port), handler)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
 
         Ok(Self {
             handle,
@@ -323,9 +315,7 @@ impl Ssh {
     fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
         let config_path = dirs::home_dir()
             .map(|h| h.join(".ssh/config"))
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "No home directory found")
-            })?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No home directory found"))?;
 
         if !config_path.exists() {
             // Return empty host params with default algorithms
@@ -337,7 +327,10 @@ impl Ssh {
         let config = SshConfig::default()
             .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
             .map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("Failed to parse SSH config: {}", e))
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse SSH config: {}", e),
+                )
             })?;
 
         Ok(config.query(host))
@@ -400,7 +393,7 @@ impl Ssh {
                             Arc::new(key),
                             None, // Use default hash algorithm
                         );
-                        
+
                         let auth_res = self
                             .handle
                             .authenticate_publickey(&self.user, key_with_hash)
@@ -492,7 +485,7 @@ impl Ssh {
     pub async fn into_distant_client(self) -> io::Result<DistantClient> {
         let family = self.detect_family().await?;
         let api = SshDistantApi::new(self.handle, family).await?;
-        
+
         // Create inmemory transport for local-to-remote API communication
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -530,7 +523,8 @@ impl Ssh {
             .handler(DistantApiServerHandler::new(api))
             .verifier(Verifier::none());
 
-        let server_ref = server.start(OneshotListener::from_value(t2))
+        let server_ref = server
+            .start(OneshotListener::from_value(t2))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         // Connect to server
@@ -551,7 +545,7 @@ impl Ssh {
 
         // TODO: Implement launch logic
         // This needs to execute the distant binary on remote machine and capture output
-        
+
         Err(io::Error::new(
             io::ErrorKind::Other,
             "Launch not yet implemented in russh migration",
@@ -559,14 +553,11 @@ impl Ssh {
     }
 
     /// Launch and connect to distant server
-    pub async fn launch_and_connect(
-        self,
-        opts: DistantLaunchOpts,
-    ) -> io::Result<DistantClient> {
+    pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
         let _credentials = self.launch(opts).await?;
-        
+
         // TODO: Parse credentials and connect
-        
+
         Err(io::Error::new(
             io::ErrorKind::Other,
             "Launch and connect not yet implemented in russh migration",

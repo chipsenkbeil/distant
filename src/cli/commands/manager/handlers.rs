@@ -220,10 +220,8 @@ impl LaunchHandler for ManagerLaunchHandler {
 }
 
 /// Supports launching remotely via SSH as defined by `ssh://...`
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 pub struct SshLaunchHandler;
 
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 #[async_trait]
 impl LaunchHandler for SshLaunchHandler {
     async fn launch(
@@ -236,7 +234,7 @@ impl LaunchHandler for SshLaunchHandler {
         let config = ClientLaunchConfig::from(options.clone());
 
         use distant_ssh2::DistantLaunchOpts;
-        let mut ssh = load_ssh(destination, options)?;
+        let mut ssh = load_ssh(destination, options).await?;
         let handler = AuthClientSshAuthHandler::new(authenticator);
         let _ = ssh.authenticate(handler).await?;
         let opts = {
@@ -358,10 +356,8 @@ impl ConnectHandler for DistantConnectHandler {
 }
 
 /// Supports connecting to a remote SSH server as defined by `ssh://...`
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 pub struct SshConnectHandler;
 
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 #[async_trait]
 impl ConnectHandler for SshConnectHandler {
     async fn connect(
@@ -371,24 +367,21 @@ impl ConnectHandler for SshConnectHandler {
         authenticator: &mut dyn Authenticator,
     ) -> io::Result<UntypedClient> {
         debug!("Handling connect of {destination} with options '{options}'");
-        let mut ssh = load_ssh(destination, options)?;
+        let mut ssh = load_ssh(destination, options).await?;
         let handler = AuthClientSshAuthHandler::new(authenticator);
         let _ = ssh.authenticate(handler).await?;
         Ok(ssh.into_distant_client().await?.into_untyped_client())
     }
 }
 
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 struct AuthClientSshAuthHandler<'a>(Mutex<&'a mut dyn Authenticator>);
 
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 impl<'a> AuthClientSshAuthHandler<'a> {
     pub fn new(authenticator: &'a mut dyn Authenticator) -> Self {
         Self(Mutex::new(authenticator))
     }
 }
 
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
 #[async_trait]
 impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     async fn on_authenticate(&self, event: distant_ssh2::SshAuthEvent) -> io::Result<Vec<String>> {
@@ -461,22 +454,13 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 }
 
-#[cfg(any(feature = "libssh", feature = "ssh2"))]
-fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh2::Ssh> {
+async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh2::Ssh> {
     trace!("load_ssh({destination}, {options})");
     use distant_ssh2::{Ssh, SshOpts};
 
     let host = destination.host.to_string();
 
     let opts = SshOpts {
-        backend: match options
-            .get("backend")
-            .or_else(|| options.get("ssh.backend"))
-        {
-            Some(s) => s.parse().map_err(|_| invalid("backend"))?,
-            None => Default::default(),
-        },
-
         identity_files: options
             .get("identity_files")
             .or_else(|| options.get("ssh.identity_files"))
@@ -518,5 +502,5 @@ fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh2
     };
 
     debug!("Connecting to {host} via ssh with {opts:?}");
-    Ssh::connect(host, opts)
+    Ssh::connect(host, opts).await
 }

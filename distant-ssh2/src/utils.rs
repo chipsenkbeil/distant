@@ -29,7 +29,8 @@ impl std::fmt::Debug for ExecOutput {
             s.field("stdout", &String::from_utf8_lossy(&self.stdout))
                 .field("stderr", &String::from_utf8_lossy(&self.stderr));
         } else {
-            s.field("stdout", &self.stdout).field("stderr", &self.stderr);
+            s.field("stdout", &self.stdout)
+                .field("stderr", &self.stderr);
         }
 
         s.finish()
@@ -78,7 +79,9 @@ pub async fn execute_output(
                     stderr.extend_from_slice(data);
                 }
             }
-            ChannelMsg::ExitStatus { exit_status: status } => {
+            ChannelMsg::ExitStatus {
+                exit_status: status,
+            } => {
                 exit_status = Some(status);
                 // If we already got EOF, we can exit now
                 if got_eof {
