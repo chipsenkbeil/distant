@@ -5,6 +5,7 @@
 pub struct ReadmeDoctests;
 
 use std::collections::BTreeMap;
+use std::error::Error as StdError;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -273,33 +274,145 @@ pub struct Ssh {
 impl Ssh {
     /// Connect to a remote TCP server using SSH
     pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
-        debug!(
-            "Establishing ssh connection to {} using {:?}",
-            host.as_ref(),
-            opts
-        );
-
-        // Parse SSH config
+        // Parse SSH config first
         let ssh_config = Self::parse_ssh_config(host.as_ref())?;
 
-        // Build russh configuration
-        let config = Self::build_russh_config(&opts, &ssh_config)?;
-
-        // Determine port
+        // Determine connection parameters
         let port = opts.port.or(ssh_config.port).unwrap_or(22);
-
-        // Determine user
         let user = opts
             .user
             .clone()
             .or(ssh_config.user.clone())
             .unwrap_or_else(whoami::username);
 
-        // Connect using russh
-        let handler = ClientHandler;
-        let handle = russh::client::connect(Arc::new(config), (host.as_ref(), port), handler)
+        // Basic connection attempt logging (always shown at info level)
+        info!(
+            "SSH connection attempt: {}:{} as user '{}'",
+            host.as_ref(),
+            port,
+            user
+        );
+        debug!("SSH options: {:?}", opts);
+        debug!(
+            "SSH config: port={:?}, user={:?}",
+            ssh_config.port, ssh_config.user
+        );
+
+        // Build russh configuration
+        let config = Self::build_russh_config(&opts, &ssh_config)?;
+
+        // VERBOSE MODE: Comprehensive diagnostics
+        if opts.verbose {
+            info!("=== SSH Verbose Mode Enabled ===");
+            info!("  Target: {}:{}", host.as_ref(), port);
+            info!("  User: {}", user);
+            debug!("  Identity files: {:?}", opts.identity_files);
+            debug!("  Identities only: {:?}", opts.identities_only);
+            debug!("  Proxy command: {:?}", opts.proxy_command);
+            debug!("  Known hosts files: {:?}", opts.user_known_hosts_files);
+            debug!("  Russh keepalive: {:?}", config.keepalive_interval);
+            info!("================================");
+
+            // TCP CONNECTIVITY PRE-TEST (verbose mode only)
+            info!(
+                "Running TCP connectivity pre-test to {}:{}...",
+                host.as_ref(),
+                port
+            );
+            match tokio::time::timeout(
+                Duration::from_secs(10),
+                tokio::net::TcpStream::connect((host.as_ref(), port)),
+            )
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
+            {
+                Ok(Ok(stream)) => {
+                    let peer = stream.peer_addr()?;
+                    let local = stream.local_addr()?;
+                    info!("✓ TCP pre-test SUCCESS");
+                    info!("  Local address: {}", local);
+                    info!("  Peer address: {}", peer);
+                    drop(stream); // Close test connection
+                }
+                Ok(Err(e)) => {
+                    error!("✗ TCP pre-test FAILED");
+                    error!("  Error: {}", e);
+                    error!("  Error kind: {:?}", e.kind());
+                    error!("  OS error code: {:?}", e.raw_os_error());
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionRefused,
+                        format!(
+                            "TCP connectivity pre-test failed to {}:{}: {} (kind: {:?}, os: {:?})",
+                            host.as_ref(),
+                            port,
+                            e,
+                            e.kind(),
+                            e.raw_os_error()
+                        ),
+                    ));
+                }
+                Err(_) => {
+                    error!("✗ TCP pre-test TIMEOUT after 10 seconds");
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "TCP connectivity pre-test timed out to {}:{} after 10s",
+                            host.as_ref(),
+                            port
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // RUSSH CONNECTION ATTEMPT with enhanced error handling
+        debug!(
+            "Initiating russh::client::connect to {}:{}...",
+            host.as_ref(),
+            port
+        );
+
+        let handler = ClientHandler;
+        let connect_result =
+            russh::client::connect(Arc::new(config), (host.as_ref(), port), handler).await;
+
+        let handle = match connect_result {
+            Ok(h) => {
+                info!("✓ SSH connection established to {}:{}", host.as_ref(), port);
+                h
+            }
+            Err(e) => {
+                // Enhanced error reporting
+                error!("✗ SSH connection FAILED to {}:{}", host.as_ref(), port);
+                error!("  Russh error: {}", e);
+                debug!("  Russh error debug: {:?}", e);
+
+                // Try to extract underlying IO error for detailed diagnostics
+                let detailed_msg = if let Some(io_err) =
+                    e.source().and_then(|s| s.downcast_ref::<io::Error>())
+                {
+                    error!("  Underlying IO error: {}", io_err);
+                    error!("  IO error kind: {:?}", io_err.kind());
+                    error!("  OS error code: {:?}", io_err.raw_os_error());
+
+                    format!(
+                        "SSH connection to {}:{} failed: {} (IO error: {}, kind: {:?}, os: {:?})",
+                        host.as_ref(),
+                        port,
+                        e,
+                        io_err,
+                        io_err.kind(),
+                        io_err.raw_os_error()
+                    )
+                } else {
+                    format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
+                };
+
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    detailed_msg,
+                ));
+            }
+        };
 
         Ok(Self {
             handle,

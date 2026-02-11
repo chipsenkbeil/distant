@@ -493,6 +493,7 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
         verbose: match options
             .get("verbose")
             .or_else(|| options.get("ssh.verbose"))
+            .or_else(|| options.get("client.verbose")) // Add generic client.verbose support
         {
             Some(s) => s.parse().map_err(|_| invalid("verbose"))?,
             None => false,
