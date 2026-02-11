@@ -1,5 +1,4 @@
-use distant_core::protocol::semver;
-use distant_core::protocol::PROTOCOL_VERSION;
+use distant_core::protocol::{semver, PROTOCOL_VERSION};
 use rstest::*;
 
 use crate::common::fixtures::*;

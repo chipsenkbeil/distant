@@ -4,32 +4,25 @@
 #[cfg(doctest)]
 pub struct ReadmeDoctests;
 
-#[cfg(not(any(feature = "libssh", feature = "ssh2")))]
-compile_error!("Either feature \"libssh\" or \"ssh2\" must be enabled for this crate.");
-
 use std::collections::BTreeMap;
-use std::fmt;
-use std::io::{self, Write};
-use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
-use std::str::FromStr;
+use std::error::Error as StdError;
+use std::fs::File;
+use std::io::{self, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use async_compat::CompatExt;
 use async_trait::async_trait;
-use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
+use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, ClientConfig};
-use distant_core::net::common::{Host, InmemoryTransport, OneshotListener, Version};
+use distant_core::net::common::{InmemoryTransport, OneshotListener};
 use distant_core::net::server::{Server, ServerRef};
-use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::{DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials};
 use log::*;
-use smol::channel::Receiver as SmolReceiver;
+use russh::client::{self, Handle};
+use russh::keys::PrivateKey;
+use ssh2_config_rs::{HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
-use wezterm_ssh::{
-    ChildKiller, Config as WezConfig, MasterPty, PtySize, Session as WezSession,
-    SessionEvent as WezSessionEvent,
-};
 
 mod api;
 mod process;
@@ -54,78 +47,6 @@ impl SshFamily {
         match self {
             Self::Unix => "unix",
             Self::Windows => "windows",
-        }
-    }
-}
-
-/// Represents the backend to use for ssh operations
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-pub enum SshBackend {
-    /// Use libssh as backend
-    #[cfg(feature = "libssh")]
-    LibSsh,
-
-    /// Use ssh2 as backend
-    #[cfg(feature = "ssh2")]
-    Ssh2,
-}
-
-impl SshBackend {
-    pub const fn as_static_str(&self) -> &'static str {
-        match self {
-            #[cfg(feature = "libssh")]
-            Self::LibSsh => "libssh",
-
-            #[cfg(feature = "ssh2")]
-            Self::Ssh2 => "ssh2",
-        }
-    }
-}
-
-impl Default for SshBackend {
-    /// Defaults to ssh2 if enabled, otherwise uses libssh by default
-    ///
-    /// NOTE: There are currently bugs in libssh that cause our implementation to hang related to
-    ///       process stdout/stderr and maybe other logic.
-    fn default() -> Self {
-        #[cfg(feature = "ssh2")]
-        {
-            Self::Ssh2
-        }
-
-        #[cfg(not(feature = "ssh2"))]
-        {
-            Self::LibSsh
-        }
-    }
-}
-
-impl FromStr for SshBackend {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            #[cfg(feature = "ssh2")]
-            s if s.trim().eq_ignore_ascii_case("ssh2") => Ok(Self::Ssh2),
-
-            #[cfg(feature = "libssh")]
-            s if s.trim().eq_ignore_ascii_case("libssh") => Ok(Self::LibSsh),
-
-            _ => Err("SSH backend must be \"libssh\" or \"ssh2\""),
-        }
-    }
-}
-
-impl fmt::Display for SshBackend {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            #[cfg(feature = "libssh")]
-            Self::LibSsh => write!(f, "libssh"),
-
-            #[cfg(feature = "ssh2")]
-            Self::Ssh2 => write!(f, "ssh2"),
         }
     }
 }
@@ -162,9 +83,6 @@ pub struct SshAuthEvent {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct SshOpts {
-    /// Represents the backend to use for ssh operations
-    pub backend: SshBackend,
-
     /// List of files from which the user's DSA, ECDSA, Ed25519, or RSA authentication identity
     /// is read, defaulting to
     ///
@@ -326,110 +244,243 @@ impl SshAuthHandler for LocalSshAuthHandler {
     }
 }
 
-/// Represents an ssh2 client.
+/// russh client handler
+struct ClientHandler;
+
+#[async_trait]
+impl client::Handler for ClientHandler {
+    type Error = russh::Error;
+
+    fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::PublicKey,
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
+        // TODO: Implement proper host key verification
+        async { Ok(true) }
+    }
+}
+
+/// Represents an ssh2 client
 pub struct Ssh {
-    session: WezSession,
-    events: SmolReceiver<WezSessionEvent>,
+    handle: Handle<ClientHandler>,
     host: String,
     port: u16,
+    user: String,
+    opts: SshOpts,
     authenticated: bool,
-
-    /// Cached copy of the family representing the remote machine.
     cached_family: Mutex<Option<SshFamily>>,
 }
 
 impl Ssh {
-    /// Connect to a remote TCP server using SSH.
-    pub fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
-        debug!(
-            "Establishing ssh connection to {} using {:?}",
+    /// Connect to a remote TCP server using SSH
+    pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
+        // Parse SSH config first
+        let ssh_config = Self::parse_ssh_config(host.as_ref())?;
+
+        // Determine connection parameters
+        let port = opts.port.or(ssh_config.port).unwrap_or(22);
+        let user = opts
+            .user
+            .clone()
+            .or(ssh_config.user.clone())
+            .unwrap_or_else(whoami::username);
+
+        // Basic connection attempt logging (always shown at info level)
+        info!(
+            "SSH connection attempt: {}:{} as user '{}'",
             host.as_ref(),
-            opts
+            port,
+            user
         );
-        let mut config = WezConfig::new();
-        config.add_default_config_files();
+        debug!("SSH options: {:?}", opts);
+        debug!(
+            "SSH config: port={:?}, user={:?}",
+            ssh_config.port, ssh_config.user
+        );
 
-        // Grab the config for the specific host
-        let mut config = config.for_host(host.as_ref());
+        // Build russh configuration
+        let config = Self::build_russh_config(&opts, &ssh_config)?;
 
-        // Override config with any settings provided by client opts
-        if let Some(port) = opts.port.as_ref() {
-            config.insert("port".to_string(), port.to_string());
-        }
-        if let Some(user) = opts.user.as_ref() {
-            config.insert("user".to_string(), user.to_string());
-        }
-        if !opts.identity_files.is_empty() {
-            config.insert(
-                "identityfile".to_string(),
-                opts.identity_files
-                    .iter()
-                    .filter_map(|p| p.to_str())
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join(" "),
+        // VERBOSE MODE: Comprehensive diagnostics
+        if opts.verbose {
+            info!("=== SSH Verbose Mode Enabled ===");
+            info!("  Target: {}:{}", host.as_ref(), port);
+            info!("  User: {}", user);
+            debug!("  Identity files: {:?}", opts.identity_files);
+            debug!("  Identities only: {:?}", opts.identities_only);
+            debug!("  Proxy command: {:?}", opts.proxy_command);
+            debug!("  Known hosts files: {:?}", opts.user_known_hosts_files);
+            debug!("  Russh keepalive: {:?}", config.keepalive_interval);
+            info!("================================");
+
+            // TCP CONNECTIVITY PRE-TEST (verbose mode only)
+            info!(
+                "Running TCP connectivity pre-test to {}:{}...",
+                host.as_ref(),
+                port
             );
+            match tokio::time::timeout(
+                Duration::from_secs(10),
+                tokio::net::TcpStream::connect((host.as_ref(), port)),
+            )
+            .await
+            {
+                Ok(Ok(stream)) => {
+                    let peer = stream.peer_addr()?;
+                    let local = stream.local_addr()?;
+                    info!("✓ TCP pre-test SUCCESS");
+                    info!("  Local address: {}", local);
+                    info!("  Peer address: {}", peer);
+                    drop(stream); // Close test connection
+                }
+                Ok(Err(e)) => {
+                    error!("✗ TCP pre-test FAILED");
+                    error!("  Error: {}", e);
+                    error!("  Error kind: {:?}", e.kind());
+                    error!("  OS error code: {:?}", e.raw_os_error());
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionRefused,
+                        format!(
+                            "TCP connectivity pre-test failed to {}:{}: {} (kind: {:?}, os: {:?})",
+                            host.as_ref(),
+                            port,
+                            e,
+                            e.kind(),
+                            e.raw_os_error()
+                        ),
+                    ));
+                }
+                Err(_) => {
+                    error!("✗ TCP pre-test TIMEOUT after 10 seconds");
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "TCP connectivity pre-test timed out to {}:{} after 10s",
+                            host.as_ref(),
+                            port
+                        ),
+                    ));
+                }
+            }
         }
-        if let Some(yes) = opts.identities_only.as_ref() {
-            let value = if *yes {
-                "yes".to_string()
-            } else {
-                "no".to_string()
-            };
-            config.insert("identitiesonly".to_string(), value);
-        }
-        if let Some(cmd) = opts.proxy_command.as_ref() {
-            config.insert("proxycommand".to_string(), cmd.to_string());
-        }
-        if !opts.user_known_hosts_files.is_empty() {
-            config.insert(
-                "userknownhostsfile".to_string(),
-                opts.user_known_hosts_files
-                    .iter()
-                    .filter_map(|p| p.to_str())
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join(" "),
-            );
-        }
 
-        // Set verbosity optin for ssh lib
-        config.insert("wezterm_ssh_verbose".to_string(), opts.verbose.to_string());
+        // RUSSH CONNECTION ATTEMPT with enhanced error handling
+        debug!(
+            "Initiating russh::client::connect to {}:{}...",
+            host.as_ref(),
+            port
+        );
 
-        // Set the backend to use going forward
-        config.insert("wezterm_ssh_backend".to_string(), opts.backend.to_string());
+        let handler = ClientHandler;
+        let connect_result =
+            russh::client::connect(Arc::new(config), (host.as_ref(), port), handler).await;
 
-        // Add in any of the other options provided
-        config.extend(opts.other);
+        let handle = match connect_result {
+            Ok(h) => {
+                info!("✓ SSH connection established to {}:{}", host.as_ref(), port);
+                h
+            }
+            Err(e) => {
+                // Enhanced error reporting
+                error!("✗ SSH connection FAILED to {}:{}", host.as_ref(), port);
+                error!("  Russh error: {}", e);
+                debug!("  Russh error debug: {:?}", e);
 
-        // Port should always exist, otherwise WezSession will panic from unwrap()
-        let port = config
-            .get("port")
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing port"))?
-            .parse::<u16>()
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
+                // Try to extract underlying IO error for detailed diagnostics
+                let detailed_msg = if let Some(io_err) =
+                    e.source().and_then(|s| s.downcast_ref::<io::Error>())
+                {
+                    error!("  Underlying IO error: {}", io_err);
+                    error!("  IO error kind: {:?}", io_err.kind());
+                    error!("  OS error code: {:?}", io_err.raw_os_error());
 
-        // Establish a connection
-        trace!("WezSession::connect({:?})", config);
-        let (session, events) =
-            WezSession::connect(config).map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                    format!(
+                        "SSH connection to {}:{} failed: {} (IO error: {}, kind: {:?}, os: {:?})",
+                        host.as_ref(),
+                        port,
+                        e,
+                        io_err,
+                        io_err.kind(),
+                        io_err.raw_os_error()
+                    )
+                } else {
+                    format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
+                };
+
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    detailed_msg,
+                ));
+            }
+        };
 
         Ok(Self {
-            session,
-            events,
+            handle,
             host: host.as_ref().to_string(),
             port,
+            user,
+            opts,
             authenticated: false,
             cached_family: Mutex::new(None),
         })
     }
 
-    /// Host this client is connected to.
+    fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
+        let config_path = dirs::home_dir()
+            .map(|h| h.join(".ssh/config"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No home directory found"))?;
+
+        if !config_path.exists() {
+            // Return empty host params with default algorithms
+            use ssh2_config_rs::DefaultAlgorithms;
+            return Ok(HostParams::new(&DefaultAlgorithms::default()));
+        }
+
+        let mut reader = BufReader::new(File::open(&config_path)?);
+        let config = SshConfig::default()
+            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Failed to parse SSH config: {}", e),
+                )
+            })?;
+
+        Ok(config.query(host))
+    }
+
+    fn build_russh_config(
+        _opts: &SshOpts,
+        params: &HostParams,
+    ) -> io::Result<russh::client::Config> {
+        let mut config = russh::client::Config::default();
+
+        // Apply SSH config algorithms if present
+        config.preferred = Self::build_preferred_algorithms(params);
+
+        // Set keepalive if configured
+        if let Some(interval) = params.server_alive_interval {
+            config.keepalive_interval = Some(interval);
+        }
+
+        Ok(config)
+    }
+
+    fn build_preferred_algorithms(_params: &HostParams) -> russh::Preferred {
+        let preferred = russh::Preferred::default();
+
+        // TODO: Map KEX, ciphers, and MACs from SSH config to russh types
+        // For now, use defaults
+
+        preferred
+    }
+
+    /// Host this client is connected to
     pub fn host(&self) -> &str {
         &self.host
     }
 
-    /// Port this client is connected to on remote host.
+    /// Port this client is connected to on remote host
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -439,331 +490,190 @@ impl Ssh {
         self.authenticated
     }
 
-    /// Authenticates the [`Ssh`] if not already authenticated.
+    /// Authenticates the [`Ssh`] if not already authenticated
     pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
         // If already authenticated, exit
         if self.authenticated {
             return Ok(());
         }
 
-        // Perform the authentication by listening for events and continuing to handle them
-        // until authenticated
-        while let Ok(event) = self.events.recv().await {
-            match event {
-                WezSessionEvent::Banner(banner) => {
-                    trace!("ssh banner: {banner:?}");
-                    if let Some(banner) = banner {
-                        handler.on_banner(banner.as_ref()).await;
-                    }
-                }
-                WezSessionEvent::HostVerify(verify) => {
-                    trace!("ssh host verify: {verify:?}");
-                    let verified = handler.on_verify_host(verify.message.as_str()).await?;
-                    verify
-                        .answer(verified)
-                        .compat()
-                        .await
-                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-                }
-                WezSessionEvent::Authenticate(mut auth) => {
-                    trace!("ssh authenticate: {auth:?}");
-                    let ev = SshAuthEvent {
-                        username: auth.username.clone(),
-                        instructions: auth.instructions.clone(),
-                        prompts: auth
-                            .prompts
-                            .drain(..)
-                            .map(|p| SshAuthPrompt {
-                                prompt: p.prompt,
-                                echo: p.echo,
-                            })
-                            .collect(),
-                    };
+        // Try public key authentication first
+        if !self.opts.identity_files.is_empty() {
+            for key_file in &self.opts.identity_files {
+                match self.load_private_key(key_file).await {
+                    Ok(key) => {
+                        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
+                            Arc::new(key),
+                            None, // Use default hash algorithm
+                        );
 
-                    let answers = handler.on_authenticate(ev).await?;
-                    auth.answer(answers)
-                        .compat()
-                        .await
-                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
-                }
-                WezSessionEvent::Error(err) => {
-                    trace!("ssh error: {err:?}");
-                    handler.on_error(&err).await;
-                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, err));
-                }
-                WezSessionEvent::Authenticated => {
-                    trace!("ssh authenticated");
-                    break;
-                }
-            }
-        }
+                        let auth_res = self
+                            .handle
+                            .authenticate_publickey(&self.user, key_with_hash)
+                            .await
+                            .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
 
-        // Mark as authenticated
-        self.authenticated = true;
-
-        Ok(())
-    }
-
-    /// Detects the family of operating system on the remote machine.
-    ///
-    /// Caches the result such that subsequent checks will return the same family.
-    pub async fn detect_family(&self) -> io::Result<SshFamily> {
-        // Exit early if not authenticated as this is a requirement
-        if !self.authenticated {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "Not authenticated",
-            ));
-        }
-
-        let mut family = self.cached_family.lock().await;
-
-        // Family value is not present, so we retrieve it now and populate our cache
-        if family.is_none() {
-            // Check if we are windows, otherwise assume unix, returning an error if encountered,
-            // which will also drop our lock on the cache
-            let is_windows = utils::is_windows(&self.session).await?;
-
-            *family = Some(if is_windows {
-                SshFamily::Windows
-            } else {
-                SshFamily::Unix
-            });
-        }
-
-        // Cache should always be Some(...) by this point
-        Ok(family.unwrap())
-    }
-
-    /// Consume [`Ssh`] and produce a [`DistantClient`] that is connected to a remote
-    /// distant server that is spawned using the ssh client
-    pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
-        trace!("ssh::launch_and_colnnnect({:?})", opts);
-
-        // Exit early if not authenticated as this is a requirement
-        if !self.authenticated {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "Not authenticated",
-            ));
-        }
-
-        let timeout = opts.timeout;
-
-        // Determine distinct candidate ip addresses for connecting
-        //
-        // NOTE: This breaks when the host is an alias defined within an ssh config; however,
-        //       we need to be able to resolve the IP address(es) for use in TCP connect. The
-        //       end solution would be to have wezterm-ssh provide some means to determine the
-        //       IP address of the end machine it is connected to, but that probably isn't
-        //       possible with ssh. So, for now, connecting to a distant server from an
-        //       established ssh connection requires that we can resolve the specified host
-        debug!("Looking up host {} @ port {}", self.host, self.port);
-        let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
-            .await
-            .map_err(|x| {
-                io::Error::new(
-                    x.kind(),
-                    format!("{} needs to be resolvable outside of ssh: {}", self.host, x),
-                )
-            })?
-            .map(|addr| addr.ip())
-            .collect::<Vec<IpAddr>>();
-        candidate_ips.sort_unstable();
-        candidate_ips.dedup();
-        if candidate_ips.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::AddrNotAvailable,
-                format!("Unable to resolve {}:{}", self.host, self.port),
-            ));
-        }
-
-        let credentials = self.launch(opts).await?;
-        let key = credentials.key;
-
-        // Try each IP address with the same port to see if one works
-        let mut err = None;
-        for ip in candidate_ips {
-            let addr = SocketAddr::new(ip, credentials.port);
-            debug!("Attempting to connect to distant server @ {}", addr);
-            match Client::tcp(addr)
-                .auth_handler(AuthHandlerMap::new().with_static_key(key.clone()))
-                .connect_timeout(timeout)
-                .version(Version::new(
-                    PROTOCOL_VERSION.major,
-                    PROTOCOL_VERSION.minor,
-                    PROTOCOL_VERSION.patch,
-                ))
-                .connect()
-                .await
-            {
-                Ok(client) => return Ok(client),
-                Err(x) => err = Some(x),
-            }
-        }
-
-        // If all failed, return the last error we got
-        Err(err.expect("Err set above"))
-    }
-
-    /// Consume [`Ssh`] and launch a distant server, returning a [`DistantSingleKeyCredentials`]
-    /// tied to the launched server that includes credentials
-    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
-        trace!("ssh::launch({:?})", opts);
-
-        // Exit early if not authenticated as this is a requirement
-        if !self.authenticated {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "Not authenticated",
-            ));
-        }
-
-        let family = self.detect_family().await?;
-        trace!("Detected family: {}", family.as_static_str());
-
-        let host = self
-            .host()
-            .parse::<Host>()
-            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
-
-        let (mut pty, mut child) = self
-            .session
-            .request_pty("xterm-256color", PtySize::default(), None, None)
-            .compat()
-            .await
-            .map_err(utils::to_other_error)?;
-
-        // Build arguments for distant to execute listen subcommand
-        let mut args = vec![
-            String::from("server"),
-            String::from("listen"),
-            String::from("--daemon"),
-            String::from("--host"),
-            String::from("ssh"),
-        ];
-        args.extend(match family {
-            SshFamily::Windows => winsplit::split(&opts.args),
-            SshFamily::Unix => shell_words::split(&opts.args)
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-        });
-
-        // Write our command to stdin of pty to execute it
-        let cmd = format!("{} {}", opts.binary, args.join(" "));
-        debug!("Executing {cmd}");
-        pty.write_all(format!("{cmd}\r\n").as_bytes())?;
-
-        // Get credentials from execution
-        let credentials = {
-            // Spawn a blocking thread to continually read stdout from the pty
-            let mut reader = pty.try_clone_reader().map_err(utils::to_other_error)?;
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
-            let read_task = tokio::task::spawn_blocking(move || {
-                let mut buf = [0u8; 1024];
-                while let Ok(n) = reader.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    let _ = tx.blocking_send(buf[..n].to_vec());
-                }
-            });
-
-            // Spawn an async task to read the forwarded stdout and attempt to detect credentials
-            // from the received stdout thus far. This will fail after waiting at least as long as
-            // the configured timeout duration.
-            //
-            // NOTE: We don't use `tokio::time::timeout` so we can capture and report back the
-            //       stdout in the case of an error. Since there is no way easy way to know if the
-            //       executed command on the pty failed, we rely on a timeout.
-            let start_instant = std::time::Instant::now();
-            let timeout = opts.timeout;
-            tokio::spawn(async move {
-                let mut stdout = Vec::new();
-                loop {
-                    // Continually process received stdout
-                    while let Ok(bytes) = rx.try_recv() {
-                        trace!("Received {} more bytes over stdout", bytes.len());
-                        stdout.extend_from_slice(&bytes);
-
-                        if let Some(mut credentials) =
-                            DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
-                        {
-                            credentials.host = host;
-                            read_task.abort();
-                            return Ok(credentials);
+                        if auth_res.success() {
+                            self.authenticated = true;
+                            return Ok(());
                         }
                     }
-
-                    // We have waited at least as long as our timeout, so we fail
-                    if start_instant.elapsed() >= timeout {
-                        // Clean the bytes before including by removing anything that isn't ascii
-                        // and isn't a control character (except whitespace)
-                        stdout.retain(|b| {
-                            b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
-                        });
-
-                        read_task.abort();
-                        return Err(io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            format!(
-                                "Failed to spawn server: '{}'",
-                                shell_words::quote(&String::from_utf8_lossy(&stdout))
-                            ),
-                        ));
+                    Err(e) => {
+                        debug!("Failed to load key {:?}: {}", key_file, e);
                     }
-
-                    // Otherwise, wait some period of time before trying again
-                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
-            })
-        };
-
-        // Wait a maximum amount of time before failing
-        trace!("Waiting for credentials to appear");
-        let credentials = credentials.await??;
-        debug!("Got credentials");
-
-        // Attempt to kill the pty, but don't block if it fails
-        drop(pty);
-        let _ = child.kill();
-
-        Ok(credentials)
-    }
-
-    /// Consume [`Ssh`] and produce a [`DistantClient`] that is powered by an ssh client
-    /// underneath.
-    pub async fn into_distant_client(self) -> io::Result<DistantClient> {
-        Ok(self.into_distant_pair().await?.0)
-    }
-
-    /// Consumes [`Ssh`] and produces a [`DistantClient`] and [`ServerRef`] pair.
-    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, ServerRef)> {
-        // Exit early if not authenticated as this is a requirement
-        if !self.authenticated {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "Not authenticated",
-            ));
+            }
         }
 
-        let Self {
-            session: wez_session,
-            ..
-        } = self;
+        // Fall back to password authentication
+        let event = SshAuthEvent {
+            username: self.user.clone(),
+            instructions: "Password:".to_string(),
+            prompts: vec![SshAuthPrompt {
+                prompt: "Password: ".to_string(),
+                echo: false,
+            }],
+        };
 
-        let (t1, t2) = InmemoryTransport::pair(1);
+        let responses = handler.on_authenticate(event).await?;
+
+        if let Some(password) = responses.first() {
+            let auth_res = self
+                .handle
+                .authenticate_password(&self.user, password)
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
+
+            if auth_res.success() {
+                self.authenticated = true;
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Authentication failed",
+                ))
+            }
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "No password provided",
+            ))
+        }
+    }
+
+    async fn load_private_key(&self, path: &Path) -> io::Result<PrivateKey> {
+        let contents = tokio::fs::read_to_string(path).await?;
+        russh::keys::decode_secret_key(&contents, None)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    /// Detects whether the family is Unix or Windows
+    pub async fn detect_family(&self) -> io::Result<SshFamily> {
+        // Check if we already have a cached value
+        {
+            let guard = self.cached_family.lock().await;
+            if let Some(family) = *guard {
+                return Ok(family);
+            }
+        }
+
+        // Use utils::is_windows to detect
+        let is_windows = utils::is_windows(&self.handle).await?;
+        let family = if is_windows {
+            SshFamily::Windows
+        } else {
+            SshFamily::Unix
+        };
+
+        // Cache the result
+        {
+            let mut guard = self.cached_family.lock().await;
+            *guard = Some(family);
+        }
+
+        Ok(family)
+    }
+
+    /// Converts into a distant client
+    pub async fn into_distant_client(self) -> io::Result<DistantClient> {
+        let family = self.detect_family().await?;
+        let api = SshDistantApi::new(self.handle, family).await?;
+
+        // Create inmemory transport for local-to-remote API communication
+        let (t1, t2) = InmemoryTransport::pair(100);
+
+        // Start local server using our API implementation
         let server = Server::new()
-            .handler(DistantApiServerHandler::new(SshDistantApi::new(
-                wez_session,
-            )))
-            .verifier(Verifier::none())
-            .start(OneshotListener::from_value(t2))?;
+            .handler(DistantApiServerHandler::new(api))
+            .verifier(Verifier::none());
+
+        tokio::spawn(async move {
+            let _ = server.start(OneshotListener::from_value(t2));
+        });
+
+        // Connect to local server
         let client = Client::build()
             .auth_handler(DummyAuthHandler)
-            .config(ClientConfig::default().with_maximum_silence_duration())
+            .config(ClientConfig::default())
             .connector(t1)
             .connect()
-            .await?;
-        Ok((client, server))
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        Ok(client)
+    }
+
+    /// Converts into a pair of distant client and server ref
+    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, ServerRef)> {
+        let family = self.detect_family().await?;
+        let api = SshDistantApi::new(self.handle, family).await?;
+
+        // Create inmemory transport
+        let (t1, t2) = InmemoryTransport::pair(100);
+
+        // Start server
+        let server = Server::new()
+            .handler(DistantApiServerHandler::new(api))
+            .verifier(Verifier::none());
+
+        let server_ref = server
+            .start(OneshotListener::from_value(t2))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        // Connect to server
+        let client = Client::build()
+            .auth_handler(DummyAuthHandler)
+            .config(ClientConfig::default())
+            .connector(t1)
+            .connect()
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        Ok((client, server_ref))
+    }
+
+    /// Launch distant server on remote machine and connect to it
+    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
+        debug!("Launching distant server: {} {}", opts.binary, opts.args);
+
+        // TODO: Implement launch logic
+        // This needs to execute the distant binary on remote machine and capture output
+
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Launch not yet implemented in russh migration",
+        ))
+    }
+
+    /// Launch and connect to distant server
+    pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
+        let _credentials = self.launch(opts).await?;
+
+        // TODO: Parse credentials and connect
+
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Launch and connect not yet implemented in russh migration",
+        ))
     }
 }

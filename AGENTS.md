@@ -33,7 +33,7 @@ cargo build --all-features --workspace
 ### Formatting
 ```bash
 # Format code (REQUIRED before committing)
-cargo +nightly fmt --all
+cargo fmt --all
 
 # Or use cargo-make
 cargo make format
