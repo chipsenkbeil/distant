@@ -27,10 +27,10 @@ impl Version {
     pub const CAP_FS_SEARCH: &'static str = "fs_search";
     /// Supports watching filesystem for changes.
     pub const CAP_FS_WATCH: &'static str = "fs_watch";
-    /// Supports TCP tunneling.
+    // /// Supports TCP tunneling.
     // pub const CAP_TCP_TUNNEL: &'static str = "tcp_tunnel";
-
-    /// Supports TCP reverse tunneling.
+    //
+    // /// Supports TCP reverse tunneling.
     // pub const CAP_TCP_REV_TUNNEL: &'static str = "tcp_rev_tunnel";
 
     /// Supports retrieving system information.

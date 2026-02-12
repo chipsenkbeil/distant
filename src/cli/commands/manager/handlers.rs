@@ -209,8 +209,7 @@ impl LaunchHandler for ManagerLaunchHandler {
                 // and we missed it, so capture the stderr to report issues
                 Err(x) => {
                     let output = child.wait_with_output().await?;
-                    break Err(io::Error::new(
-                        io::ErrorKind::Other,
+                    break Err(io::Error::other(
                         String::from_utf8(output.stderr).unwrap_or_else(|_| x.to_string()),
                     ));
                 }

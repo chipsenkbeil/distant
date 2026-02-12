@@ -37,13 +37,10 @@ pub async fn spawn_simple(
     let channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
     // Execute the command
-    channel
-        .exec(true, cmd)
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    channel.exec(true, cmd).await.map_err(io::Error::other)?;
 
     let id = rand::random();
 
@@ -65,7 +62,7 @@ pub async fn spawn_simple(
     let msg_id = id;
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
-        let mut got_eof = false;
+        let mut _got_eof = false;
 
         while let Some(msg) = read_half.wait().await {
             match msg {
@@ -85,7 +82,7 @@ pub async fn spawn_simple(
                     }
                 }
                 ChannelMsg::Eof => {
-                    got_eof = true;
+                    _got_eof = true;
                 }
                 ChannelMsg::ExitStatus {
                     exit_status: status,
@@ -153,7 +150,7 @@ pub async fn spawn_pty(
     let channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
     // Request PTY with specified size
     let term_type = environment
@@ -172,19 +169,16 @@ pub async fn spawn_pty(
             &[], // No terminal modes for now
         )
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
     // Execute the command (or shell if cmd is empty)
     if cmd.is_empty() {
         channel
             .request_shell(true)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
     } else {
-        channel
-            .exec(true, cmd)
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        channel.exec(true, cmd).await.map_err(io::Error::other)?;
     }
 
     let id = rand::random();
@@ -207,7 +201,7 @@ pub async fn spawn_pty(
     let msg_id = id;
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
-        let mut got_eof = false;
+        let mut _got_eof = false;
 
         while let Some(msg) = read_half.wait().await {
             match msg {
@@ -218,7 +212,7 @@ pub async fn spawn_pty(
                     });
                 }
                 ChannelMsg::Eof => {
-                    got_eof = true;
+                    _got_eof = true;
                 }
                 ChannelMsg::ExitStatus {
                     exit_status: status,
@@ -239,7 +233,7 @@ pub async fn spawn_pty(
     });
 
     // Spawn task to handle stdin, kill signals, and PTY resize
-    let mut write_half = write_half;
+    let write_half = write_half;
     tokio::spawn(async move {
         loop {
             tokio::select! {

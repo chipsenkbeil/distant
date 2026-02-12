@@ -151,7 +151,7 @@ mod batch_parallel {
         impl DistantApi for TestDistantApi {
             async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "fail" {
-                    return Err(io::Error::new(io::ErrorKind::Other, "test error"));
+                    return Err(io::Error::other("test error"));
                 }
 
                 Ok(Vec::new())
@@ -270,7 +270,7 @@ mod batch_sequence {
         impl DistantApi for TestDistantApi {
             async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "fail" {
-                    return Err(io::Error::new(io::ErrorKind::Other, "test error"));
+                    return Err(io::Error::other("test error"));
                 }
 
                 Ok(Vec::new())

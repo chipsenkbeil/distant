@@ -184,7 +184,7 @@ impl Backup {
     }
 
     /// Returns an iterator over the frames contained in the backup.
-    pub(super) fn frames(&self) -> impl Iterator<Item = &Frame> {
+    pub(super) fn frames(&self) -> impl Iterator<Item = &Frame<'_>> {
         self.frames.iter()
     }
 

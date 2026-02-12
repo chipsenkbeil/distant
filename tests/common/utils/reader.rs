@@ -28,13 +28,10 @@ impl ThreadedReader {
                         line = String::new();
 
                         if let Err(line) = tx.send(line2) {
-                            return Err(io::Error::new(
-                                io::ErrorKind::Other,
-                                format!(
-                                    "Failed to pass along line because channel closed! Line: '{}'",
-                                    line.0
-                                ),
-                            ));
+                            return Err(io::Error::other(format!(
+                                "Failed to pass along line because channel closed! Line: '{}'",
+                                line.0
+                            )));
                         }
                     }
                     Err(x) => return Err(x),

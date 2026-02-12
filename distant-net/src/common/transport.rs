@@ -599,7 +599,7 @@ mod tests {
             f_try_write: Box::new(|buf| {
                 static mut CNT: u8 = 0;
                 unsafe {
-                    if CNT % 2 == 0 {
+                    if CNT.is_multiple_of(2) {
                         assert_eq!(buf[0], b'a' + CNT);
                         CNT += 1;
                         Ok(1)

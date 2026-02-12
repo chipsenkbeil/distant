@@ -64,12 +64,7 @@ impl Searcher {
                     protocol::Response::Error(x) => return Err(io::Error::from(x)),
 
                     // Otherwise, we got something unexpected, and report as such
-                    x => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Unexpected response: {x:?}"),
-                        ))
-                    }
+                    x => return Err(io::Error::other(format!("Unexpected response: {x:?}"))),
                 }
             }
 
@@ -87,10 +82,9 @@ impl Searcher {
                 trace!("[Query {id}] Forwarding {} queued matches", queue.len());
                 for r#match in queue.drain(..) {
                     if tx.send(r#match).await.is_err() {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("[Query {id}] Queue search match dropped"),
-                        ));
+                        return Err(io::Error::other(format!(
+                            "[Query {id}] Queue search match dropped"
+                        )));
                     }
                 }
                 id
@@ -99,8 +93,7 @@ impl Searcher {
             // If we never received an acknowledgement of search before the mailbox closed,
             // fail with a missing confirmation error
             None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "Search query missing started confirmation",
                 ))
             }

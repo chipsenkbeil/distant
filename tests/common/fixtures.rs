@@ -164,7 +164,7 @@ impl DistantManagerCtx {
                 }
             };
 
-            for host in vec![
+            for host in [
                 Host::Ipv4(Ipv4Addr::LOCALHOST),
                 Host::Ipv6(Ipv6Addr::LOCALHOST),
                 Host::Name("localhost".to_string()),

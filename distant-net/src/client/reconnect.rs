@@ -270,8 +270,8 @@ impl ReconnectStrategy {
             ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { factor, .. } => {
                 let next_millis = (curr.as_millis() as f64) * factor;
-                Duration::from_millis(if next_millis > (std::u64::MAX as f64) {
-                    std::u64::MAX
+                Duration::from_millis(if next_millis > (u64::MAX as f64) {
+                    u64::MAX
                 } else {
                     next_millis as u64
                 })

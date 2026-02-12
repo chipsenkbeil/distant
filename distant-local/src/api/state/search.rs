@@ -91,9 +91,9 @@ impl SearchChannel {
                 cb,
             })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal search task closed"))?;
+            .map_err(|_| io::Error::other("Internal search task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to start dropped"))?
+            .map_err(|_| io::Error::other("Response to start dropped"))?
     }
 
     /// Cancels an active search
@@ -102,9 +102,9 @@ impl SearchChannel {
         self.tx
             .send(InnerSearchMsg::Cancel { id, cb })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal search task closed"))?;
+            .map_err(|_| io::Error::other("Internal search task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to cancel dropped"))?
+            .map_err(|_| io::Error::other("Response to cancel dropped"))?
     }
 }
 
@@ -172,10 +172,9 @@ async fn search_task(tx: mpsc::Sender<InnerSearchMsg>, mut rx: mpsc::Receiver<In
                         let _ = tx.send(());
                         Ok(())
                     }
-                    None => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("[Query {id}] Cancellation failed because no search found"),
-                    )),
+                    None => Err(io::Error::other(format!(
+                        "[Query {id}] Cancellation failed because no search found"
+                    ))),
                 });
             }
             InnerSearchMsg::InternalRemove { id } => {
@@ -343,7 +342,7 @@ impl SearchQueryExecutor {
                 TypesBuilder::new()
                     .add_defaults()
                     .build()
-                    .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?,
+                    .map_err(io::Error::other)?,
             )
             .standard_filters(false)
             .hidden(query.options.ignore_hidden)
@@ -645,7 +644,7 @@ impl SearchQueryPathFilter {
         match &self.matcher {
             Some(matcher) => matcher
                 .is_match(path.as_ref().to_string_lossy().as_bytes())
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x)),
+                .map_err(io::Error::other),
             None => Ok(self.default_value),
         }
     }

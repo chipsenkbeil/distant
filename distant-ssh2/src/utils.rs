@@ -110,7 +110,7 @@ pub fn to_other_error<E>(err: E) -> io::Error
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    io::Error::new(io::ErrorKind::Other, err)
+    io::Error::other(err)
 }
 
 /// Determines if using windows by checking the OS environment variable

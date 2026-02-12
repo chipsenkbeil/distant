@@ -125,6 +125,7 @@ mod tests {
     }
 
     #[derive(Copy, Clone)]
+    #[allow(dead_code)] // Used in trait implementations below
     struct ErrCodec;
 
     impl Codec for ErrCodec {

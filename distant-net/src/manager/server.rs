@@ -140,9 +140,7 @@ impl ManagerServer {
 
     /// Retrieves the manager's version.
     async fn version(&self) -> io::Result<SemVer> {
-        env!("CARGO_PKG_VERSION")
-            .parse()
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        env!("CARGO_PKG_VERSION").parse().map_err(io::Error::other)
     }
 
     /// Retrieves information about the connection to the server with the specified `id`
@@ -216,7 +214,7 @@ impl ServerHandler for ManagerServer {
         } = ctx;
 
         let response = match request.payload {
-            ManagerRequest::Version {} => {
+            ManagerRequest::Version => {
                 debug!("Looking up version");
                 match self.version().await {
                     Ok(version) => ManagerResponse::Version { version },
@@ -444,9 +442,7 @@ mod tests {
     async fn launch_should_fail_if_handler_tied_to_scheme_fails() {
         let mut config = test_config();
 
-        let handler = boxed_launch_handler!(|_a, _b, _c| {
-            Err(io::Error::new(io::ErrorKind::Other, "test failure"))
-        });
+        let handler = boxed_launch_handler!(|_a, _b, _c| { Err(io::Error::other("test failure")) });
 
         config.launch_handlers.insert("scheme".to_string(), handler);
 
@@ -502,9 +498,8 @@ mod tests {
     async fn connect_should_fail_if_handler_tied_to_scheme_fails() {
         let mut config = test_config();
 
-        let handler = boxed_connect_handler!(|_a, _b, _c| {
-            Err(io::Error::new(io::ErrorKind::Other, "test failure"))
-        });
+        let handler =
+            boxed_connect_handler!(|_a, _b, _c| { Err(io::Error::other("test failure")) });
 
         config
             .connect_handlers

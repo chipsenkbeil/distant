@@ -72,6 +72,7 @@ fn should_capture_and_print_stderr(ctx: DistantManagerCtx) {
 //       refactor and should be revisited some day.
 #[rstest]
 #[test_log::test]
+#[allow(clippy::zombie_processes)] // Test intentionally spawns child without waiting
 fn should_forward_stdin_to_remote_process(ctx: DistantManagerCtx) {
     use std::io::{BufRead, BufReader, Write};
 

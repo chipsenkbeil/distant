@@ -102,7 +102,7 @@ impl Frame<'_> {
     /// Checks if a full frame is available from `src`, returning true if a frame was found false
     /// if the current `src` does not contain a frame. Does not consume the frame.
     pub fn available(src: &BytesMut) -> bool {
-        matches!(Frame::read(&mut src.clone()), Some(_))
+        Frame::read(&mut src.clone()).is_some()
     }
 
     /// Returns a new frame which is identical but has a lifetime tied to this frame.
@@ -261,7 +261,7 @@ mod tests {
         buf.put_bytes(0, Frame::HEADER_SIZE);
 
         let result = Frame::read(&mut buf);
-        assert!(matches!(result, None), "Unexpected result: {:?}", result);
+        assert!(result.is_none(), "Unexpected result: {:?}", result);
     }
 
     #[test]
@@ -270,7 +270,7 @@ mod tests {
         buf.put_u64(0);
 
         let result = Frame::read(&mut buf);
-        assert!(matches!(result, None), "Unexpected result: {:?}", result);
+        assert!(result.is_none(), "Unexpected result: {:?}", result);
     }
 
     #[test]
