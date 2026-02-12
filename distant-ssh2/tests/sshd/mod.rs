@@ -72,17 +72,66 @@ impl SshKeygen {
             .map(|status| status.success())
             .context("Failed to generate ed25519 key")?;
 
-        #[cfg(unix)]
         if res {
-            // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
-            std::fs::metadata(path.as_ref().with_extension("pub"))
-                .context("Failed to load metadata of ed25519 pub key")?
-                .permissions()
-                .set_mode(0o600);
-            std::fs::metadata(path)
-                .context("Failed to load metadata of ed25519 key")?
-                .permissions()
-                .set_mode(0o600);
+            #[cfg(unix)]
+            {
+                // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::metadata(path.as_ref().with_extension("pub"))
+                    .context("Failed to load metadata of ed25519 pub key")?
+                    .permissions()
+                    .set_mode(0o600);
+                std::fs::metadata(path)
+                    .context("Failed to load metadata of ed25519 key")?
+                    .permissions()
+                    .set_mode(0o600);
+            }
+
+            #[cfg(windows)]
+            {
+                // On Windows, we need to use icacls to restrict permissions
+                // Remove all permissions and grant only current user read/write
+                let current_user = whoami::username();
+                let pub_key_path = path.as_ref().with_extension("pub");
+
+                for key_path in [path.as_ref(), pub_key_path.as_path()] {
+                    let key_path_str = key_path.to_string_lossy();
+
+                    // First, remove all inherited permissions
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/inheritance:r")
+                        .output();
+
+                    // Remove all users
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/remove")
+                        .arg("*S-1-1-0") // Everyone (World)
+                        .output();
+
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/remove")
+                        .arg("*S-1-5-32-545") // Users group
+                        .output();
+
+                    // Grant only current user read/write
+                    let user_sid = format!("{}:RW", current_user);
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/grant:r")
+                        .arg(&user_sid)
+                        .output();
+
+                    // Also grant SYSTEM read/write
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/grant:r")
+                        .arg("SYSTEM:RW")
+                        .output();
+                }
+            }
         }
 
         Ok(res)
