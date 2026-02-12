@@ -80,25 +80,44 @@ impl SshDistantApi {
         let path_str = path.to_string_lossy();
         let typed_path = Utf8TypedPath::derive(&path_str);
 
-        // Path validation happens during conversion
-
-        // Convert with validation
-        let converted = match self.family {
-            SshFamily::Unix => typed_path.with_unix_encoding_checked().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Path conversion failed: {:?}", e),
-                )
-            })?,
-            SshFamily::Windows => typed_path.with_windows_encoding_checked().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Path conversion failed: {:?}", e),
-                )
-            })?,
-        };
-
-        Ok(converted.to_string())
+        // If the path is already in the correct format for the target family,
+        // just use it as-is (already validated by derive)
+        match self.family {
+            SshFamily::Unix => {
+                if typed_path.is_unix() {
+                    // Already Unix format, return as-is
+                    Ok(typed_path.as_str().to_string())
+                } else {
+                    // Convert from Windows to Unix
+                    typed_path
+                        .with_unix_encoding_checked()
+                        .map(|p| p.to_string())
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Path conversion failed: {:?}", e),
+                            )
+                        })
+                }
+            }
+            SshFamily::Windows => {
+                if typed_path.is_windows() {
+                    // Already Windows format, return as-is
+                    Ok(typed_path.as_str().to_string())
+                } else {
+                    // Convert from Unix to Windows
+                    typed_path
+                        .with_windows_encoding_checked()
+                        .map(|p| p.to_string())
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Path conversion failed: {:?}", e),
+                            )
+                        })
+                }
+            }
+        }
     }
 }
 
