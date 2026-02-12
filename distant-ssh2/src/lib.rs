@@ -517,7 +517,7 @@ impl Ssh {
                         }
                     }
                     Err(e) => {
-                        debug!("Failed to load key {:?}: {}", key_file, e);
+                        warn!("Failed to load key {:?}: {}", key_file, e);
                     }
                 }
             }

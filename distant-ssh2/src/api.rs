@@ -76,29 +76,13 @@ impl SshDistantApi {
     }
 
     /// Convert PathBuf to SFTP path string using typed-path with validation
+    /// SFTP protocol always uses Unix-style paths regardless of target OS
     fn to_sftp_path(&self, path: PathBuf) -> io::Result<String> {
         let path_str = path.to_string_lossy();
         let typed_path = Utf8TypedPath::derive(&path_str);
 
-        // Path validation happens during conversion
-
-        // Convert with validation
-        let converted = match self.family {
-            SshFamily::Unix => typed_path.with_unix_encoding_checked().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Path conversion failed: {:?}", e),
-                )
-            })?,
-            SshFamily::Windows => typed_path.with_windows_encoding_checked().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Path conversion failed: {:?}", e),
-                )
-            })?,
-        };
-
-        Ok(converted.to_string())
+        // Always convert to Unix format for SFTP protocol
+        Ok(typed_path.with_unix_encoding().as_str().to_string())
     }
 }
 
@@ -154,19 +138,27 @@ impl DistantApi for SshDistantApi {
         debug!("[Conn {}] Appending to file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
-        let sftp_path = self.to_sftp_path(path)?;
+        let sftp_path = self.to_sftp_path(path.clone())?;
 
-        // Open file in append mode
+        // Use stat + seek approach instead of APPEND flag
+        // This avoids compatibility issues with APPEND flag across different SFTP servers
         use russh_sftp::protocol::OpenFlags;
-        use tokio::io::AsyncWriteExt;
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
+        // Get current file size (0 if file doesn't exist)
+        let file_size = match sftp.metadata(&sftp_path).await {
+            Ok(metadata) => metadata.size.unwrap_or(0),
+            Err(_) => 0, // File doesn't exist, start from beginning
+        };
+
+        // Open file for writing (create if needed) and seek to end
         let mut file = sftp
-            .open_with_flags(
-                &sftp_path,
-                OpenFlags::WRITE | OpenFlags::APPEND | OpenFlags::CREATE,
-            )
+            .open_with_flags(&sftp_path, OpenFlags::WRITE | OpenFlags::CREATE)
             .await
             .map_err(io::Error::other)?;
+
+        // Seek to the end of the file to append new data
+        file.seek(std::io::SeekFrom::Start(file_size)).await?;
 
         file.write_all(&data).await?;
         file.flush().await?;
@@ -374,27 +366,28 @@ impl DistantApi for SshDistantApi {
 
         if all {
             // Create parent directories recursively
-            // Split path and create each component
-            let mut current_path = String::new();
-            for component in std::path::Path::new(&sftp_path).components() {
-                use std::path::Component;
+            // Use typed-path to properly parse Unix SFTP paths regardless of host platform
+            use typed_path::{Utf8UnixPath, Utf8UnixPathBuf};
+
+            let unix_path = Utf8UnixPath::new(&sftp_path);
+            let mut current_path = Utf8UnixPathBuf::new();
+
+            for component in unix_path.components() {
+                use typed_path::Utf8Component;
                 match component {
-                    Component::RootDir | Component::Prefix(_) => {
-                        current_path.push('/');
+                    c if c.is_root() => {
+                        current_path = Utf8UnixPathBuf::from("/");
                     }
-                    Component::Normal(part) => {
-                        if !current_path.is_empty() && !current_path.ends_with('/') {
-                            current_path.push('/');
-                        }
-                        current_path.push_str(part.to_str().ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::InvalidInput, "Invalid path component")
-                        })?);
+                    c if c.is_normal() => {
+                        let part = c.as_str();
+                        current_path.push(part);
+                        let current_path_str = current_path.as_str();
 
                         // Try to create directory, ignore error if it already exists
-                        if let Err(e) = sftp.create_dir(&current_path).await {
+                        if let Err(e) = sftp.create_dir(current_path_str).await {
                             // Check if error is "already exists" (we can ignore that)
                             // russh_sftp errors don't have good introspection, so we continue
-                            debug!("create_dir error for {}: {:?}", current_path, e);
+                            debug!("create_dir error for {}: {:?}", current_path_str, e);
                         }
                     }
                     _ => {}
@@ -674,15 +667,20 @@ impl DistantApi for SshDistantApi {
             mode = 0o644; // Default: rw-r--r--
         }
 
-        // Get current metadata and update permissions
-        let _attrs = sftp.metadata(&sftp_path).await.map_err(io::Error::other)?;
-
-        // FileAttributes has a permissions field we can set directly
+        // Only set permissions field in FileAttributes to avoid changing ownership/timestamps
         use russh_sftp::protocol::FileAttributes;
-        let mut new_attrs = FileAttributes::default();
-        new_attrs.permissions = Some(mode);
+        let new_attrs = FileAttributes {
+            size: None,
+            uid: None,
+            user: None,
+            gid: None,
+            group: None,
+            permissions: Some(mode),
+            atime: None,
+            mtime: None,
+        };
 
-        // Set metadata on the file
+        // Set metadata on the file (only permissions will be modified)
         sftp.set_metadata(&sftp_path, new_attrs)
             .await
             .map_err(io::Error::other)?;

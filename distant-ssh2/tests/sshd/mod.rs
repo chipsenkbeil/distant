@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -52,6 +50,76 @@ const SPAWN_RETRY_CNT: usize = 3;
 
 const MAX_DROP_WAIT_TIME: Duration = Duration::from_millis(500);
 
+/// Sets restrictive Windows ACLs on a file so that Windows OpenSSH accepts it.
+/// In admin contexts, removes inherited permissions and sets exact ACLs.
+/// In non-admin contexts, additively grants permissions without stripping inherited ones.
+#[cfg(windows)]
+fn set_windows_file_permissions(path: &Path) {
+    let current_user = whoami::username();
+    let path_str = path.to_string_lossy();
+
+    // Try to set SYSTEM ownership — only works as admin
+    let is_admin = Command::new("icacls")
+        .arg(&*path_str)
+        .arg("/setowner")
+        .arg("SYSTEM")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if is_admin {
+        // Admin path: aggressive ACL setup (CI / elevated contexts)
+        // Remove inherited + explicit broad perms, then grant exactly what's needed
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/inheritance:r")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/remove")
+            .arg("*S-1-1-0")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/remove")
+            .arg("*S-1-5-32-545")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/grant:r")
+            .arg("SYSTEM:F")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/grant:r")
+            .arg("Administrators:F")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/grant:r")
+            .arg(format!("{}:RW", current_user))
+            .output();
+    } else {
+        // Non-admin path: just add grants without stripping inherited perms
+        warn!("Not admin — skipping aggressive ACL setup for {}", path_str);
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/grant")
+            .arg("SYSTEM:F")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/grant")
+            .arg("Administrators:F")
+            .output();
+        let _ = Command::new("icacls")
+            .arg(&*path_str)
+            .arg("/grant")
+            .arg(format!("{}:F", current_user))
+            .output();
+    }
+}
+
 pub struct SshKeygen;
 
 impl SshKeygen {
@@ -72,17 +140,28 @@ impl SshKeygen {
             .map(|status| status.success())
             .context("Failed to generate ed25519 key")?;
 
-        #[cfg(unix)]
         if res {
-            // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
-            std::fs::metadata(path.as_ref().with_extension("pub"))
-                .context("Failed to load metadata of ed25519 pub key")?
-                .permissions()
-                .set_mode(0o600);
-            std::fs::metadata(path)
-                .context("Failed to load metadata of ed25519 key")?
-                .permissions()
-                .set_mode(0o600);
+            #[cfg(unix)]
+            {
+                // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::metadata(path.as_ref().with_extension("pub"))
+                    .context("Failed to load metadata of ed25519 pub key")?
+                    .permissions()
+                    .set_mode(0o600);
+                std::fs::metadata(path)
+                    .context("Failed to load metadata of ed25519 key")?
+                    .permissions()
+                    .set_mode(0o600);
+            }
+
+            #[cfg(windows)]
+            {
+                let pub_key_path = path.as_ref().with_extension("pub");
+                for key_path in [path.as_ref(), pub_key_path.as_path()] {
+                    set_windows_file_permissions(key_path);
+                }
+            }
         }
 
         Ok(res)
@@ -92,28 +171,57 @@ impl SshKeygen {
 pub struct SshAgent;
 
 impl SshAgent {
+    /// On Unix, runs `ssh-agent -s` to get Bourne shell environment variables.
+    /// On Windows, runs `ssh-agent` which outputs cmd.exe style variables and
+    /// converts them to the same format.
     pub fn generate_shell_env() -> anyhow::Result<HashMap<String, String>> {
-        let output = Command::new("ssh-agent")
-            .arg("-s")
-            .output()
-            .context("Failed to generate Bourne shell commands from ssh-agent")?;
-        let stdout =
-            String::from_utf8(output.stdout).context("Failed to parse stdout as utf8 string")?;
-        Ok(stdout
-            .split(';')
-            .map(str::trim)
-            .filter(|s| s.contains('='))
-            .map(|s| {
-                let mut tokens = s.split('=');
-                let key = tokens.next().unwrap().trim().to_string();
-                let rest = tokens
-                    .map(str::trim)
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join("=");
-                (key, rest)
-            })
-            .collect::<HashMap<String, String>>())
+        #[cfg(unix)]
+        {
+            let output = Command::new("ssh-agent")
+                .arg("-s")
+                .output()
+                .context("Failed to generate Bourne shell commands from ssh-agent")?;
+            let stdout = String::from_utf8(output.stdout)
+                .context("Failed to parse stdout as utf8 string")?;
+            Ok(stdout
+                .split(';')
+                .map(str::trim)
+                .filter(|s| s.contains('='))
+                .map(|s| {
+                    let mut tokens = s.split('=');
+                    let key = tokens.next().unwrap().trim().to_string();
+                    let rest = tokens
+                        .map(str::trim)
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join("=");
+                    (key, rest)
+                })
+                .collect::<HashMap<String, String>>())
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, ssh-agent outputs cmd.exe style SET commands
+            let output = Command::new("ssh-agent")
+                .output()
+                .context("Failed to run ssh-agent on Windows")?;
+            let stdout = String::from_utf8(output.stdout)
+                .context("Failed to parse stdout as utf8 string")?;
+            Ok(stdout
+                .lines()
+                .map(str::trim)
+                .filter(|s| s.starts_with("SET "))
+                .filter_map(|s| {
+                    // Parse "SET SSH_AUTH_SOCK=..." format
+                    let without_set = s.strip_prefix("SET ")?;
+                    let mut tokens = without_set.splitn(2, '=');
+                    let key = tokens.next()?.trim().to_string();
+                    let value = tokens.next()?.trim().to_string();
+                    Some((key, value))
+                })
+                .collect::<HashMap<String, String>>())
+        }
     }
 
     pub fn update_tests_with_shell_env() -> anyhow::Result<()> {
@@ -159,9 +267,13 @@ impl Default for SshdConfig {
         let mut config = Self::new();
 
         config.set_authentication_methods(vec!["publickey".to_string()]);
-        config.set_use_privilege_separation(false);
+        config.set_pubkey_authentication(true);
+        // UsePrivilegeSeparation and UsePAM are not supported by Windows OpenSSH
+        if !cfg!(windows) {
+            config.set_use_privilege_separation(false);
+            config.set_use_pam(false);
+        }
         config.set_subsystem(true, true);
-        config.set_use_pam(false);
         config.set_x11_forwarding(true);
         config.set_print_motd(true);
         config.set_permit_tunnel(true);
@@ -259,6 +371,11 @@ impl SshdConfig {
         );
 
         self.0.insert("MaxStartups".to_string(), vec![value]);
+    }
+
+    pub fn set_pubkey_authentication(&mut self, yes: bool) {
+        self.0
+            .insert("PubkeyAuthentication".to_string(), Self::yes_value(yes));
     }
 
     pub fn set_strict_modes(&mut self, yes: bool) {
@@ -359,6 +476,25 @@ impl Sshd {
         )
         .context("Failed to copy ed25519 pub key to authorized keys file")?;
 
+        // On Windows, grant SYSTEM + Administrators read access to authorized_keys
+        // without stripping inherited permissions. The aggressive ACL setup used for
+        // host/identity keys causes "Access is denied" on authorized_keys because sshd
+        // holds the file open. With StrictModes=no, permissive ACLs are fine here.
+        #[cfg(windows)]
+        {
+            let ak_path_str = authorized_keys_file.path().to_string_lossy().to_string();
+            let _ = Command::new("icacls")
+                .arg(&ak_path_str)
+                .arg("/grant")
+                .arg("SYSTEM:F")
+                .output();
+            let _ = Command::new("icacls")
+                .arg(&ak_path_str)
+                .arg("/grant")
+                .arg("Administrators:F")
+                .output();
+        }
+
         // ssh-keygen -t ed25519 -f $ROOT/ssh_host_ed25519_key -N "" -q
         let ssh_host_ed25519_key_file = tmp.child("ssh_host_ed25519_key");
         assert!(
@@ -367,7 +503,7 @@ impl Sshd {
             "Failed to ssh-keygen ssh_host_ed25519_key"
         );
 
-        config.set_authorized_keys_file(id_ed25519_file.path().with_extension("pub"));
+        config.set_authorized_keys_file(&authorized_keys_file);
         config.set_host_key(ssh_host_ed25519_key_file.path());
 
         let sshd_pid_file = tmp.child("sshd.pid");
@@ -397,35 +533,65 @@ impl Sshd {
         config_path: impl AsRef<Path>,
         log_path: impl AsRef<Path>,
     ) -> anyhow::Result<(Child, u16)> {
-        static PORT: AtomicU16 = AtomicU16::new(PORT_RANGE.0);
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
-        loop {
+        static PORT: AtomicU16 = AtomicU16::new(0);
+
+        // Initialize with a random-ish starting port on first use to reduce
+        // port contention when nextest runs many test processes concurrently
+        PORT.compare_exchange(
+            0,
+            {
+                let mut hasher = DefaultHasher::new();
+                std::process::id().hash(&mut hasher);
+                std::thread::current().id().hash(&mut hasher);
+                let hash = hasher.finish();
+                let range_size = (PORT_RANGE.1 - PORT_RANGE.0) as u64;
+                PORT_RANGE.0 + (hash % range_size) as u16
+            },
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        )
+        .ok();
+
+        let max_port_attempts = 100;
+
+        for _ in 0..max_port_attempts {
             let port = PORT.fetch_add(1, Ordering::Relaxed);
+            // Wrap around if we exceed the range
+            let port = PORT_RANGE.0 + ((port - PORT_RANGE.0) % (PORT_RANGE.1 - PORT_RANGE.0));
 
             match Self::try_spawn(port, config_path.as_ref(), log_path.as_ref()) {
                 // If successful, return our spawned server child process
                 Ok(Ok(child)) => return Ok((child, port)),
 
-                // If the server died when spawned and we reached the final port, we want to exit
-                Ok(Err((code, msg))) if port == PORT_RANGE.1 => {
-                    anyhow::bail!(
-                        "{BIN_PATH:?} failed [{}]: {}",
-                        code.map(|x| x.to_string())
-                            .unwrap_or_else(|| String::from("???")),
-                        msg
-                    )
-                }
-
-                // If we've reached the final port in our range to try, we want to exit
-                Err(x) if port == PORT_RANGE.1 => anyhow::bail!(x),
-
                 // Otherwise, try next port
-                Err(_) | Ok(Err(_)) => {
-                    error!("sshd could not spawn on port {port}, so trying next port");
+                Ok(Err((code, msg))) => {
+                    error!(
+                        "sshd could not spawn on port {port}, exited with code {:?}: {msg}, so trying next port",
+                        code
+                    );
+                    if let Ok(log_content) = std::fs::read_to_string(&log_path) {
+                        if !log_content.trim().is_empty() {
+                            error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
+                        }
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    error!("sshd could not spawn on port {port} due to error: {e}, so trying next port");
+                    if let Ok(log_content) = std::fs::read_to_string(&log_path) {
+                        if !log_content.trim().is_empty() {
+                            error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
+                        }
+                    }
                     continue;
                 }
             }
         }
+
+        anyhow::bail!("Failed to find open port for sshd after {max_port_attempts} attempts")
     }
 
     fn try_spawn(
@@ -440,7 +606,44 @@ impl Sshd {
                 .with_context(|| format!("Port {port} already taken"))?,
         );
 
-        let child = Command::new(BIN_PATH.as_path())
+        #[cfg(windows)]
+        {
+            warn!(
+                "Attempting to spawn sshd on Windows - this may require administrator privileges"
+            );
+
+            // Log the exact command being executed
+            error!(
+                "Spawning sshd with command: {:?} {:?}",
+                BIN_PATH.as_path(),
+                [
+                    "-D",
+                    "-p",
+                    &port.to_string(),
+                    "-f",
+                    config_path.as_ref().to_string_lossy().as_ref(),
+                    "-E",
+                    log_path.as_ref().to_string_lossy().as_ref()
+                ]
+            );
+
+            // Check if sshd binary exists and is accessible
+            if let Ok(metadata) = std::fs::metadata(&*BIN_PATH) {
+                error!(
+                    "sshd binary info: path={:?}, size={}, readonly={}",
+                    BIN_PATH.as_path(),
+                    metadata.len(),
+                    metadata.permissions().readonly()
+                );
+            } else {
+                error!(
+                    "sshd binary not found or not accessible at {:?}",
+                    BIN_PATH.as_path()
+                );
+            }
+        }
+
+        let mut child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
             .arg(port.to_string())
@@ -449,7 +652,90 @@ impl Sshd {
             .arg("-E")
             .arg(log_path.as_ref())
             .spawn()
-            .with_context(|| format!("Failed to spawn {:?}", BIN_PATH.as_path()))?;
+            .with_context(|| {
+                #[cfg(windows)]
+                {
+                    format!(
+                        "Failed to spawn {:?}. On Windows Server 2025, sshd requires:\n\
+                         1. Host key files owned by SYSTEM account\n\
+                         2. Proper ACL permissions (SYSTEM:F, Administrators:F)\n\
+                         3. No conflicting SSH services on the same port\n\
+                         4. Administrator privileges for the test process\n\
+                         \nTroubleshooting:\n\
+                         - Check if system SSH service is running on port 22\n\
+                         - Verify host key file permissions with 'icacls'\n\
+                         - Ensure OpenSSH is properly installed",
+                        BIN_PATH.as_path()
+                    )
+                }
+                #[cfg(not(windows))]
+                {
+                    format!("Failed to spawn {:?}", BIN_PATH.as_path())
+                }
+            })?;
+
+        // Check immediately for instant failures (like permission/config errors)
+        if let Some(exit_status) = child
+            .try_wait()
+            .context("Failed to check sshd immediately")?
+        {
+            let output = child
+                .wait_with_output()
+                .context("Failed to get sshd output")?;
+            error!(
+                "sshd failed immediately with exit code {:?}",
+                exit_status.code()
+            );
+            error!("sshd stdout: {}", String::from_utf8_lossy(&output.stdout));
+            error!("sshd stderr: {}", String::from_utf8_lossy(&output.stderr));
+
+            // Windows Server 2025 specific diagnostics on failure
+            #[cfg(windows)]
+            {
+                // Detect Windows version
+                if let Ok(output) = Command::new("ver").output() {
+                    if let Ok(version) = String::from_utf8(output.stdout) {
+                        error!("Windows version: {}", version.trim());
+                        if version.contains("2025") || version.contains("26100") {
+                            error!("⚠️  Windows Server 2025 detected - requires SYSTEM file ownership for sshd");
+                        }
+                    }
+                }
+
+                // Check system SSH service conflicts
+                if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output() {
+                    if let Ok(status) = String::from_utf8(output.stdout) {
+                        if status.contains("RUNNING") {
+                            error!("⚠️  System SSH service is RUNNING - may conflict with test sshd instances");
+                        } else if status.contains("STOPPED") {
+                            error!("System SSH service is STOPPED");
+                        }
+                    }
+                } else {
+                    error!("Could not check system SSH service status");
+                }
+
+                // Check Windows OpenSSH version
+                if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output() {
+                    if let Ok(version) = String::from_utf8(output.stderr) {
+                        // SSH version goes to stderr
+                        error!("OpenSSH version: {}", version.trim());
+                    }
+                }
+            }
+
+            // Also print log file for immediate failures
+            if let Ok(log_content) = std::fs::read_to_string(&log_path) {
+                if !log_content.trim().is_empty() {
+                    error!("sshd log file content:\n{}", log_content);
+                }
+            }
+
+            return Ok(Err((
+                exit_status.code(),
+                "Immediate failure after spawn".to_string(),
+            )));
+        }
 
         // Pause for a little bit to make sure that the server didn't die due to an error
         thread::sleep(Duration::from_millis(100));
@@ -499,19 +785,59 @@ impl Sshd {
     }
 
     fn print_log_file(&self) {
-        if let Ok(log) = std::fs::read_to_string(&self.log_file) {
-            let mut out = String::new();
-            out.push('\n');
-            out.push_str("====================\n");
-            out.push_str("= SSHD LOG FILE     \n");
-            out.push_str("====================\n");
-            out.push('\n');
-            out.push_str(&log);
-            out.push('\n');
-            out.push('\n');
-            out.push_str("====================\n");
-            out.push('\n');
-            error!("{out}");
+        match std::fs::read_to_string(&self.log_file) {
+            Ok(log) if !log.trim().is_empty() => {
+                let mut out = String::new();
+                out.push('\n');
+                out.push_str("====================\n");
+                out.push_str("= SSHD LOG FILE     \n");
+                out.push_str("====================\n");
+                out.push('\n');
+                out.push_str(&log);
+                out.push('\n');
+                out.push('\n');
+
+                // Add Windows-specific diagnostic information
+                #[cfg(windows)]
+                {
+                    out.push_str("= WINDOWS DIAGNOSTICS\n");
+                    out.push_str("====================\n");
+
+                    // Check if this is Windows Server 2025 which has stricter requirements
+                    if let Ok(output) = std::process::Command::new("ver").output() {
+                        if let Ok(version) = String::from_utf8(output.stdout) {
+                            out.push_str(&format!("Windows Version: {}\n", version.trim()));
+                            if version.contains("2025") || version.contains("26100") {
+                                out.push_str("Detected Windows Server 2025 - requires SYSTEM file ownership\n");
+                            }
+                        }
+                    }
+
+                    // Check if system SSH service is running
+                    if let Ok(output) = std::process::Command::new("sc")
+                        .args(["query", "sshd"])
+                        .output()
+                    {
+                        if let Ok(status) = String::from_utf8(output.stdout) {
+                            if status.contains("RUNNING") {
+                                out.push_str("System SSH service is RUNNING - may conflict with test instances\n");
+                            }
+                        }
+                    }
+
+                    out.push('\n');
+                }
+
+                out.push_str("====================\n");
+                out.push('\n');
+                error!("{out}");
+            }
+            Ok(_) => {
+                error!("SSHD LOG FILE is empty (path: {:?})", self.log_file);
+            }
+            Err(e) => {
+                error!("Failed to read SSHD LOG FILE at {:?}: {}", self.log_file, e);
+            }
         }
     }
 
@@ -669,28 +995,35 @@ async fn load_ssh_client(sshd: &Sshd) -> Ssh {
     let mut errors = Vec::new();
     let msg = format!("Failed to connect to any of these hosts: {addrs:?}");
 
-    for addr in addrs {
-        let addr_string = addr.to_string();
-        match Ssh::connect(&addr_string, opts.clone()).await {
-            Ok(mut ssh_client) => {
-                let res = ssh_client.authenticate(MockSshAuthHandler).await;
+    let max_attempts = 3;
 
-                match res {
+    for attempt in 1..=max_attempts {
+        for addr in &addrs {
+            let addr_string = addr.to_string();
+            match Ssh::connect(&addr_string, opts.clone()).await {
+                Ok(mut ssh_client) => match ssh_client.authenticate(MockSshAuthHandler).await {
                     Ok(_) => return ssh_client,
                     Err(x) => {
-                        errors.push(
-                            anyhow::Error::new(x).context(format!(
-                                "Failed to authenticate with sshd @ {addr_string}"
-                            )),
-                        );
+                        errors.push(anyhow::Error::new(x).context(format!(
+                            "Failed to authenticate with sshd @ {addr_string} (attempt {attempt})"
+                        )));
                     }
+                },
+                Err(x) => {
+                    errors.push(anyhow::Error::new(x).context(format!(
+                        "Failed to connect to sshd @ {addr_string} (attempt {attempt})"
+                    )));
                 }
             }
-            Err(x) => {
-                errors.push(
-                    anyhow::Error::new(x)
-                        .context(format!("Failed to connect to sshd @ {addr_string}")),
-                );
+        }
+
+        if attempt < max_attempts {
+            warn!("SSH auth attempt {attempt} failed, retrying after 500ms...");
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            // Verify sshd is still alive before retrying
+            if sshd.is_dead() {
+                break;
             }
         }
     }
@@ -700,11 +1033,43 @@ async fn load_ssh_client(sshd: &Sshd) -> Ssh {
         warn!("sshd is still alive, so something else is going on");
     }
 
+    // Kill sshd so we can read its log file (Windows locks it while sshd runs)
+    {
+        let mut child_lock = sshd.child.lock().unwrap();
+        if let Some(mut child) = child_lock.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
     // We want to print out the log file from sshd in case it sheds clues on problem
     sshd.print_log_file();
 
     // We want to print out the config file from sshd in case it sheds clues on problem
     sshd.print_config_file();
+
+    // On Windows, dump ACLs for key files to diagnose permission issues
+    #[cfg(windows)]
+    {
+        for name in ["authorized_keys", "id_ed25519", "id_ed25519.pub"] {
+            let key_path = sshd.tmp.child(name).path().to_path_buf();
+            match Command::new("icacls").arg(&key_path).output() {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    error!(
+                        "icacls {} => stdout: {}, stderr: {}",
+                        name,
+                        stdout.trim(),
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to run icacls on {}: {}", name, e);
+                }
+            }
+        }
+    }
 
     let error = match errors.into_iter().reduce(|x, y| x.context(y)) {
         Some(x) => x.context(msg),
