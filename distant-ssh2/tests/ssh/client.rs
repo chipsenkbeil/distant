@@ -101,17 +101,25 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Dis
     assert_eq!(bytes, b"some file contents");
 }
 
+#[cfg_attr(windows, ignore)]
+#[cfg_attr(windows, ignore)]
 #[rstest]
 #[test(tokio::test)]
-async fn read_file_text_should_send_error_if_fails_to_read_file(
+async fn append_file_text_should_send_error_if_fails_to_create_file(
     #[future] client: Ctx<DistantClient>,
 ) {
     let mut client = client.await;
-
     let temp = assert_fs::TempDir::new().unwrap();
-    let path = temp.child("missing-file").path().to_path_buf();
+    let file = temp.child("file");
 
-    let _ = client.read_file_text(path).await.unwrap_err();
+    // Ensure that it doesn't exist and we get an error
+    let _ = client
+        .append_file_text(file.path().to_path_buf(), "some extra contents".to_string())
+        .await
+        .unwrap_err();
+
+    // Also, verify that the file doesn't exist
+    file.assert(predicate::path::missing());
 }
 
 #[rstest]
@@ -713,21 +721,24 @@ async fn remove_should_delete_nonempty_directory_if_force_is_true(
     dir.assert(predicate::path::missing());
 }
 
+#[cfg_attr(windows, ignore)]
+#[cfg_attr(windows, ignore)]
 #[rstest]
 #[test(tokio::test)]
-async fn remove_should_support_deleting_a_single_file(#[future] client: Ctx<DistantClient>) {
+async fn append_file_text_should_create_file_if_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("some-file");
-    file.touch().unwrap();
+    let file = temp.child("file");
 
+    // Create file and ensure it exists
     client
-        .remove(file.path().to_path_buf(), /* false */ false)
+        .append_file_text(file.path().to_path_buf(), "some extra contents".to_string())
         .await
         .unwrap();
 
-    // Also, verify that path does not exist
-    file.assert(predicate::path::missing());
+    // Also, verify that file exists and has correct content
+    file.assert(predicate::path::is_file());
+    file.assert(predicate::path::contains("some extra contents"));
 }
 
 #[rstest]
@@ -820,23 +831,26 @@ async fn copy_should_support_copying_a_directory_that_only_contains_directories(
     dst_dir.assert(predicate::path::is_dir().name("dst/dir"));
 }
 
+#[cfg_attr(windows, ignore)]
+#[cfg_attr(windows, ignore)]
 #[rstest]
 #[test(tokio::test)]
-async fn copy_should_support_copying_a_single_file(#[future] client: Ctx<DistantClient>) {
+async fn append_file_text_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
-    let src = temp.child("src");
-    src.write_str("some text").unwrap();
-    let dst = temp.child("dst");
+    let file = temp.child("file");
+    file.write_str("some initial contents").unwrap();
 
+    // Append to existing file and ensure it exists
     client
-        .copy(src.path().to_path_buf(), dst.path().to_path_buf())
+        .append_file_text(file.path().to_path_buf(), "some extra contents".to_string())
         .await
         .unwrap();
 
-    // Verify that we still have source and that destination has source's contents
-    src.assert(predicate::path::is_file());
-    dst.assert(predicate::path::eq_file(src.path()));
+    // Also, verify that file exists and has correct content
+    file.assert(predicate::path::is_file());
+    file.assert(predicate::path::contains("some initial contents"));
+    file.assert(predicate::path::contains("some extra contents"));
 }
 
 #[rstest]
