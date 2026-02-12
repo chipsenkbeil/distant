@@ -48,3 +48,6 @@ rstest = "0.17.0"
 test-log = "0.2.11"
 which = "4.4.0"
 whoami = "1.4.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
