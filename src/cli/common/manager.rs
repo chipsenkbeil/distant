@@ -8,6 +8,7 @@ use crate::constants::{global as global_paths, user as user_paths};
 use crate::options::{AccessControl, NetworkSettings};
 
 pub struct Manager {
+    #[cfg(unix)]
     pub access: AccessControl,
     pub config: ManagerConfig,
     pub network: NetworkSettings,
