@@ -80,25 +80,44 @@ impl SshDistantApi {
         let path_str = path.to_string_lossy();
         let typed_path = Utf8TypedPath::derive(&path_str);
 
-        // Path validation happens during conversion
-
-        // Convert with validation
-        let converted = match self.family {
-            SshFamily::Unix => typed_path.with_unix_encoding_checked().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Path conversion failed: {:?}", e),
-                )
-            })?,
-            SshFamily::Windows => typed_path.with_windows_encoding_checked().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("Path conversion failed: {:?}", e),
-                )
-            })?,
-        };
-
-        Ok(converted.to_string())
+        // If the path is already in the correct format for the target family,
+        // just use it as-is (already validated by derive)
+        match self.family {
+            SshFamily::Unix => {
+                if typed_path.is_unix() {
+                    // Already Unix format, return as-is
+                    Ok(typed_path.as_str().to_string())
+                } else {
+                    // Convert from Windows to Unix
+                    typed_path
+                        .with_unix_encoding_checked()
+                        .map(|p| p.to_string())
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Path conversion failed: {:?}", e),
+                            )
+                        })
+                }
+            }
+            SshFamily::Windows => {
+                if typed_path.is_windows() {
+                    // Already Windows format, return as-is
+                    Ok(typed_path.as_str().to_string())
+                } else {
+                    // Convert from Unix to Windows
+                    typed_path
+                        .with_windows_encoding_checked()
+                        .map(|p| p.to_string())
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Path conversion failed: {:?}", e),
+                            )
+                        })
+                }
+            }
+        }
     }
 }
 
@@ -154,19 +173,27 @@ impl DistantApi for SshDistantApi {
         debug!("[Conn {}] Appending to file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
-        let sftp_path = self.to_sftp_path(path)?;
+        let sftp_path = self.to_sftp_path(path.clone())?;
 
-        // Open file in append mode
+        // Use stat + seek approach instead of APPEND flag
+        // This avoids compatibility issues with APPEND flag across different SFTP servers
         use russh_sftp::protocol::OpenFlags;
-        use tokio::io::AsyncWriteExt;
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
+        // Get current file size (0 if file doesn't exist)
+        let file_size = match sftp.metadata(&sftp_path).await {
+            Ok(metadata) => metadata.size.unwrap_or(0),
+            Err(_) => 0, // File doesn't exist, start from beginning
+        };
+
+        // Open file for writing (create if needed) and seek to end
         let mut file = sftp
-            .open_with_flags(
-                &sftp_path,
-                OpenFlags::WRITE | OpenFlags::APPEND | OpenFlags::CREATE,
-            )
+            .open_with_flags(&sftp_path, OpenFlags::WRITE | OpenFlags::CREATE)
             .await
             .map_err(io::Error::other)?;
+
+        // Seek to the end of the file to append new data
+        file.seek(std::io::SeekFrom::Start(file_size)).await?;
 
         file.write_all(&data).await?;
         file.flush().await?;
@@ -674,15 +701,20 @@ impl DistantApi for SshDistantApi {
             mode = 0o644; // Default: rw-r--r--
         }
 
-        // Get current metadata and update permissions
-        let _attrs = sftp.metadata(&sftp_path).await.map_err(io::Error::other)?;
-
-        // FileAttributes has a permissions field we can set directly
+        // Only set permissions field in FileAttributes to avoid changing ownership/timestamps
         use russh_sftp::protocol::FileAttributes;
-        let mut new_attrs = FileAttributes::default();
-        new_attrs.permissions = Some(mode);
+        let new_attrs = FileAttributes {
+            size: None,
+            uid: None,
+            user: None,
+            gid: None,
+            group: None,
+            permissions: Some(mode),
+            atime: None,
+            mtime: None,
+        };
 
-        // Set metadata on the file
+        // Set metadata on the file (only permissions will be modified)
         sftp.set_metadata(&sftp_path, new_attrs)
             .await
             .map_err(io::Error::other)?;

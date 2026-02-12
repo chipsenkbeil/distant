@@ -110,8 +110,7 @@ mod tests {
             .create(&addr)?;
 
         // Send the address back to our main test thread
-        tx.send(addr)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        tx.send(addr).map_err(io::Error::other)?;
 
         Ok(pipe)
     }

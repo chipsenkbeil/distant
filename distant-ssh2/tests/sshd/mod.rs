@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -72,17 +70,66 @@ impl SshKeygen {
             .map(|status| status.success())
             .context("Failed to generate ed25519 key")?;
 
-        #[cfg(unix)]
         if res {
-            // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
-            std::fs::metadata(path.as_ref().with_extension("pub"))
-                .context("Failed to load metadata of ed25519 pub key")?
-                .permissions()
-                .set_mode(0o600);
-            std::fs::metadata(path)
-                .context("Failed to load metadata of ed25519 key")?
-                .permissions()
-                .set_mode(0o600);
+            #[cfg(unix)]
+            {
+                // chmod 600 id_ed25519* -> ida_ed25519 + ida_ed25519.pub
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::metadata(path.as_ref().with_extension("pub"))
+                    .context("Failed to load metadata of ed25519 pub key")?
+                    .permissions()
+                    .set_mode(0o600);
+                std::fs::metadata(path)
+                    .context("Failed to load metadata of ed25519 key")?
+                    .permissions()
+                    .set_mode(0o600);
+            }
+
+            #[cfg(windows)]
+            {
+                // On Windows, we need to use icacls to restrict permissions
+                // Remove all permissions and grant only current user read/write
+                let current_user = whoami::username();
+                let pub_key_path = path.as_ref().with_extension("pub");
+
+                for key_path in [path.as_ref(), pub_key_path.as_path()] {
+                    let key_path_str = key_path.to_string_lossy();
+
+                    // First, remove all inherited permissions
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/inheritance:r")
+                        .output();
+
+                    // Remove all users
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/remove")
+                        .arg("*S-1-1-0") // Everyone (World)
+                        .output();
+
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/remove")
+                        .arg("*S-1-5-32-545") // Users group
+                        .output();
+
+                    // Grant only current user read/write
+                    let user_sid = format!("{}:RW", current_user);
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/grant:r")
+                        .arg(&user_sid)
+                        .output();
+
+                    // Also grant SYSTEM read/write
+                    let _ = Command::new("icacls")
+                        .arg(&*key_path_str)
+                        .arg("/grant:r")
+                        .arg("SYSTEM:RW")
+                        .output();
+                }
+            }
         }
 
         Ok(res)
@@ -92,28 +139,57 @@ impl SshKeygen {
 pub struct SshAgent;
 
 impl SshAgent {
+    /// On Unix, runs `ssh-agent -s` to get Bourne shell environment variables.
+    /// On Windows, runs `ssh-agent` which outputs cmd.exe style variables and
+    /// converts them to the same format.
     pub fn generate_shell_env() -> anyhow::Result<HashMap<String, String>> {
-        let output = Command::new("ssh-agent")
-            .arg("-s")
-            .output()
-            .context("Failed to generate Bourne shell commands from ssh-agent")?;
-        let stdout =
-            String::from_utf8(output.stdout).context("Failed to parse stdout as utf8 string")?;
-        Ok(stdout
-            .split(';')
-            .map(str::trim)
-            .filter(|s| s.contains('='))
-            .map(|s| {
-                let mut tokens = s.split('=');
-                let key = tokens.next().unwrap().trim().to_string();
-                let rest = tokens
-                    .map(str::trim)
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join("=");
-                (key, rest)
-            })
-            .collect::<HashMap<String, String>>())
+        #[cfg(unix)]
+        {
+            let output = Command::new("ssh-agent")
+                .arg("-s")
+                .output()
+                .context("Failed to generate Bourne shell commands from ssh-agent")?;
+            let stdout = String::from_utf8(output.stdout)
+                .context("Failed to parse stdout as utf8 string")?;
+            Ok(stdout
+                .split(';')
+                .map(str::trim)
+                .filter(|s| s.contains('='))
+                .map(|s| {
+                    let mut tokens = s.split('=');
+                    let key = tokens.next().unwrap().trim().to_string();
+                    let rest = tokens
+                        .map(str::trim)
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join("=");
+                    (key, rest)
+                })
+                .collect::<HashMap<String, String>>())
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, ssh-agent outputs cmd.exe style SET commands
+            let output = Command::new("ssh-agent")
+                .output()
+                .context("Failed to run ssh-agent on Windows")?;
+            let stdout = String::from_utf8(output.stdout)
+                .context("Failed to parse stdout as utf8 string")?;
+            Ok(stdout
+                .lines()
+                .map(str::trim)
+                .filter(|s| s.starts_with("SET "))
+                .filter_map(|s| {
+                    // Parse "SET SSH_AUTH_SOCK=..." format
+                    let without_set = s.strip_prefix("SET ")?;
+                    let mut tokens = without_set.splitn(2, '=');
+                    let key = tokens.next()?.trim().to_string();
+                    let value = tokens.next()?.trim().to_string();
+                    Some((key, value))
+                })
+                .collect::<HashMap<String, String>>())
+        }
     }
 
     pub fn update_tests_with_shell_env() -> anyhow::Result<()> {
@@ -367,7 +443,7 @@ impl Sshd {
             "Failed to ssh-keygen ssh_host_ed25519_key"
         );
 
-        config.set_authorized_keys_file(id_ed25519_file.path().with_extension("pub"));
+        config.set_authorized_keys_file(&authorized_keys_file);
         config.set_host_key(ssh_host_ed25519_key_file.path());
 
         let sshd_pid_file = tmp.child("sshd.pid");
@@ -440,6 +516,9 @@ impl Sshd {
                 .with_context(|| format!("Port {port} already taken"))?,
         );
 
+        #[cfg(windows)]
+        warn!("Attempting to spawn sshd on Windows - this may require administrator privileges");
+
         let child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
@@ -449,7 +528,21 @@ impl Sshd {
             .arg("-E")
             .arg(log_path.as_ref())
             .spawn()
-            .with_context(|| format!("Failed to spawn {:?}", BIN_PATH.as_path()))?;
+            .with_context(|| {
+                #[cfg(windows)]
+                {
+                    format!(
+                        "Failed to spawn {:?}. On Windows, spawning sshd may require:\n\
+                         1. Running tests as Administrator, or\n\
+                         2. Installing OpenSSH from https://github.com/PowerShell/Win32-OpenSSH/releases",
+                        BIN_PATH.as_path()
+                    )
+                }
+                #[cfg(not(windows))]
+                {
+                    format!("Failed to spawn {:?}", BIN_PATH.as_path())
+                }
+            })?;
 
         // Pause for a little bit to make sure that the server didn't die due to an error
         thread::sleep(Duration::from_millis(100));

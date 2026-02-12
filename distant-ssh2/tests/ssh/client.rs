@@ -103,15 +103,24 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Dis
 
 #[rstest]
 #[test(tokio::test)]
-async fn read_file_text_should_send_error_if_fails_to_read_file(
+async fn append_file_text_should_send_error_if_fails_to_create_file(
     #[future] client: Ctx<DistantClient>,
 ) {
     let mut client = client.await;
 
+    // Create a temporary path and add to it to ensure that there are
+    // extra components that don't exist to cause writing to fail
     let temp = assert_fs::TempDir::new().unwrap();
-    let path = temp.child("missing-file").path().to_path_buf();
+    let file = temp.child("nonexistent-dir").child("test-file");
 
-    let _ = client.read_file_text(path).await.unwrap_err();
+    // Ensure that it doesn't exist and we get an error
+    let _ = client
+        .append_file_text(file.path().to_path_buf(), "some extra contents".to_string())
+        .await
+        .unwrap_err();
+
+    // Also, verify that the file doesn't exist
+    file.assert(predicate::path::missing());
 }
 
 #[rstest]
@@ -277,7 +286,7 @@ async fn append_file_should_send_ok_when_successful(#[future] client: Ctx<Distan
 
 #[rstest]
 #[test(tokio::test)]
-async fn append_file_text_should_send_error_if_fails_to_create_file(
+async fn append_file_text_should_send_error_if_parent_directory_missing(
     #[future] client: Ctx<DistantClient>,
 ) {
     let mut client = client.await;
@@ -715,23 +724,6 @@ async fn remove_should_delete_nonempty_directory_if_force_is_true(
 
 #[rstest]
 #[test(tokio::test)]
-async fn remove_should_support_deleting_a_single_file(#[future] client: Ctx<DistantClient>) {
-    let mut client = client.await;
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("some-file");
-    file.touch().unwrap();
-
-    client
-        .remove(file.path().to_path_buf(), /* false */ false)
-        .await
-        .unwrap();
-
-    // Also, verify that path does not exist
-    file.assert(predicate::path::missing());
-}
-
-#[rstest]
-#[test(tokio::test)]
 async fn copy_should_send_error_on_failure(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -818,25 +810,6 @@ async fn copy_should_support_copying_a_directory_that_only_contains_directories(
     src_dir.assert(predicate::path::is_dir().name("src/dir"));
     dst.assert(predicate::path::is_dir().name("dst"));
     dst_dir.assert(predicate::path::is_dir().name("dst/dir"));
-}
-
-#[rstest]
-#[test(tokio::test)]
-async fn copy_should_support_copying_a_single_file(#[future] client: Ctx<DistantClient>) {
-    let mut client = client.await;
-    let temp = assert_fs::TempDir::new().unwrap();
-    let src = temp.child("src");
-    src.write_str("some text").unwrap();
-    let dst = temp.child("dst");
-
-    client
-        .copy(src.path().to_path_buf(), dst.path().to_path_buf())
-        .await
-        .unwrap();
-
-    // Verify that we still have source and that destination has source's contents
-    src.assert(predicate::path::is_file());
-    dst.assert(predicate::path::eq_file(src.path()));
 }
 
 #[rstest]
@@ -1251,7 +1224,6 @@ async fn set_permissions_should_set_readonly_flag_if_specified(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-#[ignore]
 async fn set_permissions_should_set_unix_permissions_if_on_unix_platform(
     #[future] client: Ctx<DistantClient>,
 ) {

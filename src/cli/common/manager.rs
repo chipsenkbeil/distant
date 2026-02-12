@@ -5,9 +5,12 @@ use distant_core::net::server::ServerRef;
 use log::*;
 
 use crate::constants::{global as global_paths, user as user_paths};
-use crate::options::{AccessControl, NetworkSettings};
+#[cfg(unix)]
+use crate::options::AccessControl;
+use crate::options::NetworkSettings;
 
 pub struct Manager {
+    #[cfg(unix)]
     pub access: AccessControl,
     pub config: ManagerConfig,
     pub network: NetworkSettings,
