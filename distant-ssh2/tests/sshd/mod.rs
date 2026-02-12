@@ -141,28 +141,57 @@ impl SshKeygen {
 pub struct SshAgent;
 
 impl SshAgent {
+    /// On Unix, runs `ssh-agent -s` to get Bourne shell environment variables.
+    /// On Windows, runs `ssh-agent` which outputs cmd.exe style variables and
+    /// converts them to the same format.
     pub fn generate_shell_env() -> anyhow::Result<HashMap<String, String>> {
-        let output = Command::new("ssh-agent")
-            .arg("-s")
-            .output()
-            .context("Failed to generate Bourne shell commands from ssh-agent")?;
-        let stdout =
-            String::from_utf8(output.stdout).context("Failed to parse stdout as utf8 string")?;
-        Ok(stdout
-            .split(';')
-            .map(str::trim)
-            .filter(|s| s.contains('='))
-            .map(|s| {
-                let mut tokens = s.split('=');
-                let key = tokens.next().unwrap().trim().to_string();
-                let rest = tokens
-                    .map(str::trim)
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join("=");
-                (key, rest)
-            })
-            .collect::<HashMap<String, String>>())
+        #[cfg(unix)]
+        {
+            let output = Command::new("ssh-agent")
+                .arg("-s")
+                .output()
+                .context("Failed to generate Bourne shell commands from ssh-agent")?;
+            let stdout = String::from_utf8(output.stdout)
+                .context("Failed to parse stdout as utf8 string")?;
+            Ok(stdout
+                .split(';')
+                .map(str::trim)
+                .filter(|s| s.contains('='))
+                .map(|s| {
+                    let mut tokens = s.split('=');
+                    let key = tokens.next().unwrap().trim().to_string();
+                    let rest = tokens
+                        .map(str::trim)
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join("=");
+                    (key, rest)
+                })
+                .collect::<HashMap<String, String>>())
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, ssh-agent outputs cmd.exe style SET commands
+            let output = Command::new("ssh-agent")
+                .output()
+                .context("Failed to run ssh-agent on Windows")?;
+            let stdout = String::from_utf8(output.stdout)
+                .context("Failed to parse stdout as utf8 string")?;
+            Ok(stdout
+                .lines()
+                .map(str::trim)
+                .filter(|s| s.starts_with("SET "))
+                .filter_map(|s| {
+                    // Parse "SET SSH_AUTH_SOCK=..." format
+                    let without_set = s.strip_prefix("SET ")?;
+                    let mut tokens = without_set.splitn(2, '=');
+                    let key = tokens.next()?.trim().to_string();
+                    let value = tokens.next()?.trim().to_string();
+                    Some((key, value))
+                })
+                .collect::<HashMap<String, String>>())
+        }
     }
 
     pub fn update_tests_with_shell_env() -> anyhow::Result<()> {
