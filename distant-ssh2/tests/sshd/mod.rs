@@ -489,6 +489,9 @@ impl Sshd {
                 .with_context(|| format!("Port {port} already taken"))?,
         );
 
+        #[cfg(windows)]
+        warn!("Attempting to spawn sshd on Windows - this may require administrator privileges");
+
         let child = Command::new(BIN_PATH.as_path())
             .arg("-D")
             .arg("-p")
@@ -498,7 +501,21 @@ impl Sshd {
             .arg("-E")
             .arg(log_path.as_ref())
             .spawn()
-            .with_context(|| format!("Failed to spawn {:?}", BIN_PATH.as_path()))?;
+            .with_context(|| {
+                #[cfg(windows)]
+                {
+                    format!(
+                        "Failed to spawn {:?}. On Windows, spawning sshd may require:\n\
+                         1. Running tests as Administrator, or\n\
+                         2. Installing OpenSSH from https://github.com/PowerShell/Win32-OpenSSH/releases",
+                        BIN_PATH.as_path()
+                    )
+                }
+                #[cfg(not(windows))]
+                {
+                    format!("Failed to spawn {:?}", BIN_PATH.as_path())
+                }
+            })?;
 
         // Pause for a little bit to make sure that the server didn't die due to an error
         thread::sleep(Duration::from_millis(100));
