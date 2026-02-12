@@ -25,7 +25,7 @@ jobs:
           - { os: windows-latest }
           - { os: ubuntu-latest }
     env:
-      RUSTFLAGS: -Dwarnings
+      RUSTFLAGS: -Dwarnings --cfg ci
     steps:
       - name: Ensure windows git checkout keeps \n line ending
         run: |
