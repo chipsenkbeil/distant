@@ -69,7 +69,7 @@ impl From<RangeInclusive<u16>> for PortRange {
     }
 }
 
-impl<'a> IntoIterator for &'a PortRange {
+impl IntoIterator for &PortRange {
     type IntoIter = RangeInclusive<u16>;
     type Item = u16;
 

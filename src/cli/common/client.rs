@@ -92,9 +92,9 @@ impl<T: AuthHandler + Clone> Client<T> {
                 }
             }
 
-            Ok(maybe_client.ok_or_else(|| {
+            maybe_client.ok_or_else(|| {
                 error.unwrap_or_else(|| anyhow::anyhow!("No unix socket candidate available"))
-            })?)
+            })
         }
 
         #[cfg(windows)]

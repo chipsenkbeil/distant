@@ -83,9 +83,9 @@ impl ProcessChannel {
                 cb,
             })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
+            .map_err(|_| io::Error::other("Internal process task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to spawn dropped"))?
+            .map_err(|_| io::Error::other("Response to spawn dropped"))?
     }
 
     /// Resizes the pty of a running process.
@@ -94,9 +94,9 @@ impl ProcessChannel {
         self.tx
             .send(InnerProcessMsg::Resize { id, size, cb })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
+            .map_err(|_| io::Error::other("Internal process task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to resize dropped"))?
+            .map_err(|_| io::Error::other("Response to resize dropped"))?
     }
 
     /// Send stdin to a running process.
@@ -105,9 +105,9 @@ impl ProcessChannel {
         self.tx
             .send(InnerProcessMsg::Stdin { id, data, cb })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
+            .map_err(|_| io::Error::other("Internal process task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to stdin dropped"))?
+            .map_err(|_| io::Error::other("Response to stdin dropped"))?
     }
 
     /// Kills a running process, including persistent processes if `force` is true. Will fail if
@@ -117,9 +117,9 @@ impl ProcessChannel {
         self.tx
             .send(InnerProcessMsg::Kill { id, cb })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal process task closed"))?;
+            .map_err(|_| io::Error::other("Internal process task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to kill dropped"))?
+            .map_err(|_| io::Error::other("Response to kill dropped"))?
     }
 }
 
@@ -187,34 +187,22 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
             InnerProcessMsg::Resize { id, size, cb } => {
                 let _ = cb.send(match processes.get(&id) {
                     Some(process) => process.pty.resize_pty(size),
-                    None => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("No process found with id {id}"),
-                    )),
+                    None => Err(io::Error::other(format!("No process found with id {id}"))),
                 });
             }
             InnerProcessMsg::Stdin { id, data, cb } => {
                 let _ = cb.send(match processes.get_mut(&id) {
                     Some(process) => match process.stdin.as_mut() {
                         Some(stdin) => stdin.send(&data).await,
-                        None => Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Process {id} stdin is closed"),
-                        )),
+                        None => Err(io::Error::other(format!("Process {id} stdin is closed"))),
                     },
-                    None => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("No process found with id {id}"),
-                    )),
+                    None => Err(io::Error::other(format!("No process found with id {id}"))),
                 });
             }
             InnerProcessMsg::Kill { id, cb } => {
                 let _ = cb.send(match processes.get_mut(&id) {
                     Some(process) => process.killer.kill().await,
-                    None => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("No process found with id {id}"),
-                    )),
+                    None => Err(io::Error::other(format!("No process found with id {id}"))),
                 });
             }
             InnerProcessMsg::InternalRemove { id } => {

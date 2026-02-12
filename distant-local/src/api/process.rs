@@ -12,7 +12,7 @@ mod simple;
 pub use simple::*;
 
 mod wait;
-pub use wait::{ExitStatus, WaitRx, WaitTx};
+pub use wait::{ExitStatus, WaitRx};
 
 /// Alias to the return type of an async function (for use with traits)
 pub type FutureReturn<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -81,10 +81,7 @@ impl<T: NoProcessPty> ProcessPty for T {
     }
 
     fn resize_pty(&self, _size: PtySize) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Process does not use pty",
-        ))
+        Err(io::Error::other("Process does not use pty"))
     }
 
     fn clone_pty(&self) -> Box<dyn ProcessPty> {

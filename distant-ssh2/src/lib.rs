@@ -1,4 +1,7 @@
 #![doc = include_str!("../README.md")]
+#![allow(dead_code)] // Allow unused functions/fields that may be platform-specific or future use
+#![allow(clippy::field_reassign_with_default)] // Sometimes clearer than inline initialization
+#![allow(clippy::manual_async_fn)] // Trait implementations may require this pattern
 
 #[doc = include_str!("../README.md")]
 #[cfg(doctest)]
@@ -210,8 +213,7 @@ impl SshAuthHandler for LocalSshAuthHandler {
             Ok(answers)
         });
 
-        task.await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+        task.await.map_err(io::Error::other)?
     }
 
     async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
@@ -231,8 +233,7 @@ impl SshAuthHandler for LocalSshAuthHandler {
             }
         });
 
-        task.await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?
+        task.await.map_err(io::Error::other)?
     }
 
     async fn on_banner(&self, _text: &str) {
@@ -387,14 +388,13 @@ impl Ssh {
                 debug!("  Russh error debug: {:?}", e);
 
                 // Try to extract underlying IO error for detailed diagnostics
-                let detailed_msg = if let Some(io_err) =
-                    e.source().and_then(|s| s.downcast_ref::<io::Error>())
-                {
-                    error!("  Underlying IO error: {}", io_err);
-                    error!("  IO error kind: {:?}", io_err.kind());
-                    error!("  OS error code: {:?}", io_err.raw_os_error());
+                let detailed_msg =
+                    if let Some(io_err) = e.source().and_then(|s| s.downcast_ref::<io::Error>()) {
+                        error!("  Underlying IO error: {}", io_err);
+                        error!("  IO error kind: {:?}", io_err.kind());
+                        error!("  OS error code: {:?}", io_err.raw_os_error());
 
-                    format!(
+                        format!(
                         "SSH connection to {}:{} failed: {} (IO error: {}, kind: {:?}, os: {:?})",
                         host.as_ref(),
                         port,
@@ -403,9 +403,9 @@ impl Ssh {
                         io_err.kind(),
                         io_err.raw_os_error()
                     )
-                } else {
-                    format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
-                };
+                    } else {
+                        format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
+                    };
 
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionRefused,
@@ -467,12 +467,10 @@ impl Ssh {
     }
 
     fn build_preferred_algorithms(_params: &HostParams) -> russh::Preferred {
-        let preferred = russh::Preferred::default();
-
         // TODO: Map KEX, ciphers, and MACs from SSH config to russh types
         // For now, use defaults
 
-        preferred
+        russh::Preferred::default()
     }
 
     /// Host this client is connected to
@@ -618,7 +616,7 @@ impl Ssh {
             .connector(t1)
             .connect()
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         Ok(client)
     }
@@ -638,7 +636,7 @@ impl Ssh {
 
         let server_ref = server
             .start(OneshotListener::from_value(t2))
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         // Connect to server
         let client = Client::build()
@@ -647,7 +645,7 @@ impl Ssh {
             .connector(t1)
             .connect()
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         Ok((client, server_ref))
     }
@@ -659,8 +657,7 @@ impl Ssh {
         // TODO: Implement launch logic
         // This needs to execute the distant binary on remote machine and capture output
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "Launch not yet implemented in russh migration",
         ))
     }
@@ -671,8 +668,7 @@ impl Ssh {
 
         // TODO: Parse credentials and connect
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "Launch and connect not yet implemented in russh migration",
         ))
     }

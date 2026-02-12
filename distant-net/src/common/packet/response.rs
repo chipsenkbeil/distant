@@ -53,7 +53,7 @@ where
     }
 
     /// Attempts to convert a typed response to an untyped response
-    pub fn to_untyped_response(&self) -> io::Result<UntypedResponse> {
+    pub fn to_untyped_response(&self) -> io::Result<UntypedResponse<'_>> {
         Ok(UntypedResponse {
             header: Cow::Owned(if !self.header.is_empty() {
                 utils::serialize_to_vec(&self.header)?

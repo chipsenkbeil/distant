@@ -107,8 +107,7 @@ mod tests {
         let listener = TcpListener::bind(addr).await?;
 
         // Send the address back to our main test thread
-        tx.send(addr)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))?;
+        tx.send(addr).map_err(|x| io::Error::other(x.to_string()))?;
 
         run_server(listener).await
     }

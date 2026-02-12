@@ -54,7 +54,7 @@ pub fn parse(s: &str) -> Result<Destination, &'static str> {
     })
 }
 
-fn parse_scheme(s: &str) -> PResult<&str> {
+fn parse_scheme(s: &str) -> PResult<'_, &str> {
     let (scheme, remaining) = s.split_once("://").ok_or("Scheme missing ://")?;
 
     if scheme
@@ -67,7 +67,7 @@ fn parse_scheme(s: &str) -> PResult<&str> {
     }
 }
 
-fn parse_username_password(s: &str) -> PResult<(Option<&str>, Option<&str>)> {
+fn parse_username_password(s: &str) -> PResult<'_, (Option<&str>, Option<&str>)> {
     let (auth, remaining) = s.split_once('@').ok_or("Auth missing @")?;
     let (auth, username) = maybe(parse_until(|c| c == ':'))(auth)?;
     let (auth, password) = maybe(prefixed(parse_char(':'), |s| Ok(("", s))))(auth)?;
@@ -79,12 +79,12 @@ fn parse_username_password(s: &str) -> PResult<(Option<&str>, Option<&str>)> {
     Ok((remaining, (username, password)))
 }
 
-fn parse_host(s: &str) -> PResult<Host> {
+fn parse_host(s: &str) -> PResult<'_, Host> {
     let host = s.parse::<Host>().map_err(HostParseError::into_static_str)?;
     Ok(("", host))
 }
 
-fn parse_port(s: &str) -> PResult<u16> {
+fn parse_port(s: &str) -> PResult<'_, u16> {
     let port = s
         .parse::<u16>()
         .map_err(|_| "Not an unsigned 16-bit integer")?;
@@ -243,11 +243,11 @@ mod tests {
     mod parsers {
         use super::*;
 
-        fn parse_fail(_: &str) -> PResult<&str> {
+        fn parse_fail(_: &str) -> PResult<'_, &str> {
             Err("bad parser")
         }
 
-        fn parse_all(s: &str) -> PResult<&str> {
+        fn parse_all(s: &str) -> PResult<'_, &str> {
             Ok(("", s))
         }
 

@@ -28,6 +28,7 @@ pub struct Ctx<T> {
     #[deref_mut]
     pub value: T,
 
+    #[allow(dead_code)] // Used to keep sshd alive during tests
     pub sshd: Sshd,
 }
 

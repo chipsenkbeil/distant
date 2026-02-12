@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)] // Allow ci cfg condition used in test attributes
+
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -1303,7 +1305,6 @@ async fn set_permissions_should_set_unix_permissions_if_on_unix_platform(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(unix, ignore)]
-#[ignore]
 async fn set_permissions_should_set_readonly_flag_if_not_on_unix_platform(
     #[future] client: Ctx<DistantClient>,
 ) {

@@ -1178,12 +1178,12 @@ pub enum ServerSubcommand {
         /// There are three options here:
         ///
         /// 1. `ssh`: the server will reply from the IP address that the SSH
-        /// connection came from (as found in the SSH_CONNECTION environment variable). This is
-        /// useful for multihomed servers.
+        ///    connection came from (as found in the SSH_CONNECTION environment variable). This is
+        ///    useful for multihomed servers.
         ///
         /// 2. `any`: the server will reply on the default interface and will not bind to
-        /// a particular IP address. This can be useful if the connection is made through ssh or
-        /// another tool that makes the SSH connection appear to come from localhost.
+        ///    a particular IP address. This can be useful if the connection is made through ssh or
+        ///    another tool that makes the SSH connection appear to come from localhost.
         ///
         /// 3. `IP`: the server will attempt to bind to the specified IP address.
         #[clap(long, value_name = "ssh|any|IP", default_value_t = Value::Default(BindAddress::Any))]
@@ -1274,12 +1274,14 @@ pub struct ServerListenWatchOptions {
 /// Represents the format to use for output from a command.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 #[clap(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Format {
     /// Sends and receives data in JSON format.
     Json,
 
     /// Commands are traditional shell commands and output responses are inline with what is
     /// expected of a program's output in a shell.
+    #[default]
     Shell,
 }
 
@@ -1287,12 +1289,6 @@ impl Format {
     /// Returns true if json format
     pub fn is_json(self) -> bool {
         matches!(self, Self::Json)
-    }
-}
-
-impl Default for Format {
-    fn default() -> Self {
-        Self::Shell
     }
 }
 

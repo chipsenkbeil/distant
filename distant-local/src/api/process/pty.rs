@@ -52,7 +52,7 @@ impl PtyProcess {
                 pixel_width: size.pixel_width,
                 pixel_height: size.pixel_height,
             })
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+            .map_err(io::Error::other)?;
         let pty_master = pty_pair.master;
         let pty_slave = pty_pair.slave;
 
@@ -65,9 +65,7 @@ impl PtyProcess {
         for (key, value) in environment {
             cmd.env(key, value);
         }
-        let mut child = pty_slave
-            .spawn_command(cmd)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        let mut child = pty_slave.spawn_command(cmd).map_err(io::Error::other)?;
 
         // NOTE: Need to drop slave to close out file handles and avoid deadlock when waiting on
         //       the child
@@ -75,9 +73,7 @@ impl PtyProcess {
 
         // Spawn a blocking task to process submitting stdin async
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(1);
-        let mut stdin_writer = pty_master
-            .take_writer()
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        let mut stdin_writer = pty_master.take_writer().map_err(io::Error::other)?;
         let stdin_task = tokio::task::spawn_blocking(move || {
             while let Some(input) = stdin_rx.blocking_recv() {
                 if stdin_writer.write_all(&input).is_err() {
@@ -88,9 +84,7 @@ impl PtyProcess {
 
         // Spawn a blocking task to process receiving stdout async
         let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(1);
-        let mut stdout_reader = pty_master
-            .try_clone_reader()
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+        let mut stdout_reader = pty_master.try_clone_reader().map_err(io::Error::other)?;
         let stdout_task = tokio::task::spawn_blocking(move || {
             let mut buf: [u8; MAX_PIPE_CHUNK_SIZE] = [0; MAX_PIPE_CHUNK_SIZE];
             loop {
@@ -319,7 +313,7 @@ impl ProcessPty for PtyProcessMaster {
                     pixel_width: size.pixel_width,
                     pixel_height: size.pixel_height,
                 })
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+                .map_err(io::Error::other)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,

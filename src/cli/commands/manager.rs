@@ -425,8 +425,8 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
                     trace!("Building selection prompt of {} choices", list.len());
                     let items: Vec<String> = list
-                        .iter()
-                        .map(|(_, destination)| {
+                        .values()
+                        .map(|destination| {
                             format!(
                                 "{}{}{}",
                                 destination

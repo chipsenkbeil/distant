@@ -20,8 +20,7 @@ impl<T: Send + 'static> Reply for mpsc::UnboundedSender<T> {
     type Data = T;
 
     fn send(&self, data: Self::Data) -> io::Result<()> {
-        mpsc::UnboundedSender::send(self, data)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))
+        mpsc::UnboundedSender::send(self, data).map_err(|x| io::Error::other(x.to_string()))
     }
 
     fn clone_reply(&self) -> Box<dyn Reply<Data = Self::Data>> {

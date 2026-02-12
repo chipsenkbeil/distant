@@ -19,7 +19,7 @@ pub type AsyncReturn<'a, T, E = io::Error> =
     Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 fn mismatched_response() -> io::Error {
-    io::Error::new(io::ErrorKind::Other, "Mismatched response")
+    io::Error::other("Mismatched response")
 }
 
 /// Provides convenience functions on top of a [`Channel`]

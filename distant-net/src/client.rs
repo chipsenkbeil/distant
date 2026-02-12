@@ -105,7 +105,7 @@ impl UntypedClient {
     pub async fn wait(mut self) -> io::Result<()> {
         match self.task.take().unwrap().await {
             Ok(x) => x,
-            Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
+            Err(x) => Err(io::Error::other(x)),
         }
     }
 
@@ -302,7 +302,7 @@ impl UntypedClient {
                                             "Client receiving (id:{} | origin: {}): {}",
                                             response.id,
                                             response.origin_id,
-                                            String::from_utf8_lossy(&response.payload).to_string()
+                                            String::from_utf8_lossy(&response.payload)
                                         );
                                     }
 
@@ -356,7 +356,7 @@ impl UntypedClient {
                         if log_enabled!(Level::Trace) {
                             trace!(
                                 "Client sending {}",
-                                String::from_utf8_lossy(&request.to_bytes()).to_string()
+                                String::from_utf8_lossy(&request.to_bytes())
                             );
                         }
                         match connection.try_write_frame(request.to_bytes()) {
@@ -560,7 +560,7 @@ impl<T, U> Client<T, U> {
     pub async fn wait(mut self) -> io::Result<()> {
         match self.task.take().unwrap().await {
             Ok(x) => x,
-            Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
+            Err(x) => Err(io::Error::other(x)),
         }
     }
 
