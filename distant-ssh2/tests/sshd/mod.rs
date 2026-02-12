@@ -416,7 +416,7 @@ impl Sshd {
             "Failed to ssh-keygen ssh_host_ed25519_key"
         );
 
-        config.set_authorized_keys_file(id_ed25519_file.path().with_extension("pub"));
+        config.set_authorized_keys_file(&authorized_keys_file);
         config.set_host_key(ssh_host_ed25519_key_file.path());
 
         let sshd_pid_file = tmp.child("sshd.pid");
