@@ -47,7 +47,7 @@ impl Config {
                 toml_edit::de::from_slice(&std::fs::read(path)?).context("Failed to parse config")
             }
             None => {
-                let paths = vec![
+                let paths = [
                     constants::global::CONFIG_FILE_PATH.as_path(),
                     constants::user::CONFIG_FILE_PATH.as_path(),
                 ];

@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![allow(dead_code)] // Allow unused trait methods and structs for API completeness
 
 #[doc = include_str!("../README.md")]
 #[cfg(doctest)]

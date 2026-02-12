@@ -444,10 +444,7 @@ impl DistantApi for Api {
                 .metadata()
                 .map_err(|x| match x.io_error() {
                     Some(x) => io::Error::new(x.kind(), format!("(Read permissions failed) {x}")),
-                    None => io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("(Read permissions failed) {x}"),
-                    ),
+                    None => io::Error::other(format!("(Read permissions failed) {x}")),
                 })?
                 .permissions();
 
@@ -642,20 +639,20 @@ impl DistantApi for Api {
         // Parse our server's version
         let mut server_version: semver::Version = env!("CARGO_PKG_VERSION")
             .parse()
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+            .map_err(io::Error::other)?;
 
         // Add the package name to the version information
         if server_version.build.is_empty() {
-            server_version.build = semver::BuildMetadata::new(env!("CARGO_PKG_NAME"))
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+            server_version.build =
+                semver::BuildMetadata::new(env!("CARGO_PKG_NAME")).map_err(io::Error::other)?;
         } else {
             let raw_build_str = format!(
                 "{}.{}",
                 server_version.build.as_str(),
                 env!("CARGO_PKG_NAME")
             );
-            server_version.build = semver::BuildMetadata::new(&raw_build_str)
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+            server_version.build =
+                semver::BuildMetadata::new(&raw_build_str).map_err(io::Error::other)?;
         }
 
         Ok(Version {

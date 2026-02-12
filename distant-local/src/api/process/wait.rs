@@ -84,7 +84,7 @@ impl WaitTx {
 
                 match res {
                     Ok(_) => Ok(()),
-                    Err(x) => Err(io::Error::new(io::ErrorKind::Other, x)),
+                    Err(x) => Err(io::Error::other(x)),
                 }
             }
         }
@@ -115,10 +115,7 @@ impl WaitRx {
     pub async fn recv(&mut self) -> io::Result<ExitStatus> {
         match self {
             Self::Ready(status) => Ok(*status),
-            Self::Dropped => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Internal resolver dropped",
-            )),
+            Self::Dropped => Err(io::Error::other("Internal resolver dropped")),
             Self::Pending(rx) => match rx.recv().await {
                 Some(status) => {
                     *self = Self::Ready(status);
@@ -126,10 +123,7 @@ impl WaitRx {
                 }
                 None => {
                     *self = Self::Dropped;
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "Internal resolver dropped",
-                    ))
+                    Err(io::Error::other("Internal resolver dropped"))
                 }
             },
         }

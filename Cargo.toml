@@ -21,6 +21,9 @@ members = [
     "distant-ssh2",
 ]
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
+
 [profile.release]
 opt-level = 'z'
 lto = true
@@ -80,3 +83,6 @@ indoc = "2.0.1"
 predicates = "3.0.3"
 rstest = "0.17.0"
 test-log = "0.2.11"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }

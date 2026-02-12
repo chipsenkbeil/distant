@@ -232,12 +232,9 @@ where
             "[Conn {id}] Checking compatibility between client {version} & server {server_version}"
         );
         if !version.is_compatible_with(&server_version) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Client version {version} is incompatible with server version {server_version}"
-                ),
-            ));
+            return Err(io::Error::other(format!(
+                "Client version {version} is incompatible with server version {server_version}"
+            )));
         }
 
         // Perform a handshake to ensure that the connection is properly established and encrypted
@@ -255,9 +252,7 @@ where
             let new_id = transport
                 .read_frame_as::<ConnectionId>()
                 .await?
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::Other, "Missing connection id frame")
-                })?;
+                .ok_or_else(|| io::Error::other("Missing connection id frame"))?;
             debug!("[Conn {id}] Resetting id to {new_id}");
             new_id
         };
@@ -319,7 +314,7 @@ where
         let connection_type = transport
             .read_frame_as::<ConnectType>()
             .await?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Missing connection type frame"))?;
+            .ok_or_else(|| io::Error::other("Missing connection type frame"))?;
 
         // Create a oneshot channel used to relay the backup when the connection is dropped
         let (tx, rx) = oneshot::channel();
