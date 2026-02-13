@@ -27,7 +27,7 @@ rpassword = "7.2.0"
 russh = { version = "0.57", default-features = false, features = ["ring"] }
 russh-sftp = "2.1"
 shell-words = "1.1.0"
-ssh2-config-rs = { git = "https://github.com/polarathene/ssh2-config-rs", version = "0.7", default-features = false }
+ssh2-config-rs = { git = "https://github.com/pRizz/ssh2-config-rs", version = "0.7", default-features = false }
 tokio = { version = "1.28.2", features = ["full"] }
 typed-path = "0.12.3"
 whoami = "1.4.0"
