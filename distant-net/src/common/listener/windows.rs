@@ -101,7 +101,7 @@ mod tests {
             let mut listener = WindowsPipeListener::bind_local(&name)?;
 
             // Send the name back to our main test thread
-            tx.send(name).map_err(|x| io::Error::other(x))?;
+            tx.send(name).map_err(io::Error::other)?;
 
             // Get first connection
             let conn_1 = listener.accept().await?;
