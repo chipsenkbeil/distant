@@ -733,15 +733,20 @@ impl DistantApi for SshDistantApi {
             mode = 0o644; // Default: rw-r--r--
         }
 
-        // Get current metadata and update permissions
-        let _attrs = sftp.metadata(&sftp_path).await.map_err(io::Error::other)?;
-
-        // FileAttributes has a permissions field we can set directly
+        // Only set permissions field in FileAttributes to avoid changing ownership/timestamps
         use russh_sftp::protocol::FileAttributes;
-        let mut new_attrs = FileAttributes::default();
-        new_attrs.permissions = Some(mode);
+        let new_attrs = FileAttributes {
+            size: None,
+            uid: None,
+            user: None,
+            gid: None,
+            group: None,
+            permissions: Some(mode),
+            atime: None,
+            mtime: None,
+        };
 
-        // Set metadata on the file
+        // Set metadata on the file (only permissions will be modified)
         sftp.set_metadata(&sftp_path, new_attrs)
             .await
             .map_err(io::Error::other)?;

@@ -4,3 +4,7 @@
 /distant-ssh2/Cargo.lock
 **/*.un~
 .aider*
+
+# Claude Code generated files
+CLAUDE.md
+claude-guide.md
