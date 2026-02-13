@@ -179,6 +179,7 @@ impl DistantApi for SshDistantApi {
         // Use a read-then-write approach for reliable Windows compatibility
         #[cfg(windows)]
         {
+            use russh_sftp::protocol::OpenFlags;
             use tokio::io::AsyncWriteExt;
             
             // Read existing file contents (if file exists)
@@ -199,8 +200,14 @@ impl DistantApi for SshDistantApi {
             let mut combined_data = existing_data;
             combined_data.extend_from_slice(&data);
             
-            // Write combined data using create (which works reliably on Windows)
-            let mut file = sftp.create(&sftp_path).await.map_err(io::Error::other)?;
+            // Write combined data using open_with_flags for better Windows compatibility
+            let mut file = sftp
+                .open_with_flags(
+                    &sftp_path,
+                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+                )
+                .await
+                .map_err(io::Error::other)?;
             file.write_all(&combined_data).await?;
             file.flush().await?;
         }
