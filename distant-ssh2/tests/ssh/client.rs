@@ -101,7 +101,6 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Dis
     assert_eq!(bytes, b"some file contents");
 }
 
-#[cfg_attr(windows, ignore)]
 #[rstest]
 #[test(tokio::test)]
 async fn append_file_text_should_send_error_if_fails_to_create_file(
