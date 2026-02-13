@@ -186,6 +186,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 }
             );
             let manager = Manager {
+                #[cfg(unix)]
                 access,
                 config: NetManagerConfig {
                     user,
