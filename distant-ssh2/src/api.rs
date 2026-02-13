@@ -181,7 +181,7 @@ impl DistantApi for SshDistantApi {
         {
             use russh_sftp::protocol::OpenFlags;
             use tokio::io::AsyncWriteExt;
-            
+
             // Read existing file contents (if file exists)
             let existing_data = match sftp.open(&sftp_path).await {
                 Ok(mut file) => {
@@ -195,11 +195,11 @@ impl DistantApi for SshDistantApi {
                     Vec::new()
                 }
             };
-            
+
             // Combine existing data with new data
             let mut combined_data = existing_data;
             combined_data.extend_from_slice(&data);
-            
+
             // Write combined data using open_with_flags for better Windows compatibility
             let mut file = sftp
                 .open_with_flags(
@@ -211,7 +211,7 @@ impl DistantApi for SshDistantApi {
             file.write_all(&combined_data).await?;
             file.flush().await?;
         }
-        
+
         // Unix systems can use the more efficient append operation
         #[cfg(not(windows))]
         {
