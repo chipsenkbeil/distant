@@ -213,13 +213,13 @@ impl Options {
 
                         *current_dir = current_dir.take().or(config.server.listen.current_dir);
                         if host.is_default() && config.server.listen.host.is_some() {
-                            *host = Value::Explicit(config.server.listen.host.unwrap());
+                            *host = Value::Explicit(config.server.listen.host.expect("host is Some"));
                         }
                         if port.is_default() && config.server.listen.port.is_some() {
-                            *port = Value::Explicit(config.server.listen.port.unwrap());
+                            *port = Value::Explicit(config.server.listen.port.expect("port is Some"));
                         }
                         if shutdown.is_default() && config.server.listen.shutdown.is_some() {
-                            *shutdown = Value::Explicit(config.server.listen.shutdown.unwrap());
+                            *shutdown = Value::Explicit(config.server.listen.shutdown.expect("shutdown is Some"));
                         }
                         if !*use_ipv6 && config.server.listen.use_ipv6 {
                             *use_ipv6 = true;
@@ -246,7 +246,7 @@ impl Options {
                             && config.server.watch.debounce_timeout.is_some()
                         {
                             watch.watch_debounce_timeout =
-                                Value::Explicit(config.server.watch.debounce_timeout.unwrap());
+                                Value::Explicit(config.server.watch.debounce_timeout.expect("debounce_timeout is Some"));
                         }
 
                         watch.watch_debounce_tick_rate = watch

@@ -102,7 +102,7 @@ mod tests {
 
             // Send the name back to our main test thread
             tx.send(name)
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+                .map_err(|x| io::Error::other(x))?;
 
             // Get first connection
             let conn_1 = listener.accept().await?;

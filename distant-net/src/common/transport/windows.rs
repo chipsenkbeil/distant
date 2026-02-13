@@ -111,7 +111,7 @@ mod tests {
 
         // Send the address back to our main test thread
         tx.send(addr)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?;
+            .map_err(|x| io::Error::other(x))?;
 
         Ok(pipe)
     }
