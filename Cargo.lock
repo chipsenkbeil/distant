@@ -1077,7 +1077,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3299,7 +3299,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4432,7 +4432,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4960,7 +4960,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5441,7 +5441,8 @@ dependencies = [
 [[package]]
 name = "ssh2-config-rs"
 version = "0.7.2"
-source = "git+https://github.com/polarathene/ssh2-config-rs#b6ae9d2ca7103a71a8f1e811276508ab7eed1358"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16032e12ce40f3d0d7d2337041934183e9787f2778013dff9aaab977bd02e236"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
