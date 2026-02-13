@@ -176,16 +176,10 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
             info!(
                 "Starting manager (network = {})",
-                if cfg!(windows) && network.windows_pipe.is_some() {
-                    format!(
-                        "custom:windows:{}",
-                        network.windows_pipe.as_ref().expect("windows_pipe is Some")
-                    )
-                } else if cfg!(unix) && network.unix_socket.is_some() {
-                    format!(
-                        "custom:unix:{:?}",
-                        network.unix_socket.as_ref().expect("unix_socket is Some")
-                    )
+                if let Some(pipe) = network.windows_pipe.as_ref().filter(|_| cfg!(windows)) {
+                    format!("custom:windows:{}", pipe)
+                } else if let Some(socket) = network.unix_socket.as_ref().filter(|_| cfg!(unix)) {
+                    format!("custom:unix:{:?}", socket)
                 } else if user {
                     "user".to_string()
                 } else {
