@@ -166,7 +166,8 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             Ok(())
         }
         ManagerSubcommand::Listen {
-            access: _,
+            #[cfg_attr(not(unix), allow(unused_variables))]
+            access,
             daemon: _daemon,
             network,
             user,
