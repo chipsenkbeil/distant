@@ -24,7 +24,7 @@ hex = "0.4.3"
 log = "0.4.18"
 rand = { version = "0.8.5", features = ["getrandom"] }
 rpassword = "7.2.0"
-russh = "0.57"
+russh = { version = "0.57", default-features = false, features = ["ring"] }
 russh-sftp = "2.1"
 shell-words = "1.1.0"
 ssh2-config-rs = { git = "https://github.com/polarathene/ssh2-config-rs", version = "0.7" }
