@@ -8,3 +8,9 @@
 # Claude Code generated files
 CLAUDE.md
 claude-guide.md
+
+# CI monitoring scripts (temporary development tools)
+ci_monitor*.sh
+monitor_status*.sh
+ci_monitor*.log
+debug_monitor*.log
