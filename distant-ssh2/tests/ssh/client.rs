@@ -103,7 +103,6 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Dis
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn append_file_text_should_send_error_if_fails_to_create_file(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -243,7 +242,6 @@ async fn append_file_should_send_error_if_fails_to_create_file(
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn append_file_should_create_file_if_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -266,7 +264,6 @@ async fn append_file_should_create_file_if_missing(#[future] client: Ctx<Distant
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn append_file_should_send_ok_when_successful(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
@@ -310,7 +307,6 @@ async fn append_file_text_should_send_error_if_parent_directory_missing(
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn append_file_text_should_create_file_if_missing(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 

@@ -173,22 +173,55 @@ impl DistantApi for SshDistantApi {
         debug!("[Conn {}] Appending to file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
-        let sftp_path = self.to_sftp_path(path)?;
+        let sftp_path = self.to_sftp_path(path.clone())?;
 
-        // Open file in append mode
-        use russh_sftp::protocol::OpenFlags;
-        use tokio::io::AsyncWriteExt;
+        // Windows SFTP servers may hang on OpenFlags::APPEND operations
+        // Use a read-then-write approach for reliable Windows compatibility
+        #[cfg(windows)]
+        {
+            use tokio::io::AsyncWriteExt;
+            
+            // Read existing file contents (if file exists)
+            let existing_data = match sftp.open(&sftp_path).await {
+                Ok(mut file) => {
+                    use tokio::io::AsyncReadExt;
+                    let mut contents = Vec::new();
+                    file.read_to_end(&mut contents).await?;
+                    contents
+                }
+                Err(_) => {
+                    // File doesn't exist, start with empty content
+                    Vec::new()
+                }
+            };
+            
+            // Combine existing data with new data
+            let mut combined_data = existing_data;
+            combined_data.extend_from_slice(&data);
+            
+            // Write combined data using create (which works reliably on Windows)
+            let mut file = sftp.create(&sftp_path).await.map_err(io::Error::other)?;
+            file.write_all(&combined_data).await?;
+            file.flush().await?;
+        }
+        
+        // Unix systems can use the more efficient append operation
+        #[cfg(not(windows))]
+        {
+            use russh_sftp::protocol::OpenFlags;
+            use tokio::io::AsyncWriteExt;
 
-        let mut file = sftp
-            .open_with_flags(
-                &sftp_path,
-                OpenFlags::WRITE | OpenFlags::APPEND | OpenFlags::CREATE,
-            )
-            .await
-            .map_err(io::Error::other)?;
+            let mut file = sftp
+                .open_with_flags(
+                    &sftp_path,
+                    OpenFlags::WRITE | OpenFlags::APPEND | OpenFlags::CREATE,
+                )
+                .await
+                .map_err(io::Error::other)?;
 
-        file.write_all(&data).await?;
-        file.flush().await?;
+            file.write_all(&data).await?;
+            file.flush().await?;
+        }
 
         Ok(())
     }
