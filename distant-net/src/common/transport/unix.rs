@@ -83,7 +83,7 @@ mod tests {
 
         // Send the path back to our main test thread
         tx.send(path)
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x.display().to_string()))?;
+            .map_err(|x| io::Error::other(x.display().to_string()))?;
 
         run_server(listener).await
     }

@@ -30,8 +30,7 @@ impl ManagerAuthenticator {
 
         self.registry.write().await.insert(id, tx);
         self.reply.send(ManagerResponse::Authenticate { id, msg })?;
-        rx.await
-            .map_err(|x| io::Error::new(io::ErrorKind::Other, x))
+        rx.await.map_err(io::Error::other)
     }
 
     /// Sends an [`Authentication`] `msg` without expecting a reply. No callback is stored.
@@ -54,10 +53,7 @@ impl Authenticator for ManagerAuthenticator {
             .await
         {
             Ok(AuthenticationResponse::Initialization(x)) => Ok(x),
-            Ok(x) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unexpected response: {x:?}"),
-            )),
+            Ok(x) => Err(io::Error::other(format!("Unexpected response: {x:?}"))),
             Err(x) => Err(x),
         }
     }
@@ -65,10 +61,7 @@ impl Authenticator for ManagerAuthenticator {
     async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
         match self.send(Authentication::Challenge(challenge)).await {
             Ok(AuthenticationResponse::Challenge(x)) => Ok(x),
-            Ok(x) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unexpected response: {x:?}"),
-            )),
+            Ok(x) => Err(io::Error::other(format!("Unexpected response: {x:?}"))),
             Err(x) => Err(x),
         }
     }
@@ -76,10 +69,7 @@ impl Authenticator for ManagerAuthenticator {
     async fn verify(&mut self, verification: Verification) -> io::Result<VerificationResponse> {
         match self.send(Authentication::Verification(verification)).await {
             Ok(AuthenticationResponse::Verification(x)) => Ok(x),
-            Ok(x) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unexpected response: {x:?}"),
-            )),
+            Ok(x) => Err(io::Error::other(format!("Unexpected response: {x:?}"))),
             Err(x) => Err(x),
         }
     }

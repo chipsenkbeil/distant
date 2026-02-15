@@ -48,7 +48,7 @@ impl Future for ConnectionTask {
             Poll::Pending => Poll::Pending,
             Poll::Ready(x) => match x {
                 Ok(x) => Poll::Ready(x),
-                Err(x) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, x))),
+                Err(x) => Poll::Ready(Err(io::Error::other(x))),
             },
         }
     }
@@ -615,6 +615,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::diverging_sub_expression)] // unreachable!() in test handlers is intentional
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -768,7 +769,7 @@ mod tests {
             type Response = String;
 
             async fn on_connect(&self, _: ConnectionId) -> io::Result<()> {
-                Err(io::Error::new(io::ErrorKind::Other, "bad connect"))
+                Err(io::Error::other("bad connect"))
             }
 
             async fn on_request(&self, _: RequestCtx<Self::Request, Self::Response>) {
@@ -837,10 +838,7 @@ mod tests {
 
             async fn ready(&self, interest: Interest) -> io::Result<Ready> {
                 if self.fail_ready.load(Ordering::Relaxed) {
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "targeted ready failure",
-                    ))
+                    Err(io::Error::other("targeted ready failure"))
                 } else {
                     self.inner.ready(interest).await
                 }
@@ -1063,7 +1061,7 @@ mod tests {
             async fn on_connect(&self, _: ConnectionId) -> io::Result<()> {
                 // Wait "forever" so we can ensure that we fail at this step
                 tokio::time::sleep(Duration::MAX).await;
-                Err(io::Error::new(io::ErrorKind::Other, "bad connect"))
+                Err(io::Error::other("bad connect"))
             }
 
             async fn on_request(&self, _: RequestCtx<Self::Request, Self::Response>) {

@@ -54,7 +54,7 @@ impl Spawner {
                     .map(|s| s.trim().eq_ignore_ascii_case(exclude))
                     .unwrap_or_default()
             })
-            .chain(extra_args.into_iter());
+            .chain(extra_args);
         for arg in it {
             cmd.push(" ");
             cmd.push(&arg);

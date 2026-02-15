@@ -49,7 +49,7 @@ where
     }
 
     /// Attempts to convert a typed request to an untyped request
-    pub fn to_untyped_request(&self) -> io::Result<UntypedRequest> {
+    pub fn to_untyped_request(&self) -> io::Result<UntypedRequest<'_>> {
         Ok(UntypedRequest {
             header: Cow::Owned(if !self.header.is_empty() {
                 utils::serialize_to_vec(&self.header)?

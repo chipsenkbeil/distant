@@ -19,23 +19,18 @@ pub struct Version {
 impl Version {
     /// Supports executing processes.
     pub const CAP_EXEC: &'static str = "exec";
-
     /// Supports reading and writing via filesystem IO.
     pub const CAP_FS_IO: &'static str = "fs_io";
-
     /// Supports modifying permissions of filesystem.
     pub const CAP_FS_PERM: &'static str = "fs_perm";
-
     /// Supports searching filesystem.
     pub const CAP_FS_SEARCH: &'static str = "fs_search";
-
     /// Supports watching filesystem for changes.
     pub const CAP_FS_WATCH: &'static str = "fs_watch";
-
-    /// Supports TCP tunneling.
+    // /// Supports TCP tunneling.
     // pub const CAP_TCP_TUNNEL: &'static str = "tcp_tunnel";
-
-    /// Supports TCP reverse tunneling.
+    //
+    // /// Supports TCP reverse tunneling.
     // pub const CAP_TCP_REV_TUNNEL: &'static str = "tcp_rev_tunnel";
 
     /// Supports retrieving system information.
@@ -57,8 +52,9 @@ impl Version {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use semver::Version as SemVer;
+
+    use super::*;
 
     #[test]
     fn should_be_able_to_serialize_to_json() {

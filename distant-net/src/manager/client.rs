@@ -27,7 +27,7 @@ impl ManagerClient {
         &mut self,
         destination: impl Into<Destination>,
         options: impl Into<Map>,
-        mut handler: impl AuthHandler + Send,
+        mut handler: impl AuthHandler,
     ) -> io::Result<Destination> {
         let destination = Box::new(destination.into());
         let options = options.into();
@@ -100,7 +100,7 @@ impl ManagerClient {
                 },
                 ManagerResponse::Launched { destination } => return Ok(destination),
                 ManagerResponse::Error { description } => {
-                    return Err(io::Error::new(io::ErrorKind::Other, description))
+                    return Err(io::Error::other(description))
                 }
                 x => {
                     return Err(io::Error::new(
@@ -126,7 +126,7 @@ impl ManagerClient {
         &mut self,
         destination: impl Into<Destination>,
         options: impl Into<Map>,
-        mut handler: impl AuthHandler + Send,
+        mut handler: impl AuthHandler,
     ) -> io::Result<ConnectionId> {
         let destination = Box::new(destination.into());
         let options = options.into();
@@ -199,7 +199,7 @@ impl ManagerClient {
                 },
                 ManagerResponse::Connected { id } => return Ok(id),
                 ManagerResponse::Error { description } => {
-                    return Err(io::Error::new(io::ErrorKind::Other, description))
+                    return Err(io::Error::other(description))
                 }
                 x => {
                     return Err(io::Error::new(
@@ -237,9 +237,7 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::Version).await?;
         match res.payload {
             ManagerResponse::Version { version } => Ok(version),
-            ManagerResponse::Error { description } => {
-                Err(io::Error::new(io::ErrorKind::Other, description))
-            }
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {x:?}"),
@@ -253,9 +251,7 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::Info { id }).await?;
         match res.payload {
             ManagerResponse::Info(info) => Ok(info),
-            ManagerResponse::Error { description } => {
-                Err(io::Error::new(io::ErrorKind::Other, description))
-            }
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {x:?}"),
@@ -269,9 +265,7 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::Kill { id }).await?;
         match res.payload {
             ManagerResponse::Killed => Ok(()),
-            ManagerResponse::Error { description } => {
-                Err(io::Error::new(io::ErrorKind::Other, description))
-            }
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {x:?}"),
@@ -285,9 +279,7 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
-            ManagerResponse::Error { description } => {
-                Err(io::Error::new(io::ErrorKind::Other, description))
-            }
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Got unexpected response: {x:?}"),

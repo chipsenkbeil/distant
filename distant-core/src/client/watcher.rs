@@ -78,12 +78,7 @@ impl Watcher {
                         confirmed = true;
                     }
                     protocol::Response::Error(x) => return Err(io::Error::from(x)),
-                    x => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Unexpected response: {x:?}"),
-                        ))
-                    }
+                    x => return Err(io::Error::other(format!("Unexpected response: {x:?}"))),
                 }
             }
 
@@ -99,14 +94,14 @@ impl Watcher {
         trace!("Forwarding {} queued changes for {:?}", queue.len(), path);
         for change in queue {
             if tx.send(change).await.is_err() {
-                return Err(io::Error::new(io::ErrorKind::Other, "Queue change dropped"));
+                return Err(io::Error::other("Queue change dropped"));
             }
         }
 
         // If we never received an acknowledgement of watch before the mailbox closed,
         // fail with a missing confirmation error
         if !confirmed {
-            return Err(io::Error::new(io::ErrorKind::Other, "Missing confirmation"));
+            return Err(io::Error::other("Missing confirmation"));
         }
 
         // Spawn a task that continues to look for change events, discarding anything

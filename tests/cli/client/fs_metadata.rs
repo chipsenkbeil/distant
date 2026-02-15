@@ -59,7 +59,7 @@ fn should_output_metadata_for_directory(ctx: DistantManagerCtx) {
         .stderr("");
 }
 
-// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
+// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]

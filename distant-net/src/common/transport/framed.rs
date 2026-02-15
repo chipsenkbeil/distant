@@ -495,23 +495,13 @@ impl<T: Transport> FramedTransport<T> {
 
             // Determine how many frames we need to resend. This will either be (sent - received) or
             // available frames, whichever is smaller.
-            let resend_cnt = std::cmp::min(
-                if sent_cnt > other_received_cnt {
-                    sent_cnt - other_received_cnt
-                } else {
-                    0
-                },
-                available_cnt,
-            );
+            let resend_cnt =
+                std::cmp::min(sent_cnt.saturating_sub(other_received_cnt), available_cnt);
 
             // Determine how many frames we expect to receive. This will either be (received - sent) or
             // available frames, whichever is smaller.
             let expected_cnt = std::cmp::min(
-                if received_cnt < other_sent_cnt {
-                    other_sent_cnt - received_cnt
-                } else {
-                    0
-                },
+                other_sent_cnt.saturating_sub(received_cnt),
                 other_available_cnt,
             );
 
@@ -996,7 +986,7 @@ mod tests {
             let start = idx.fetch_add(step, Ordering::Relaxed);
             let end = start + step;
             let end = if end > data.len() { data.len() } else { end };
-            let len = if start > end { 0 } else { end - start };
+            let len = end.saturating_sub(start);
 
             buf[..len].copy_from_slice(&data[start..end]);
             Ok(len)

@@ -97,9 +97,7 @@ impl RawChannel {
         let channel_id = match mailbox.next().await {
             Some(response) => match response.payload {
                 ManagerResponse::ChannelOpened { id } => Ok(id),
-                ManagerResponse::Error { description } => {
-                    Err(io::Error::new(io::ErrorKind::Other, description))
-                }
+                ManagerResponse::Error { description } => Err(io::Error::other(description)),
                 x => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("[Conn {connection_id}] Raw channel open unexpected response: {x:?}"),
