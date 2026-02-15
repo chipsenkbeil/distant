@@ -179,7 +179,7 @@ impl DistantApi for SshDistantApi {
         // This avoids compatibility issues with APPEND flag across different SFTP servers
         use russh_sftp::protocol::OpenFlags;
         use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-        
+
         // Get current file size (0 if file doesn't exist)
         let file_size = match sftp.metadata(&sftp_path).await {
             Ok(metadata) => metadata.size.unwrap_or(0),
@@ -191,10 +191,10 @@ impl DistantApi for SshDistantApi {
             .open_with_flags(&sftp_path, OpenFlags::WRITE | OpenFlags::CREATE)
             .await
             .map_err(io::Error::other)?;
-            
+
         // Seek to the end of the file to append new data
         file.seek(std::io::SeekFrom::Start(file_size)).await?;
-        
+
         file.write_all(&data).await?;
         file.flush().await?;
 
