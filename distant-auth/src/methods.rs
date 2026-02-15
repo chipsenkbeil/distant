@@ -176,7 +176,7 @@ mod tests {
                         .collect(),
                 })
             }),
-            finished: Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "test error"))),
+            finished: Box::new(|| Err(io::Error::other("test error"))),
             ..Default::default()
         };
 

@@ -27,7 +27,7 @@ impl Shutdown for mpsc::Sender<oneshot::Sender<io::Result<()>>> {
 
 #[inline]
 fn already_shutdown() -> io::Error {
-    io::Error::new(io::ErrorKind::Other, "Client already shutdown")
+    io::Error::other("Client already shutdown")
 }
 
 impl Clone for Box<dyn Shutdown> {

@@ -25,10 +25,12 @@ impl LoggingSettings {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LogLevel {
     Off,
     Error,
     Warn,
+    #[default]
     Info,
     Debug,
     Trace,
@@ -44,11 +46,5 @@ impl LogLevel {
             Self::Debug => log::LevelFilter::Debug,
             Self::Trace => log::LevelFilter::Trace,
         }
-    }
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
     }
 }

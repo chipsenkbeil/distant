@@ -166,19 +166,21 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             Ok(())
         }
         ManagerSubcommand::Listen {
+            #[cfg_attr(not(unix), allow(unused_variables))]
             access,
             daemon: _daemon,
             network,
             user,
         } => {
+            #[cfg(unix)]
             let access = access.unwrap_or_default();
 
             info!(
                 "Starting manager (network = {})",
-                if cfg!(windows) && network.windows_pipe.is_some() {
-                    format!("custom:windows:{}", network.windows_pipe.as_ref().unwrap())
-                } else if cfg!(unix) && network.unix_socket.is_some() {
-                    format!("custom:unix:{:?}", network.unix_socket.as_ref().unwrap())
+                if let Some(pipe) = network.windows_pipe.as_ref().filter(|_| cfg!(windows)) {
+                    format!("custom:windows:{}", pipe)
+                } else if let Some(socket) = network.unix_socket.as_ref().filter(|_| cfg!(unix)) {
+                    format!("custom:unix:{:?}", socket)
                 } else if user {
                     "user".to_string()
                 } else {
@@ -186,6 +188,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 }
             );
             let manager = Manager {
+                #[cfg(unix)]
                 access,
                 config: NetManagerConfig {
                     user,
@@ -196,7 +199,6 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                             Box::new(handlers::ManagerLaunchHandler::new()),
                         );
 
-                        #[cfg(any(feature = "libssh", feature = "ssh2"))]
                         handlers.insert("ssh".to_string(), Box::new(handlers::SshLaunchHandler));
 
                         handlers
@@ -209,7 +211,6 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                             Box::new(handlers::DistantConnectHandler),
                         );
 
-                        #[cfg(any(feature = "libssh", feature = "ssh2"))]
                         handlers.insert("ssh".to_string(), Box::new(handlers::SshConnectHandler));
 
                         handlers
@@ -427,8 +428,8 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
                     trace!("Building selection prompt of {} choices", list.len());
                     let items: Vec<String> = list
-                        .iter()
-                        .map(|(_, destination)| {
+                        .values()
+                        .map(|destination| {
                             format!(
                                 "{}{}{}",
                                 destination

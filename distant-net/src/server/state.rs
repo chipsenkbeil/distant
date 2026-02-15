@@ -51,12 +51,7 @@ impl<T: Send + 'static> ConnectionState<T> {
             channel_tx,
             Self {
                 shutdown_tx,
-                task: tokio::spawn(async move {
-                    match channel_rx.await {
-                        Ok(x) => Some(x),
-                        Err(_) => None,
-                    }
-                }),
+                task: tokio::spawn(async move { (channel_rx.await).ok() }),
             },
         )
     }

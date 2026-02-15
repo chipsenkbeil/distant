@@ -111,7 +111,7 @@ mod tests {
 
             // Send the name back to our main test thread
             tx.send(SocketAddr::from((addr, listener.port())))
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x.to_string()))?;
+                .map_err(|x| io::Error::other(x.to_string()))?;
 
             // Get first connection
             let conn_1 = listener.accept().await?;

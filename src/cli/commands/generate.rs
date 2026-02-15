@@ -32,6 +32,7 @@ async fn async_run(cmd: GenerateSubcommand) -> CliResult {
                     name,
                     &mut fs::OpenOptions::new()
                         .create(true)
+                        .truncate(true)
                         .write(true)
                         .open(&path)
                         .with_context(|| format!("Failed to open {path:?}"))?,
