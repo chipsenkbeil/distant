@@ -2,12 +2,12 @@
 
 use std::io;
 use std::path::Path;
-use std::time::Duration;
 
 use assert_fs::prelude::*;
 use assert_fs::TempDir;
 use distant_core::protocol::{
-    ChangeKindSet, Environment, FileType, Metadata, Permissions, SetPermissionsOptions,
+    ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, SearchQuery,
+    SearchQueryCondition, SearchQueryTarget, SetPermissionsOptions,
 };
 use distant_core::{DistantChannelExt, DistantClient};
 use once_cell::sync::Lazy;
@@ -17,63 +17,17 @@ use test_log::test;
 
 use crate::sshd::*;
 
-const SETUP_DIR_TIMEOUT: Duration = Duration::from_secs(1);
-const SETUP_DIR_POLL: Duration = Duration::from_millis(50);
+/// Returns a platform-appropriate command string.
+/// On Unix, uses the unix_cmd; on Windows, uses the windows_cmd.
+fn platform_cmd(unix_cmd: &str, windows_cmd: &str) -> String {
+    if cfg!(windows) {
+        windows_cmd.to_string()
+    } else {
+        unix_cmd.to_string()
+    }
+}
 
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
-static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
-
-static ECHO_ARGS_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-                #/usr/bin/env bash
-                printf "%s" "$*"
-            "#
-        ))
-        .unwrap();
-    script
-});
-
-static ECHO_ARGS_TO_STDERR_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("echo_args_to_stderr.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-                #/usr/bin/env bash
-                printf "%s" "$*" 1>&2
-            "#
-        ))
-        .unwrap();
-    script
-});
-
-static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("echo_stdin_to_stdout.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-                #/usr/bin/env bash
-                while IFS= read; do echo "$REPLY"; done
-            "#
-        ))
-        .unwrap();
-    script
-});
-
-static SLEEP_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-    let script = TEMP_SCRIPT_DIR.child("sleep.sh");
-    script
-        .write_str(indoc::indoc!(
-            r#"
-                #!/usr/bin/env bash
-                sleep "$1"
-            "#
-        ))
-        .unwrap();
-    script
-});
 
 static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
     Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
@@ -255,9 +209,6 @@ async fn append_file_should_create_file_if_missing(#[future] client: Ctx<Distant
         .await
         .unwrap();
 
-    // Yield to allow chance to finish appending to file
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
     // Also verify that we actually did create to the file
     file.assert("some extra contents");
 }
@@ -277,8 +228,9 @@ async fn append_file_should_send_ok_when_successful(#[future] client: Ctx<Distan
         .await
         .unwrap();
 
-    // Yield to allow chance to finish appending to file
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Give SFTP a moment to flush on Windows
+    #[cfg(windows)]
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Also verify that we actually did append to the file
     file.assert("some file contentssome extra contents");
@@ -320,9 +272,6 @@ async fn append_file_text_should_create_file_if_missing(#[future] client: Ctx<Di
         .await
         .unwrap();
 
-    // Yield to allow chance to finish appending to file
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
     // Also verify that we actually did create to the file
     file.assert("some extra contents");
 }
@@ -342,8 +291,9 @@ async fn append_file_text_should_send_ok_when_successful(#[future] client: Ctx<D
         .await
         .unwrap();
 
-    // Yield to allow chance to finish appending to file
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Give SFTP a moment to flush on Windows
+    #[cfg(windows)]
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Also verify that we actually did append to the file
     file.assert("some file contentssome extra contents");
@@ -390,27 +340,6 @@ async fn setup_dir() -> assert_fs::TempDir {
 
     let link1 = root_dir.child("link1");
     link1.symlink_to_file(file2.path()).unwrap();
-
-    // Wait to ensure that everything was set up
-    tokio::time::timeout(SETUP_DIR_TIMEOUT, async {
-        macro_rules! all_exist {
-            () => {{
-                let root_dir_exists = root_dir.exists();
-                let sub1_exists = sub1.exists();
-                let file1_exists = file1.exists();
-                let file2_exists = file2.exists();
-                let link1_exists = link1.exists();
-
-                root_dir_exists && sub1_exists && file1_exists && file2_exists && link1_exists
-            }};
-        }
-
-        while !all_exist!() {
-            tokio::time::sleep(SETUP_DIR_POLL).await;
-        }
-    })
-    .await
-    .expect("Failed to setup dir");
 
     root_dir
 }
@@ -719,6 +648,30 @@ async fn remove_should_delete_nonempty_directory_if_force_is_true(
         .unwrap();
 
     // Also, verify that path does not exist
+    dir.assert(predicate::path::missing());
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn remove_should_delete_deeply_nested_directory_if_force_is_true(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let dir = temp.child("dir");
+    dir.create_dir_all().unwrap();
+    let subdir = dir.child("subdir");
+    subdir.create_dir_all().unwrap();
+    subdir.child("file").touch().unwrap();
+    let subdir2 = subdir.child("subsubdir");
+    subdir2.create_dir_all().unwrap();
+    subdir2.child("file2").touch().unwrap();
+
+    client
+        .remove(dir.path().to_path_buf(), /* force */ true)
+        .await
+        .unwrap();
+
     dir.assert(predicate::path::missing());
 }
 
@@ -1186,7 +1139,7 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_set_readonly_flag_if_specified(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1320,7 +1273,7 @@ async fn set_permissions_should_set_readonly_flag_if_not_on_unix_platform(
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
@@ -1395,7 +1348,7 @@ async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ct
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1442,7 +1395,7 @@ async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_s
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1492,7 +1445,7 @@ async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_followi
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1540,7 +1493,7 @@ async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_support_recursive_if_option_specified(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1595,7 +1548,7 @@ async fn set_permissions_should_support_recursive_if_option_specified(
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_support_following_symlinks_if_option_specified(
     #[future] client: Ctx<DistantClient>,
 ) {
@@ -1678,14 +1631,10 @@ async fn proc_spawn_should_not_fail_even_if_process_not_found(
 async fn proc_spawn_should_return_id_of_spawned_process(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
+    let cmd = platform_cmd("echo hello", "echo hello");
     let proc = client
         .spawn(
-            /* cmd */
-            format!(
-                "{} {}",
-                *SCRIPT_RUNNER,
-                ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
-            ),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1695,24 +1644,17 @@ async fn proc_spawn_should_return_id_of_spawned_process(#[future] client: Ctx<Di
     assert!(proc.id() > 0);
 }
 
-// NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-//       with / but thinks it's on windows and is providing \
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn proc_spawn_should_send_back_stdout_periodically_when_available(
     #[future] client: Ctx<DistantClient>,
 ) {
     let mut client = client.await;
 
+    let cmd = platform_cmd("sh -c 'printf \"%s\" \"some stdout\"'", "echo some stdout");
     let mut proc = client
         .spawn(
-            /* cmd */
-            format!(
-                "{} {} some stdout",
-                *SCRIPT_RUNNER,
-                ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
-            ),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1720,9 +1662,12 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
         .await
         .unwrap();
 
-    assert_eq!(
-        proc.stdout.as_mut().unwrap().read().await.unwrap(),
-        b"some stdout"
+    let stdout = proc.stdout.as_mut().unwrap().read().await.unwrap();
+    let stdout_str = String::from_utf8_lossy(&stdout);
+    assert!(
+        stdout_str.trim() == "some stdout",
+        "Expected 'some stdout', got '{}'",
+        stdout_str.trim()
     );
     assert!(
         proc.wait().await.unwrap().success,
@@ -1730,24 +1675,20 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
     );
 }
 
-// NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-//       with / but thinks it's on windows and is providing \
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn proc_spawn_should_send_back_stderr_periodically_when_available(
     #[future] client: Ctx<DistantClient>,
 ) {
     let mut client = client.await;
 
+    let cmd = platform_cmd(
+        "sh -c 'printf \"%s\" \"some stderr\" >&2'",
+        "echo some stderr 1>&2",
+    );
     let mut proc = client
         .spawn(
-            /* cmd */
-            format!(
-                "{} {} some stderr",
-                *SCRIPT_RUNNER,
-                ECHO_ARGS_TO_STDERR_SH.to_str().unwrap()
-            ),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1755,9 +1696,12 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
         .await
         .unwrap();
 
-    assert_eq!(
-        proc.stderr.as_mut().unwrap().read().await.unwrap(),
-        b"some stderr"
+    let stderr = proc.stderr.as_mut().unwrap().read().await.unwrap();
+    let stderr_str = String::from_utf8_lossy(&stderr);
+    assert!(
+        stderr_str.trim() == "some stderr",
+        "Expected 'some stderr', got '{}'",
+        stderr_str.trim()
     );
     assert!(
         proc.wait().await.unwrap().success,
@@ -1765,18 +1709,15 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
     );
 }
 
-// NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-//       with / but thinks it's on windows and is providing \
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn proc_spawn_should_send_done_signal_when_completed(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
+    let cmd = platform_cmd("sleep 0.1", "timeout /t 1 /nobreak >nul");
     let proc = client
         .spawn(
-            /* cmd */
-            format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1794,10 +1735,10 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(
 ) {
     let mut client = client.await;
 
+    let cmd = platform_cmd("sleep 1", "timeout /t 1 /nobreak >nul");
     let mut proc = client
         .spawn(
-            /* cmd */
-            format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1818,10 +1759,10 @@ async fn proc_spawn_should_clear_process_from_state_when_killed(
 async fn proc_kill_should_fail_if_process_not_running(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
+    let cmd = platform_cmd("sleep 1", "timeout /t 1 /nobreak >nul");
     let mut proc = client
         .spawn(
-            /* cmd */
-            format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1845,10 +1786,10 @@ async fn proc_kill_should_fail_if_process_not_running(#[future] client: Ctx<Dist
 async fn proc_stdin_should_fail_if_process_not_running(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
 
+    let cmd = platform_cmd("sleep 1", "timeout /t 1 /nobreak >nul");
     let mut proc = client
         .spawn(
-            /* cmd */
-            format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1867,23 +1808,22 @@ async fn proc_stdin_should_fail_if_process_not_running(#[future] client: Ctx<Dis
     let _ = stdin.write_str("some data").await.unwrap_err();
 }
 
-// NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-//       with / but thinks it's on windows and is providing \
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<DistantClient>) {
     let mut client = client.await;
+
+    // On Unix, use a simple read-echo loop; on Windows, use PowerShell to read one line from stdin
+    // (findstr buffers output when not connected to a console, causing hangs)
+    let cmd = platform_cmd(
+        "sh -c 'while IFS= read line; do echo \"$line\"; done'",
+        "powershell -NonInteractive -Command [Console]::In.ReadLine()",
+    );
 
     // First, run a program that listens for stdin
     let mut proc = client
         .spawn(
-            /* cmd */
-            format!(
-                "{} {}",
-                *SCRIPT_RUNNER,
-                ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap()
-            ),
+            cmd,
             /* environment */ Environment::new(),
             /* current_dir */ None,
             /* pty */ None,
@@ -1900,9 +1840,11 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<DistantCl
         .unwrap();
 
     // Third, check the async response of stdout to verify we got stdin
-    assert_eq!(
-        proc.stdout.as_mut().unwrap().read_string().await.unwrap(),
-        "hello world\n"
+    let stdout = proc.stdout.as_mut().unwrap().read_string().await.unwrap();
+    assert!(
+        stdout.trim() == "hello world",
+        "Expected 'hello world', got '{}'",
+        stdout.trim()
     );
 }
 
@@ -1931,4 +1873,192 @@ async fn system_info_should_return_system_info_based_on_binary(
     // so we just check that they are not empty
     assert_ne!(system_info.username, "");
     assert_ne!(system_info.shell, "");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn version_should_return_server_version_and_capabilities(
+    #[future] client: Ctx<DistantClient>,
+) {
+    let mut client = client.await;
+
+    let version = client.version().await.unwrap();
+
+    // Verify server version is parseable and contains our crate name as build metadata
+    assert!(
+        version
+            .server_version
+            .build
+            .as_str()
+            .contains("distant-ssh2"),
+        "Server version build metadata should contain 'distant-ssh2', got: {}",
+        version.server_version
+    );
+
+    // Verify capabilities include expected ones
+    let caps = &version.capabilities;
+    assert!(
+        caps.iter().any(|c| c.contains("exec")),
+        "Missing exec capability: {:?}",
+        caps
+    );
+    assert!(
+        caps.iter().any(|c| c.contains("fs_io")),
+        "Missing fs_io capability: {:?}",
+        caps
+    );
+    assert!(
+        caps.iter().any(|c| c.contains("sys_info")),
+        "Missing sys_info capability: {:?}",
+        caps
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn search_should_fail_as_unsupported(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+
+    let result = client
+        .search(SearchQuery {
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Contains {
+                value: "test".to_string(),
+            },
+            paths: vec![temp.path().to_path_buf()],
+            options: Default::default(),
+        })
+        .await;
+
+    assert!(result.is_err(), "Search should fail as unsupported");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn cancel_search_should_fail_as_unsupported(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+
+    let result = client.cancel_search(0).await;
+
+    assert!(result.is_err(), "Cancel search should fail as unsupported");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn unwatch_should_fail_as_unsupported(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.touch().unwrap();
+
+    let result = client.unwatch(file.path().to_path_buf()).await;
+
+    assert!(result.is_err(), "Unwatch should fail as unsupported");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_with_pty_should_return_id(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+
+    let cmd = platform_cmd("echo hello", "echo hello");
+    let proc = client
+        .spawn(
+            cmd,
+            Environment::new(),
+            None,
+            Some(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert!(proc.id() > 0);
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_with_pty_should_be_killable(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+
+    let cmd = platform_cmd("sleep 30", "timeout /t 30 /nobreak >nul");
+    let mut proc = client
+        .spawn(
+            cmd,
+            Environment::new(),
+            None,
+            Some(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Kill the process
+    proc.kill().await.unwrap();
+
+    // Verify killed
+    let status = proc.wait().await.unwrap();
+    assert!(!status.success, "PTY process succeeded when killed");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_with_pty_should_support_resize(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+
+    let cmd = platform_cmd("sleep 30", "timeout /t 30 /nobreak >nul");
+    let mut proc = client
+        .spawn(
+            cmd,
+            Environment::new(),
+            None,
+            Some(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Resize should succeed without error
+    proc.resize(PtySize {
+        rows: 48,
+        cols: 120,
+        pixel_width: 0,
+        pixel_height: 0,
+    })
+    .await
+    .unwrap();
+
+    // Clean up
+    proc.kill().await.unwrap();
+    let _ = proc.wait().await.unwrap();
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_should_fail_if_current_dir_specified(#[future] client: Ctx<DistantClient>) {
+    let mut client = client.await;
+
+    let current_dir = if cfg!(windows) { "C:\\temp" } else { "/tmp" };
+    let result = client
+        .spawn(
+            "echo hello".to_string(),
+            Environment::new(),
+            Some(std::path::PathBuf::from(current_dir)),
+            None,
+        )
+        .await;
+    assert!(result.is_err());
 }

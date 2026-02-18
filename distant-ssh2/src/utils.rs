@@ -234,3 +234,88 @@ pub fn convert_to_windows_path_string(s: &str) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_slash_c_colon_path_to_windows() {
+        // /C:/Users/test -> C:/Users/test
+        let result = convert_to_windows_path_string("/C:/Users/test");
+        assert_eq!(result, Some("C:/Users/test".to_string()));
+    }
+
+    #[test]
+    fn convert_already_windows_path_unchanged() {
+        // C:\Users\test is already a Windows path
+        let result = convert_to_windows_path_string("C:\\Users\\test");
+        assert_eq!(result, Some("C:\\Users\\test".to_string()));
+    }
+
+    #[test]
+    fn convert_relative_path_returns_none() {
+        assert_eq!(convert_to_windows_path_string("relative/path"), None);
+    }
+
+    #[test]
+    fn convert_root_only_returns_none() {
+        assert_eq!(convert_to_windows_path_string("/"), None);
+    }
+
+    #[test]
+    fn convert_c_colon_slash_root_path() {
+        // /C:/ -> just the drive root
+        let result = convert_to_windows_path_string("/C:/");
+        assert!(result.is_some(), "Should handle drive root path");
+    }
+
+    #[test]
+    fn convert_slash_c_slash_path_to_windows() {
+        // /C/Users/test -> should attempt drive-letter conversion
+        let result = convert_to_windows_path_string("/C/Users/test");
+        assert!(result.is_some(), "Should convert single-letter drive path");
+    }
+
+    #[test]
+    fn convert_multi_char_component_returns_none() {
+        // /notadrive/path -> not a single-letter drive, returns None
+        assert_eq!(convert_to_windows_path_string("/notadrive/path"), None);
+    }
+
+    #[test]
+    fn exec_output_debug_alternate_format() {
+        let output = ExecOutput {
+            success: true,
+            stdout: b"hello".to_vec(),
+            stderr: b"world".to_vec(),
+        };
+        let debug_str = format!("{:#?}", output);
+        assert!(
+            debug_str.contains("hello"),
+            "Missing stdout in alternate debug: {}",
+            debug_str
+        );
+        assert!(
+            debug_str.contains("world"),
+            "Missing stderr in alternate debug: {}",
+            debug_str
+        );
+    }
+
+    #[test]
+    fn exec_output_debug_normal_format() {
+        let output = ExecOutput {
+            success: false,
+            stdout: b"out".to_vec(),
+            stderr: b"err".to_vec(),
+        };
+        let debug_str = format!("{:?}", output);
+        // Normal format uses byte representation, not string
+        assert!(
+            debug_str.contains("success: false"),
+            "Missing success field: {}",
+            debug_str
+        );
+    }
+}

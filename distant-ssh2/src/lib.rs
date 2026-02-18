@@ -755,3 +755,30 @@ impl Ssh {
         Err(err.expect("Err set above"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssh_family_as_static_str() {
+        assert_eq!(SshFamily::Unix.as_static_str(), "unix");
+        assert_eq!(SshFamily::Windows.as_static_str(), "windows");
+    }
+
+    #[test]
+    fn distant_launch_opts_default() {
+        let opts = DistantLaunchOpts::default();
+        assert_eq!(opts.binary, "distant");
+        assert!(opts.args.is_empty());
+        assert_eq!(opts.timeout, Duration::from_secs(15));
+    }
+
+    #[tokio::test]
+    async fn local_ssh_auth_handler_on_banner_and_on_error() {
+        let handler = LocalSshAuthHandler;
+        handler.on_banner("test banner").await;
+        handler.on_error("test error").await;
+        // These just log — verifying they don't panic is sufficient
+    }
+}

@@ -40,7 +40,7 @@ static BIN_PATH: Lazy<PathBuf> =
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
 
-static USERNAME: Lazy<String> = Lazy::new(whoami::username);
+pub static USERNAME: Lazy<String> = Lazy::new(whoami::username);
 
 /// Time to wait after spawning sshd before continuing. Will check if still alive
 const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
@@ -165,73 +165,6 @@ impl SshKeygen {
         }
 
         Ok(res)
-    }
-}
-
-pub struct SshAgent;
-
-impl SshAgent {
-    /// On Unix, runs `ssh-agent -s` to get Bourne shell environment variables.
-    /// On Windows, runs `ssh-agent` which outputs cmd.exe style variables and
-    /// converts them to the same format.
-    pub fn generate_shell_env() -> anyhow::Result<HashMap<String, String>> {
-        #[cfg(unix)]
-        {
-            let output = Command::new("ssh-agent")
-                .arg("-s")
-                .output()
-                .context("Failed to generate Bourne shell commands from ssh-agent")?;
-            let stdout = String::from_utf8(output.stdout)
-                .context("Failed to parse stdout as utf8 string")?;
-            Ok(stdout
-                .split(';')
-                .map(str::trim)
-                .filter(|s| s.contains('='))
-                .map(|s| {
-                    let mut tokens = s.split('=');
-                    let key = tokens.next().unwrap().trim().to_string();
-                    let rest = tokens
-                        .map(str::trim)
-                        .map(ToString::to_string)
-                        .collect::<Vec<String>>()
-                        .join("=");
-                    (key, rest)
-                })
-                .collect::<HashMap<String, String>>())
-        }
-
-        #[cfg(windows)]
-        {
-            // On Windows, ssh-agent outputs cmd.exe style SET commands
-            let output = Command::new("ssh-agent")
-                .output()
-                .context("Failed to run ssh-agent on Windows")?;
-            let stdout = String::from_utf8(output.stdout)
-                .context("Failed to parse stdout as utf8 string")?;
-            Ok(stdout
-                .lines()
-                .map(str::trim)
-                .filter(|s| s.starts_with("SET "))
-                .filter_map(|s| {
-                    // Parse "SET SSH_AUTH_SOCK=..." format
-                    let without_set = s.strip_prefix("SET ")?;
-                    let mut tokens = without_set.splitn(2, '=');
-                    let key = tokens.next()?.trim().to_string();
-                    let value = tokens.next()?.trim().to_string();
-                    Some((key, value))
-                })
-                .collect::<HashMap<String, String>>())
-        }
-    }
-
-    pub fn update_tests_with_shell_env() -> anyhow::Result<()> {
-        let env_map =
-            Self::generate_shell_env().context("Failed to generate ssh agent shell env")?;
-        for (key, value) in env_map {
-            std::env::set_var(key, value);
-        }
-
-        Ok(())
     }
 }
 
@@ -455,10 +388,6 @@ impl Sshd {
 
     pub fn spawn(mut config: SshdConfig) -> anyhow::Result<Self> {
         let tmp = TempDir::new().context("Failed to create temporary directory")?;
-
-        // Ensure that everything needed for interacting with ssh-agent is set
-        SshAgent::update_tests_with_shell_env()
-            .context("Failed to update tests with ssh agent shell env")?;
 
         // ssh-keygen -t ed25519 -f $ROOT/id_ed25519 -N "" -q
         let id_ed25519_file = tmp.child("id_ed25519");
@@ -972,7 +901,7 @@ pub async fn ssh(sshd: Sshd) -> Ctx<Ssh> {
     Ctx { sshd, value: ssh }
 }
 
-async fn load_ssh_client(sshd: &Sshd) -> Ssh {
+pub async fn load_ssh_client(sshd: &Sshd) -> Ssh {
     if sshd.is_dead() {
         panic!("sshd is dead!");
     }

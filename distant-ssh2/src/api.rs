@@ -473,25 +473,40 @@ impl DistantApi for SshDistantApi {
 
         if metadata.is_dir() {
             if force {
-                let entries = sftp.read_dir(&sftp_path).await.map_err(io::Error::other)?;
+                // Recursively remove directory contents using DFS
+                let mut dirs_to_remove = Vec::new();
+                let mut stack = vec![sftp_path.clone()];
 
-                for entry in entries {
-                    let filename = entry.file_name();
-                    if filename != "." && filename != ".." {
-                        let entry_path = format!("{}/{}", sftp_path, filename);
+                while let Some(dir) = stack.pop() {
+                    let entries = sftp.read_dir(&dir).await.map_err(io::Error::other)?;
+
+                    for entry in entries {
+                        let filename = entry.file_name();
+                        if filename == "." || filename == ".." {
+                            continue;
+                        }
+                        let entry_path = format!("{}/{}", dir, filename);
                         if entry.metadata().is_dir() {
-                            sftp.remove_dir(&entry_path)
-                                .await
-                                .map_err(io::Error::other)?;
+                            stack.push(entry_path.clone());
                         } else {
                             sftp.remove_file(&entry_path)
                                 .await
                                 .map_err(io::Error::other)?;
                         }
                     }
+
+                    dirs_to_remove.push(dir);
                 }
+
+                // Remove directories in reverse order (deepest first)
+                for dir in dirs_to_remove.into_iter().rev() {
+                    sftp.remove_dir(&dir).await.map_err(io::Error::other)?;
+                }
+
+                Ok(())
+            } else {
+                sftp.remove_dir(&sftp_path).await.map_err(io::Error::other)
             }
-            sftp.remove_dir(&sftp_path).await.map_err(io::Error::other)
         } else {
             sftp.remove_file(&sftp_path).await.map_err(io::Error::other)
         }
