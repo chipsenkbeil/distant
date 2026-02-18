@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
+use async_once_cell::OnceCell;
 use async_trait::async_trait;
 use distant_core::protocol::{
     DirEntry, Environment, Metadata, Permissions, ProcessId, PtySize, SearchId, SearchQuery,
@@ -18,41 +19,51 @@ use typed_path::Utf8TypedPath;
 use crate::process::Process;
 use crate::{ClientHandler, SshFamily};
 
-/// Represents implementation of [`DistantApi`] for SSH
+/// Represents implementation of [`DistantApi`] for SSH.
 pub struct SshDistantApi {
-    /// SSH session handle (NOT SFTP)
+    /// Active SSH session handle.
     session: Handle<ClientHandler>,
 
-    /// Lazy-cached SFTP session (created on first file operation)
+    /// Lazy-cached SFTP session (created on first file operation).
     sftp: Arc<Mutex<Option<Arc<SftpSession>>>>,
 
-    /// Process tracking
+    /// Global tracking of running processes by id.
     processes: Arc<RwLock<HashMap<ProcessId, Process>>>,
 
-    /// Remote system family (Unix/Windows)
+    /// Remote system family (Unix/Windows).
     family: SshFamily,
+
+    /// Cached current working directory.
+    cached_current_dir: OnceCell<PathBuf>,
+
+    /// Cached username.
+    cached_username: OnceCell<String>,
+
+    /// Cached shell.
+    cached_shell: OnceCell<String>,
 }
 
 impl SshDistantApi {
-    pub async fn new(session: Handle<ClientHandler>, family: SshFamily) -> io::Result<Self> {
-        Ok(Self {
+    pub fn new(session: Handle<ClientHandler>, family: SshFamily) -> Self {
+        Self {
             session,
             sftp: Arc::new(Mutex::new(None)),
             processes: Arc::new(RwLock::new(HashMap::new())),
             family,
-        })
+            cached_current_dir: OnceCell::new(),
+            cached_username: OnceCell::new(),
+            cached_shell: OnceCell::new(),
+        }
     }
 
-    /// Get or create SFTP session (lazy initialization with caching)
+    /// Get or create SFTP session (lazy initialization with caching).
     async fn get_sftp(&self) -> io::Result<Arc<SftpSession>> {
         let mut sftp_lock = self.sftp.lock().await;
 
-        // Return existing session if available
         if let Some(sftp) = sftp_lock.as_ref() {
             return Ok(Arc::clone(sftp));
         }
 
-        // Create new SFTP session (happens once per API instance)
         debug!("Creating new SFTP session");
         let channel = self
             .session
@@ -75,14 +86,99 @@ impl SshDistantApi {
         Ok(sftp)
     }
 
-    /// Convert PathBuf to SFTP path string using typed-path with validation
-    /// SFTP protocol always uses Unix-style paths regardless of target OS
+    /// Convert PathBuf to SFTP path string using typed-path with validation.
+    /// SFTP protocol always uses Unix-style paths regardless of target OS.
     fn to_sftp_path(&self, path: PathBuf) -> io::Result<String> {
         let path_str = path.to_string_lossy();
         let typed_path = Utf8TypedPath::derive(&path_str);
 
-        // Always convert to Unix format for SFTP protocol
         Ok(typed_path.with_unix_encoding().as_str().to_string())
+    }
+
+    /// Apply permissions to a single path via SFTP, reading current mode and merging.
+    /// Returns the path if it is a directory (for recursive processing).
+    async fn apply_permissions(
+        &self,
+        sftp: &SftpSession,
+        path: &str,
+        permissions: &Permissions,
+        options: &SetPermissionsOptions,
+    ) -> io::Result<Option<String>> {
+        use russh_sftp::protocol::FileAttributes;
+
+        let metadata = sftp
+            .symlink_metadata(path)
+            .await
+            .map_err(io::Error::other)?;
+
+        if options.exclude_symlinks && metadata.is_symlink() {
+            return Ok(None);
+        }
+
+        // Resolve symlinks if requested
+        let (resolved_path, resolved_metadata) = if options.follow_symlinks && metadata.is_symlink()
+        {
+            let target = sftp.read_link(path).await.map_err(io::Error::other)?;
+            let target_metadata = sftp.metadata(&target).await.map_err(io::Error::other)?;
+            (target, target_metadata)
+        } else {
+            (path.to_string(), metadata)
+        };
+
+        // Read current permissions and merge with the requested changes
+        let perms = resolved_metadata.permissions();
+        let mut current_mode: u32 = 0;
+        if perms.owner_read {
+            current_mode |= 0o400;
+        }
+        if perms.owner_write {
+            current_mode |= 0o200;
+        }
+        if perms.owner_exec {
+            current_mode |= 0o100;
+        }
+        if perms.group_read {
+            current_mode |= 0o040;
+        }
+        if perms.group_write {
+            current_mode |= 0o020;
+        }
+        if perms.group_exec {
+            current_mode |= 0o010;
+        }
+        if perms.other_read {
+            current_mode |= 0o004;
+        }
+        if perms.other_write {
+            current_mode |= 0o002;
+        }
+        if perms.other_exec {
+            current_mode |= 0o001;
+        }
+        let mut current_perms = Permissions::from_unix_mode(current_mode);
+        current_perms.apply_from(permissions);
+        let new_mode = current_perms.to_unix_mode();
+
+        let new_attrs = FileAttributes {
+            size: None,
+            uid: None,
+            user: None,
+            gid: None,
+            group: None,
+            permissions: Some(new_mode),
+            atime: None,
+            mtime: None,
+        };
+
+        sftp.set_metadata(&resolved_path, new_attrs)
+            .await
+            .map_err(io::Error::other)?;
+
+        if resolved_metadata.is_dir() {
+            Ok(Some(resolved_path))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -94,7 +190,6 @@ impl DistantApi for SshDistantApi {
         let sftp = self.get_sftp().await?;
         let sftp_path = self.to_sftp_path(path)?;
 
-        // Open file and read contents
         use tokio::io::AsyncReadExt;
         let mut file = sftp.open(&sftp_path).await.map_err(io::Error::other)?;
 
@@ -115,7 +210,6 @@ impl DistantApi for SshDistantApi {
         let sftp = self.get_sftp().await?;
         let sftp_path = self.to_sftp_path(path)?;
 
-        // Create or truncate file and write contents
         use tokio::io::AsyncWriteExt;
         let mut file = sftp.create(&sftp_path).await.map_err(io::Error::other)?;
 
@@ -138,27 +232,18 @@ impl DistantApi for SshDistantApi {
         debug!("[Conn {}] Appending to file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
-        let sftp_path = self.to_sftp_path(path.clone())?;
+        let sftp_path = self.to_sftp_path(path)?;
 
-        // Use stat + seek approach instead of APPEND flag
-        // This avoids compatibility issues with APPEND flag across different SFTP servers
         use russh_sftp::protocol::OpenFlags;
-        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
 
-        // Get current file size (0 if file doesn't exist)
-        let file_size = match sftp.metadata(&sftp_path).await {
-            Ok(metadata) => metadata.size.unwrap_or(0),
-            Err(_) => 0, // File doesn't exist, start from beginning
-        };
-
-        // Open file for writing (create if needed) and seek to end
         let mut file = sftp
-            .open_with_flags(&sftp_path, OpenFlags::WRITE | OpenFlags::CREATE)
+            .open_with_flags(
+                &sftp_path,
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::APPEND,
+            )
             .await
             .map_err(io::Error::other)?;
-
-        // Seek to the end of the file to append new data
-        file.seek(std::io::SeekFrom::Start(file_size)).await?;
 
         file.write_all(&data).await?;
         file.flush().await?;
@@ -216,7 +301,6 @@ impl DistantApi for SshDistantApi {
 
             let mut entries = Vec::new();
             for entry in dir_entries {
-                // Skip . and ..
                 let filename = entry.file_name();
                 if filename == "." || filename == ".." {
                     continue;
@@ -225,16 +309,11 @@ impl DistantApi for SshDistantApi {
                 let entry_path = if absolute {
                     base_path.join(&filename)
                 } else if canonicalize {
-                    // For canonicalize without absolute, we need to resolve symlinks
-                    // and keep paths relative to base
                     if entry.metadata().is_symlink() {
-                        // Canonicalize symlinks to get their target path
                         let full_path = format!("{}/{}", path, filename);
                         match sftp.canonicalize(&full_path).await {
                             Ok(canonical_str) => {
                                 let canonical_path = PathBuf::from(canonical_str);
-
-                                // Make relative to base_path
                                 canonical_path
                                     .strip_prefix(base_path)
                                     .map(|p| p.to_path_buf())
@@ -243,14 +322,12 @@ impl DistantApi for SshDistantApi {
                             Err(_) => PathBuf::from(&filename),
                         }
                     } else {
-                        // Non-symlinks just use filename
                         PathBuf::from(&filename)
                     }
                 } else {
                     PathBuf::from(&filename)
                 };
 
-                // Convert SFTP metadata to Distant metadata
                 let file_type = if entry.metadata().is_dir() {
                     FileType::Dir
                 } else if entry.metadata().is_symlink() {
@@ -270,38 +347,34 @@ impl DistantApi for SshDistantApi {
         }
 
         // Read root directory
-        match read_single_dir(&sftp, &sftp_path, &base_path, absolute, canonicalize).await {
-            Ok(mut root_entries) => {
-                if include_root {
-                    // Add root entry with canonicalized path
-                    let root_path = match sftp.canonicalize(&sftp_path).await {
-                        Ok(p) => PathBuf::from(p),
-                        Err(_) => path.clone(),
-                    };
+        let mut root_entries =
+            read_single_dir(&sftp, &sftp_path, &base_path, absolute, canonicalize).await?;
 
-                    entries.push(DirEntry {
-                        path: root_path,
-                        file_type: distant_core::protocol::FileType::Dir,
-                        depth: 0,
-                    });
-                }
-                entries.append(&mut root_entries);
-            }
-            Err(e) => {
-                // If we can't read the root directory, always return an error
-                // This happens when the directory doesn't exist or we don't have permissions
-                return Err(e);
-            }
+        if include_root {
+            let root_path = match sftp.canonicalize(&sftp_path).await {
+                Ok(p) => PathBuf::from(p),
+                Err(_) => path.clone(),
+            };
+
+            entries.push(DirEntry {
+                path: root_path,
+                file_type: distant_core::protocol::FileType::Dir,
+                depth: 0,
+            });
         }
+        entries.append(&mut root_entries);
 
         // Implement recursive directory reading for depth > 1 or depth == 0 (unlimited)
         if depth == 0 || depth > 1 {
-            let mut to_process = entries.clone();
-            let mut processed_count = to_process.len();
+            // Seed the work queue with directories from the initial listing
+            let mut to_process: Vec<DirEntry> = entries
+                .iter()
+                .filter(|e| e.file_type == distant_core::protocol::FileType::Dir && e.depth >= 1)
+                .cloned()
+                .collect();
             let max_depth = if depth == 0 { usize::MAX } else { depth };
 
             while let Some(entry) = to_process.pop() {
-                // Only process directories that haven't exceeded depth
                 if entry.file_type == distant_core::protocol::FileType::Dir
                     && entry.depth < max_depth
                 {
@@ -326,7 +399,6 @@ impl DistantApi for SshDistantApi {
                             for mut sub_entry in sub_entries {
                                 sub_entry.depth = entry.depth + 1;
 
-                                // Fix the path to be relative to root if not absolute
                                 if !absolute && !canonicalize {
                                     sub_entry.path =
                                         entry.path.join(sub_entry.path.file_name().unwrap());
@@ -341,15 +413,9 @@ impl DistantApi for SshDistantApi {
                         }
                     }
                 }
-
-                processed_count -= 1;
-                if processed_count == 0 {
-                    processed_count = to_process.len();
-                }
             }
         }
 
-        // Sort entries by path for consistent ordering
         entries.sort_by(|a, b| a.path.cmp(&b.path));
 
         Ok((entries, errors))
@@ -365,8 +431,6 @@ impl DistantApi for SshDistantApi {
         let sftp_path = self.to_sftp_path(path.clone())?;
 
         if all {
-            // Create parent directories recursively
-            // Use typed-path to properly parse Unix SFTP paths regardless of host platform
             use typed_path::{Utf8UnixPath, Utf8UnixPathBuf};
 
             let unix_path = Utf8UnixPath::new(&sftp_path);
@@ -383,10 +447,7 @@ impl DistantApi for SshDistantApi {
                         current_path.push(part);
                         let current_path_str = current_path.as_str();
 
-                        // Try to create directory, ignore error if it already exists
                         if let Err(e) = sftp.create_dir(current_path_str).await {
-                            // Check if error is "already exists" (we can ignore that)
-                            // russh_sftp errors don't have good introspection, so we continue
                             debug!("create_dir error for {}: {:?}", current_path_str, e);
                         }
                     }
@@ -395,7 +456,6 @@ impl DistantApi for SshDistantApi {
             }
             Ok(())
         } else {
-            // Create single directory
             sftp.create_dir(&sftp_path).await.map_err(io::Error::other)
         }
     }
@@ -409,12 +469,10 @@ impl DistantApi for SshDistantApi {
         let sftp = self.get_sftp().await?;
         let sftp_path = self.to_sftp_path(path)?;
 
-        // Check if path is a directory or file
         let metadata = sftp.metadata(&sftp_path).await.map_err(io::Error::other)?;
 
         if metadata.is_dir() {
             if force {
-                // Recursively remove directory contents
                 let entries = sftp.read_dir(&sftp_path).await.map_err(io::Error::other)?;
 
                 for entry in entries {
@@ -422,9 +480,6 @@ impl DistantApi for SshDistantApi {
                     if filename != "." && filename != ".." {
                         let entry_path = format!("{}/{}", sftp_path, filename);
                         if entry.metadata().is_dir() {
-                            // Recursive call would require converting back to PathBuf
-                            // For now, use a simple remove_dir_all approach via SFTP
-                            // This is a simplified version - full implementation would recurse
                             sftp.remove_dir(&entry_path)
                                 .await
                                 .map_err(io::Error::other)?;
@@ -436,10 +491,8 @@ impl DistantApi for SshDistantApi {
                     }
                 }
             }
-            // Remove the directory itself
             sftp.remove_dir(&sftp_path).await.map_err(io::Error::other)
         } else {
-            // Remove file
             sftp.remove_file(&sftp_path).await.map_err(io::Error::other)
         }
     }
@@ -450,8 +503,6 @@ impl DistantApi for SshDistantApi {
             ctx.connection_id, src, dst
         );
 
-        // SFTP doesn't have native remote-to-remote copy
-        // We'll use a shell command for efficiency
         use crate::utils::execute_output;
 
         let src_str = src.to_string_lossy();
@@ -496,9 +547,6 @@ impl DistantApi for SshDistantApi {
         _only: Vec<distant_core::protocol::ChangeKind>,
         _except: Vec<distant_core::protocol::ChangeKind>,
     ) -> io::Result<()> {
-        // File watching over SSH would require running a watcher daemon on the remote system
-        // This is complex and not currently supported. Users can implement custom watchers
-        // using proc_spawn if needed.
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "File watching is not supported over SSH. Consider using proc_spawn for custom watchers.",
@@ -521,7 +569,6 @@ impl DistantApi for SshDistantApi {
         let sftp = self.get_sftp().await?;
         let sftp_path = self.to_sftp_path(path)?;
 
-        // Try to get metadata - if successful, file exists
         match sftp.try_exists(&sftp_path).await {
             Ok(exists) => Ok(exists),
             Err(_) => Ok(false),
@@ -543,12 +590,9 @@ impl DistantApi for SshDistantApi {
         let sftp = self.get_sftp().await?;
         let sftp_path = self.to_sftp_path(path.clone())?;
 
-        // Get metadata from SFTP
         let attrs = if resolve_file_type {
-            // Follow symlinks
             sftp.metadata(&sftp_path).await
         } else {
-            // Don't follow symlinks
             sftp.symlink_metadata(&sftp_path).await
         }
         .map_err(io::Error::other)?;
@@ -557,7 +601,6 @@ impl DistantApi for SshDistantApi {
 
         use distant_core::protocol::FileType;
 
-        // Determine file type
         let file_type = if attrs.is_dir() {
             FileType::Dir
         } else if attrs.is_symlink() {
@@ -566,7 +609,6 @@ impl DistantApi for SshDistantApi {
             FileType::File
         };
 
-        // Get canonical path if requested
         let canonical_path = if canonicalize {
             match sftp.canonicalize(&sftp_path).await {
                 Ok(p) => Some(PathBuf::from(p)),
@@ -576,7 +618,6 @@ impl DistantApi for SshDistantApi {
             None
         };
 
-        // Helper to convert SystemTime to u64 (seconds since UNIX_EPOCH)
         let systemtime_to_secs = |st: SystemTime| -> u64 {
             st.duration_since(SystemTime::UNIX_EPOCH)
                 .ok()
@@ -584,7 +625,6 @@ impl DistantApi for SshDistantApi {
                 .unwrap_or(0)
         };
 
-        // Get permissions - russh_sftp returns FilePermissions struct directly
         let perms = attrs.permissions();
         let unix_metadata = Some(distant_core::protocol::UnixMetadata {
             owner_read: perms.owner_read,
@@ -598,7 +638,6 @@ impl DistantApi for SshDistantApi {
             other_exec: perms.other_exec,
         });
 
-        // Build metadata
         Ok(Metadata {
             canonicalized_path: canonical_path,
             file_type,
@@ -630,74 +669,44 @@ impl DistantApi for SshDistantApi {
         let sftp = self.get_sftp().await?;
         let sftp_path = self.to_sftp_path(path)?;
 
-        // Convert Distant permissions to Unix mode
-        let mut mode = 0u32;
-
-        // Build mode from permission fields
-        if permissions.owner_read.unwrap_or(false) {
-            mode |= 0o400;
-        }
-        if permissions.owner_write.unwrap_or(false) {
-            mode |= 0o200;
-        }
-        if permissions.owner_exec.unwrap_or(false) {
-            mode |= 0o100;
-        }
-        if permissions.group_read.unwrap_or(false) {
-            mode |= 0o040;
-        }
-        if permissions.group_write.unwrap_or(false) {
-            mode |= 0o020;
-        }
-        if permissions.group_exec.unwrap_or(false) {
-            mode |= 0o010;
-        }
-        if permissions.other_read.unwrap_or(false) {
-            mode |= 0o004;
-        }
-        if permissions.other_write.unwrap_or(false) {
-            mode |= 0o002;
-        }
-        if permissions.other_exec.unwrap_or(false) {
-            mode |= 0o001;
+        // Apply permissions to the root path
+        let mut dirs = VecDeque::new();
+        if let Some(dir_path) = self
+            .apply_permissions(&sftp, &sftp_path, &permissions, &options)
+            .await?
+        {
+            dirs.push_back(dir_path);
         }
 
-        // If no permissions were set, use a default
-        if mode == 0 {
-            mode = 0o644; // Default: rw-r--r--
-        }
-
-        // Only set permissions field in FileAttributes to avoid changing ownership/timestamps
-        use russh_sftp::protocol::FileAttributes;
-        let new_attrs = FileAttributes {
-            size: None,
-            uid: None,
-            user: None,
-            gid: None,
-            group: None,
-            permissions: Some(mode),
-            atime: None,
-            mtime: None,
-        };
-
-        // Set metadata on the file (only permissions will be modified)
-        sftp.set_metadata(&sftp_path, new_attrs)
-            .await
-            .map_err(io::Error::other)?;
-
-        // Handle recursive option
+        // Recursively apply to directory contents via BFS
         if options.recursive {
-            // TODO: Implement recursive permission setting
-            // This would require walking the directory tree
-            debug!("Recursive permission setting not yet fully implemented");
+            while let Some(dir) = dirs.pop_front() {
+                let dir_entries = sftp.read_dir(&dir).await.map_err(io::Error::other)?;
+                for entry in dir_entries {
+                    let filename = entry.file_name();
+                    if filename == "." || filename == ".." {
+                        continue;
+                    }
+
+                    let entry_path = format!("{}/{}", dir, filename);
+                    match self
+                        .apply_permissions(&sftp, &entry_path, &permissions, &options)
+                        .await
+                    {
+                        Ok(Some(sub_dir)) => dirs.push_back(sub_dir),
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!("Failed to set permissions on {}: {}", entry_path, e);
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
     }
 
     async fn search(&self, _ctx: DistantCtx, _query: SearchQuery) -> io::Result<SearchId> {
-        // Search over SSH is complex and would require implementing a full search engine
-        // For now, return unsupported. Users can use proc_spawn with find/grep commands instead.
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Search is not supported over SSH. Use proc_spawn with find/grep commands instead.",
@@ -726,6 +735,16 @@ impl DistantApi for SshDistantApi {
 
         use crate::process::{spawn_pty, spawn_simple, Process, SpawnResult};
 
+        // Create cleanup closure that removes the process from tracking when it exits
+        let global_processes = Arc::downgrade(&self.processes);
+        let make_cleanup = |processes_ref: Weak<RwLock<HashMap<ProcessId, Process>>>| {
+            move |id: ProcessId| async move {
+                if let Some(processes) = processes_ref.upgrade() {
+                    processes.write().await.remove(&id);
+                }
+            }
+        };
+
         let SpawnResult {
             id,
             stdin,
@@ -739,6 +758,7 @@ impl DistantApi for SshDistantApi {
                     environment,
                     current_dir,
                     ctx.reply.clone_reply(),
+                    make_cleanup(global_processes),
                 )
                 .await?
             }
@@ -750,12 +770,12 @@ impl DistantApi for SshDistantApi {
                     current_dir,
                     size,
                     ctx.reply.clone_reply(),
+                    make_cleanup(global_processes),
                 )
                 .await?
             }
         };
 
-        // Store process for later management
         let process = Process {
             id,
             stdin_tx: Some(stdin),
@@ -764,6 +784,10 @@ impl DistantApi for SshDistantApi {
         };
 
         self.processes.write().await.insert(id, process);
+        debug!(
+            "[Conn {}] Spawned process {} successfully!",
+            ctx.connection_id, id
+        );
 
         Ok(id)
     }
@@ -773,7 +797,6 @@ impl DistantApi for SshDistantApi {
 
         let mut processes = self.processes.write().await;
         if let Some(process) = processes.get_mut(&id) {
-            // Send kill signal via the killer channel
             if let Some(killer) = process.kill_tx.take() {
                 let _ = killer.send(()).await;
             }
@@ -795,10 +818,10 @@ impl DistantApi for SshDistantApi {
         let processes = self.processes.read().await;
         if let Some(process) = processes.get(&id) {
             if let Some(stdin_tx) = &process.stdin_tx {
-                stdin_tx.send(data).await.map_err(|_| {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "Stdin channel closed")
-                })?;
-                Ok(())
+                stdin_tx
+                    .send(data)
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Stdin channel closed"))
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -827,10 +850,10 @@ impl DistantApi for SshDistantApi {
         let processes = self.processes.read().await;
         if let Some(process) = processes.get(&id) {
             if let Some(resize_tx) = &process.resize_tx {
-                resize_tx.send(size).await.map_err(|_| {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "Resize channel closed")
-                })?;
-                Ok(())
+                resize_tx
+                    .send(size)
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Resize channel closed"))
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -845,67 +868,99 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn system_info(&self, _ctx: DistantCtx) -> io::Result<SystemInfo> {
-        debug!("Reading system information");
+    async fn system_info(&self, ctx: DistantCtx) -> io::Result<SystemInfo> {
+        debug!("[Conn {}] Reading system information", ctx.connection_id);
 
-        use crate::utils::{execute_output, powershell_output};
+        let is_windows = self.family == SshFamily::Windows;
 
-        // Detect current working directory
-        let current_dir = {
-            let sftp = self.get_sftp().await?;
-            let path_str = sftp.canonicalize(".").await.map_err(io::Error::other)?;
-            PathBuf::from(path_str)
-        };
+        let current_dir = self
+            .cached_current_dir
+            .get_or_try_init(async {
+                let sftp = self.get_sftp().await?;
+                let path_str = sftp.canonicalize(".").await.map_err(io::Error::other)?;
+                let current_dir = PathBuf::from(&path_str);
 
-        // Get username
-        let username = if self.family == SshFamily::Windows {
-            let output = powershell_output(&self.session, "$env:USERNAME", None).await?;
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            let output = execute_output(&self.session, "whoami", None).await?;
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        };
+                // Fix Windows paths: /C:/... -> C:\...
+                let current_dir = if is_windows {
+                    current_dir
+                        .to_str()
+                        .and_then(crate::utils::convert_to_windows_path_string)
+                        .map(PathBuf::from)
+                        .unwrap_or(current_dir)
+                } else {
+                    current_dir
+                };
 
-        // Get shell
-        let shell = if self.family == SshFamily::Windows {
-            "powershell.exe".to_string()
-        } else {
-            let output = execute_output(&self.session, "echo $SHELL", None).await?;
-            let shell_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if shell_path.is_empty() {
-                "/bin/sh".to_string()
-            } else {
-                shell_path
-            }
-        };
+                Result::<_, io::Error>::Ok(current_dir)
+            })
+            .await?
+            .clone();
+
+        let session = &self.session;
+        let username = self
+            .cached_username
+            .get_or_try_init(crate::utils::query_username(session, is_windows))
+            .await?
+            .clone();
+
+        let shell = self
+            .cached_shell
+            .get_or_try_init(crate::utils::query_shell(session, is_windows))
+            .await?
+            .clone();
 
         Ok(SystemInfo {
             family: match self.family {
                 SshFamily::Unix => "unix".to_string(),
                 SshFamily::Windows => "windows".to_string(),
             },
-            os: if self.family == SshFamily::Windows {
+            os: if is_windows {
                 "windows".to_string()
             } else {
-                String::new() // Empty string for non-Windows as per test expectations
+                // Complex to determine over SSH without additional platform-specific commands
+                String::new()
             },
-            arch: String::new(), // Empty string as per test expectations
+            // Complex to determine over SSH without additional platform-specific commands
+            arch: String::new(),
             current_dir,
-            main_separator: if self.family == SshFamily::Windows {
-                '\\'
-            } else {
-                '/'
-            },
+            main_separator: if is_windows { '\\' } else { '/' },
             username,
             shell,
         })
     }
 
-    async fn version(&self, _ctx: DistantCtx) -> io::Result<Version> {
+    async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
+        debug!("[Conn {}] Querying capabilities", ctx.connection_id);
+
+        let capabilities = vec![
+            Version::CAP_EXEC.to_string(),
+            Version::CAP_FS_IO.to_string(),
+            Version::CAP_SYS_INFO.to_string(),
+        ];
+
+        use distant_core::protocol::semver;
+
+        let mut server_version: semver::Version = env!("CARGO_PKG_VERSION")
+            .parse()
+            .map_err(io::Error::other)?;
+
+        if server_version.build.is_empty() {
+            server_version.build =
+                semver::BuildMetadata::new(env!("CARGO_PKG_NAME")).map_err(io::Error::other)?;
+        } else {
+            let raw_build_str = format!(
+                "{}.{}",
+                server_version.build.as_str(),
+                env!("CARGO_PKG_NAME")
+            );
+            server_version.build =
+                semver::BuildMetadata::new(&raw_build_str).map_err(io::Error::other)?;
+        }
+
         Ok(Version {
-            protocol_version: PROTOCOL_VERSION.clone(),
-            server_version: env!("CARGO_PKG_VERSION").parse().unwrap(),
-            capabilities: vec![],
+            server_version,
+            protocol_version: PROTOCOL_VERSION,
+            capabilities,
         })
     }
 }

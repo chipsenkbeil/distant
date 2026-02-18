@@ -11,15 +11,17 @@ use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use distant_core::net::auth::{DummyAuthHandler, Verifier};
+use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, ClientConfig};
-use distant_core::net::common::{InmemoryTransport, OneshotListener};
+use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
+use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::{DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials};
 use log::*;
 use russh::client::{self, Handle};
@@ -245,7 +247,7 @@ impl SshAuthHandler for LocalSshAuthHandler {
     }
 }
 
-/// russh client handler
+/// Handles SSH client events from the russh connection, including host key verification.
 struct ClientHandler;
 
 #[async_trait]
@@ -256,7 +258,7 @@ impl client::Handler for ClientHandler {
         &mut self,
         _server_public_key: &russh::keys::PublicKey,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
-        // TODO: Implement proper host key verification
+        // TODO: Implement proper host key verification using known_hosts
         async { Ok(true) }
     }
 }
@@ -286,7 +288,6 @@ impl Ssh {
             .or(ssh_config.user.clone())
             .unwrap_or_else(whoami::username);
 
-        // Basic connection attempt logging (always shown at info level)
         info!(
             "SSH connection attempt: {}:{} as user '{}'",
             host.as_ref(),
@@ -302,70 +303,18 @@ impl Ssh {
         // Build russh configuration
         let config = Self::build_russh_config(&opts, &ssh_config)?;
 
-        // VERBOSE MODE: Comprehensive diagnostics
+        // Verbose diagnostics
         if opts.verbose {
-            info!("=== SSH Verbose Mode Enabled ===");
-            info!("  Target: {}:{}", host.as_ref(), port);
-            info!("  User: {}", user);
-            debug!("  Identity files: {:?}", opts.identity_files);
-            debug!("  Identities only: {:?}", opts.identities_only);
-            debug!("  Proxy command: {:?}", opts.proxy_command);
-            debug!("  Known hosts files: {:?}", opts.user_known_hosts_files);
-            debug!("  Russh keepalive: {:?}", config.keepalive_interval);
-            info!("================================");
-
-            // TCP CONNECTIVITY PRE-TEST (verbose mode only)
-            info!(
-                "Running TCP connectivity pre-test to {}:{}...",
-                host.as_ref(),
-                port
-            );
-            match tokio::time::timeout(
-                Duration::from_secs(10),
-                tokio::net::TcpStream::connect((host.as_ref(), port)),
-            )
-            .await
-            {
-                Ok(Ok(stream)) => {
-                    let peer = stream.peer_addr()?;
-                    let local = stream.local_addr()?;
-                    info!("✓ TCP pre-test SUCCESS");
-                    info!("  Local address: {}", local);
-                    info!("  Peer address: {}", peer);
-                    drop(stream); // Close test connection
-                }
-                Ok(Err(e)) => {
-                    error!("✗ TCP pre-test FAILED");
-                    error!("  Error: {}", e);
-                    error!("  Error kind: {:?}", e.kind());
-                    error!("  OS error code: {:?}", e.raw_os_error());
-                    return Err(io::Error::new(
-                        io::ErrorKind::ConnectionRefused,
-                        format!(
-                            "TCP connectivity pre-test failed to {}:{}: {} (kind: {:?}, os: {:?})",
-                            host.as_ref(),
-                            port,
-                            e,
-                            e.kind(),
-                            e.raw_os_error()
-                        ),
-                    ));
-                }
-                Err(_) => {
-                    error!("✗ TCP pre-test TIMEOUT after 10 seconds");
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!(
-                            "TCP connectivity pre-test timed out to {}:{} after 10s",
-                            host.as_ref(),
-                            port
-                        ),
-                    ));
-                }
-            }
+            info!("SSH verbose mode enabled");
+            info!("Target: {}:{}", host.as_ref(), port);
+            info!("User: {}", user);
+            debug!("Identity files: {:?}", opts.identity_files);
+            debug!("Identities only: {:?}", opts.identities_only);
+            debug!("Proxy command: {:?}", opts.proxy_command);
+            debug!("Known hosts files: {:?}", opts.user_known_hosts_files);
+            debug!("Russh keepalive: {:?}", config.keepalive_interval);
         }
 
-        // RUSSH CONNECTION ATTEMPT with enhanced error handling
         debug!(
             "Initiating russh::client::connect to {}:{}...",
             host.as_ref(),
@@ -378,21 +327,19 @@ impl Ssh {
 
         let handle = match connect_result {
             Ok(h) => {
-                info!("✓ SSH connection established to {}:{}", host.as_ref(), port);
+                info!("SSH connection established to {}:{}", host.as_ref(), port);
                 h
             }
             Err(e) => {
-                // Enhanced error reporting
-                error!("✗ SSH connection FAILED to {}:{}", host.as_ref(), port);
-                error!("  Russh error: {}", e);
-                debug!("  Russh error debug: {:?}", e);
+                error!("SSH connection failed to {}:{}", host.as_ref(), port);
+                error!("Russh error: {}", e);
+                debug!("Russh error debug: {:?}", e);
 
-                // Try to extract underlying IO error for detailed diagnostics
                 let detailed_msg =
                     if let Some(io_err) = e.source().and_then(|s| s.downcast_ref::<io::Error>()) {
-                        error!("  Underlying IO error: {}", io_err);
-                        error!("  IO error kind: {:?}", io_err.kind());
-                        error!("  OS error code: {:?}", io_err.raw_os_error());
+                        error!("Underlying IO error: {}", io_err);
+                        error!("IO error kind: {:?}", io_err.kind());
+                        error!("OS error code: {:?}", io_err.raw_os_error());
 
                         format!(
                         "SSH connection to {}:{} failed: {} (IO error: {}, kind: {:?}, os: {:?})",
@@ -427,11 +374,10 @@ impl Ssh {
 
     fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
         let config_path = dirs::home_dir()
-            .map(|h| h.join(".ssh/config"))
+            .map(|h| h.join(".ssh").join("config"))
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No home directory found"))?;
 
         if !config_path.exists() {
-            // Return empty host params with default algorithms
             use ssh2_config_rs::DefaultAlgorithms;
             return Ok(HostParams::new(&DefaultAlgorithms::default()));
         }
@@ -455,10 +401,8 @@ impl Ssh {
     ) -> io::Result<russh::client::Config> {
         let mut config = russh::client::Config::default();
 
-        // Apply SSH config algorithms if present
         config.preferred = Self::build_preferred_algorithms(params);
 
-        // Set keepalive if configured
         if let Some(interval) = params.server_alive_interval {
             config.keepalive_interval = Some(interval);
         }
@@ -467,9 +411,8 @@ impl Ssh {
     }
 
     fn build_preferred_algorithms(_params: &HostParams) -> russh::Preferred {
-        // TODO: Map KEX, ciphers, and MACs from SSH config to russh types
-        // For now, use defaults
-
+        // Using defaults; SSH config algorithm preferences (KexAlgorithms, Ciphers, MACs)
+        // are not yet applied.
         russh::Preferred::default()
     }
 
@@ -490,7 +433,6 @@ impl Ssh {
 
     /// Authenticates the [`Ssh`] if not already authenticated
     pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
-        // If already authenticated, exit
         if self.authenticated {
             return Ok(());
         }
@@ -500,10 +442,8 @@ impl Ssh {
             for key_file in &self.opts.identity_files {
                 match self.load_private_key(key_file).await {
                     Ok(key) => {
-                        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
-                            Arc::new(key),
-                            None, // Use default hash algorithm
-                        );
+                        let key_with_hash =
+                            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
 
                         let auth_res = self
                             .handle
@@ -567,7 +507,6 @@ impl Ssh {
 
     /// Detects whether the family is Unix or Windows
     pub async fn detect_family(&self) -> io::Result<SshFamily> {
-        // Check if we already have a cached value
         {
             let guard = self.cached_family.lock().await;
             if let Some(family) = *guard {
@@ -575,7 +514,6 @@ impl Ssh {
             }
         }
 
-        // Use utils::is_windows to detect
         let is_windows = utils::is_windows(&self.handle).await?;
         let family = if is_windows {
             SshFamily::Windows
@@ -583,7 +521,6 @@ impl Ssh {
             SshFamily::Unix
         };
 
-        // Cache the result
         {
             let mut guard = self.cached_family.lock().await;
             *guard = Some(family);
@@ -595,12 +532,10 @@ impl Ssh {
     /// Converts into a distant client
     pub async fn into_distant_client(self) -> io::Result<DistantClient> {
         let family = self.detect_family().await?;
-        let api = SshDistantApi::new(self.handle, family).await?;
+        let api = SshDistantApi::new(self.handle, family);
 
-        // Create inmemory transport for local-to-remote API communication
         let (t1, t2) = InmemoryTransport::pair(100);
 
-        // Start local server using our API implementation
         let server = Server::new()
             .handler(DistantApiServerHandler::new(api))
             .verifier(Verifier::none());
@@ -609,7 +544,6 @@ impl Ssh {
             let _ = server.start(OneshotListener::from_value(t2));
         });
 
-        // Connect to local server
         let client = Client::build()
             .auth_handler(DummyAuthHandler)
             .config(ClientConfig::default())
@@ -624,12 +558,10 @@ impl Ssh {
     /// Converts into a pair of distant client and server ref
     pub async fn into_distant_pair(self) -> io::Result<(DistantClient, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshDistantApi::new(self.handle, family).await?;
+        let api = SshDistantApi::new(self.handle, family);
 
-        // Create inmemory transport
         let (t1, t2) = InmemoryTransport::pair(100);
 
-        // Start server
         let server = Server::new()
             .handler(DistantApiServerHandler::new(api))
             .verifier(Verifier::none());
@@ -638,7 +570,6 @@ impl Ssh {
             .start(OneshotListener::from_value(t2))
             .map_err(io::Error::other)?;
 
-        // Connect to server
         let client = Client::build()
             .auth_handler(DummyAuthHandler)
             .config(ClientConfig::default())
@@ -650,26 +581,177 @@ impl Ssh {
         Ok((client, server_ref))
     }
 
-    /// Launch distant server on remote machine and connect to it
+    /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
+    /// for connecting to the launched server.
     pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
         debug!("Launching distant server: {} {}", opts.binary, opts.args);
 
-        // TODO: Implement launch logic
-        // This needs to execute the distant binary on remote machine and capture output
+        let family = self.detect_family().await?;
+        trace!("Detected family: {}", family.as_static_str());
 
-        Err(io::Error::other(
-            "Launch not yet implemented in russh migration",
-        ))
+        use distant_core::net::common::Host;
+
+        let host = self
+            .host()
+            .parse::<Host>()
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
+
+        // Open a channel and request a PTY for launching the distant server
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(io::Error::other)?;
+
+        channel
+            .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
+            .await
+            .map_err(io::Error::other)?;
+
+        channel
+            .request_shell(true)
+            .await
+            .map_err(io::Error::other)?;
+
+        // Build arguments for distant to run listen subcommand
+        let mut args = vec![
+            String::from("server"),
+            String::from("listen"),
+            String::from("--daemon"),
+            String::from("--host"),
+            String::from("ssh"),
+        ];
+        args.extend(match family {
+            SshFamily::Windows => winsplit::split(&opts.args),
+            SshFamily::Unix => shell_words::split(&opts.args)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+        });
+
+        let cmd = format!("{} {}\r\n", opts.binary, args.join(" "));
+        debug!("Writing launch command: {}", cmd.trim());
+
+        use std::io::Cursor;
+        channel
+            .data(Cursor::new(cmd.into_bytes()))
+            .await
+            .map_err(io::Error::other)?;
+
+        // Read stdout from the PTY and look for credentials
+        let (mut read_half, _write_half) = channel.split();
+
+        let timeout = opts.timeout;
+        let start_instant = std::time::Instant::now();
+        let mut stdout = Vec::new();
+
+        loop {
+            // Check for timeout
+            if start_instant.elapsed() >= timeout {
+                // Clean the bytes before including by removing anything that isn't ascii
+                // and isn't a control character (except whitespace)
+                stdout.retain(|b: &u8| {
+                    b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
+                });
+
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!(
+                        "Failed to spawn server: '{}'",
+                        shell_words::quote(&String::from_utf8_lossy(&stdout))
+                    ),
+                ));
+            }
+
+            let remaining = timeout
+                .checked_sub(start_instant.elapsed())
+                .unwrap_or(Duration::from_millis(1));
+
+            match tokio::time::timeout(remaining, read_half.wait()).await {
+                Ok(Some(russh::ChannelMsg::Data { ref data })) => {
+                    trace!("Received {} more bytes over stdout", data.len());
+                    stdout.extend_from_slice(data);
+
+                    if let Some(mut credentials) =
+                        DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
+                    {
+                        credentials.host = host;
+                        debug!("Got credentials from launched server");
+                        return Ok(credentials);
+                    }
+                }
+                Ok(Some(_)) => {
+                    // Other channel messages, continue
+                }
+                Ok(None) => {
+                    // Channel closed without finding credentials
+                    stdout.retain(|b: &u8| {
+                        b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
+                    });
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!(
+                            "Channel closed before credentials found: '{}'",
+                            shell_words::quote(&String::from_utf8_lossy(&stdout))
+                        ),
+                    ));
+                }
+                Err(_) => {
+                    // Timeout on this read iteration, will be caught at loop top
+                }
+            }
+        }
     }
 
-    /// Launch and connect to distant server
+    /// Consume [`Ssh`] and launch a distant server, then connect to it as a client.
     pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
-        let _credentials = self.launch(opts).await?;
+        trace!("ssh::launch_and_connect({:?})", opts);
 
-        // TODO: Parse credentials and connect
+        let timeout = opts.timeout;
 
-        Err(io::Error::other(
-            "Launch and connect not yet implemented in russh migration",
-        ))
+        // Determine distinct candidate IP addresses for connecting
+        debug!("Looking up host {} @ port {}", self.host, self.port);
+        let mut candidate_ips = tokio::net::lookup_host(format!("{}:{}", self.host, self.port))
+            .await
+            .map_err(|x| {
+                io::Error::new(
+                    x.kind(),
+                    format!("{} needs to be resolvable outside of ssh: {}", self.host, x),
+                )
+            })?
+            .map(|addr| addr.ip())
+            .collect::<Vec<IpAddr>>();
+        candidate_ips.sort_unstable();
+        candidate_ips.dedup();
+        if candidate_ips.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("Unable to resolve {}:{}", self.host, self.port),
+            ));
+        }
+
+        let credentials = self.launch(opts).await?;
+        let key = credentials.key;
+
+        // Try each IP address with the same port to see if one works
+        let mut err = None;
+        for ip in candidate_ips {
+            let addr = SocketAddr::new(ip, credentials.port);
+            debug!("Attempting to connect to distant server @ {}", addr);
+            match Client::tcp(addr)
+                .auth_handler(AuthHandlerMap::new().with_static_key(key.clone()))
+                .connect_timeout(timeout)
+                .version(Version::new(
+                    PROTOCOL_VERSION.major,
+                    PROTOCOL_VERSION.minor,
+                    PROTOCOL_VERSION.patch,
+                ))
+                .connect()
+                .await
+            {
+                Ok(client) => return Ok(client),
+                Err(x) => err = Some(x),
+            }
+        }
+
+        Err(err.expect("Err set above"))
     }
 }

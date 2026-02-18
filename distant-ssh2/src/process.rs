@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::io;
 use std::sync::Arc;
 
@@ -26,20 +27,38 @@ pub struct SpawnResult {
 }
 
 /// Spawns a simple (non-PTY) process
-pub async fn spawn_simple(
+pub async fn spawn_simple<F, Fut>(
     handle: &Handle<ClientHandler>,
     cmd: &str,
-    _environment: Environment,
-    _current_dir: Option<std::path::PathBuf>,
+    environment: Environment,
+    current_dir: Option<std::path::PathBuf>,
     reply: Box<dyn Reply<Data = Response>>,
-) -> io::Result<SpawnResult> {
+    cleanup: F,
+) -> io::Result<SpawnResult>
+where
+    F: FnOnce(ProcessId) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    if current_dir.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "current_dir is not supported for SSH process spawning",
+        ));
+    }
+
     // Open a channel for command execution
     let channel = handle
         .channel_open_session()
         .await
         .map_err(io::Error::other)?;
 
-    // Execute the command
+    // Set environment variables before executing the command
+    for (key, value) in environment.iter() {
+        // set_env may fail if the server rejects it (AcceptEnv), but we ignore failures
+        let _ = channel.set_env(true, key, value).await;
+    }
+
+    // Execute the command via SSH channel
     channel.exec(true, cmd).await.map_err(io::Error::other)?;
 
     let id = rand::random();
@@ -74,7 +93,6 @@ pub async fn spawn_simple(
                 }
                 ChannelMsg::ExtendedData { ref data, ext } => {
                     if ext == 1 {
-                        // stderr
                         let _ = stderr_reply.send(Response::ProcStderr {
                             id: msg_id,
                             data: data.to_vec(),
@@ -100,6 +118,9 @@ pub async fn spawn_simple(
             success: !killed && exit_status.map(|s| s == 0).unwrap_or(false),
             code: exit_status.map(|s| s as i32),
         });
+
+        // Run cleanup to remove process from tracking
+        cleanup(msg_id).await;
     });
 
     // Spawn task to handle stdin and kill signals
@@ -108,16 +129,13 @@ pub async fn spawn_simple(
         loop {
             tokio::select! {
                 Some(data) = stdin_rx.recv() => {
-                    // data() expects an AsyncRead, so wrap the Vec in Cursor
                     use std::io::Cursor;
                     if write_half.data(Cursor::new(data)).await.is_err() {
                         break;
                     }
                 }
                 Some(()) = kill_rx.recv() => {
-                    // Mark as killed
                     *was_killed.lock().await = true;
-                    // Kill signal received
                     let _ = write_half.eof().await;
                     break;
                 }
@@ -138,30 +156,48 @@ pub async fn spawn_simple(
 }
 
 /// Spawns a PTY process
-pub async fn spawn_pty(
+pub async fn spawn_pty<F, Fut>(
     handle: &Handle<ClientHandler>,
     cmd: &str,
     environment: Environment,
-    _current_dir: Option<std::path::PathBuf>,
+    current_dir: Option<std::path::PathBuf>,
     size: PtySize,
     reply: Box<dyn Reply<Data = Response>>,
-) -> io::Result<SpawnResult> {
+    cleanup: F,
+) -> io::Result<SpawnResult>
+where
+    F: FnOnce(ProcessId) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    if current_dir.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "current_dir is not supported for SSH process spawning",
+        ));
+    }
+
     // Open a channel for PTY
     let channel = handle
         .channel_open_session()
         .await
         .map_err(io::Error::other)?;
 
-    // Request PTY with specified size
+    // Set environment variables before requesting PTY
+    // Extract TERM for PTY request, but still pass all env vars via set_env
     let term_type = environment
         .get("TERM")
-        .map(|s| s.as_str())
-        .unwrap_or("xterm-256color");
+        .map(|s| s.as_str().to_string())
+        .unwrap_or_else(|| "xterm-256color".to_string());
 
+    for (key, value) in environment.iter() {
+        let _ = channel.set_env(true, key, value).await;
+    }
+
+    // Request PTY with specified size
     channel
         .request_pty(
             true,
-            term_type,
+            &term_type,
             size.cols as u32,
             size.rows as u32,
             size.pixel_width as u32,
@@ -171,7 +207,7 @@ pub async fn spawn_pty(
         .await
         .map_err(io::Error::other)?;
 
-    // Execute the command (or shell if cmd is empty)
+    // Run the command (or request a shell if cmd is empty)
     if cmd.is_empty() {
         channel
             .request_shell(true)
@@ -230,6 +266,9 @@ pub async fn spawn_pty(
             success: !killed && exit_status.map(|s| s == 0).unwrap_or(false),
             code: exit_status.map(|s| s as i32),
         });
+
+        // Run cleanup to remove process from tracking
+        cleanup(msg_id).await;
     });
 
     // Spawn task to handle stdin, kill signals, and PTY resize
@@ -238,21 +277,17 @@ pub async fn spawn_pty(
         loop {
             tokio::select! {
                 Some(data) = stdin_rx.recv() => {
-                    // data() expects an AsyncRead, so wrap the Vec in Cursor
                     use std::io::Cursor;
                     if write_half.data(Cursor::new(data)).await.is_err() {
                         break;
                     }
                 }
                 Some(()) = kill_rx.recv() => {
-                    // Mark as killed
                     *was_killed.lock().await = true;
-                    // Kill signal received
                     let _ = write_half.eof().await;
                     break;
                 }
                 Some(new_size) = resize_rx.recv() => {
-                    // Resize PTY
                     if write_half.window_change(
                         new_size.cols as u32,
                         new_size.rows as u32,

@@ -6,7 +6,7 @@ use typed_path::{Components, WindowsComponent, WindowsPath, WindowsPathBuf};
 
 use crate::ClientHandler;
 
-const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(1));
+const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(30));
 
 #[allow(dead_code)]
 const READER_PAUSE_MILLIS: u64 = 100;
@@ -49,9 +49,11 @@ pub async fn powershell_output(
 pub async fn execute_output(
     handle: &Handle<ClientHandler>,
     cmd: &str,
-    _timeout: impl Into<Option<Duration>>,
+    timeout: impl Into<Option<Duration>>,
 ) -> io::Result<ExecOutput> {
     use russh::ChannelMsg;
+
+    let timeout_duration = timeout.into();
 
     // Open a channel
     let mut channel = handle
@@ -62,48 +64,99 @@ pub async fn execute_output(
     // Execute command
     channel.exec(true, cmd).await.map_err(to_other_error)?;
 
-    // Read output via channel messages
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut exit_status: Option<u32> = None;
-    let mut got_eof = false;
+    let read_future = async {
+        // Read output via channel messages
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut exit_status: Option<u32> = None;
+        let mut got_eof = false;
 
-    while let Some(msg) = channel.wait().await {
-        match msg {
-            ChannelMsg::Data { ref data } => {
-                stdout.extend_from_slice(data);
-            }
-            ChannelMsg::ExtendedData { ref data, ext } => {
-                if ext == 1 {
-                    // stderr
-                    stderr.extend_from_slice(data);
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { ref data } => {
+                    stdout.extend_from_slice(data);
                 }
-            }
-            ChannelMsg::ExitStatus {
-                exit_status: status,
-            } => {
-                exit_status = Some(status);
-                // If we already got EOF, we can exit now
-                if got_eof {
-                    break;
+                ChannelMsg::ExtendedData { ref data, ext } => {
+                    if ext == 1 {
+                        stderr.extend_from_slice(data);
+                    }
                 }
-            }
-            ChannelMsg::Eof => {
-                got_eof = true;
-                // If we already got exit status, we can exit now
-                if exit_status.is_some() {
-                    break;
+                ChannelMsg::ExitStatus {
+                    exit_status: status,
+                } => {
+                    exit_status = Some(status);
+                    if got_eof {
+                        break;
+                    }
                 }
+                ChannelMsg::Eof => {
+                    got_eof = true;
+                    if exit_status.is_some() {
+                        break;
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
-    }
 
-    Ok(ExecOutput {
-        success: exit_status.map(|s| s == 0).unwrap_or(false),
-        stdout,
-        stderr,
-    })
+        Ok(ExecOutput {
+            success: exit_status.map(|s| s == 0).unwrap_or(false),
+            stdout,
+            stderr,
+        })
+    };
+
+    if let Some(duration) = timeout_duration {
+        tokio::time::timeout(duration, read_future)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "SSH command timed out"))?
+    } else {
+        read_future.await
+    }
+}
+
+/// Query remote system for name of current user
+pub async fn query_username(
+    handle: &Handle<ClientHandler>,
+    is_windows: bool,
+) -> io::Result<String> {
+    if is_windows {
+        // Will get DOMAIN\USERNAME as output -- needed because USERNAME isn't set on
+        // Github's Windows CI (it sets USER instead)
+        let output = powershell_output(
+            handle,
+            "[System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
+            SSH_EXEC_TIMEOUT,
+        )
+        .await?;
+
+        let output = String::from_utf8_lossy(&output.stdout);
+        let output = match output.split_once('\\') {
+            Some((_, username)) => username,
+            None => output.as_ref(),
+        };
+
+        Ok(output.trim().to_string())
+    } else {
+        let output = execute_output(handle, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+}
+
+/// Query remote system for the default shell of current user
+pub async fn query_shell(handle: &Handle<ClientHandler>, is_windows: bool) -> io::Result<String> {
+    let output = if is_windows {
+        powershell_output(
+            handle,
+            "[Environment]::GetEnvironmentVariable('ComSpec')",
+            SSH_EXEC_TIMEOUT,
+        )
+        .await?
+    } else {
+        execute_output(handle, "/bin/sh -c 'echo $SHELL'", SSH_EXEC_TIMEOUT).await?
+    };
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 pub fn to_other_error<E>(err: E) -> io::Error
