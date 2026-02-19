@@ -1,5 +1,6 @@
-use derive_more::{Display, Error};
 use std::str::FromStr;
+
+use derive_more::{Display, Error};
 use typed_path::{Utf8UnixPath, Utf8WindowsPath};
 
 /// Represents a shell to execute on the remote machine.

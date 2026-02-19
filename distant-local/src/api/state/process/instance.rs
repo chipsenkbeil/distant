@@ -157,10 +157,7 @@ impl ProcessInstance {
     {
         if let Some(task) = self.wait_task.take() {
             tokio::spawn(async move {
-                f(task
-                    .await
-                    .unwrap_or_else(|x| Err(io::Error::new(io::ErrorKind::Other, x))))
-                .await
+                f(task.await.unwrap_or_else(|x| Err(io::Error::other(x)))).await
             });
         }
     }

@@ -212,14 +212,20 @@ impl Options {
                         //
 
                         *current_dir = current_dir.take().or(config.server.listen.current_dir);
-                        if host.is_default() && config.server.listen.host.is_some() {
-                            *host = Value::Explicit(config.server.listen.host.unwrap());
+                        if host.is_default() {
+                            if let Some(host_value) = config.server.listen.host {
+                                *host = Value::Explicit(host_value);
+                            }
                         }
-                        if port.is_default() && config.server.listen.port.is_some() {
-                            *port = Value::Explicit(config.server.listen.port.unwrap());
+                        if port.is_default() {
+                            if let Some(port_value) = config.server.listen.port {
+                                *port = Value::Explicit(port_value);
+                            }
                         }
-                        if shutdown.is_default() && config.server.listen.shutdown.is_some() {
-                            *shutdown = Value::Explicit(config.server.listen.shutdown.unwrap());
+                        if shutdown.is_default() {
+                            if let Some(shutdown_value) = config.server.listen.shutdown {
+                                *shutdown = Value::Explicit(shutdown_value);
+                            }
                         }
                         if !*use_ipv6 && config.server.listen.use_ipv6 {
                             *use_ipv6 = true;
@@ -242,11 +248,10 @@ impl Options {
                             watch.watch_compare_contents = true;
                         }
 
-                        if watch.watch_debounce_timeout.is_default()
-                            && config.server.watch.debounce_timeout.is_some()
-                        {
-                            watch.watch_debounce_timeout =
-                                Value::Explicit(config.server.watch.debounce_timeout.unwrap());
+                        if watch.watch_debounce_timeout.is_default() {
+                            if let Some(debounce_timeout) = config.server.watch.debounce_timeout {
+                                watch.watch_debounce_timeout = Value::Explicit(debounce_timeout);
+                            }
                         }
 
                         watch.watch_debounce_tick_rate = watch
@@ -1178,12 +1183,12 @@ pub enum ServerSubcommand {
         /// There are three options here:
         ///
         /// 1. `ssh`: the server will reply from the IP address that the SSH
-        /// connection came from (as found in the SSH_CONNECTION environment variable). This is
-        /// useful for multihomed servers.
+        ///    connection came from (as found in the SSH_CONNECTION environment variable). This is
+        ///    useful for multihomed servers.
         ///
         /// 2. `any`: the server will reply on the default interface and will not bind to
-        /// a particular IP address. This can be useful if the connection is made through ssh or
-        /// another tool that makes the SSH connection appear to come from localhost.
+        ///    a particular IP address. This can be useful if the connection is made through ssh or
+        ///    another tool that makes the SSH connection appear to come from localhost.
         ///
         /// 3. `IP`: the server will attempt to bind to the specified IP address.
         #[clap(long, value_name = "ssh|any|IP", default_value_t = Value::Default(BindAddress::Any))]
@@ -1274,12 +1279,14 @@ pub struct ServerListenWatchOptions {
 /// Represents the format to use for output from a command.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 #[clap(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Format {
     /// Sends and receives data in JSON format.
     Json,
 
     /// Commands are traditional shell commands and output responses are inline with what is
     /// expected of a program's output in a shell.
+    #[default]
     Shell,
 }
 
@@ -1287,12 +1294,6 @@ impl Format {
     /// Returns true if json format
     pub fn is_json(self) -> bool {
         matches!(self, Self::Json)
-    }
-}
-
-impl Default for Format {
-    fn default() -> Self {
-        Self::Shell
     }
 }
 

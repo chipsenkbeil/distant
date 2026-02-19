@@ -164,7 +164,7 @@ impl FromStr for Map {
 
                         // If we get a quote and have an even number of preceding backslashes,
                         // this is considered a closing quote and we've found our split index
-                        } else if b == b'"' && backslash_cnt % 2 == 0 {
+                        } else if b == b'"' && backslash_cnt.is_multiple_of(2) {
                             split_idx = Some(i);
                             break;
 

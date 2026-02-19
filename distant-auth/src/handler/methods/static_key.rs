@@ -34,6 +34,7 @@ impl<K> StaticKeyAuthMethodHandler<K> {
 
             #[async_trait]
             impl AuthMethodHandler for __AuthMethodHandler {
+                #[allow(clippy::diverging_sub_expression)]
                 async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
                     unreachable!("on_challenge should be handled by StaticKeyAuthMethodHandler");
                 }

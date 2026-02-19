@@ -7,10 +7,10 @@ use std::time::Duration;
 use anyhow::Context;
 use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
-use distant_core::protocol::semver;
 use distant_core::protocol::{
-    self, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery, SearchQueryContentsMatch,
-    SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions, SystemInfo, Version,
+    self, semver, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
+    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
+    SystemInfo, Version,
 };
 use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;

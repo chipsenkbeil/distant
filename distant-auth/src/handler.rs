@@ -152,9 +152,8 @@ impl AuthHandlerMap {
         &mut self,
     ) -> io::Result<&mut (dyn AuthMethodHandler + 'static)> {
         let id = self.active.clone();
-        self.get_mut_active_method_handler().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, format!("No active handler for {id}"))
-        })
+        self.get_mut_active_method_handler()
+            .ok_or_else(|| io::Error::other(format!("No active handler for {id}")))
     }
 
     /// Retrieves a mutable reference to the active [`AuthMethodHandler`] with the specified `id`.

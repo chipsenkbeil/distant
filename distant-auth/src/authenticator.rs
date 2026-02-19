@@ -9,7 +9,7 @@ use crate::msg::*;
 #[async_trait]
 pub trait Authenticate {
     /// Performs authentication by leveraging the `handler` for any received challenge.
-    async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()>;
+    async fn authenticate(&mut self, mut handler: impl AuthHandler) -> io::Result<()>;
 }
 
 /// Represents an interface for submitting challenges for authentication.

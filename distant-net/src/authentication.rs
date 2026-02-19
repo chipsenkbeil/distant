@@ -64,7 +64,7 @@ impl<T> Authenticate for FramedTransport<T>
 where
     T: Transport,
 {
-    async fn authenticate(&mut self, mut handler: impl AuthHandler + Send) -> io::Result<()> {
+    async fn authenticate(&mut self, mut handler: impl AuthHandler) -> io::Result<()> {
         loop {
             trace!("Authenticate::authenticate waiting on next authentication frame");
             match next_frame_as!(self, Authentication) {

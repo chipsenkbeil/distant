@@ -25,7 +25,7 @@ jobs:
           - { os: windows-latest }
           - { os: ubuntu-latest }
     env:
-      RUSTFLAGS: -Dwarnings
+      RUSTFLAGS: -Dwarnings --cfg ci
     steps:
       - name: Ensure windows git checkout keeps \n line ending
         run: |
@@ -104,64 +104,32 @@ jobs:
           key: "ci-tests-${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.target }}"
       - name: Check Cargo availability
         run: cargo --version
-      - uses: nick-fields/retry@v2
-        name: Install OpenSSH on Windows
+      - name: Configure Windows for SSH testing
         if: matrix.os == 'windows-latest'
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          shell: pwsh
-          command: |
-            # From https://gist.github.com/inevity/a0d7b9f1c5ba5a813917b92736122797
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            function Unzip
-            {
-                param([string]$zipfile, [string]$outpath)
-
-                [System.IO.Compression.ZipFile]::ExtractToDirectory($zipfile, $outpath)
-            }
-
-            $url = 'https://github.com/PowerShell/Win32-OpenSSH/releases/latest/'
-            $request = [System.Net.WebRequest]::Create($url)
-            $request.AllowAutoRedirect=$false
-            $response=$request.GetResponse()
-            $file = $([String]$response.GetResponseHeader("Location")).Replace('tag','download') + '/OpenSSH-Win64.zip'
-
-            $client = new-object system.Net.Webclient;
-            $client.DownloadFile($file ,"c:\\OpenSSH-Win64.zip")
-
-            Unzip "c:\\OpenSSH-Win64.zip" "C:\Program Files\" 
-            mv "c:\\Program Files\OpenSSH-Win64" "C:\Program Files\OpenSSH\" 
-
-            powershell.exe -ExecutionPolicy Bypass -File "C:\Program Files\OpenSSH\install-sshd.ps1"
-
-            New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22,49152-65535
-
-            net start sshd
-
-            Set-Service sshd -StartupType Automatic
-            Set-Service ssh-agent -StartupType Automatic
-
-            cd "C:\Program Files\OpenSSH\"
-            Powershell.exe -ExecutionPolicy Bypass -Command '. .\FixHostFilePermissions.ps1 -Confirm:$false'
-
-            $registryPath = "HKLM:\SOFTWARE\OpenSSH\"
-            $Name = "DefaultShell"
-            $value = "C:\windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-
-            IF(!(Test-Path $registryPath))
-              {
-                New-Item -Path $registryPath -Force
-                New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType String -Force
-            } ELSE {
-                New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType String -Force
-            }
+        shell: pwsh
+        run: |
+          # Windows Server 2025 has OpenSSH installed by default
+          # We don't start the system sshd service as our tests spawn their own sshd instances
+          
+          # Ensure ssh-agent is available for key management
+          Set-Service ssh-agent -StartupType Automatic
+          Start-Service ssh-agent
+          
+          # Configure firewall for SSH tests on high ports used by tests
+          New-NetFirewallRule -Name sshd-tests -DisplayName 'OpenSSH Tests (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 49152-65535
+          
+          # Ensure we have proper permissions for file operations
+          # Grant current user SeCreateSymbolicLinkPrivilege if needed for tests
       - name: Extend Windows retry count to be more resilient
-        run: echo "NEXTEST_RETRIES=9" >> $GITHUB_ENV
+        run: echo "NEXTEST_RETRIES=3" >> $GITHUB_ENV
+        shell: bash
+        if: matrix.os == 'windows-latest'
+      - name: Set faster timeouts for Windows SSH debugging
+        run: echo "NEXTEST_TEST_TIMEOUT=30s" >> $GITHUB_ENV
         shell: bash
         if: matrix.os == 'windows-latest'
       - name: Ensure /run/sshd exists on Unix
-        run: mkdir -p /run/sshd
+        run: sudo mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
       - name: Run all workspace tests (all features)
         run: cargo nextest run --profile ci --release --all-features --workspace

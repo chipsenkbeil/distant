@@ -119,16 +119,18 @@ impl WatcherBuilder {
                         // https://github.com/notify-rs/notify/issues/423
                         WatcherErrorKind::Io(x) if x.raw_os_error() == Some(38) => {
                             warn!("Recommended watcher is unsupported! Falling back to polling watcher!");
-                            Ok(spawn_task!(new_debouncer!(PollWatcher, tx)
-                                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?))
+                            Ok(spawn_task!(
+                                new_debouncer!(PollWatcher, tx).map_err(io::Error::other)?
+                            ))
                         }
-                        _ => Err(io::Error::new(io::ErrorKind::Other, x)),
+                        _ => Err(io::Error::other(x)),
                     }
                 }
             }
         } else {
-            Ok(spawn_task!(new_debouncer!(PollWatcher, tx)
-                .map_err(|x| io::Error::new(io::ErrorKind::Other, x))?))
+            Ok(spawn_task!(
+                new_debouncer!(PollWatcher, tx).map_err(io::Error::other)?
+            ))
         }
     }
 }
@@ -184,9 +186,9 @@ impl WatcherChannel {
                 cb,
             })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal watcher task closed"))?;
+            .map_err(|_| io::Error::other("Internal watcher task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to watch dropped"))?
+            .map_err(|_| io::Error::other("Response to watch dropped"))?
     }
 
     /// Unwatch a path for a specific connection denoted by the id
@@ -198,9 +200,9 @@ impl WatcherChannel {
         self.tx
             .send(InnerWatcherMsg::Unwatch { id, path, cb })
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Internal watcher task closed"))?;
+            .map_err(|_| io::Error::other("Internal watcher task closed"))?;
         rx.await
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Response to unwatch dropped"))?
+            .map_err(|_| io::Error::other("Response to unwatch dropped"))?
     }
 }
 
@@ -262,7 +264,7 @@ async fn watcher_task<W>(
                                 RecursiveMode::NonRecursive
                             },
                         )
-                        .map_err(|x| io::Error::new(io::ErrorKind::Other, x));
+                        .map_err(io::Error::other);
 
                     // If we succeeded, store our registered path and set the tracking cnt to 1
                     if res.is_ok() {
@@ -292,28 +294,22 @@ async fn watcher_task<W>(
                     // 2. If we removed nothing from our path list, we want to return an error
                     // 3. Otherwise, we return okay because we succeeded
                     if *cnt <= removed_cnt {
-                        let _ = cb.send(
-                            debouncer
-                                .watcher()
-                                .unwatch(&path)
-                                .map_err(|x| io::Error::new(io::ErrorKind::Other, x)),
-                        );
+                        let _ =
+                            cb.send(debouncer.watcher().unwatch(&path).map_err(io::Error::other));
                     } else if removed_cnt == 0 {
                         // Send a failure as there was nothing to unwatch for this connection
-                        let _ = cb.send(Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("{path:?} is not being watched"),
-                        )));
+                        let _ = cb.send(Err(io::Error::other(format!(
+                            "{path:?} is not being watched"
+                        ))));
                     } else {
                         // Send a success as we removed some paths
                         let _ = cb.send(Ok(()));
                     }
                 } else {
                     // Send a failure as there was nothing to unwatch
-                    let _ = cb.send(Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("{path:?} is not being watched"),
-                    )));
+                    let _ = cb.send(Err(io::Error::other(format!(
+                        "{path:?} is not being watched"
+                    ))));
                 }
             }
             InnerWatcherMsg::Event { ev } => {

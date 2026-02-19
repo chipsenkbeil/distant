@@ -108,7 +108,7 @@ fn should_print_immediate_files_and_directories_by_default(ctx: DistantManagerCt
         .stderr("");
 }
 
-// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
+// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]
@@ -135,7 +135,7 @@ fn should_use_absolute_paths_if_specified(ctx: DistantManagerCtx) {
         .stderr("");
 }
 
-// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
+// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]
@@ -182,7 +182,7 @@ fn should_print_all_files_and_directories_if_depth_is_0(ctx: DistantManagerCtx) 
         .stderr("");
 }
 
-// NOTE: Ignoring on windows because ssh2 doesn't properly canonicalize paths to resolve symlinks!
+// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]
