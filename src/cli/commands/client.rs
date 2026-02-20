@@ -1365,10 +1365,11 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             // Connect via SSH (pure SSH mode — no distant binary needed on remote)
             debug!("Connecting via SSH to {}", destination);
+            let dest_display = destination.to_string();
             let id = client
                 .connect(destination, options, PromptAuthHandler::new())
                 .await
-                .context("Failed to connect via SSH")?;
+                .with_context(|| format!("Failed to connect to {dest_display}"))?;
 
             // Update cache with the new connection
             let mut cache = read_cache(&cache).await;
