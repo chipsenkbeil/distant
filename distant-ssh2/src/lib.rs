@@ -596,23 +596,6 @@ impl Ssh {
             .parse::<Host>()
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        // Open a channel and request a PTY for launching the distant server
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(io::Error::other)?;
-
-        channel
-            .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
-            .await
-            .map_err(io::Error::other)?;
-
-        channel
-            .request_shell(true)
-            .await
-            .map_err(io::Error::other)?;
-
         // Build arguments for distant to run listen subcommand
         let mut args = vec![
             String::from("server"),
@@ -627,37 +610,37 @@ impl Ssh {
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         });
 
-        let cmd = format!("{} {}\r\n", opts.binary, args.join(" "));
-        debug!("Writing launch command: {}", cmd.trim());
+        let cmd = format!("{} {}", opts.binary, args.join(" "));
+        debug!("Executing launch command: {}", cmd);
 
-        use std::io::Cursor;
-        channel
-            .data(Cursor::new(cmd.into_bytes()))
+        // Use channel exec instead of PTY + shell to avoid interference
+        // from shell startup scripts (.bashrc, .zshrc, etc.)
+        let channel = self
+            .handle
+            .channel_open_session()
             .await
             .map_err(io::Error::other)?;
 
-        // Read stdout from the PTY and look for credentials
+        channel
+            .exec(true, cmd.as_bytes())
+            .await
+            .map_err(io::Error::other)?;
+
+        // Read stdout directly for credentials (no PTY escape codes to filter)
         let (mut read_half, _write_half) = channel.split();
 
         let timeout = opts.timeout;
         let start_instant = std::time::Instant::now();
         let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
 
         loop {
             // Check for timeout
             if start_instant.elapsed() >= timeout {
-                // Clean the bytes before including by removing anything that isn't ascii
-                // and isn't a control character (except whitespace)
-                stdout.retain(|b: &u8| {
-                    b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
-                });
-
+                let output = Self::clean_launch_output(&stdout, &stderr);
                 return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!(
-                        "Failed to spawn server: '{}'",
-                        shell_words::quote(&String::from_utf8_lossy(&stdout))
-                    ),
+                    io::ErrorKind::TimedOut,
+                    format!("Timed out waiting for server credentials: {output}"),
                 ));
             }
 
@@ -678,26 +661,57 @@ impl Ssh {
                         return Ok(credentials);
                     }
                 }
+                Ok(Some(russh::ChannelMsg::ExtendedData { ref data, ext })) => {
+                    // ext == 1 is stderr
+                    if ext == 1 {
+                        trace!("Received {} more bytes over stderr", data.len());
+                        stderr.extend_from_slice(data);
+                    }
+                }
                 Ok(Some(_)) => {
-                    // Other channel messages, continue
+                    // Other channel messages (e.g. exit status), continue
                 }
                 Ok(None) => {
-                    // Channel closed without finding credentials
-                    stdout.retain(|b: &u8| {
-                        b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
-                    });
+                    // Channel closed — check one last time if credentials appeared
+                    if let Some(mut credentials) =
+                        DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
+                    {
+                        credentials.host = host;
+                        debug!("Got credentials from launched server (on channel close)");
+                        return Ok(credentials);
+                    }
+
+                    let output = Self::clean_launch_output(&stdout, &stderr);
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
-                        format!(
-                            "Channel closed before credentials found: '{}'",
-                            shell_words::quote(&String::from_utf8_lossy(&stdout))
-                        ),
+                        format!("Channel closed before credentials found: {output}"),
                     ));
                 }
                 Err(_) => {
                     // Timeout on this read iteration, will be caught at loop top
                 }
             }
+        }
+    }
+
+    /// Clean and format the output from a failed launch attempt for error messages.
+    fn clean_launch_output(stdout: &[u8], stderr: &[u8]) -> String {
+        fn clean_bytes(bytes: &[u8]) -> String {
+            let s: String = String::from_utf8_lossy(bytes)
+                .chars()
+                .filter(|c| !c.is_control() || c.is_ascii_whitespace())
+                .collect();
+            s.trim().to_string()
+        }
+
+        let out = clean_bytes(stdout);
+        let err = clean_bytes(stderr);
+
+        match (out.is_empty(), err.is_empty()) {
+            (true, true) => "(no output)".to_string(),
+            (false, true) => format!("stdout: '{out}'"),
+            (true, false) => format!("stderr: '{err}'"),
+            (false, false) => format!("stdout: '{out}', stderr: '{err}'"),
         }
     }
 

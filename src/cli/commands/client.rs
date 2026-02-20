@@ -22,12 +22,12 @@ use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
 use crate::cli::common::{
-    Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
+    connect_to_manager, try_connect as try_connect_no_autostart, Cache, JsonAuthHandler,
+    MsgReceiver, MsgSender, PromptAuthHandler,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
-    ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings, ParseShellError,
-    Shell as ShellOption,
+    ClientFileSystemSubcommand, ClientSubcommand, Format, ParseShellError, Shell as ShellOption,
 };
 use crate::{CliError, CliResult};
 
@@ -199,11 +199,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             timeout,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_json_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Json, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -330,11 +326,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -376,11 +368,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -492,11 +480,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -683,11 +667,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             dst,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -716,11 +696,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -758,11 +734,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             all,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -793,11 +765,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -924,11 +892,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             include_root,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1024,11 +988,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             force,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1058,11 +1018,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             dst,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1094,11 +1050,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             paths,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1188,11 +1140,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1295,11 +1243,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1367,11 +1311,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             };
 
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1405,6 +1345,97 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     })?;
             }
         }
+        ClientSubcommand::Ssh {
+            cache,
+            destination,
+            options,
+            network,
+            current_dir,
+            environment,
+            cmd,
+        } => {
+            debug!("Connecting to manager (auto-start enabled)");
+            let mut client = connect_to_manager(Format::Shell, network).await?;
+
+            // Ensure destination has ssh:// scheme
+            let mut destination = *destination;
+            if destination.scheme.is_none() {
+                destination.scheme = Some("ssh".to_string());
+            }
+
+            // Connect via SSH (pure SSH mode — no distant binary needed on remote)
+            debug!("Connecting via SSH to {}", destination);
+            let id = client
+                .connect(destination, options, PromptAuthHandler::new())
+                .await
+                .context("Failed to connect via SSH")?;
+
+            // Update cache with the new connection
+            let mut cache = read_cache(&cache).await;
+            *cache.data.selected = id;
+            cache.write_to_disk().await?;
+
+            debug!("Opening channel to connection {}", id);
+            let channel = client
+                .open_raw_channel(id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {id}"))?;
+
+            // Convert cmd into string
+            let cmd = cmd.map(|cmd| cmd.join(" "));
+
+            debug!(
+                "Spawning shell (environment = {:?}): {}",
+                environment,
+                cmd.as_deref().unwrap_or(r"$SHELL")
+            );
+            Shell::new(channel.into_client().into_channel())
+                .spawn(
+                    cmd,
+                    environment.into_map(),
+                    current_dir,
+                    MAX_PIPE_CHUNK_SIZE,
+                )
+                .await?;
+        }
+        ClientSubcommand::Status { network, cache } => {
+            // Try to connect to the manager without auto-starting it
+            match try_connect_no_autostart(Format::Shell, &network).await {
+                Ok(mut client) => {
+                    println!("Manager: running");
+
+                    let list = client
+                        .list()
+                        .await
+                        .context("Failed to get list of connections")?;
+
+                    let selected = read_cache(&cache).await.data.selected;
+
+                    if list.is_empty() {
+                        println!("\nNo active connections.");
+                    } else {
+                        println!("\nConnections:");
+                        for (id, dest) in list {
+                            let marker = if *selected == id { " *" } else { "  " };
+                            let scheme = dest
+                                .scheme
+                                .as_ref()
+                                .map(|s| format!("{s}://"))
+                                .unwrap_or_default();
+                            let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
+                            println!("{marker} {id} -> {scheme}{}{port}", dest.host);
+                        }
+                    }
+                }
+                Err(_) => {
+                    println!("Manager: not running");
+                    println!(
+                        "\nStart it with:\n  \
+                         distant manager listen --daemon"
+                    );
+                }
+            }
+        }
     }
 
     Ok(())
@@ -1432,11 +1463,21 @@ async fn use_or_lookup_connection_id(
                 Ok(*cache.data.selected)
             } else if list.is_empty() {
                 trace!("Cached connection id is invalid as there are no connections");
-                anyhow::bail!("There are no connections being managed! You need to start one!");
+                anyhow::bail!(
+                    "No active connections.\n\n\
+                     Connect to a remote host first:\n  \
+                     distant connect ssh://user@host\n  \
+                     distant launch ssh://user@host  (requires distant installed on remote)\n\n\
+                     Or use the shorthand:\n  \
+                     distant ssh user@host"
+                );
             } else if list.len() > 1 {
                 trace!("Cached connection id is invalid and there are multiple connections");
                 anyhow::bail!(
-                    "There are multiple connections being managed! You need to pick one!"
+                    "Multiple active connections. Specify which one to use:\n  \
+                     distant manager list              (see available connections)\n  \
+                     distant manager select            (choose interactively)\n  \
+                     distant shell --connection ID     (specify directly)"
                 );
             } else {
                 trace!("Cached connection id is invalid");
@@ -1450,22 +1491,4 @@ async fn use_or_lookup_connection_id(
             }
         }
     }
-}
-
-async fn connect_to_manager(
-    format: Format,
-    network: NetworkSettings,
-) -> anyhow::Result<ManagerClient> {
-    Ok(match format {
-        Format::Shell => Client::new(network)
-            .using_prompt_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-        Format::Json => Client::new(network)
-            .using_json_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-    })
 }

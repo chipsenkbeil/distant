@@ -1,6 +1,7 @@
 use std::io;
 use std::time::Duration;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{
@@ -11,7 +12,7 @@ use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
 use log::*;
 
 use crate::cli::common::{MsgReceiver, MsgSender};
-use crate::options::NetworkSettings;
+use crate::options::{Format, NetworkSettings};
 
 pub struct Client<T> {
     network: NetworkSettings,
@@ -306,5 +307,103 @@ impl AuthMethodHandler for PromptAuthHandler {
 
     async fn on_error(&mut self, error: Error) -> io::Result<()> {
         self.0.on_error(error).await
+    }
+}
+
+/// Attempt to start the manager daemon by spawning `distant manager listen --daemon`.
+/// Returns Ok(()) if the process was spawned successfully, Err otherwise.
+fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
+    let exe = std::env::current_exe().context("Failed to determine distant executable path")?;
+
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["manager", "listen", "--daemon"]);
+
+    // Forward custom socket/pipe settings so the new manager listens on the same address
+    #[cfg(unix)]
+    if let Some(ref socket) = network.unix_socket {
+        cmd.args(["--unix-socket", &socket.to_string_lossy()]);
+    }
+    #[cfg(windows)]
+    if let Some(ref pipe) = network.windows_pipe {
+        cmd.args(["--windows-pipe", pipe]);
+    }
+
+    let status = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .context("Failed to spawn distant manager")?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "distant manager listen --daemon exited with status {}",
+            status
+        );
+    }
+}
+
+/// Connect to the manager, auto-starting it if not already running.
+///
+/// This is the shared implementation used by both client and manager commands.
+pub async fn connect_to_manager(
+    format: Format,
+    network: NetworkSettings,
+) -> anyhow::Result<ManagerClient> {
+    // First attempt: try connecting directly
+    let first_err = match try_connect(format, &network).await {
+        Ok(client) => return Ok(client),
+        Err(err) => err,
+    };
+
+    // Connection failed — try to auto-start the manager
+    eprintln!("Starting distant manager...");
+    if let Err(err) = start_manager_daemon(&network) {
+        warn!("Failed to auto-start manager: {err}");
+        return Err(first_err.context(
+            "Could not connect to the distant manager, and auto-start failed. \
+             Run `distant manager listen --daemon` to start it manually.",
+        ));
+    }
+
+    // Retry with backoff: 100ms, 200ms, 400ms, 800ms, 500ms = ~2s total
+    let delays = [100, 200, 400, 800, 500];
+    for delay_ms in delays {
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        match try_connect(format, &network).await {
+            Ok(client) => return Ok(client),
+            Err(_) => continue,
+        }
+    }
+
+    // Final attempt with the full error context
+    try_connect(format, &network).await.map_err(|err| {
+        err.context(
+            "Failed to connect to the distant manager after auto-starting it. \
+             Try running `distant manager listen --daemon` manually.",
+        )
+    })
+}
+
+/// Try to connect to the manager without auto-starting it.
+pub async fn try_connect(
+    format: Format,
+    network: &NetworkSettings,
+) -> anyhow::Result<ManagerClient> {
+    match format {
+        Format::Shell => {
+            Client::new(network.clone())
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+        }
+        Format::Json => {
+            Client::new(network.clone())
+                .using_json_auth_handler()
+                .connect()
+                .await
+        }
     }
 }

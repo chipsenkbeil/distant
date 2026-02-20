@@ -7,9 +7,7 @@ use dialoguer::console::Term;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::Select;
 use distant_core::net::common::ConnectionId;
-use distant_core::net::manager::{
-    Config as NetManagerConfig, ConnectHandler, LaunchHandler, ManagerClient,
-};
+use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
 use log::*;
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
@@ -19,9 +17,9 @@ use service_manager::{
 };
 use tabled::{Table, Tabled};
 
-use crate::cli::common::{MsgReceiver, MsgSender};
-use crate::cli::{Cache, Client, Manager};
-use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand, NetworkSettings};
+use crate::cli::common::{connect_to_manager, MsgReceiver, MsgSender};
+use crate::cli::{Cache, Manager};
+use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
 use crate::{CliError, CliResult};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
@@ -409,7 +407,10 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
                     if list.is_empty() {
                         return Err(CliError::Error(anyhow::anyhow!(
-                            "No connection available in manager"
+                            "No active connections.\n\n\
+                             Connect to a remote host first:\n  \
+                             distant connect ssh://user@host\n  \
+                             distant ssh user@host"
                         )));
                     }
 
@@ -511,23 +512,4 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             }
         }
     }
-}
-
-async fn connect_to_manager(
-    format: Format,
-    network: NetworkSettings,
-) -> anyhow::Result<ManagerClient> {
-    debug!("Connecting to manager");
-    Ok(match format {
-        Format::Shell => Client::new(network)
-            .using_prompt_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-        Format::Json => Client::new(network)
-            .using_json_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-    })
 }

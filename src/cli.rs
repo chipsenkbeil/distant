@@ -8,7 +8,7 @@ mod common;
 
 #[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use common::Spawner;
-pub(crate) use common::{Cache, Client, Manager};
+pub(crate) use common::{Cache, Manager};
 
 /// Represents the primary CLI entrypoint
 #[derive(Debug)]

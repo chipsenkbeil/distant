@@ -163,6 +163,15 @@ impl Options {
                     ClientSubcommand::Version { network, .. } => {
                         network.merge(config.client.network);
                     }
+                    ClientSubcommand::Ssh {
+                        network, options, ..
+                    } => {
+                        network.merge(config.client.network);
+                        options.merge(config.client.connect.options, /* keep */ true);
+                    }
+                    ClientSubcommand::Status { network, .. } => {
+                        network.merge(config.client.network);
+                    }
                 }
             }
             DistantSubcommand::Generate(_) => {
@@ -534,6 +543,66 @@ pub enum ClientSubcommand {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
     },
+
+    /// Connect to a remote host via SSH and optionally open a shell or run a command.
+    ///
+    /// This is the simplest way to use distant. It auto-starts the manager,
+    /// connects via SSH (no distant binary needed on the remote), and opens
+    /// a shell or runs the specified command.
+    ///
+    /// Examples:
+    ///   distant ssh user@host              # open an interactive shell
+    ///   distant ssh user@host -- ls -la    # run a single command
+    #[clap(name = "ssh")]
+    Ssh {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Additional options to provide to the SSH handler (key-value pairs separated by comma)
+        ///
+        /// E.g. `key="value",key2="value2"`
+        #[clap(long, default_value_t)]
+        options: Map,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Alternative current directory for the remote process
+        #[clap(long)]
+        current_dir: Option<PathBuf>,
+
+        /// Environment variables to provide to the remote shell
+        #[clap(long, default_value_t)]
+        environment: Map,
+
+        /// Destination in the form [user@]host[:port]
+        destination: Box<Destination>,
+
+        /// Optional command to run instead of opening an interactive shell
+        #[clap(name = "CMD", last = true)]
+        cmd: Option<Vec<String>>,
+    },
+
+    /// Show the current status of the manager and active connections
+    Status {
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+    },
 }
 
 impl ClientSubcommand {
@@ -545,6 +614,8 @@ impl ClientSubcommand {
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
+            Self::Ssh { cache, .. } => cache.as_path(),
+            Self::Status { cache, .. } => cache.as_path(),
             Self::SystemInfo { cache, .. } => cache.as_path(),
             Self::Version { cache, .. } => cache.as_path(),
         }
@@ -558,6 +629,8 @@ impl ClientSubcommand {
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
+            Self::Ssh { network, .. } => network,
+            Self::Status { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
             Self::Version { network, .. } => network,
         }
@@ -573,6 +646,8 @@ impl ClientSubcommand {
             Self::Launch { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
+            Self::Ssh { .. } => Format::Shell,
+            Self::Status { .. } => Format::Shell,
             Self::SystemInfo { .. } => Format::Shell,
             Self::Version { format, .. } => *format,
         }
