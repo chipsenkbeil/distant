@@ -17,7 +17,7 @@ use service_manager::{
 };
 use tabled::{Table, Tabled};
 
-use crate::cli::common::{connect_to_manager, MsgReceiver, MsgSender};
+use crate::cli::common::{connect_to_manager, MsgReceiver, MsgSender, Ui};
 use crate::cli::{Cache, Manager};
 use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
 use crate::{CliError, CliResult};
@@ -74,6 +74,8 @@ fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
 }
 
 async fn async_run(cmd: ManagerSubcommand) -> CliResult {
+    let ui = Ui::new();
+
     match cmd {
         ManagerSubcommand::Service(ManagerServiceSubcommand::Start { kind, user }) => {
             debug!("Starting manager service via {:?}", kind);
@@ -229,7 +231,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
         }
         ManagerSubcommand::Version { format, network } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             debug!("Getting version");
             let version = client.version().await.context("Failed to get version")?;
@@ -256,7 +258,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             debug!("Getting info about connection {}", id);
             let info = client
@@ -307,7 +309,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             debug!("Getting list of connections");
             let list = client
@@ -365,7 +367,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             debug!("Killing connection {}", id);
             client
@@ -399,7 +401,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                 }
                 None => {
                     debug!("Connecting to manager");
-                    let mut client = connect_to_manager(format, network).await?;
+                    let mut client = connect_to_manager(format, network, &ui).await?;
                     let list = client
                         .list()
                         .await

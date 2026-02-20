@@ -38,6 +38,7 @@ anyhow = "1.0.71"
 async-trait = "0.1.68"
 clap = { version = "4.3.0", features = ["derive"] }
 clap_complete = "4.3.0"
+console = "0.15"
 config = { version = "0.13.3", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.4", default-features = false }
@@ -46,6 +47,7 @@ distant-local = { version = "=0.20.0", path = "distant-local" }
 directories = "5.0.1"
 file-mode = "0.1.2"
 flexi_logger = "0.25.5"
+indicatif = "0.17"
 indoc = "2.0.1"
 log = "0.4.18"
 once_cell = "1.17.2"
