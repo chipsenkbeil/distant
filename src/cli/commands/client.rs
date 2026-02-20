@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use console::style;
-use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
+use distant_core::net::common::{ConnectionId, Destination, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
     self, semver, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
@@ -64,35 +64,80 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             format,
             network,
             options,
+            new,
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
-            // Trigger our manager to connect to the launched server
-            debug!("Connecting to server at {} with {}", destination, options);
-            let dest_display = destination.to_string();
-            let sp = ui.spinner(&format!("Connecting to {dest_display}..."));
-            let id = match format {
-                Format::Shell => {
-                    client
-                        .connect(
-                            *destination,
-                            options,
-                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
-                        )
-                        .await
+            // Check for an existing connection to the same destination
+            let (id, reused) = if !new {
+                if let Some(existing_id) =
+                    find_existing_connection_id(&mut client, &destination).await
+                {
+                    let dest_display = destination.to_string();
+                    match format {
+                        Format::Shell => {
+                            ui.success(&format!(
+                                "Reusing existing connection to {dest_display} (id: {existing_id})"
+                            ));
+                        }
+                        Format::Json => {}
+                    }
+                    (existing_id, true)
+                } else {
+                    // No existing connection found, create a new one
+                    debug!("Connecting to server at {} with {}", destination, options);
+                    let dest_display = destination.to_string();
+                    let sp = ui.spinner(&format!("Connecting to {dest_display}..."));
+                    let id = match format {
+                        Format::Shell => {
+                            client
+                                .connect(
+                                    *destination,
+                                    options,
+                                    PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                                )
+                                .await
+                        }
+                        Format::Json => {
+                            client
+                                .connect(*destination, options, JsonAuthHandler::default())
+                                .await
+                        }
+                    };
+                    match &id {
+                        Ok(id) => sp.done(&format!("Connected (id: {id})")),
+                        Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                    }
+                    (id.context("Failed to connect to server")?, false)
                 }
-                Format::Json => {
-                    client
-                        .connect(*destination, options, JsonAuthHandler::default())
-                        .await
+            } else {
+                // --new flag: always create a fresh connection
+                debug!("Connecting to server at {} with {}", destination, options);
+                let dest_display = destination.to_string();
+                let sp = ui.spinner(&format!("Connecting to {dest_display}..."));
+                let id = match format {
+                    Format::Shell => {
+                        client
+                            .connect(
+                                *destination,
+                                options,
+                                PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                            )
+                            .await
+                    }
+                    Format::Json => {
+                        client
+                            .connect(*destination, options, JsonAuthHandler::default())
+                            .await
+                    }
+                };
+                match &id {
+                    Ok(id) => sp.done(&format!("Connected (id: {id})")),
+                    Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
                 }
+                (id.context("Failed to connect to server")?, false)
             };
-            match &id {
-                Ok(id) => sp.done(&format!("Connected (id: {id})")),
-                Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
-            }
-            let id = id.context("Failed to connect to server")?;
 
             // Mark the server's id as the new default
             debug!("Updating selected connection id in cache to {}", id);
@@ -107,6 +152,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     serde_json::to_string(&json!({
                         "type": "connected",
                         "id": id,
+                        "reused": reused,
                     }))
                     .unwrap()
                 ),
@@ -1392,6 +1438,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
             current_dir,
             environment,
+            new,
             cmd,
         } => {
             debug!("Connecting to manager (auto-start enabled)");
@@ -1403,24 +1450,54 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 destination.scheme = Some("ssh".to_string());
             }
 
-            // Connect via SSH (pure SSH mode — no distant binary needed on remote)
-            debug!("Connecting via SSH to {}", destination);
-            let dest_display = destination.to_string();
-            let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
-            let result = client
-                .connect(
-                    destination,
-                    options,
-                    PromptAuthHandler::with_progress_bar(sp.progress_bar()),
-                )
-                .await;
-            match &result {
-                Ok(_) => sp.done(&format!("Connected to {dest_display}")),
-                Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
-            }
-            let id = result.with_context(|| format!("Failed to connect to {dest_display}"))?;
+            // Check for an existing connection or create a new one
+            let id = if !new {
+                if let Some(existing_id) =
+                    find_existing_connection_id(&mut client, &destination).await
+                {
+                    let dest_display = destination.to_string();
+                    ui.success(&format!(
+                        "Reusing existing connection to {dest_display} (id: {existing_id})"
+                    ));
+                    existing_id
+                } else {
+                    // No existing connection found, create a new one
+                    debug!("Connecting via SSH to {}", destination);
+                    let dest_display = destination.to_string();
+                    let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
+                    let result = client
+                        .connect(
+                            destination,
+                            options,
+                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                        )
+                        .await;
+                    match &result {
+                        Ok(_) => sp.done(&format!("Connected to {dest_display}")),
+                        Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                    }
+                    result.with_context(|| format!("Failed to connect to {dest_display}"))?
+                }
+            } else {
+                // --new flag: always create a fresh connection
+                debug!("Connecting via SSH to {}", destination);
+                let dest_display = destination.to_string();
+                let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
+                let result = client
+                    .connect(
+                        destination,
+                        options,
+                        PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                    )
+                    .await;
+                match &result {
+                    Ok(_) => sp.done(&format!("Connected to {dest_display}")),
+                    Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                }
+                result.with_context(|| format!("Failed to connect to {dest_display}"))?
+            };
 
-            // Update cache with the new connection
+            // Update cache with the connection
             let mut cache = read_cache(&cache).await;
             *cache.data.selected = id;
             cache.write_to_disk().await?;
@@ -1502,6 +1579,35 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
     }
 
     Ok(())
+}
+
+/// Checks for an existing connection matching the given destination's (scheme, host, port, username).
+/// Returns the first matching connection ID, or None if no match found.
+async fn find_existing_connection_id(
+    client: &mut ManagerClient,
+    dest: &Destination,
+) -> Option<ConnectionId> {
+    let list = match client.list().await {
+        Ok(list) => list,
+        Err(err) => {
+            debug!("Failed to list connections for reuse check: {err}");
+            return None;
+        }
+    };
+
+    list.iter()
+        .find(|(_, existing)| {
+            let scheme_matches = match (&existing.scheme, &dest.scheme) {
+                (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                (None, None) => true,
+                _ => false,
+            };
+            scheme_matches
+                && existing.host == dest.host
+                && existing.port == dest.port
+                && existing.username == dest.username
+        })
+        .map(|(id, _)| *id)
 }
 
 async fn use_or_lookup_connection_id(

@@ -358,6 +358,10 @@ pub enum ClientSubcommand {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
+        /// Force a new connection even if one to the same destination already exists
+        #[clap(long)]
+        new: bool,
+
         destination: Box<Destination>,
     },
 
@@ -580,6 +584,10 @@ pub enum ClientSubcommand {
         /// Environment variables to provide to the remote shell
         #[clap(long, default_value_t)]
         environment: Map,
+
+        /// Force a new connection even if one to the same destination already exists
+        #[clap(long)]
+        new: bool,
 
         /// Destination in the form [user@]host[:port]
         destination: Box<Destination>,
@@ -1629,6 +1637,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 format: Format::Json,
+                new: false,
                 destination: Box::new("test://destination".parse().unwrap()),
             }),
         };
@@ -1667,6 +1676,7 @@ mod tests {
                         windows_pipe: Some(String::from("config-windows-pipe")),
                     },
                     format: Format::Json,
+                    new: false,
                     destination: Box::new("test://destination".parse().unwrap()),
                 }),
             }
@@ -1689,6 +1699,7 @@ mod tests {
                     windows_pipe: Some(String::from("cli-windows-pipe")),
                 },
                 format: Format::Json,
+                new: false,
                 destination: Box::new("test://destination".parse().unwrap()),
             }),
         };
@@ -1727,6 +1738,7 @@ mod tests {
                         windows_pipe: Some(String::from("cli-windows-pipe")),
                     },
                     format: Format::Json,
+                    new: false,
                     destination: Box::new("test://destination".parse().unwrap()),
                 }),
             }
