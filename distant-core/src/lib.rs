@@ -1,9 +1,3 @@
-#![doc = include_str!("../README.md")]
-
-#[doc = include_str!("../README.md")]
-#[cfg(doctest)]
-pub struct ReadmeDoctests;
-
 mod api;
 pub use api::*;
 
@@ -16,7 +10,11 @@ pub use credentials::*;
 mod constants;
 mod serde_str;
 
+/// Authentication functionality.
+pub mod auth;
+
 /// Network functionality.
-pub use distant_net as net;
+pub mod net;
+
 /// Protocol structures.
-pub use distant_protocol as protocol;
+pub mod protocol;

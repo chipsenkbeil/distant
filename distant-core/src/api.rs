@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use distant_net::common::ConnectionId;
-use distant_net::server::{Reply, RequestCtx, ServerHandler};
+use crate::net::common::ConnectionId;
+use crate::net::server::{Reply, RequestCtx, ServerHandler};
 use log::*;
 
 use crate::protocol::{

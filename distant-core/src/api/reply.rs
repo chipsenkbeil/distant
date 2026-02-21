@@ -1,6 +1,6 @@
 use std::io;
 
-use distant_net::server::Reply;
+use crate::net::server::Reply;
 
 use crate::protocol;
 

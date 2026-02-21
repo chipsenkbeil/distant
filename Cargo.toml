@@ -13,11 +13,8 @@ license = "MIT OR Apache-2.0"
 
 [workspace]
 members = [
-    "distant-auth", 
-    "distant-core", 
-    "distant-local", 
-    "distant-net", 
-    "distant-protocol", 
+    "distant-core",
+    "distant-local",
     "distant-ssh2",
 ]
 

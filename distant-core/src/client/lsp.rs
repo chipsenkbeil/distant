@@ -432,8 +432,8 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use distant_net::common::{FramedTransport, InmemoryTransport, Request, Response};
-    use distant_net::Client;
+    use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
+    use crate::net::Client;
     use test_log::test;
 
     use super::*;

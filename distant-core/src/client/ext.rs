@@ -3,8 +3,8 @@ use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use distant_net::client::Channel;
-use distant_net::common::Request;
+use crate::net::client::Channel;
+use crate::net::common::Request;
 
 use crate::client::{
     RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,

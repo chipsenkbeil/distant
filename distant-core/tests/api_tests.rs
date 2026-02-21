@@ -5,11 +5,11 @@ use async_trait::async_trait;
 use distant_core::{
     DistantApi, DistantApiServerHandler, DistantChannelExt, DistantClient, DistantCtx,
 };
-use distant_net::auth::{DummyAuthHandler, Verifier};
-use distant_net::client::Client;
-use distant_net::common::{InmemoryTransport, OneshotListener, Version};
-use distant_net::server::{Server, ServerRef};
-use distant_protocol::PROTOCOL_VERSION;
+use distant_core::net::auth::{DummyAuthHandler, Verifier};
+use distant_core::net::client::Client;
+use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
+use distant_core::net::server::{Server, ServerRef};
+use distant_core::protocol::PROTOCOL_VERSION;
 
 /// Stands up an inmemory client and server using the given api.
 async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, ServerRef) {
@@ -85,8 +85,8 @@ mod single {
 mod batch_parallel {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use distant_net::common::Request;
-    use distant_protocol::{Msg, Request as RequestPayload};
+    use distant_core::net::common::Request;
+    use distant_core::protocol::{Msg, Request as RequestPayload};
     use test_log::test;
 
     use super::*;
@@ -128,7 +128,7 @@ mod batch_parallel {
         let mut times = Vec::new();
         for payload in payloads {
             match payload {
-                distant_protocol::Response::Blob { data } => {
+                distant_core::protocol::Response::Blob { data } => {
                     let mut buf = [0u8; 8];
                     buf.copy_from_slice(&data[..8]);
                     times.push(u64::from_be_bytes(buf));
@@ -177,21 +177,21 @@ mod batch_parallel {
 
         // Should be a success, error, and success
         assert!(
-            matches!(payloads[0], distant_protocol::Response::Blob { .. }),
+            matches!(payloads[0], distant_core::protocol::Response::Blob { .. }),
             "Unexpected payloads[0]: {:?}",
             payloads[0]
         );
         assert!(
             matches!(
                 &payloads[1],
-                distant_protocol::Response::Error(distant_protocol::Error { kind, description })
-                if matches!(kind, distant_protocol::ErrorKind::Other) && description == "test error"
+                distant_core::protocol::Response::Error(distant_core::protocol::Error { kind, description })
+                if matches!(kind, distant_core::protocol::ErrorKind::Other) && description == "test error"
             ),
             "Unexpected payloads[1]: {:?}",
             payloads[1]
         );
         assert!(
-            matches!(payloads[2], distant_protocol::Response::Blob { .. }),
+            matches!(payloads[2], distant_core::protocol::Response::Blob { .. }),
             "Unexpected payloads[2]: {:?}",
             payloads[2]
         );
@@ -201,8 +201,8 @@ mod batch_parallel {
 mod batch_sequence {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use distant_net::common::Request;
-    use distant_protocol::{Msg, Request as RequestPayload};
+    use distant_core::net::common::Request;
+    use distant_core::protocol::{Msg, Request as RequestPayload};
     use test_log::test;
 
     use super::*;
@@ -247,7 +247,7 @@ mod batch_sequence {
         let mut times = Vec::new();
         for payload in payloads {
             match payload {
-                distant_protocol::Response::Blob { data } => {
+                distant_core::protocol::Response::Blob { data } => {
                     let mut buf = [0u8; 8];
                     buf.copy_from_slice(&data[..8]);
                     times.push(u64::from_be_bytes(buf));
@@ -299,15 +299,15 @@ mod batch_sequence {
 
         // Should be a success, error, and interrupt
         assert!(
-            matches!(payloads[0], distant_protocol::Response::Blob { .. }),
+            matches!(payloads[0], distant_core::protocol::Response::Blob { .. }),
             "Unexpected payloads[0]: {:?}",
             payloads[0]
         );
         assert!(
             matches!(
                 &payloads[1],
-                distant_protocol::Response::Error(distant_protocol::Error { kind, description })
-                if matches!(kind, distant_protocol::ErrorKind::Other) && description == "test error"
+                distant_core::protocol::Response::Error(distant_core::protocol::Error { kind, description })
+                if matches!(kind, distant_core::protocol::ErrorKind::Other) && description == "test error"
             ),
             "Unexpected payloads[1]: {:?}",
             payloads[1]
@@ -315,8 +315,8 @@ mod batch_sequence {
         assert!(
             matches!(
                 &payloads[2],
-                distant_protocol::Response::Error(distant_protocol::Error { kind, .. })
-                if matches!(kind, distant_protocol::ErrorKind::Interrupted)
+                distant_core::protocol::Response::Error(distant_core::protocol::Error { kind, .. })
+                if matches!(kind, distant_core::protocol::ErrorKind::Interrupted)
             ),
             "Unexpected payloads[2]: {:?}",
             payloads[2]
