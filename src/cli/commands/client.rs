@@ -1653,16 +1653,24 @@ async fn use_or_lookup_connection_id(
                                 .as_ref()
                                 .map(|s| format!("{s}://"))
                                 .unwrap_or_default();
+                            let user = dest
+                                .username
+                                .as_ref()
+                                .map(|u| format!("{u}@"))
+                                .unwrap_or_default();
                             let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
-                            format!("{id} -> {scheme}{}{port}", dest.host)
+                            format!("{id} -> {scheme}{user}{}{port}", dest.host)
                         })
                         .collect();
                     let selection = dialoguer::Select::new()
                         .with_prompt("Multiple connections available")
                         .items(&items)
                         .default(0)
-                        .interact_on(&console::Term::stderr())
+                        .interact_on_opt(&console::Term::stderr())
                         .context("Failed to select connection")?;
+                    let Some(selection) = selection else {
+                        anyhow::bail!("Cancelled");
+                    };
                     let id = *list.keys().nth(selection).unwrap();
                     *cache.data.selected = id;
                     cache.write_to_disk().await?;

@@ -6,8 +6,10 @@ use anyhow::Context;
 use dialoguer::console::Term;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::Select;
-use distant_core::net::common::ConnectionId;
-use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
+use distant_core::net::common::{ConnectionId, Destination};
+use distant_core::net::manager::{
+    Config as NetManagerConfig, ConnectHandler, LaunchHandler, ManagerClient,
+};
 use log::*;
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
@@ -260,6 +262,18 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    match prompt_for_connection(&mut client, format, "Select connection to inspect")
+                        .await?
+                    {
+                        Some(id) => id,
+                        None => return Ok(()),
+                    }
+                }
+            };
+
             debug!("Getting info about connection {}", id);
             let info = client
                 .info(id)
@@ -362,12 +376,65 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             Ok(())
         }
         ManagerSubcommand::Kill {
+            cache,
             format,
             id,
             network,
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
+
+            // Fetch list BEFORE kill for destination info + selection prompt
+            let list = client
+                .list()
+                .await
+                .context("Failed to get list of connections")?;
+
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    if list.is_empty() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active connections.\n\n\
+                             Connect to a remote host first:\n  \
+                             distant connect ssh://user@host\n  \
+                             distant ssh user@host"
+                        )));
+                    }
+
+                    match format {
+                        Format::Shell => {
+                            if !Term::stderr().is_term() {
+                                return Err(CliError::Error(anyhow::anyhow!(
+                                    "No connection ID specified. See available connections:\n  \
+                                     distant manager list"
+                                )));
+                            }
+
+                            // Always show prompt — even with 1 connection — so user can cancel
+                            let items: Vec<String> = list
+                                .iter()
+                                .map(|(id, dest)| format_connection(*id, dest))
+                                .collect();
+                            let selection = Select::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Select connection to kill")
+                                .items(&items)
+                                .default(0)
+                                .interact_on_opt(&Term::stderr())
+                                .context("Failed to render prompt")?;
+                            match selection {
+                                Some(index) => *list.keys().nth(index).unwrap(),
+                                None => return Ok(()),
+                            }
+                        }
+                        Format::Json => {
+                            return Err(CliError::Error(anyhow::anyhow!(
+                                "Connection ID is required in JSON mode"
+                            )));
+                        }
+                    }
+                }
+            };
 
             debug!("Killing connection {}", id);
             client
@@ -377,8 +444,40 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
             debug!("Connection killed");
             match format {
-                Format::Json => println!("{}", json!({"type": "ok"})),
-                Format::Shell => (),
+                Format::Json => println!("{}", json!({"type": "ok", "id": id})),
+                Format::Shell => {
+                    let msg = match list.get(&id) {
+                        Some(dest) => format!("Killed {}", format_connection(id, dest)),
+                        None => format!("Killed connection {id}"),
+                    };
+                    ui.success(&msg);
+                }
+            }
+
+            // Cache update — only if we killed the selected connection
+            let mut cache = Cache::read_from_disk_or_default(cache)
+                .await
+                .context("Failed to read cache")?;
+            if *cache.data.selected == id {
+                let remaining = client
+                    .list()
+                    .await
+                    .context("Failed to get updated connection list")?;
+                if remaining.len() == 1 {
+                    let new_id = *remaining.keys().next().unwrap();
+                    *cache.data.selected = new_id;
+                    if let Format::Shell = format {
+                        if let Some(dest) = remaining.get(&new_id) {
+                            ui.dim(&format!(
+                                "Selected remaining connection: {}",
+                                format_connection(new_id, dest)
+                            ));
+                        }
+                    }
+                } else {
+                    *cache.data.selected = 0;
+                }
+                cache.write_to_disk().await?;
             }
 
             Ok(())
@@ -431,22 +530,8 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
                     trace!("Building selection prompt of {} choices", list.len());
                     let items: Vec<String> = list
-                        .values()
-                        .map(|destination| {
-                            format!(
-                                "{}{}{}",
-                                destination
-                                    .scheme
-                                    .as_ref()
-                                    .map(|scheme| format!(r"{scheme}://"))
-                                    .unwrap_or_default(),
-                                destination.host,
-                                destination
-                                    .port
-                                    .map(|port| format!(":{port}"))
-                                    .unwrap_or_default()
-                            )
-                        })
+                        .iter()
+                        .map(|(id, dest)| format_connection(*id, dest))
                         .collect();
 
                     // Prompt for a selection, with None meaning no change
@@ -512,6 +597,79 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Format a connection list entry for display in selection prompts.
+fn format_connection(id: ConnectionId, dest: &Destination) -> String {
+    let scheme = dest
+        .scheme
+        .as_ref()
+        .map(|s| format!("{s}://"))
+        .unwrap_or_default();
+    let user = dest
+        .username
+        .as_ref()
+        .map(|u| format!("{u}@"))
+        .unwrap_or_default();
+    let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
+    format!("{id} -> {scheme}{user}{}{port}", dest.host)
+}
+
+/// Prompt the user to select a connection from the manager's active list.
+/// Returns the selected connection ID, or `None` if the user cancels (Escape).
+/// Errors if no connections exist or in non-interactive/JSON mode with multiple.
+async fn prompt_for_connection(
+    client: &mut ManagerClient,
+    format: Format,
+    prompt_text: &str,
+) -> anyhow::Result<Option<ConnectionId>> {
+    let list = client
+        .list()
+        .await
+        .context("Failed to get list of connections")?;
+
+    if list.is_empty() {
+        anyhow::bail!(
+            "No active connections.\n\n\
+             Connect to a remote host first:\n  \
+             distant connect ssh://user@host\n  \
+             distant ssh user@host"
+        );
+    }
+
+    if list.len() == 1 {
+        return Ok(Some(*list.keys().next().unwrap()));
+    }
+
+    // Multiple connections — need interactive selection
+    let items: Vec<String> = list
+        .iter()
+        .map(|(id, dest)| format_connection(*id, dest))
+        .collect();
+
+    match format {
+        Format::Shell => {
+            if !Term::stderr().is_term() {
+                anyhow::bail!(
+                    "Multiple active connections. Specify the connection ID:\n  \
+                     distant manager list    (see available connections)"
+                );
+            }
+            let selection = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt(prompt_text)
+                .items(&items)
+                .default(0)
+                .interact_on_opt(&Term::stderr())
+                .context("Failed to render prompt")?;
+            match selection {
+                Some(index) => Ok(Some(*list.keys().nth(index).unwrap())),
+                None => Ok(None),
+            }
+        }
+        Format::Json => {
+            anyhow::bail!("Connection ID is required in JSON mode");
         }
     }
 }

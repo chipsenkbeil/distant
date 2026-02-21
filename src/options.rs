@@ -1155,7 +1155,7 @@ pub enum ManagerSubcommand {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
-        id: ConnectionId,
+        id: Option<ConnectionId>,
 
         #[clap(flatten)]
         network: NetworkSettings,
@@ -1187,7 +1187,16 @@ pub enum ManagerSubcommand {
         #[clap(flatten)]
         network: NetworkSettings,
 
-        id: ConnectionId,
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        id: Option<ConnectionId>,
     },
 }
 
@@ -3696,7 +3705,7 @@ mod tests {
                 log_level: None,
             },
             command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                id: 0,
+                id: Some(0),
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: None,
@@ -3729,7 +3738,7 @@ mod tests {
                     log_level: Some(LogLevel::Trace),
                 },
                 command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                    id: 0,
+                    id: Some(0),
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
@@ -3749,7 +3758,7 @@ mod tests {
                 log_level: Some(LogLevel::Info),
             },
             command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                id: 0,
+                id: Some(0),
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -3782,7 +3791,7 @@ mod tests {
                     log_level: Some(LogLevel::Info),
                 },
                 command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                    id: 0,
+                    id: Some(0),
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -3802,7 +3811,8 @@ mod tests {
                 log_level: None,
             },
             command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                id: 0,
+                cache: PathBuf::new(),
+                id: Some(0),
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: None,
@@ -3835,7 +3845,8 @@ mod tests {
                     log_level: Some(LogLevel::Trace),
                 },
                 command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                    id: 0,
+                    cache: PathBuf::new(),
+                    id: Some(0),
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
@@ -3855,7 +3866,8 @@ mod tests {
                 log_level: Some(LogLevel::Info),
             },
             command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                id: 0,
+                cache: PathBuf::new(),
+                id: Some(0),
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -3888,7 +3900,8 @@ mod tests {
                     log_level: Some(LogLevel::Info),
                 },
                 command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                    id: 0,
+                    cache: PathBuf::new(),
+                    id: Some(0),
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
