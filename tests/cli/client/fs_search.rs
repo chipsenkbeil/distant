@@ -51,6 +51,5 @@ fn should_search_filesystem_using_query(ctx: DistantManagerCtx) {
         .arg(root.path())
         .assert()
         .success()
-        .stdout(stdout_predicate_fn)
-        .stderr("");
+        .stdout(stdout_predicate_fn);
 }

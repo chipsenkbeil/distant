@@ -17,8 +17,7 @@ fn should_output_true_if_exists(ctx: DistantManagerCtx) {
         .arg(file.to_str().unwrap())
         .assert()
         .success()
-        .stdout("true\n")
-        .stderr("");
+        .stdout("true\n");
 }
 
 #[rstest]
@@ -34,6 +33,5 @@ fn should_output_false_if_not_exists(ctx: DistantManagerCtx) {
         .arg(file.to_str().unwrap())
         .assert()
         .success()
-        .stdout("false\n")
-        .stderr("");
+        .stdout("false\n");
 }

@@ -1544,7 +1544,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 Some(id) => {
                     // Detail mode: show info about a specific connection
                     debug!("Connecting to manager");
-                    let mut client = connect_to_manager(format, network, &ui).await?;
+                    let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
                     debug!("Getting info about connection {}", id);
                     let info = client
@@ -1590,7 +1590,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 }
                 None => {
                     // Overview mode: show manager status + connection list
-                    match try_connect_no_autostart(format, &network).await {
+                    match try_connect_no_autostart(Format::Shell, &network).await {
                         Ok(mut client) => {
                             let list = client
                                 .list()

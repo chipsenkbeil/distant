@@ -170,6 +170,10 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_should_properly_resolve_bind_address() {
+        // Save and clear any existing SSH_CONNECTION (e.g., when running tests over SSH)
+        let original_ssh_connection = env::var("SSH_CONNECTION").ok();
+        env::remove_var("SSH_CONNECTION");
+
         // For ssh, we check SSH_CONNECTION, and there are three situations where this can fail:
         //
         // 1. The environment variable does not exist
@@ -248,5 +252,10 @@ mod tests {
                 .unwrap(),
             Ipv6Addr::LOCALHOST
         );
+
+        // Restore original SSH_CONNECTION if it existed
+        if let Some(val) = original_ssh_connection {
+            env::set_var("SSH_CONNECTION", val);
+        }
     }
 }

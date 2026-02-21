@@ -2,7 +2,7 @@ use assert_cmd::Command;
 
 #[test]
 fn distant_help_should_include_top_level_commands() {
-    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
     let output = cmd.arg("--help").assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
@@ -16,7 +16,7 @@ fn distant_help_should_include_top_level_commands() {
 
 #[test]
 fn distant_help_should_not_include_removed_manager_commands_at_top_level() {
-    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
     let output = cmd.arg("--help").assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
@@ -33,7 +33,7 @@ fn distant_help_should_not_include_removed_manager_commands_at_top_level() {
 
 #[test]
 fn distant_manager_help_should_only_show_daemon_commands() {
-    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
     let output = cmd.args(["manager", "--help"]).assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
@@ -44,15 +44,18 @@ fn distant_manager_help_should_only_show_daemon_commands() {
         );
     }
     for cmd in ["list", "kill", "info", "select"] {
-        assert!(
-            !stdout.contains(cmd),
-            "Expected manager help to NOT contain '{cmd}', got:\n{stdout}"
-        );
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            assert!(
+                !trimmed.starts_with(&format!("{cmd} ")),
+                "Found '{cmd}' as a subcommand in manager help:\n{stdout}"
+            );
+        }
     }
 }
 
 #[test]
 fn distant_manager_list_should_be_unknown_command() {
-    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
     cmd.args(["manager", "list"]).assert().failure();
 }

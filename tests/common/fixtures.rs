@@ -244,7 +244,7 @@ impl DistantManagerCtx {
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
-        let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+        let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
         for subcommand in subcommands {
             cmd.arg(subcommand);
         }

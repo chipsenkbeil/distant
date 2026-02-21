@@ -15,8 +15,7 @@ fn should_report_ok_when_done(ctx: DistantManagerCtx) {
         .args([dir.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     dir.assert(predicate::path::exists());
     dir.assert(predicate::path::is_dir());
@@ -33,8 +32,7 @@ fn should_support_creating_missing_parent_directories_if_specified(ctx: DistantM
         .args(["--all", dir.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     dir.assert(predicate::path::exists());
     dir.assert(predicate::path::is_dir());

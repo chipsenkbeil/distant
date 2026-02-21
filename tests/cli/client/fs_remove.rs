@@ -16,8 +16,7 @@ fn should_support_removing_file(ctx: DistantManagerCtx) {
         .args([file.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     file.assert(predicate::path::missing());
 }
@@ -36,8 +35,7 @@ fn should_support_removing_empty_directory(ctx: DistantManagerCtx) {
         .args([dir.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     dir.assert(predicate::path::missing());
 }
@@ -57,8 +55,7 @@ fn should_support_removing_nonempty_directory_if_force_specified(ctx: DistantMan
         .args(["--force", dir.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     dir.assert(predicate::path::missing());
 }

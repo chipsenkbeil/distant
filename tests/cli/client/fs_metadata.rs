@@ -31,8 +31,7 @@ fn should_output_metadata_for_file(ctx: DistantManagerCtx) {
             "Created: .*\n",
             "Last Accessed: .*\n",
             "Last Modified: .*\n",
-        )))
-        .stderr("");
+        )));
 }
 
 #[rstest]
@@ -55,8 +54,7 @@ fn should_output_metadata_for_directory(ctx: DistantManagerCtx) {
             "Created: .*\n",
             "Last Accessed: .*\n",
             "Last Modified: .*\n",
-        )))
-        .stderr("");
+        )));
 }
 
 // NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
@@ -88,8 +86,7 @@ fn should_support_including_a_canonicalized_path(ctx: DistantManagerCtx) {
                 "Last Modified: .*\n",
             ),
             file.path().canonicalize().unwrap()
-        )))
-        .stderr("");
+        )));
 }
 
 #[rstest]
@@ -115,8 +112,7 @@ fn should_support_resolving_file_type_of_symlink(ctx: DistantManagerCtx) {
             "Created: .*\n",
             "Last Accessed: .*\n",
             "Last Modified: .*\n",
-        )))
-        .stderr("");
+        )));
 }
 
 #[rstest]

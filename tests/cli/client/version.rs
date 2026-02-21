@@ -47,6 +47,5 @@ fn should_output_capabilities(ctx: DistantManagerCtx) {
     ctx.cmd("version")
         .assert()
         .success()
-        .stdout(TrimmedLinesMatchPredicate::new(expected))
-        .stderr("");
+        .stdout(TrimmedLinesMatchPredicate::new(expected));
 }

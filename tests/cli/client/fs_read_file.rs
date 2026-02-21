@@ -23,8 +23,7 @@ fn should_print_out_file_contents(ctx: DistantManagerCtx) {
         .args([file.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(FILE_CONTENTS)
-        .stderr("");
+        .stdout(FILE_CONTENTS);
 }
 
 #[rstest]

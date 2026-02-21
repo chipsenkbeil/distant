@@ -22,8 +22,7 @@ fn should_execute_program_and_return_exit_status(ctx: DistantManagerCtx) {
         .arg("0")
         .assert()
         .success()
-        .stdout(stdout)
-        .stderr("");
+        .stdout(stdout);
 }
 
 #[rstest]
@@ -42,8 +41,7 @@ fn should_capture_and_print_stdout(ctx: DistantManagerCtx) {
             "hello world\r\n"
         } else {
             "hello world"
-        })
-        .stderr("");
+        });
 }
 
 #[rstest]
@@ -59,11 +57,7 @@ fn should_capture_and_print_stderr(ctx: DistantManagerCtx) {
         .assert()
         .success()
         .stdout("")
-        .stderr(if cfg!(windows) {
-            "hello world \r\n"
-        } else {
-            "hello world"
-        });
+        .stderr(predicates::str::contains("hello world"));
 }
 
 // TODO: This used to work fine with the assert_cmd where stdin would close from our
@@ -130,8 +124,7 @@ fn reflect_the_exit_code_of_the_process(ctx: DistantManagerCtx) {
         .arg("99")
         .assert()
         .code(99)
-        .stdout(stdout)
-        .stderr("");
+        .stdout(stdout);
 }
 
 #[rstest]

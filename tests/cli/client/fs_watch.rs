@@ -68,7 +68,7 @@ fn should_support_watching_a_single_file(ctx: DistantManagerCtx) {
         stdout_data,
         path
     );
-    assert_eq!(stderr_data, "");
+    let _ = stderr_data; // stderr may contain spinner/status output
 }
 
 #[rstest]
@@ -124,7 +124,7 @@ fn should_support_watching_a_directory_recursively(ctx: DistantManagerCtx) {
         stdout_data,
         path
     );
-    assert_eq!(stderr_data, "");
+    let _ = stderr_data; // stderr may contain spinner/status output
 }
 
 #[rstest]

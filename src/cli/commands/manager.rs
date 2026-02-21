@@ -14,7 +14,9 @@ use service_manager::{
 use crate::cli::common::{connect_to_manager, Ui};
 use crate::cli::Manager;
 use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
-use crate::{CliError, CliResult};
+#[cfg(unix)]
+use crate::CliError;
+use crate::CliResult;
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
 static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
