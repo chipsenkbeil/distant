@@ -104,8 +104,7 @@ fn should_print_immediate_files_and_directories_by_default(ctx: DistantManagerCt
         .args([temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(expected)
-        .stderr("");
+        .stdout(expected);
 }
 
 // NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
@@ -131,8 +130,7 @@ fn should_use_absolute_paths_if_specified(ctx: DistantManagerCtx) {
         .args(["--absolute", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(expected)
-        .stderr("");
+        .stdout(expected);
 }
 
 // NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
@@ -178,8 +176,7 @@ fn should_print_all_files_and_directories_if_depth_is_0(ctx: DistantManagerCtx) 
         .args(["--depth", "0", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(expected)
-        .stderr("");
+        .stdout(expected);
 }
 
 // NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
@@ -206,8 +203,7 @@ fn should_include_root_directory_if_specified(ctx: DistantManagerCtx) {
         .args(["--include-root", temp.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(expected)
-        .stderr("");
+        .stdout(expected);
 }
 
 #[rstest]

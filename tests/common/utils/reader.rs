@@ -57,6 +57,7 @@ impl ThreadedReader {
             }
 
             checked_at_least_once = true;
+            thread::sleep(Duration::from_millis(1));
         }
 
         None
@@ -73,6 +74,7 @@ impl ThreadedReader {
             }
 
             checked_at_least_once = true;
+            thread::sleep(Duration::from_millis(1));
         }
 
         panic!("Reached timeout of {:?}", timeout);

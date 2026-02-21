@@ -18,6 +18,18 @@ fn main() -> MainResult {
 
 #[cfg(windows)]
 fn main() -> MainResult {
+    // Windows default stack is 1MB; the deeply nested clap derive structure
+    // exceeds this during parsing. Spawn on a thread with 8MB stack (Unix default).
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(windows_main)
+        .expect("Failed to spawn main thread")
+        .join()
+        .expect("Main thread panicked")
+}
+
+#[cfg(windows)]
+fn windows_main() -> MainResult {
     let cli = match Cli::initialize() {
         Ok(cli) => cli,
         Err(x) => return MainResult::from(x),

@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use distant_core::net::common::{ConnectionId, Host, Map, Request, Response};
+use console::style;
+use distant_core::net::common::{ConnectionId, Destination, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
     self, semver, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
@@ -21,13 +22,17 @@ use tabled::settings::{Alignment, Disable, Modify};
 use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
+use dialoguer::console::Term;
+use dialoguer::theme::ColorfulTheme;
+use dialoguer::Select;
+
 use crate::cli::common::{
-    Cache, Client, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler,
+    connect_to_manager, format_connection, try_connect as try_connect_no_autostart, Cache,
+    JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler, Ui,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
-    ClientFileSystemSubcommand, ClientSubcommand, Format, NetworkSettings, ParseShellError,
-    Shell as ShellOption,
+    ClientFileSystemSubcommand, ClientSubcommand, Format, ParseShellError, Shell as ShellOption,
 };
 use crate::{CliError, CliResult};
 
@@ -54,6 +59,8 @@ async fn read_cache(path: &Path) -> Cache {
 }
 
 async fn async_run(cmd: ClientSubcommand) -> CliResult {
+    let ui = Ui::new();
+
     match cmd {
         ClientSubcommand::Connect {
             cache,
@@ -61,21 +68,79 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             format,
             network,
             options,
+            new,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
-            // Trigger our manager to connect to the launched server
-            debug!("Connecting to server at {} with {}", destination, options);
-            let id = match format {
-                Format::Shell => client
-                    .connect(*destination, options, PromptAuthHandler::new())
-                    .await
-                    .context("Failed to connect to server")?,
-                Format::Json => client
-                    .connect(*destination, options, JsonAuthHandler::default())
-                    .await
-                    .context("Failed to connect to server")?,
+            // Check for an existing connection to the same destination
+            let (id, reused) = if !new {
+                if let Some(existing_id) =
+                    find_existing_connection_id(&mut client, &destination).await
+                {
+                    let dest_display = destination.to_string();
+                    match format {
+                        Format::Shell => {
+                            ui.success(&format!(
+                                "Reusing existing connection to {dest_display} (id: {existing_id})"
+                            ));
+                        }
+                        Format::Json => {}
+                    }
+                    (existing_id, true)
+                } else {
+                    // No existing connection found, create a new one
+                    debug!("Connecting to server at {} with {}", destination, options);
+                    let dest_display = destination.to_string();
+                    let sp = ui.spinner(&format!("Connecting to {dest_display}..."));
+                    let id = match format {
+                        Format::Shell => {
+                            client
+                                .connect(
+                                    *destination,
+                                    options,
+                                    PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                                )
+                                .await
+                        }
+                        Format::Json => {
+                            client
+                                .connect(*destination, options, JsonAuthHandler::default())
+                                .await
+                        }
+                    };
+                    match &id {
+                        Ok(id) => sp.done(&format!("Connected (id: {id})")),
+                        Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                    }
+                    (id.context("Failed to connect to server")?, false)
+                }
+            } else {
+                // --new flag: always create a fresh connection
+                debug!("Connecting to server at {} with {}", destination, options);
+                let dest_display = destination.to_string();
+                let sp = ui.spinner(&format!("Connecting to {dest_display}..."));
+                let id = match format {
+                    Format::Shell => {
+                        client
+                            .connect(
+                                *destination,
+                                options,
+                                PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                            )
+                            .await
+                    }
+                    Format::Json => {
+                        client
+                            .connect(*destination, options, JsonAuthHandler::default())
+                            .await
+                    }
+                };
+                match &id {
+                    Ok(id) => sp.done(&format!("Connected (id: {id})")),
+                    Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                }
+                (id.context("Failed to connect to server")?, false)
             };
 
             // Mark the server's id as the new default
@@ -91,6 +156,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     serde_json::to_string(&json!({
                         "type": "connected",
                         "id": id,
+                        "reused": reused,
                     }))
                     .unwrap()
                 ),
@@ -107,7 +173,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             mut options,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             // Grab the host we are connecting to for later use
             let host = destination.host.to_string();
@@ -134,16 +200,28 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             // Start the server using our manager
             debug!("Launching server at {} with {}", destination, options);
-            let mut new_destination = match format {
-                Format::Shell => client
-                    .launch(*destination, options, PromptAuthHandler::new())
-                    .await
-                    .context("Failed to launch server")?,
-                Format::Json => client
-                    .launch(*destination, options, JsonAuthHandler::default())
-                    .await
-                    .context("Failed to launch server")?,
+            let sp = ui.spinner(&format!("Launching server at {}...", destination));
+            let launch_result = match format {
+                Format::Shell => {
+                    client
+                        .launch(
+                            *destination,
+                            options,
+                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                        )
+                        .await
+                }
+                Format::Json => {
+                    client
+                        .launch(*destination, options, JsonAuthHandler::default())
+                        .await
+                }
             };
+            match &launch_result {
+                Ok(_) => sp.done(&format!("Server launched at {host}")),
+                Err(_) => sp.fail("Failed to launch server"),
+            }
+            let mut new_destination = launch_result.context("Failed to launch server")?;
 
             // Update the new destination with our previously-used host if the
             // new host is not globally-accessible
@@ -163,16 +241,28 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             // Trigger our manager to connect to the launched server
             debug!("Connecting to server at {}", new_destination);
+            let sp = ui.spinner("Connecting to launched server...");
             let id = match format {
-                Format::Shell => client
-                    .connect(new_destination, Map::new(), PromptAuthHandler::new())
-                    .await
-                    .context("Failed to connect to server")?,
-                Format::Json => client
-                    .connect(new_destination, Map::new(), JsonAuthHandler::default())
-                    .await
-                    .context("Failed to connect to server")?,
+                Format::Shell => {
+                    client
+                        .connect(
+                            new_destination,
+                            Map::new(),
+                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                        )
+                        .await
+                }
+                Format::Json => {
+                    client
+                        .connect(new_destination, Map::new(), JsonAuthHandler::default())
+                        .await
+                }
             };
+            match &id {
+                Ok(id) => sp.done(&format!("Connected (id: {id})")),
+                Err(_) => sp.fail("Connection to launched server failed"),
+            }
+            let id = id.context("Failed to connect to server")?;
 
             // Mark the server's id as the new default
             debug!("Updating selected connection id in cache to {}", id);
@@ -199,11 +289,12 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             timeout,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_json_auth_handler()
-                .connect()
+            let mut client = try_connect_no_autostart(Format::Json, &network)
                 .await
-                .context("Failed to connect to manager")?;
+                .context(
+                    "Failed to connect to the distant manager. \
+                     Is it running? Start it with: distant manager listen --daemon",
+                )?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -330,11 +421,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -376,11 +463,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -492,11 +575,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -555,7 +634,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -683,11 +762,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             dst,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -716,11 +791,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -758,11 +829,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             all,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -793,11 +860,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -924,11 +987,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             include_root,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1024,11 +1083,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             force,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1058,11 +1113,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             dst,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1094,11 +1145,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             paths,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1188,11 +1235,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1295,11 +1338,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             path,
         }) => {
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1321,6 +1360,8 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             )
             .await
             .with_context(|| format!("Failed to watch {path:?}"))?;
+
+            ui.dim(&format!("Watching {:?}", path));
 
             // Continue to receive and process changes
             while let Some(change) = watcher.next().await {
@@ -1367,11 +1408,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             };
 
             debug!("Connecting to manager");
-            let mut client = Client::new(network)
-                .using_prompt_auth_handler()
-                .connect()
-                .await
-                .context("Failed to connect to manager")?;
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1405,9 +1442,483 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     })?;
             }
         }
+        ClientSubcommand::Ssh {
+            cache,
+            destination,
+            options,
+            network,
+            current_dir,
+            environment,
+            new,
+            cmd,
+        } => {
+            debug!("Connecting to manager (auto-start enabled)");
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            // Ensure destination has ssh:// scheme
+            let mut destination = *destination;
+            if destination.scheme.is_none() {
+                destination.scheme = Some("ssh".to_string());
+            }
+
+            // Check for an existing connection or create a new one
+            let id = if !new {
+                if let Some(existing_id) =
+                    find_existing_connection_id(&mut client, &destination).await
+                {
+                    let dest_display = destination.to_string();
+                    ui.success(&format!(
+                        "Reusing existing connection to {dest_display} (id: {existing_id})"
+                    ));
+                    existing_id
+                } else {
+                    // No existing connection found, create a new one
+                    debug!("Connecting via SSH to {}", destination);
+                    let dest_display = destination.to_string();
+                    let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
+                    let result = client
+                        .connect(
+                            destination,
+                            options,
+                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                        )
+                        .await;
+                    match &result {
+                        Ok(_) => sp.done(&format!("Connected to {dest_display}")),
+                        Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                    }
+                    result.with_context(|| format!("Failed to connect to {dest_display}"))?
+                }
+            } else {
+                // --new flag: always create a fresh connection
+                debug!("Connecting via SSH to {}", destination);
+                let dest_display = destination.to_string();
+                let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
+                let result = client
+                    .connect(
+                        destination,
+                        options,
+                        PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                    )
+                    .await;
+                match &result {
+                    Ok(_) => sp.done(&format!("Connected to {dest_display}")),
+                    Err(_) => sp.fail(&format!("Connection to {dest_display} failed")),
+                }
+                result.with_context(|| format!("Failed to connect to {dest_display}"))?
+            };
+
+            // Update cache with the connection
+            let mut cache = read_cache(&cache).await;
+            *cache.data.selected = id;
+            cache.write_to_disk().await?;
+
+            debug!("Opening channel to connection {}", id);
+            let channel = client
+                .open_raw_channel(id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {id}"))?;
+
+            // Convert cmd into string
+            let cmd = cmd.map(|cmd| cmd.join(" "));
+
+            debug!(
+                "Spawning shell (environment = {:?}): {}",
+                environment,
+                cmd.as_deref().unwrap_or(r"$SHELL")
+            );
+            Shell::new(channel.into_client().into_channel())
+                .spawn(
+                    cmd,
+                    environment.into_map(),
+                    current_dir,
+                    MAX_PIPE_CHUNK_SIZE,
+                )
+                .await?;
+        }
+        ClientSubcommand::Status {
+            id,
+            format,
+            network,
+            cache,
+        } => {
+            match id {
+                Some(id) => {
+                    // Detail mode: show info about a specific connection
+                    debug!("Connecting to manager");
+                    let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+                    debug!("Getting info about connection {}", id);
+                    let info = client
+                        .info(id)
+                        .await
+                        .context("Failed to get info about connection")?;
+                    debug!("Got info: {info:?}");
+
+                    match format {
+                        Format::Json => {
+                            println!(
+                                "{}",
+                                serde_json::to_string(&info)
+                                    .context("Failed to format connection info as json")?
+                            );
+                        }
+                        Format::Shell => {
+                            let scheme = info.destination.scheme.as_deref().unwrap_or_default();
+                            let user = info
+                                .destination
+                                .username
+                                .as_deref()
+                                .map(|u| format!("{u}@"))
+                                .unwrap_or_default();
+                            let host = &info.destination.host;
+                            let port = info
+                                .destination
+                                .port
+                                .map(|p| format!(":{p}"))
+                                .unwrap_or_default();
+
+                            let dest_str = format!("{scheme}://{user}{host}{port}");
+
+                            ui.header(&format!("Connection {}:", info.id));
+                            ui.write_line(&format!("  {}  {}", style("Host:").bold(), dest_str));
+
+                            let opts = info.options.to_string();
+                            if !opts.is_empty() {
+                                ui.write_line(&format!("  {}  {}", style("Options:").bold(), opts));
+                            }
+                        }
+                    }
+                }
+                None => {
+                    // Overview mode: show manager status + connection list
+                    match try_connect_no_autostart(Format::Shell, &network).await {
+                        Ok(mut client) => {
+                            let list = client
+                                .list()
+                                .await
+                                .context("Failed to get list of connections")?;
+
+                            let selected = read_cache(&cache).await.data.selected;
+
+                            match format {
+                                Format::Json => {
+                                    println!(
+                                        "{}",
+                                        serde_json::to_string(&list)
+                                            .context("Failed to format connection list as json")?
+                                    );
+                                }
+                                Format::Shell => {
+                                    ui.status(
+                                        "Manager",
+                                        "running",
+                                        crate::cli::common::StatusColor::Green,
+                                    );
+
+                                    if list.is_empty() {
+                                        ui.dim("\nNo active connections.");
+                                    } else {
+                                        ui.header("\nConnections:");
+                                        for (id, dest) in list {
+                                            let scheme = dest
+                                                .scheme
+                                                .as_ref()
+                                                .map(|s| format!("{s}://"))
+                                                .unwrap_or_default();
+                                            let port = dest
+                                                .port
+                                                .map(|p| format!(":{p}"))
+                                                .unwrap_or_default();
+                                            if *selected == id {
+                                                ui.write_line(&format!(
+                                                    "  {} {} -> {scheme}{}{port}",
+                                                    style("*").green(),
+                                                    style(id).bold(),
+                                                    dest.host
+                                                ));
+                                            } else {
+                                                ui.write_line(&format!(
+                                                    "    {} -> {scheme}{}{port}",
+                                                    style(id).dim(),
+                                                    dest.host
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => match format {
+                            Format::Shell => {
+                                ui.status(
+                                    "Manager",
+                                    "not running",
+                                    crate::cli::common::StatusColor::Red,
+                                );
+                                ui.dim("\n  Start it with: distant manager listen --daemon");
+                            }
+                            Format::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string(&serde_json::json!({})).unwrap()
+                                );
+                            }
+                        },
+                    }
+                }
+            }
+        }
+        ClientSubcommand::Kill {
+            format,
+            id,
+            network,
+            cache,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network, &ui).await?;
+
+            // Fetch list BEFORE kill for destination info + selection prompt
+            let list = client
+                .list()
+                .await
+                .context("Failed to get list of connections")?;
+
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    if list.is_empty() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active connections.\n\n\
+                             Connect to a remote host first:\n  \
+                             distant connect ssh://user@host\n  \
+                             distant ssh user@host"
+                        )));
+                    }
+
+                    match format {
+                        Format::Shell => {
+                            if !Term::stderr().is_term() {
+                                return Err(CliError::Error(anyhow::anyhow!(
+                                    "No connection ID specified. See available connections:\n  \
+                                     distant status"
+                                )));
+                            }
+
+                            // Always show prompt — even with 1 connection — so user can cancel
+                            let items: Vec<String> = list
+                                .iter()
+                                .map(|(id, dest)| format_connection(*id, dest))
+                                .collect();
+                            let selection = Select::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Select connection to kill")
+                                .items(&items)
+                                .default(0)
+                                .interact_on_opt(&Term::stderr())
+                                .context("Failed to render prompt")?;
+                            match selection {
+                                Some(index) => *list.keys().nth(index).unwrap(),
+                                None => return Ok(()),
+                            }
+                        }
+                        Format::Json => {
+                            return Err(CliError::Error(anyhow::anyhow!(
+                                "Connection ID is required in JSON mode"
+                            )));
+                        }
+                    }
+                }
+            };
+
+            debug!("Killing connection {}", id);
+            client
+                .kill(id)
+                .await
+                .with_context(|| format!("Failed to kill connection to server {id}"))?;
+
+            debug!("Connection killed");
+            match format {
+                Format::Json => println!("{}", json!({"type": "ok", "id": id})),
+                Format::Shell => {
+                    let msg = match list.get(&id) {
+                        Some(dest) => format!("Killed {}", format_connection(id, dest)),
+                        None => format!("Killed connection {id}"),
+                    };
+                    ui.success(&msg);
+                }
+            }
+
+            // Cache update — only if we killed the selected connection
+            let mut cache = Cache::read_from_disk_or_default(cache)
+                .await
+                .context("Failed to read cache")?;
+            if *cache.data.selected == id {
+                let remaining = client
+                    .list()
+                    .await
+                    .context("Failed to get updated connection list")?;
+                if remaining.len() == 1 {
+                    let new_id = *remaining.keys().next().unwrap();
+                    *cache.data.selected = new_id;
+                    if let Format::Shell = format {
+                        if let Some(dest) = remaining.get(&new_id) {
+                            ui.dim(&format!(
+                                "Selected remaining connection: {}",
+                                format_connection(new_id, dest)
+                            ));
+                        }
+                    }
+                } else {
+                    *cache.data.selected = 0;
+                }
+                cache.write_to_disk().await?;
+            }
+        }
+        ClientSubcommand::Select {
+            format,
+            connection,
+            network,
+            cache,
+        } => {
+            let mut cache = Cache::read_from_disk_or_default(cache)
+                .await
+                .context("Failed to look up cache")?;
+
+            match connection {
+                Some(id) => {
+                    *cache.data.selected = id;
+                    cache.write_to_disk().await?;
+                }
+                None => {
+                    debug!("Connecting to manager");
+                    let mut client = connect_to_manager(format, network, &ui).await?;
+                    let list = client
+                        .list()
+                        .await
+                        .context("Failed to get a list of managed connections")?;
+
+                    if list.is_empty() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active connections.\n\n\
+                             Connect to a remote host first:\n  \
+                             distant connect ssh://user@host\n  \
+                             distant ssh user@host"
+                        )));
+                    }
+
+                    // Figure out the current selection
+                    let current = list
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, (id, _))| {
+                            if *cache.data.selected == *id {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+
+                    trace!("Building selection prompt of {} choices", list.len());
+                    let items: Vec<String> = list
+                        .iter()
+                        .map(|(id, dest)| format_connection(*id, dest))
+                        .collect();
+
+                    // Prompt for a selection, with None meaning no change
+                    let selected = match format {
+                        Format::Shell => {
+                            trace!("Rendering prompt");
+                            Select::with_theme(&ColorfulTheme::default())
+                                .items(&items)
+                                .default(current)
+                                .interact_on_opt(&Term::stderr())
+                                .context("Failed to render prompt")?
+                        }
+
+                        Format::Json => {
+                            // Print out choices
+                            MsgSender::from_stdout()
+                                .send_blocking(&json!({
+                                    "type": "select",
+                                    "choices": items,
+                                    "current": current,
+                                }))
+                                .context("Failed to send JSON choices")?;
+
+                            // Wait for a response
+                            let msg = MsgReceiver::from_stdin()
+                                .recv_blocking::<serde_json::Value>()
+                                .context("Failed to receive JSON selection")?;
+
+                            // Verify the response type is "selected"
+                            match msg.get("type") {
+                                Some(value) if value == "selected" => msg
+                                    .get("choice")
+                                    .and_then(|value| value.as_u64())
+                                    .map(|choice| choice as usize),
+                                Some(value) => {
+                                    return Err(CliError::Error(anyhow::anyhow!(
+                                        "Unexpected 'type' field value: {value}"
+                                    )));
+                                }
+                                None => {
+                                    return Err(CliError::Error(anyhow::anyhow!(
+                                        "Missing 'type' field"
+                                    )));
+                                }
+                            }
+                        }
+                    };
+
+                    match selected {
+                        Some(index) => {
+                            trace!("Selected choice {}", index);
+                            if let Some((id, _)) = list.iter().nth(index) {
+                                debug!("Updating selected connection id in cache to {}", id);
+                                *cache.data.selected = *id;
+                                cache.write_to_disk().await?;
+                            }
+                        }
+                        None => {
+                            debug!("No change in selection of default connection id");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Checks for an existing connection matching the given destination's (scheme, host, port, username).
+/// Returns the first matching connection ID, or None if no match found.
+async fn find_existing_connection_id(
+    client: &mut ManagerClient,
+    dest: &Destination,
+) -> Option<ConnectionId> {
+    let list = match client.list().await {
+        Ok(list) => list,
+        Err(err) => {
+            debug!("Failed to list connections for reuse check: {err}");
+            return None;
+        }
+    };
+
+    list.iter()
+        .find(|(_, existing)| {
+            let scheme_matches = match (&existing.scheme, &dest.scheme) {
+                (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                (None, None) => true,
+                _ => false,
+            };
+            scheme_matches
+                && existing.host == dest.host
+                && existing.port == dest.port
+                && existing.username == dest.username
+        })
+        .map(|(id, _)| *id)
 }
 
 async fn use_or_lookup_connection_id(
@@ -1432,11 +1943,56 @@ async fn use_or_lookup_connection_id(
                 Ok(*cache.data.selected)
             } else if list.is_empty() {
                 trace!("Cached connection id is invalid as there are no connections");
-                anyhow::bail!("There are no connections being managed! You need to start one!");
+                anyhow::bail!(
+                    "No active connections.\n\n\
+                     Connect to a remote host first:\n  \
+                     distant connect ssh://user@host\n  \
+                     distant launch ssh://user@host  (requires distant installed on remote)\n\n\
+                     Or use the shorthand:\n  \
+                     distant ssh user@host"
+                );
             } else if list.len() > 1 {
                 trace!("Cached connection id is invalid and there are multiple connections");
+
+                // If stderr is a TTY, let user pick interactively
+                if console::Term::stderr().is_term() {
+                    let items: Vec<String> = list
+                        .iter()
+                        .map(|(id, dest)| {
+                            let scheme = dest
+                                .scheme
+                                .as_ref()
+                                .map(|s| format!("{s}://"))
+                                .unwrap_or_default();
+                            let user = dest
+                                .username
+                                .as_ref()
+                                .map(|u| format!("{u}@"))
+                                .unwrap_or_default();
+                            let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
+                            format!("{id} -> {scheme}{user}{}{port}", dest.host)
+                        })
+                        .collect();
+                    let selection = dialoguer::Select::new()
+                        .with_prompt("Multiple connections available")
+                        .items(&items)
+                        .default(0)
+                        .interact_on_opt(&console::Term::stderr())
+                        .context("Failed to select connection")?;
+                    let Some(selection) = selection else {
+                        anyhow::bail!("Cancelled");
+                    };
+                    let id = *list.keys().nth(selection).unwrap();
+                    *cache.data.selected = id;
+                    cache.write_to_disk().await?;
+                    return Ok(id);
+                }
+
                 anyhow::bail!(
-                    "There are multiple connections being managed! You need to pick one!"
+                    "Multiple active connections. Specify which one to use:\n  \
+                     distant manager list              (see available connections)\n  \
+                     distant manager select            (choose interactively)\n  \
+                     distant shell --connection ID     (specify directly)"
                 );
             } else {
                 trace!("Cached connection id is invalid");
@@ -1450,22 +2006,4 @@ async fn use_or_lookup_connection_id(
             }
         }
     }
-}
-
-async fn connect_to_manager(
-    format: Format,
-    network: NetworkSettings,
-) -> anyhow::Result<ManagerClient> {
-    Ok(match format {
-        Format::Shell => Client::new(network)
-            .using_prompt_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-        Format::Json => Client::new(network)
-            .using_json_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-    })
 }

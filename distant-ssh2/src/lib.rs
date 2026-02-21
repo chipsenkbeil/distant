@@ -35,6 +35,18 @@ mod utils;
 
 use api::SshDistantApi;
 
+/// Format a `MethodSet` as a comma-separated string of method names.
+fn format_methods(methods: &russh::MethodSet) -> String {
+    if methods.is_empty() {
+        return "none".to_string();
+    }
+    methods
+        .iter()
+        .map(<&str>::from)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Represents the family of the remote machine connected over SSH
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -433,18 +445,81 @@ impl Ssh {
 
     /// Authenticates the [`Ssh`] if not already authenticated
     pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
+        use russh::MethodKind;
+
         if self.authenticated {
             return Ok(());
         }
 
-        // Try public key authentication first
-        if !self.opts.identity_files.is_empty() {
-            for key_file in &self.opts.identity_files {
+        // Track what we tried and what the server accepts for error reporting
+        let mut methods_tried: Vec<String> = Vec::new();
+        let mut server_methods: Option<russh::MethodSet> = None;
+
+        // Probe with "none" auth to discover which methods the server supports
+        match self.handle.authenticate_none(&self.user).await {
+            Ok(res) => {
+                if res.success() {
+                    self.authenticated = true;
+                    return Ok(());
+                }
+                if let russh::client::AuthResult::Failure {
+                    remaining_methods, ..
+                } = res
+                {
+                    debug!(
+                        "Server auth methods: {}",
+                        format_methods(&remaining_methods)
+                    );
+                    server_methods = Some(remaining_methods);
+                }
+            }
+            Err(e) => {
+                warn!("authenticate_none probe failed: {e}");
+            }
+        }
+
+        let server_accepts_pubkey = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::PublicKey));
+        let server_accepts_password = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::Password));
+        let server_accepts_kbdint = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+
+        // --- Public key authentication ---
+        if server_accepts_pubkey {
+            // Determine which key files to try
+            let key_files: Vec<PathBuf> = if !self.opts.identity_files.is_empty() {
+                self.opts.identity_files.clone()
+            } else {
+                // Try standard default key paths
+                if let Some(home) = dirs::home_dir() {
+                    let ssh_dir = home.join(".ssh");
+                    let defaults = [
+                        ssh_dir.join("id_ed25519"),
+                        ssh_dir.join("id_rsa"),
+                        ssh_dir.join("id_ecdsa"),
+                    ];
+                    defaults.into_iter().filter(|p| p.exists()).collect()
+                } else {
+                    warn!("Could not determine home directory; skipping default key discovery");
+                    Vec::new()
+                }
+            };
+
+            if !key_files.is_empty() {
+                methods_tried.push("publickey".to_string());
+            }
+
+            for key_file in &key_files {
                 match self.load_private_key(key_file).await {
                     Ok(key) => {
                         let key_with_hash =
                             russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
 
+                        debug!("Trying publickey auth with {:?}", key_file);
                         let auth_res = self
                             .handle
                             .authenticate_publickey(&self.user, key_with_hash)
@@ -455,6 +530,13 @@ impl Ssh {
                             self.authenticated = true;
                             return Ok(());
                         }
+
+                        if let russh::client::AuthResult::Failure {
+                            remaining_methods, ..
+                        } = auth_res
+                        {
+                            server_methods = Some(remaining_methods);
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to load key {:?}: {}", key_file, e);
@@ -463,40 +545,149 @@ impl Ssh {
             }
         }
 
-        // Fall back to password authentication
-        let event = SshAuthEvent {
-            username: self.user.clone(),
-            instructions: "Password:".to_string(),
-            prompts: vec![SshAuthPrompt {
-                prompt: "Password: ".to_string(),
-                echo: false,
-            }],
-        };
+        // --- Keyboard-interactive authentication ---
+        // Track whether we already prompted the user (to avoid double-prompting with password)
+        let mut user_was_prompted = false;
 
-        let responses = handler.on_authenticate(event).await?;
-
-        if let Some(password) = responses.first() {
-            let auth_res = self
+        if server_accepts_kbdint {
+            debug!("Trying keyboard-interactive auth");
+            match self
                 .handle
-                .authenticate_password(&self.user, password)
+                .authenticate_keyboard_interactive_start(&self.user, None)
                 .await
-                .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
+            {
+                Ok(mut response) => {
+                    methods_tried.push("keyboard-interactive".to_string());
+                    loop {
+                        match response {
+                            russh::client::KeyboardInteractiveAuthResponse::Success => {
+                                self.authenticated = true;
+                                return Ok(());
+                            }
+                            russh::client::KeyboardInteractiveAuthResponse::Failure {
+                                remaining_methods,
+                                ..
+                            } => {
+                                server_methods = Some(remaining_methods);
+                                break;
+                            }
+                            russh::client::KeyboardInteractiveAuthResponse::InfoRequest {
+                                name,
+                                instructions,
+                                prompts,
+                            } => {
+                                if prompts.is_empty() {
+                                    // Server sent an empty prompt set; respond with empty answers
+                                    match self
+                                        .handle
+                                        .authenticate_keyboard_interactive_respond(Vec::new())
+                                        .await
+                                    {
+                                        Ok(next) => {
+                                            response = next;
+                                            continue;
+                                        }
+                                        Err(e) => {
+                                            warn!("keyboard-interactive respond failed: {e}");
+                                            break;
+                                        }
+                                    }
+                                }
 
-            if auth_res.success() {
-                self.authenticated = true;
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "Authentication failed",
-                ))
+                                user_was_prompted = true;
+                                let event = SshAuthEvent {
+                                    username: if name.is_empty() {
+                                        self.user.clone()
+                                    } else {
+                                        name
+                                    },
+                                    instructions: if instructions.is_empty() {
+                                        "Authentication required".to_string()
+                                    } else {
+                                        instructions
+                                    },
+                                    prompts: prompts
+                                        .into_iter()
+                                        .map(|p| SshAuthPrompt {
+                                            prompt: p.prompt,
+                                            echo: p.echo,
+                                        })
+                                        .collect(),
+                                };
+                                let answers = handler.on_authenticate(event).await?;
+                                match self
+                                    .handle
+                                    .authenticate_keyboard_interactive_respond(answers)
+                                    .await
+                                {
+                                    Ok(next) => response = next,
+                                    Err(e) => {
+                                        warn!("keyboard-interactive respond failed: {e}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("keyboard-interactive start failed: {e}");
+                }
             }
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "No password provided",
-            ))
         }
+
+        // --- Password authentication ---
+        // Skip if keyboard-interactive already prompted the user (avoids double-prompt)
+        if server_accepts_password && !user_was_prompted {
+            let event = SshAuthEvent {
+                username: self.user.clone(),
+                instructions: "Password:".to_string(),
+                prompts: vec![SshAuthPrompt {
+                    prompt: "Password: ".to_string(),
+                    echo: false,
+                }],
+            };
+
+            let responses = handler.on_authenticate(event).await?;
+
+            if let Some(password) = responses.first() {
+                methods_tried.push("password".to_string());
+                debug!("Trying password auth");
+                let auth_res = self
+                    .handle
+                    .authenticate_password(&self.user, password)
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
+
+                if auth_res.success() {
+                    self.authenticated = true;
+                    return Ok(());
+                }
+
+                if let russh::client::AuthResult::Failure {
+                    remaining_methods, ..
+                } = auth_res
+                {
+                    server_methods = Some(remaining_methods);
+                }
+            }
+        }
+
+        // All methods exhausted — build a descriptive error
+        let tried = if methods_tried.is_empty() {
+            "none".to_string()
+        } else {
+            methods_tried.join(", ")
+        };
+        let accepts = server_methods
+            .as_ref()
+            .map(format_methods)
+            .unwrap_or_else(|| "unknown".to_string());
+
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("Permission denied (tried: {tried}; server accepts: {accepts})"),
+        ))
     }
 
     async fn load_private_key(&self, path: &Path) -> io::Result<PrivateKey> {
@@ -596,23 +787,6 @@ impl Ssh {
             .parse::<Host>()
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        // Open a channel and request a PTY for launching the distant server
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(io::Error::other)?;
-
-        channel
-            .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
-            .await
-            .map_err(io::Error::other)?;
-
-        channel
-            .request_shell(true)
-            .await
-            .map_err(io::Error::other)?;
-
         // Build arguments for distant to run listen subcommand
         let mut args = vec![
             String::from("server"),
@@ -627,37 +801,37 @@ impl Ssh {
                 .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
         });
 
-        let cmd = format!("{} {}\r\n", opts.binary, args.join(" "));
-        debug!("Writing launch command: {}", cmd.trim());
+        let cmd = format!("{} {}", opts.binary, args.join(" "));
+        debug!("Executing launch command: {}", cmd);
 
-        use std::io::Cursor;
-        channel
-            .data(Cursor::new(cmd.into_bytes()))
+        // Use channel exec instead of PTY + shell to avoid interference
+        // from shell startup scripts (.bashrc, .zshrc, etc.)
+        let channel = self
+            .handle
+            .channel_open_session()
             .await
             .map_err(io::Error::other)?;
 
-        // Read stdout from the PTY and look for credentials
+        channel
+            .exec(true, cmd.as_bytes())
+            .await
+            .map_err(io::Error::other)?;
+
+        // Read stdout directly for credentials (no PTY escape codes to filter)
         let (mut read_half, _write_half) = channel.split();
 
         let timeout = opts.timeout;
         let start_instant = std::time::Instant::now();
         let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
 
         loop {
             // Check for timeout
             if start_instant.elapsed() >= timeout {
-                // Clean the bytes before including by removing anything that isn't ascii
-                // and isn't a control character (except whitespace)
-                stdout.retain(|b: &u8| {
-                    b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
-                });
-
+                let output = Self::clean_launch_output(&stdout, &stderr);
                 return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!(
-                        "Failed to spawn server: '{}'",
-                        shell_words::quote(&String::from_utf8_lossy(&stdout))
-                    ),
+                    io::ErrorKind::TimedOut,
+                    format!("Timed out waiting for server credentials: {output}"),
                 ));
             }
 
@@ -678,26 +852,57 @@ impl Ssh {
                         return Ok(credentials);
                     }
                 }
+                Ok(Some(russh::ChannelMsg::ExtendedData { ref data, ext })) => {
+                    // ext == 1 is stderr
+                    if ext == 1 {
+                        trace!("Received {} more bytes over stderr", data.len());
+                        stderr.extend_from_slice(data);
+                    }
+                }
                 Ok(Some(_)) => {
-                    // Other channel messages, continue
+                    // Other channel messages (e.g. exit status), continue
                 }
                 Ok(None) => {
-                    // Channel closed without finding credentials
-                    stdout.retain(|b: &u8| {
-                        b.is_ascii() && (b.is_ascii_whitespace() || !b.is_ascii_control())
-                    });
+                    // Channel closed — check one last time if credentials appeared
+                    if let Some(mut credentials) =
+                        DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
+                    {
+                        credentials.host = host;
+                        debug!("Got credentials from launched server (on channel close)");
+                        return Ok(credentials);
+                    }
+
+                    let output = Self::clean_launch_output(&stdout, &stderr);
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
-                        format!(
-                            "Channel closed before credentials found: '{}'",
-                            shell_words::quote(&String::from_utf8_lossy(&stdout))
-                        ),
+                        format!("Channel closed before credentials found: {output}"),
                     ));
                 }
                 Err(_) => {
                     // Timeout on this read iteration, will be caught at loop top
                 }
             }
+        }
+    }
+
+    /// Clean and format the output from a failed launch attempt for error messages.
+    fn clean_launch_output(stdout: &[u8], stderr: &[u8]) -> String {
+        fn clean_bytes(bytes: &[u8]) -> String {
+            let s: String = String::from_utf8_lossy(bytes)
+                .chars()
+                .filter(|c| !c.is_control() || c.is_ascii_whitespace())
+                .collect();
+            s.trim().to_string()
+        }
+
+        let out = clean_bytes(stdout);
+        let err = clean_bytes(stderr);
+
+        match (out.is_empty(), err.is_empty()) {
+            (true, true) => "(no output)".to_string(),
+            (false, true) => format!("stdout: '{out}'"),
+            (true, false) => format!("stderr: '{err}'"),
+            (false, false) => format!("stdout: '{out}', stderr: '{err}'"),
         }
     }
 

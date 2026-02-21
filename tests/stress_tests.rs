@@ -17,7 +17,8 @@ fn should_handle_large_volume_of_requests(ctx: DistantManagerCtx) {
 
     // Perform many requests of writing a file and reading a file
     for i in 1..100 {
-        ctx.new_assert_cmd(["fs", "write"])
+        let _ = ctx
+            .new_assert_cmd(["fs", "write"])
             .arg(path.to_str().unwrap())
             .write_stdin(format!("idx: {i}"))
             .assert();

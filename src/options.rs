@@ -163,6 +163,21 @@ impl Options {
                     ClientSubcommand::Version { network, .. } => {
                         network.merge(config.client.network);
                     }
+                    ClientSubcommand::Ssh {
+                        network, options, ..
+                    } => {
+                        network.merge(config.client.network);
+                        options.merge(config.client.connect.options, /* keep */ true);
+                    }
+                    ClientSubcommand::Status { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::Kill { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    ClientSubcommand::Select { network, .. } => {
+                        network.merge(config.client.network);
+                    }
                 }
             }
             DistantSubcommand::Generate(_) => {
@@ -174,22 +189,10 @@ impl Options {
                     ManagerSubcommand::Version { network, .. } => {
                         network.merge(config.manager.network);
                     }
-                    ManagerSubcommand::Info { network, .. } => {
-                        network.merge(config.manager.network);
-                    }
-                    ManagerSubcommand::Kill { network, .. } => {
-                        network.merge(config.manager.network);
-                    }
-                    ManagerSubcommand::List { network, .. } => {
-                        network.merge(config.manager.network);
-                    }
                     ManagerSubcommand::Listen {
                         access, network, ..
                     } => {
                         *access = access.take().or(config.manager.access);
-                        network.merge(config.manager.network);
-                    }
-                    ManagerSubcommand::Select { network, .. } => {
                         network.merge(config.manager.network);
                     }
                     ManagerSubcommand::Service(_) => (),
@@ -348,6 +351,10 @@ pub enum ClientSubcommand {
 
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
+
+        /// Force a new connection even if one to the same destination already exists
+        #[clap(long)]
+        new: bool,
 
         destination: Box<Destination>,
     },
@@ -534,6 +541,121 @@ pub enum ClientSubcommand {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
     },
+
+    /// Connect to a remote host via SSH and optionally open a shell or run a command.
+    ///
+    /// This is the simplest way to use distant. It auto-starts the manager,
+    /// connects via SSH (no distant binary needed on the remote), and opens
+    /// a shell or runs the specified command.
+    ///
+    /// Examples:
+    ///   distant ssh user@host              # open an interactive shell
+    ///   distant ssh user@host -- ls -la    # run a single command
+    #[clap(name = "ssh")]
+    Ssh {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Additional options to provide to the SSH handler (key-value pairs separated by comma)
+        ///
+        /// E.g. `key="value",key2="value2"`
+        #[clap(long, default_value_t)]
+        options: Map,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Alternative current directory for the remote process
+        #[clap(long)]
+        current_dir: Option<PathBuf>,
+
+        /// Environment variables to provide to the remote shell
+        #[clap(long, default_value_t)]
+        environment: Map,
+
+        /// Force a new connection even if one to the same destination already exists
+        #[clap(long)]
+        new: bool,
+
+        /// Destination in the form [user@]host[:port]
+        destination: Box<Destination>,
+
+        /// Optional command to run instead of opening an interactive shell
+        #[clap(name = "CMD", last = true)]
+        cmd: Option<Vec<String>>,
+    },
+
+    /// Show the current status of the manager and active connections.
+    ///
+    /// With no arguments, shows an overview of the manager and all connections.
+    /// With a connection ID, shows detailed info about that specific connection.
+    Status {
+        /// Connection ID to inspect (shows overview if omitted)
+        id: Option<ConnectionId>,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+    },
+
+    /// Kill an active connection
+    Kill {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
+        /// Connection to kill (interactive prompt if omitted)
+        id: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+    },
+
+    /// Select the active connection
+    Select {
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
+        /// Connection to select (interactive prompt if omitted)
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+    },
 }
 
 impl ClientSubcommand {
@@ -545,8 +667,12 @@ impl ClientSubcommand {
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
+            Self::Ssh { cache, .. } => cache.as_path(),
+            Self::Status { cache, .. } => cache.as_path(),
             Self::SystemInfo { cache, .. } => cache.as_path(),
             Self::Version { cache, .. } => cache.as_path(),
+            Self::Kill { cache, .. } => cache.as_path(),
+            Self::Select { cache, .. } => cache.as_path(),
         }
     }
 
@@ -558,8 +684,12 @@ impl ClientSubcommand {
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
+            Self::Ssh { network, .. } => network,
+            Self::Status { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
             Self::Version { network, .. } => network,
+            Self::Kill { network, .. } => network,
+            Self::Select { network, .. } => network,
         }
     }
 
@@ -573,8 +703,12 @@ impl ClientSubcommand {
             Self::Launch { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
+            Self::Ssh { .. } => Format::Shell,
+            Self::Status { format, .. } => *format,
             Self::SystemInfo { .. } => Format::Shell,
             Self::Version { format, .. } => *format,
+            Self::Kill { format, .. } => *format,
+            Self::Select { format, .. } => *format,
         }
     }
 }
@@ -1015,27 +1149,6 @@ impl GenerateSubcommand {
 /// Subcommands for `distant manager`.
 #[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
-    /// Select the active connection
-    Select {
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-
-        /// Connection to use, otherwise will prompt to select
-        connection: Option<ConnectionId>,
-
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-    },
-
     /// Interact with a manager being run by a service management platform
     #[clap(subcommand)]
     Service(ManagerServiceSubcommand),
@@ -1066,46 +1179,6 @@ pub enum ManagerSubcommand {
         #[clap(flatten)]
         network: NetworkSettings,
     },
-
-    /// Retrieve information about a specific connection
-    Info {
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-
-        id: ConnectionId,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-    },
-
-    /// List information about all connections
-    List {
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        /// Location to store cached data
-        #[clap(
-            long,
-            value_hint = ValueHint::FilePath,
-            value_parser,
-            default_value = CACHE_FILE_PATH_STR.as_str()
-        )]
-        cache: PathBuf,
-    },
-
-    /// Kill a specific connection
-    Kill {
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-
-        #[clap(flatten)]
-        network: NetworkSettings,
-
-        id: ConnectionId,
-    },
 }
 
 impl ManagerSubcommand {
@@ -1113,13 +1186,9 @@ impl ManagerSubcommand {
     #[inline]
     pub fn format(&self) -> Format {
         match self {
-            Self::Select { format, .. } => *format,
             Self::Service(_) => Format::Shell,
             Self::Listen { .. } => Format::Shell,
             Self::Version { format, .. } => *format,
-            Self::Info { format, .. } => *format,
-            Self::List { format, .. } => *format,
-            Self::Kill { format, .. } => *format,
         }
     }
 }
@@ -1554,6 +1623,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 format: Format::Json,
+                new: false,
                 destination: Box::new("test://destination".parse().unwrap()),
             }),
         };
@@ -1592,6 +1662,7 @@ mod tests {
                         windows_pipe: Some(String::from("config-windows-pipe")),
                     },
                     format: Format::Json,
+                    new: false,
                     destination: Box::new("test://destination".parse().unwrap()),
                 }),
             }
@@ -1614,6 +1685,7 @@ mod tests {
                     windows_pipe: Some(String::from("cli-windows-pipe")),
                 },
                 format: Format::Json,
+                new: false,
                 destination: Box::new("test://destination".parse().unwrap()),
             }),
         };
@@ -1652,6 +1724,7 @@ mod tests {
                         windows_pipe: Some(String::from("cli-windows-pipe")),
                     },
                     format: Format::Json,
+                    new: false,
                     destination: Box::new("test://destination".parse().unwrap()),
                 }),
             }
@@ -3601,16 +3674,17 @@ mod tests {
     }
 
     #[test]
-    fn distant_manager_info_should_support_merging_with_config() {
+    fn distant_status_should_support_merging_with_config() {
         let mut options = Options {
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
                 log_level: None,
             },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                id: 0,
-                format: Format::Json,
+            command: DistantSubcommand::Client(ClientSubcommand::Status {
+                id: None,
+                format: Format::Shell,
+                cache: PathBuf::new(),
                 network: NetworkSettings {
                     unix_socket: None,
                     windows_pipe: None,
@@ -3619,7 +3693,7 @@ mod tests {
         };
 
         options.merge(Config {
-            manager: ManagerConfig {
+            client: ClientConfig {
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
@@ -3641,9 +3715,10 @@ mod tests {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
                 },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                    id: 0,
-                    format: Format::Json,
+                command: DistantSubcommand::Client(ClientSubcommand::Status {
+                    id: None,
+                    format: Format::Shell,
+                    cache: PathBuf::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
                         windows_pipe: Some(String::from("config-windows-pipe")),
@@ -3654,16 +3729,17 @@ mod tests {
     }
 
     #[test]
-    fn distant_manager_info_should_prioritize_explicit_cli_options_when_merging() {
+    fn distant_status_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
                 log_level: Some(LogLevel::Info),
             },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                id: 0,
+            command: DistantSubcommand::Client(ClientSubcommand::Status {
+                id: Some(0),
                 format: Format::Json,
+                cache: PathBuf::new(),
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
                     windows_pipe: Some(String::from("cli-windows-pipe")),
@@ -3672,7 +3748,7 @@ mod tests {
         };
 
         options.merge(Config {
-            manager: ManagerConfig {
+            client: ClientConfig {
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
@@ -3694,8 +3770,119 @@ mod tests {
                     log_file: Some(PathBuf::from("cli-log-file")),
                     log_level: Some(LogLevel::Info),
                 },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Info {
-                    id: 0,
+                command: DistantSubcommand::Client(ClientSubcommand::Status {
+                    id: Some(0),
+                    format: Format::Json,
+                    cache: PathBuf::new(),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_kill_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Kill {
+                cache: PathBuf::new(),
+                id: Some(0),
+                format: Format::Json,
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Kill {
+                    cache: PathBuf::new(),
+                    id: Some(0),
+                    format: Format::Json,
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_kill_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Kill {
+                cache: PathBuf::new(),
+                id: Some(0),
+                format: Format::Json,
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Kill {
+                    cache: PathBuf::new(),
+                    id: Some(0),
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -3707,15 +3894,16 @@ mod tests {
     }
 
     #[test]
-    fn distant_manager_kill_should_support_merging_with_config() {
+    fn distant_select_should_support_merging_with_config() {
         let mut options = Options {
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
                 log_level: None,
             },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                id: 0,
+            command: DistantSubcommand::Client(ClientSubcommand::Select {
+                cache: PathBuf::new(),
+                connection: None,
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: None,
@@ -3725,7 +3913,7 @@ mod tests {
         };
 
         options.merge(Config {
-            manager: ManagerConfig {
+            client: ClientConfig {
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
@@ -3747,8 +3935,9 @@ mod tests {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
                 },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                    id: 0,
+                command: DistantSubcommand::Client(ClientSubcommand::Select {
+                    cache: PathBuf::new(),
+                    connection: None,
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
@@ -3760,15 +3949,16 @@ mod tests {
     }
 
     #[test]
-    fn distant_manager_kill_should_prioritize_explicit_cli_options_when_merging() {
+    fn distant_select_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
                 log_level: Some(LogLevel::Info),
             },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                id: 0,
+            command: DistantSubcommand::Client(ClientSubcommand::Select {
+                cache: PathBuf::new(),
+                connection: None,
                 format: Format::Json,
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -3778,7 +3968,7 @@ mod tests {
         };
 
         options.merge(Config {
-            manager: ManagerConfig {
+            client: ClientConfig {
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
                     log_level: Some(LogLevel::Trace),
@@ -3800,114 +3990,9 @@ mod tests {
                     log_file: Some(PathBuf::from("cli-log-file")),
                     log_level: Some(LogLevel::Info),
                 },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Kill {
-                    id: 0,
-                    format: Format::Json,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                        windows_pipe: Some(String::from("cli-windows-pipe")),
-                    },
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_manager_list_should_support_merging_with_config() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: None,
-                log_level: None,
-            },
-            command: DistantSubcommand::Manager(ManagerSubcommand::List {
-                cache: PathBuf::new(),
-                format: Format::Json,
-                network: NetworkSettings {
-                    unix_socket: None,
-                    windows_pipe: None,
-                },
-            }),
-        };
-
-        options.merge(Config {
-            manager: ManagerConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                command: DistantSubcommand::Manager(ManagerSubcommand::List {
+                command: DistantSubcommand::Client(ClientSubcommand::Select {
                     cache: PathBuf::new(),
-                    format: Format::Json,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("config-unix-socket")),
-                        windows_pipe: Some(String::from("config-windows-pipe")),
-                    },
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_manager_list_should_prioritize_explicit_cli_options_when_merging() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: Some(PathBuf::from("cli-log-file")),
-                log_level: Some(LogLevel::Info),
-            },
-            command: DistantSubcommand::Manager(ManagerSubcommand::List {
-                cache: PathBuf::new(),
-                format: Format::Json,
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                    windows_pipe: Some(String::from("cli-windows-pipe")),
-                },
-            }),
-        };
-
-        options.merge(Config {
-            manager: ManagerConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("cli-log-file")),
-                    log_level: Some(LogLevel::Info),
-                },
-                command: DistantSubcommand::Manager(ManagerSubcommand::List {
-                    cache: PathBuf::new(),
+                    connection: None,
                     format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -4019,116 +4104,6 @@ mod tests {
                     access: Some(AccessControl::Owner),
                     daemon: false,
                     user: false,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                        windows_pipe: Some(String::from("cli-windows-pipe")),
-                    },
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_manager_select_should_support_merging_with_config() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: None,
-                log_level: None,
-            },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Select {
-                cache: PathBuf::new(),
-                connection: None,
-                format: Format::Json,
-                network: NetworkSettings {
-                    unix_socket: None,
-                    windows_pipe: None,
-                },
-            }),
-        };
-
-        options.merge(Config {
-            manager: ManagerConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Select {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    format: Format::Json,
-                    network: NetworkSettings {
-                        unix_socket: Some(PathBuf::from("config-unix-socket")),
-                        windows_pipe: Some(String::from("config-windows-pipe")),
-                    },
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_manager_select_should_prioritize_explicit_cli_options_when_merging() {
-        let mut options = Options {
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: Some(PathBuf::from("cli-log-file")),
-                log_level: Some(LogLevel::Info),
-            },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Select {
-                cache: PathBuf::new(),
-                connection: None,
-                format: Format::Json,
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
-                    windows_pipe: Some(String::from("cli-windows-pipe")),
-                },
-            }),
-        };
-
-        options.merge(Config {
-            manager: ManagerConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                network: NetworkSettings {
-                    unix_socket: Some(PathBuf::from("config-unix-socket")),
-                    windows_pipe: Some(String::from("config-windows-pipe")),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("cli-log-file")),
-                    log_level: Some(LogLevel::Info),
-                },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Select {
-                    cache: PathBuf::new(),
-                    connection: None,
-                    format: Format::Json,
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
                         windows_pipe: Some(String::from("cli-windows-pipe")),
@@ -4390,5 +4365,106 @@ mod tests {
                 }),
             }
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Clap parsing tests for new/moved top-level commands
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn distant_status_should_parse_without_id() {
+        let options = Options::try_parse_from(["distant", "status"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Status { id, .. }) => {
+                assert_eq!(id, None);
+            }
+            other => panic!("Expected Status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_status_should_parse_with_id() {
+        let options = Options::try_parse_from(["distant", "status", "5"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Status { id, .. }) => {
+                assert_eq!(id, Some(5));
+            }
+            other => panic!("Expected Status with id=5, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_status_should_parse_with_format_json() {
+        let options = Options::try_parse_from(["distant", "status", "--format", "json"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Status { format, .. }) => {
+                assert_eq!(format, Format::Json);
+            }
+            other => panic!("Expected Status with json format, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_kill_should_parse_without_id() {
+        let options = Options::try_parse_from(["distant", "kill"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Kill { id, .. }) => {
+                assert_eq!(id, None);
+            }
+            other => panic!("Expected Kill, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_kill_should_parse_with_id() {
+        let options = Options::try_parse_from(["distant", "kill", "5"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Kill { id, .. }) => {
+                assert_eq!(id, Some(5));
+            }
+            other => panic!("Expected Kill with id=5, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_select_should_parse_without_connection() {
+        let options = Options::try_parse_from(["distant", "select"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Select { connection, .. }) => {
+                assert_eq!(connection, None);
+            }
+            other => panic!("Expected Select, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_select_should_parse_with_connection() {
+        let options = Options::try_parse_from(["distant", "select", "5"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Select { connection, .. }) => {
+                assert_eq!(connection, Some(5));
+            }
+            other => panic!("Expected Select with connection=5, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_list_should_not_parse() {
+        assert!(Options::try_parse_from(["distant", "manager", "list"]).is_err());
+    }
+
+    #[test]
+    fn distant_manager_kill_should_not_parse() {
+        assert!(Options::try_parse_from(["distant", "manager", "kill"]).is_err());
+    }
+
+    #[test]
+    fn distant_manager_info_should_not_parse() {
+        assert!(Options::try_parse_from(["distant", "manager", "info"]).is_err());
+    }
+
+    #[test]
+    fn distant_manager_select_should_not_parse() {
+        assert!(Options::try_parse_from(["distant", "manager", "select"]).is_err());
     }
 }

@@ -1,17 +1,18 @@
 use std::io;
 use std::time::Duration;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use distant_core::net::auth::msg::*;
-use distant_core::net::auth::{
-    AuthHandler, AuthMethodHandler, PromptAuthMethodHandler, SingleAuthHandler,
-};
+use distant_core::net::auth::{AuthHandler, AuthMethodHandler};
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
 use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
+use indicatif::ProgressBar;
 use log::*;
 
+use crate::cli::common::ui::Ui;
 use crate::cli::common::{MsgReceiver, MsgSender};
-use crate::options::NetworkSettings;
+use crate::options::{Format, NetworkSettings};
 
 pub struct Client<T> {
     network: NetworkSettings,
@@ -237,74 +238,223 @@ impl AuthMethodHandler for JsonAuthHandler {
 }
 
 /// Implementation of [`AuthHandler`] that uses prompts to perform authentication requests and
-/// notification of different information.
-pub struct PromptAuthHandler(Box<dyn AuthHandler>);
+/// notification of different information. Optionally holds a [`ProgressBar`] to suspend the
+/// spinner while prompting, preventing visual conflicts on stderr.
+pub struct PromptAuthHandler {
+    pb: Option<ProgressBar>,
+}
 
 impl PromptAuthHandler {
     pub fn new() -> Self {
-        Self(Box::new(SingleAuthHandler::new(
-            PromptAuthMethodHandler::new(
-                |prompt: &str| {
-                    eprintln!("{prompt}");
-                    let mut line = String::new();
-                    std::io::stdin().read_line(&mut line)?;
-                    Ok(line)
-                },
-                |prompt: &str| rpassword::prompt_password(prompt),
-            ),
-        )))
+        Self { pb: None }
+    }
+
+    pub fn with_progress_bar(pb: Option<ProgressBar>) -> Self {
+        Self { pb }
     }
 }
 
 impl Clone for PromptAuthHandler {
-    /// Clones a new copy of the handler.
-    ///
-    /// ### Note
-    ///
-    /// This is a hack so we can use this handler elsewhere. Because this handler only has a new
-    /// method that creates a new instance, we treat it like a clone and just create an entirely
-    /// new prompt auth handler since there is no actual state to clone.
     fn clone(&self) -> Self {
-        Self::new()
+        Self {
+            pb: self.pb.clone(),
+        }
     }
 }
 
 #[async_trait]
-impl AuthHandler for PromptAuthHandler {
-    async fn on_initialization(
-        &mut self,
-        initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        self.0.on_initialization(initialization).await
-    }
-
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        self.0.on_start_method(start_method).await
-    }
-
-    async fn on_finished(&mut self) -> io::Result<()> {
-        self.0.on_finished().await
-    }
-}
+impl AuthHandler for PromptAuthHandler {}
 
 #[async_trait]
 impl AuthMethodHandler for PromptAuthHandler {
     async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        self.0.on_challenge(challenge).await
+        let mut answers = Vec::new();
+        for question in challenge.questions.iter() {
+            let mut lines = question.text.split('\n').collect::<Vec<_>>();
+            let line = lines.pop().unwrap();
+
+            let answer = match &self.pb {
+                Some(pb) => pb.suspend(|| {
+                    for l in &lines {
+                        eprintln!("{l}");
+                    }
+                    rpassword::prompt_password(line).unwrap_or_default()
+                }),
+                None => {
+                    for l in &lines {
+                        eprintln!("{l}");
+                    }
+                    rpassword::prompt_password(line).unwrap_or_default()
+                }
+            };
+            answers.push(answer);
+        }
+        Ok(ChallengeResponse { answers })
     }
 
     async fn on_verification(
         &mut self,
         verification: Verification,
     ) -> io::Result<VerificationResponse> {
-        self.0.on_verification(verification).await
+        match verification.kind {
+            VerificationKind::Host => {
+                let answer = match &self.pb {
+                    Some(pb) => pb.suspend(|| {
+                        eprintln!("{}", verification.text);
+                        let mut line = String::new();
+                        eprint!("Enter [y/N]> ");
+                        std::io::stdin().read_line(&mut line).ok();
+                        line
+                    }),
+                    None => {
+                        eprintln!("{}", verification.text);
+                        let mut line = String::new();
+                        eprint!("Enter [y/N]> ");
+                        std::io::stdin().read_line(&mut line).ok();
+                        line
+                    }
+                };
+                Ok(VerificationResponse {
+                    valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
+                })
+            }
+            x => {
+                log::error!("Unsupported verify kind: {x}");
+                Ok(VerificationResponse { valid: false })
+            }
+        }
     }
 
     async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        self.0.on_info(info).await
+        match &self.pb {
+            Some(pb) => pb.suspend(|| eprintln!("{}", info.text)),
+            None => eprintln!("{}", info.text),
+        }
+        Ok(())
     }
 
     async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        self.0.on_error(error).await
+        match &self.pb {
+            Some(pb) => pb.suspend(|| eprintln!("{}: {}", error.kind, error.text)),
+            None => eprintln!("{}: {}", error.kind, error.text),
+        }
+        Ok(())
+    }
+}
+
+/// Attempt to start the manager daemon by spawning `distant manager listen --daemon`.
+/// Returns Ok(()) if the process was spawned successfully, Err otherwise.
+fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
+    let exe = std::env::current_exe().context("Failed to determine distant executable path")?;
+
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["manager", "listen", "--daemon"]);
+
+    // Forward custom socket/pipe settings so the new manager listens on the same address
+    #[cfg(unix)]
+    if let Some(ref socket) = network.unix_socket {
+        cmd.args(["--unix-socket", &socket.to_string_lossy()]);
+    }
+    #[cfg(windows)]
+    if let Some(ref pipe) = network.windows_pipe {
+        cmd.args(["--windows-pipe", pipe]);
+    }
+
+    let status = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .context("Failed to spawn distant manager")?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "distant manager listen --daemon exited with status {}",
+            status
+        );
+    }
+}
+
+/// Connect to the manager, auto-starting it if not already running.
+///
+/// This is the shared implementation used by both client and manager commands.
+/// Provides visual feedback via the `Ui` abstraction (spinners, status messages).
+pub async fn connect_to_manager(
+    format: Format,
+    network: NetworkSettings,
+    ui: &Ui,
+) -> anyhow::Result<ManagerClient> {
+    // First attempt: try connecting directly
+    let sp = ui.spinner("Connecting to manager...");
+    let first_err = match try_connect(format, &network).await {
+        Ok(client) => {
+            sp.done("Connected to manager");
+            return Ok(client);
+        }
+        Err(err) => err,
+    };
+
+    // Connection failed — try to auto-start the manager
+    sp.set_message("Starting manager...");
+    ui.warning("Manager not running, starting it...");
+    if let Err(err) = start_manager_daemon(&network) {
+        warn!("Failed to auto-start manager: {err}");
+        sp.fail("Could not start manager");
+        return Err(first_err.context(
+            "Could not connect to the distant manager, and auto-start failed. \
+             Run `distant manager listen --daemon` to start it manually.",
+        ));
+    }
+
+    // Retry with backoff: 100ms, 200ms, 400ms, 800ms, 500ms = ~2s total
+    sp.set_message("Waiting for manager...");
+    let delays = [100, 200, 400, 800, 500];
+    for delay_ms in delays {
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        match try_connect(format, &network).await {
+            Ok(client) => {
+                sp.done("Connected to manager");
+                return Ok(client);
+            }
+            Err(_) => continue,
+        }
+    }
+
+    // Final attempt with the full error context
+    match try_connect(format, &network).await {
+        Ok(client) => {
+            sp.done("Connected to manager");
+            Ok(client)
+        }
+        Err(err) => {
+            sp.fail("Failed to connect to manager");
+            Err(err.context(
+                "Failed to connect to the distant manager after auto-starting it. \
+                 Try running `distant manager listen --daemon` manually.",
+            ))
+        }
+    }
+}
+
+/// Try to connect to the manager without auto-starting it.
+pub async fn try_connect(
+    format: Format,
+    network: &NetworkSettings,
+) -> anyhow::Result<ManagerClient> {
+    match format {
+        Format::Shell => {
+            Client::new(network.clone())
+                .using_prompt_auth_handler()
+                .connect()
+                .await
+        }
+        Format::Json => {
+            Client::new(network.clone())
+                .using_json_auth_handler()
+                .connect()
+                .await
+        }
     }
 }

@@ -25,8 +25,7 @@ fn should_support_renaming_file(ctx: DistantManagerCtx) {
         .args([src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     src.assert(predicate::path::missing());
     dst.assert(FILE_CONTENTS);
@@ -51,8 +50,7 @@ fn should_support_renaming_nonempty_directory(ctx: DistantManagerCtx) {
         .args([src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     src.assert(predicate::path::missing());
     src_file.assert(predicate::path::missing());

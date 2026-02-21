@@ -25,8 +25,7 @@ fn should_support_copying_file(ctx: DistantManagerCtx) {
         .args([src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     src.assert(predicate::path::exists());
     dst.assert(predicate::path::eq_file(src.path()));
@@ -51,8 +50,7 @@ fn should_support_copying_nonempty_directory(ctx: DistantManagerCtx) {
         .args([src.to_str().unwrap(), dst.to_str().unwrap()])
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     src_file.assert(predicate::path::exists());
     dst_file.assert(predicate::path::eq_file(src_file.path()));

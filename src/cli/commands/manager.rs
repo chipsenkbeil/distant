@@ -3,26 +3,20 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use dialoguer::console::Term;
-use dialoguer::theme::ColorfulTheme;
-use dialoguer::Select;
-use distant_core::net::common::ConnectionId;
-use distant_core::net::manager::{
-    Config as NetManagerConfig, ConnectHandler, LaunchHandler, ManagerClient,
-};
+use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
 use log::*;
 use once_cell::sync::Lazy;
-use serde_json::{json, Value};
 use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx, ServiceStopCtx,
     ServiceUninstallCtx,
 };
-use tabled::{Table, Tabled};
 
-use crate::cli::common::{MsgReceiver, MsgSender};
-use crate::cli::{Cache, Client, Manager};
-use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand, NetworkSettings};
-use crate::{CliError, CliResult};
+use crate::cli::common::{connect_to_manager, Ui};
+use crate::cli::Manager;
+use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
+#[cfg(unix)]
+use crate::CliError;
+use crate::CliResult;
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
 static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
@@ -76,6 +70,8 @@ fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
 }
 
 async fn async_run(cmd: ManagerSubcommand) -> CliResult {
+    let ui = Ui::new();
+
     match cmd {
         ManagerSubcommand::Service(ManagerServiceSubcommand::Start { kind, user }) => {
             debug!("Starting manager service via {:?}", kind);
@@ -231,7 +227,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
         }
         ManagerSubcommand::Version { format, network } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
+            let mut client = connect_to_manager(format, network, &ui).await?;
 
             debug!("Getting version");
             let version = client.version().await.context("Failed to get version")?;
@@ -252,282 +248,5 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
             Ok(())
         }
-        ManagerSubcommand::Info {
-            format,
-            id,
-            network,
-        } => {
-            debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
-
-            debug!("Getting info about connection {}", id);
-            let info = client
-                .info(id)
-                .await
-                .context("Failed to get info about connection")?;
-            debug!("Got info: {info:?}");
-
-            match format {
-                Format::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string(&info)
-                            .context("Failed to format connection info as json")?
-                    );
-                }
-                Format::Shell => {
-                    #[derive(Tabled)]
-                    struct InfoRow {
-                        id: ConnectionId,
-                        scheme: String,
-                        host: String,
-                        port: String,
-                        options: String,
-                    }
-                    println!(
-                        "{}",
-                        Table::new(vec![InfoRow {
-                            id: info.id,
-                            scheme: info.destination.scheme.unwrap_or_default(),
-                            host: info.destination.host.to_string(),
-                            port: info
-                                .destination
-                                .port
-                                .map(|x| x.to_string())
-                                .unwrap_or_default(),
-                            options: info.options.to_string()
-                        }])
-                    );
-                }
-            }
-
-            Ok(())
-        }
-        ManagerSubcommand::List {
-            cache,
-            format,
-            network,
-        } => {
-            debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
-
-            debug!("Getting list of connections");
-            let list = client
-                .list()
-                .await
-                .context("Failed to get list of connections")?;
-            debug!("Got list: {list:?}");
-
-            debug!("Looking up selected connection");
-            let selected = Cache::read_from_disk_or_default(cache)
-                .await
-                .context("Failed to look up selected connection")?
-                .data
-                .selected;
-            debug!("Using selected: {selected}");
-
-            match format {
-                Format::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string(&list)
-                            .context("Failed to format connection list as json")?
-                    );
-                }
-                Format::Shell => {
-                    #[derive(Tabled)]
-                    struct ListRow {
-                        selected: bool,
-                        id: ConnectionId,
-                        scheme: String,
-                        host: String,
-                        port: String,
-                    }
-
-                    println!(
-                        "{}",
-                        Table::new(list.into_iter().map(|(id, destination)| {
-                            ListRow {
-                                selected: *selected == id,
-                                id,
-                                scheme: destination.scheme.unwrap_or_default(),
-                                host: destination.host.to_string(),
-                                port: destination.port.map(|x| x.to_string()).unwrap_or_default(),
-                            }
-                        }))
-                    );
-                }
-            }
-
-            Ok(())
-        }
-        ManagerSubcommand::Kill {
-            format,
-            id,
-            network,
-        } => {
-            debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network).await?;
-
-            debug!("Killing connection {}", id);
-            client
-                .kill(id)
-                .await
-                .with_context(|| format!("Failed to kill connection to server {id}"))?;
-
-            debug!("Connection killed");
-            match format {
-                Format::Json => println!("{}", json!({"type": "ok"})),
-                Format::Shell => (),
-            }
-
-            Ok(())
-        }
-        ManagerSubcommand::Select {
-            cache,
-            connection,
-            format,
-            network,
-        } => {
-            let mut cache = Cache::read_from_disk_or_default(cache)
-                .await
-                .context("Failed to look up cache")?;
-
-            match connection {
-                Some(id) => {
-                    *cache.data.selected = id;
-                    cache.write_to_disk().await?;
-                    Ok(())
-                }
-                None => {
-                    debug!("Connecting to manager");
-                    let mut client = connect_to_manager(format, network).await?;
-                    let list = client
-                        .list()
-                        .await
-                        .context("Failed to get a list of managed connections")?;
-
-                    if list.is_empty() {
-                        return Err(CliError::Error(anyhow::anyhow!(
-                            "No connection available in manager"
-                        )));
-                    }
-
-                    // Figure out the current selection
-                    let current = list
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, (id, _))| {
-                            if *cache.data.selected == *id {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or_default();
-
-                    trace!("Building selection prompt of {} choices", list.len());
-                    let items: Vec<String> = list
-                        .values()
-                        .map(|destination| {
-                            format!(
-                                "{}{}{}",
-                                destination
-                                    .scheme
-                                    .as_ref()
-                                    .map(|scheme| format!(r"{scheme}://"))
-                                    .unwrap_or_default(),
-                                destination.host,
-                                destination
-                                    .port
-                                    .map(|port| format!(":{port}"))
-                                    .unwrap_or_default()
-                            )
-                        })
-                        .collect();
-
-                    // Prompt for a selection, with None meaning no change
-                    let selected = match format {
-                        Format::Shell => {
-                            trace!("Rendering prompt");
-                            Select::with_theme(&ColorfulTheme::default())
-                                .items(&items)
-                                .default(current)
-                                .interact_on_opt(&Term::stderr())
-                                .context("Failed to render prompt")?
-                        }
-
-                        Format::Json => {
-                            // Print out choices
-                            MsgSender::from_stdout()
-                                .send_blocking(&json!({
-                                    "type": "select",
-                                    "choices": items,
-                                    "current": current,
-                                }))
-                                .context("Failed to send JSON choices")?;
-
-                            // Wait for a response
-                            let msg = MsgReceiver::from_stdin()
-                                .recv_blocking::<Value>()
-                                .context("Failed to receive JSON selection")?;
-
-                            // Verify the response type is "selected"
-                            match msg.get("type") {
-                                Some(value) if value == "selected" => msg
-                                    .get("choice")
-                                    .and_then(|value| value.as_u64())
-                                    .map(|choice| choice as usize),
-                                Some(value) => {
-                                    return Err(CliError::Error(anyhow::anyhow!(
-                                        "Unexpected 'type' field value: {value}"
-                                    )))
-                                }
-                                None => {
-                                    return Err(CliError::Error(anyhow::anyhow!(
-                                        "Missing 'type' field"
-                                    )))
-                                }
-                            }
-                        }
-                    };
-
-                    match selected {
-                        Some(index) => {
-                            trace!("Selected choice {}", index);
-                            if let Some((id, _)) = list.iter().nth(index) {
-                                debug!("Updating selected connection id in cache to {}", id);
-                                *cache.data.selected = *id;
-                                cache.write_to_disk().await?;
-                            }
-                            Ok(())
-                        }
-                        None => {
-                            debug!("No change in selection of default connection id");
-                            Ok(())
-                        }
-                    }
-                }
-            }
-        }
     }
-}
-
-async fn connect_to_manager(
-    format: Format,
-    network: NetworkSettings,
-) -> anyhow::Result<ManagerClient> {
-    debug!("Connecting to manager");
-    Ok(match format {
-        Format::Shell => Client::new(network)
-            .using_prompt_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-        Format::Json => Client::new(network)
-            .using_json_auth_handler()
-            .connect()
-            .await
-            .context("Failed to connect to manager")?,
-    })
 }

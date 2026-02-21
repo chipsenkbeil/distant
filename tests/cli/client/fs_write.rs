@@ -28,8 +28,7 @@ fn should_support_writing_stdin_to_file(ctx: DistantManagerCtx) {
         .write_stdin(FILE_CONTENTS)
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     // NOTE: We wait a little bit to give the OS time to fully write to file
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -51,8 +50,7 @@ fn should_support_appending_stdin_to_file(ctx: DistantManagerCtx) {
         .write_stdin(APPENDED_FILE_CONTENTS)
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     // NOTE: We wait a little bit to give the OS time to fully write to file
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -73,8 +71,7 @@ fn should_support_writing_argument_to_file(ctx: DistantManagerCtx) {
         .arg(FILE_CONTENTS)
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     // NOTE: We wait a little bit to give the OS time to fully write to file
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -96,8 +93,7 @@ fn should_support_appending_argument_to_file(ctx: DistantManagerCtx) {
         .arg(APPENDED_FILE_CONTENTS)
         .assert()
         .success()
-        .stdout("")
-        .stderr("");
+        .stdout("");
 
     // NOTE: We wait a little bit to give the OS time to fully write to file
     std::thread::sleep(std::time::Duration::from_millis(100));
