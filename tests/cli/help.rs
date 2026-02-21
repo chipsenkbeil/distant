@@ -1,0 +1,70 @@
+use assert_cmd::Command;
+
+#[test]
+fn distant_help_should_include_top_level_commands() {
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for cmd in ["status", "kill", "select", "ssh", "connect", "shell"] {
+        assert!(
+            stdout.contains(cmd),
+            "Expected top-level help to contain '{cmd}', got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn distant_help_should_not_include_removed_manager_commands_at_top_level() {
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    // "list" should not appear as a top-level command
+    // Check that no line in the help starts with a command named "list"
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        assert!(
+            !trimmed.starts_with("list "),
+            "Found 'list' as a top-level command in help:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn distant_manager_help_should_only_show_daemon_commands() {
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .args(["manager", "--help"])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for cmd in ["listen", "version", "service"] {
+        assert!(
+            stdout.contains(cmd),
+            "Expected manager help to contain '{cmd}', got:\n{stdout}"
+        );
+    }
+    for cmd in ["list", "kill", "info", "select"] {
+        assert!(
+            !stdout.contains(cmd),
+            "Expected manager help to NOT contain '{cmd}', got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn distant_manager_list_should_be_unknown_command() {
+    Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .args(["manager", "list"])
+        .assert()
+        .failure();
+}

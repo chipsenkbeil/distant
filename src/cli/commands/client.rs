@@ -22,9 +22,13 @@ use tabled::settings::{Alignment, Disable, Modify};
 use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
+use dialoguer::console::Term;
+use dialoguer::theme::ColorfulTheme;
+use dialoguer::Select;
+
 use crate::cli::common::{
-    connect_to_manager, try_connect as try_connect_no_autostart, Cache, JsonAuthHandler,
-    MsgReceiver, MsgSender, PromptAuthHandler, Ui,
+    connect_to_manager, format_connection, try_connect as try_connect_no_autostart, Cache,
+    JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler, Ui,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
@@ -285,7 +289,12 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             timeout,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(Format::Json, network, &ui).await?;
+            let mut client = try_connect_no_autostart(Format::Json, &network)
+                .await
+                .context(
+                    "Failed to connect to the distant manager. \
+                     Is it running? Start it with: distant manager listen --daemon",
+                )?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1525,54 +1534,354 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 )
                 .await?;
         }
-        ClientSubcommand::Status { network, cache } => {
-            // Try to connect to the manager without auto-starting it
-            match try_connect_no_autostart(Format::Shell, &network).await {
-                Ok(mut client) => {
-                    ui.status("Manager", "running", crate::cli::common::StatusColor::Green);
+        ClientSubcommand::Status {
+            id,
+            format,
+            network,
+            cache,
+        } => {
+            match id {
+                Some(id) => {
+                    // Detail mode: show info about a specific connection
+                    debug!("Connecting to manager");
+                    let mut client = connect_to_manager(format, network, &ui).await?;
 
-                    let list = client
-                        .list()
+                    debug!("Getting info about connection {}", id);
+                    let info = client
+                        .info(id)
                         .await
-                        .context("Failed to get list of connections")?;
+                        .context("Failed to get info about connection")?;
+                    debug!("Got info: {info:?}");
 
-                    let selected = read_cache(&cache).await.data.selected;
-
-                    if list.is_empty() {
-                        ui.dim("\nNo active connections.");
-                    } else {
-                        ui.header("\nConnections:");
-                        for (id, dest) in list {
-                            let scheme = dest
-                                .scheme
-                                .as_ref()
-                                .map(|s| format!("{s}://"))
+                    match format {
+                        Format::Json => {
+                            println!(
+                                "{}",
+                                serde_json::to_string(&info)
+                                    .context("Failed to format connection info as json")?
+                            );
+                        }
+                        Format::Shell => {
+                            let scheme = info.destination.scheme.as_deref().unwrap_or_default();
+                            let user = info
+                                .destination
+                                .username
+                                .as_deref()
+                                .map(|u| format!("{u}@"))
                                 .unwrap_or_default();
-                            let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
-                            if *selected == id {
-                                ui.write_line(&format!(
-                                    "  {} {} -> {scheme}{}{port}",
-                                    style("*").green(),
-                                    style(id).bold(),
-                                    dest.host
-                                ));
-                            } else {
-                                ui.write_line(&format!(
-                                    "    {} -> {scheme}{}{port}",
-                                    style(id).dim(),
-                                    dest.host
-                                ));
+                            let host = &info.destination.host;
+                            let port = info
+                                .destination
+                                .port
+                                .map(|p| format!(":{p}"))
+                                .unwrap_or_default();
+
+                            let dest_str = format!("{scheme}://{user}{host}{port}");
+
+                            ui.header(&format!("Connection {}:", info.id));
+                            ui.write_line(&format!("  {}  {}", style("Host:").bold(), dest_str));
+
+                            let opts = info.options.to_string();
+                            if !opts.is_empty() {
+                                ui.write_line(&format!("  {}  {}", style("Options:").bold(), opts));
                             }
                         }
                     }
                 }
-                Err(_) => {
-                    ui.status(
-                        "Manager",
-                        "not running",
-                        crate::cli::common::StatusColor::Red,
-                    );
-                    ui.dim("\n  Start it with: distant manager listen --daemon");
+                None => {
+                    // Overview mode: show manager status + connection list
+                    match try_connect_no_autostart(format, &network).await {
+                        Ok(mut client) => {
+                            let list = client
+                                .list()
+                                .await
+                                .context("Failed to get list of connections")?;
+
+                            let selected = read_cache(&cache).await.data.selected;
+
+                            match format {
+                                Format::Json => {
+                                    println!(
+                                        "{}",
+                                        serde_json::to_string(&list)
+                                            .context("Failed to format connection list as json")?
+                                    );
+                                }
+                                Format::Shell => {
+                                    ui.status(
+                                        "Manager",
+                                        "running",
+                                        crate::cli::common::StatusColor::Green,
+                                    );
+
+                                    if list.is_empty() {
+                                        ui.dim("\nNo active connections.");
+                                    } else {
+                                        ui.header("\nConnections:");
+                                        for (id, dest) in list {
+                                            let scheme = dest
+                                                .scheme
+                                                .as_ref()
+                                                .map(|s| format!("{s}://"))
+                                                .unwrap_or_default();
+                                            let port = dest
+                                                .port
+                                                .map(|p| format!(":{p}"))
+                                                .unwrap_or_default();
+                                            if *selected == id {
+                                                ui.write_line(&format!(
+                                                    "  {} {} -> {scheme}{}{port}",
+                                                    style("*").green(),
+                                                    style(id).bold(),
+                                                    dest.host
+                                                ));
+                                            } else {
+                                                ui.write_line(&format!(
+                                                    "    {} -> {scheme}{}{port}",
+                                                    style(id).dim(),
+                                                    dest.host
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => match format {
+                            Format::Shell => {
+                                ui.status(
+                                    "Manager",
+                                    "not running",
+                                    crate::cli::common::StatusColor::Red,
+                                );
+                                ui.dim("\n  Start it with: distant manager listen --daemon");
+                            }
+                            Format::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string(&serde_json::json!({})).unwrap()
+                                );
+                            }
+                        },
+                    }
+                }
+            }
+        }
+        ClientSubcommand::Kill {
+            format,
+            id,
+            network,
+            cache,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network, &ui).await?;
+
+            // Fetch list BEFORE kill for destination info + selection prompt
+            let list = client
+                .list()
+                .await
+                .context("Failed to get list of connections")?;
+
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    if list.is_empty() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active connections.\n\n\
+                             Connect to a remote host first:\n  \
+                             distant connect ssh://user@host\n  \
+                             distant ssh user@host"
+                        )));
+                    }
+
+                    match format {
+                        Format::Shell => {
+                            if !Term::stderr().is_term() {
+                                return Err(CliError::Error(anyhow::anyhow!(
+                                    "No connection ID specified. See available connections:\n  \
+                                     distant status"
+                                )));
+                            }
+
+                            // Always show prompt — even with 1 connection — so user can cancel
+                            let items: Vec<String> = list
+                                .iter()
+                                .map(|(id, dest)| format_connection(*id, dest))
+                                .collect();
+                            let selection = Select::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Select connection to kill")
+                                .items(&items)
+                                .default(0)
+                                .interact_on_opt(&Term::stderr())
+                                .context("Failed to render prompt")?;
+                            match selection {
+                                Some(index) => *list.keys().nth(index).unwrap(),
+                                None => return Ok(()),
+                            }
+                        }
+                        Format::Json => {
+                            return Err(CliError::Error(anyhow::anyhow!(
+                                "Connection ID is required in JSON mode"
+                            )));
+                        }
+                    }
+                }
+            };
+
+            debug!("Killing connection {}", id);
+            client
+                .kill(id)
+                .await
+                .with_context(|| format!("Failed to kill connection to server {id}"))?;
+
+            debug!("Connection killed");
+            match format {
+                Format::Json => println!("{}", json!({"type": "ok", "id": id})),
+                Format::Shell => {
+                    let msg = match list.get(&id) {
+                        Some(dest) => format!("Killed {}", format_connection(id, dest)),
+                        None => format!("Killed connection {id}"),
+                    };
+                    ui.success(&msg);
+                }
+            }
+
+            // Cache update — only if we killed the selected connection
+            let mut cache = Cache::read_from_disk_or_default(cache)
+                .await
+                .context("Failed to read cache")?;
+            if *cache.data.selected == id {
+                let remaining = client
+                    .list()
+                    .await
+                    .context("Failed to get updated connection list")?;
+                if remaining.len() == 1 {
+                    let new_id = *remaining.keys().next().unwrap();
+                    *cache.data.selected = new_id;
+                    if let Format::Shell = format {
+                        if let Some(dest) = remaining.get(&new_id) {
+                            ui.dim(&format!(
+                                "Selected remaining connection: {}",
+                                format_connection(new_id, dest)
+                            ));
+                        }
+                    }
+                } else {
+                    *cache.data.selected = 0;
+                }
+                cache.write_to_disk().await?;
+            }
+        }
+        ClientSubcommand::Select {
+            format,
+            connection,
+            network,
+            cache,
+        } => {
+            let mut cache = Cache::read_from_disk_or_default(cache)
+                .await
+                .context("Failed to look up cache")?;
+
+            match connection {
+                Some(id) => {
+                    *cache.data.selected = id;
+                    cache.write_to_disk().await?;
+                }
+                None => {
+                    debug!("Connecting to manager");
+                    let mut client = connect_to_manager(format, network, &ui).await?;
+                    let list = client
+                        .list()
+                        .await
+                        .context("Failed to get a list of managed connections")?;
+
+                    if list.is_empty() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active connections.\n\n\
+                             Connect to a remote host first:\n  \
+                             distant connect ssh://user@host\n  \
+                             distant ssh user@host"
+                        )));
+                    }
+
+                    // Figure out the current selection
+                    let current = list
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, (id, _))| {
+                            if *cache.data.selected == *id {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+
+                    trace!("Building selection prompt of {} choices", list.len());
+                    let items: Vec<String> = list
+                        .iter()
+                        .map(|(id, dest)| format_connection(*id, dest))
+                        .collect();
+
+                    // Prompt for a selection, with None meaning no change
+                    let selected = match format {
+                        Format::Shell => {
+                            trace!("Rendering prompt");
+                            Select::with_theme(&ColorfulTheme::default())
+                                .items(&items)
+                                .default(current)
+                                .interact_on_opt(&Term::stderr())
+                                .context("Failed to render prompt")?
+                        }
+
+                        Format::Json => {
+                            // Print out choices
+                            MsgSender::from_stdout()
+                                .send_blocking(&json!({
+                                    "type": "select",
+                                    "choices": items,
+                                    "current": current,
+                                }))
+                                .context("Failed to send JSON choices")?;
+
+                            // Wait for a response
+                            let msg = MsgReceiver::from_stdin()
+                                .recv_blocking::<serde_json::Value>()
+                                .context("Failed to receive JSON selection")?;
+
+                            // Verify the response type is "selected"
+                            match msg.get("type") {
+                                Some(value) if value == "selected" => msg
+                                    .get("choice")
+                                    .and_then(|value| value.as_u64())
+                                    .map(|choice| choice as usize),
+                                Some(value) => {
+                                    return Err(CliError::Error(anyhow::anyhow!(
+                                        "Unexpected 'type' field value: {value}"
+                                    )));
+                                }
+                                None => {
+                                    return Err(CliError::Error(anyhow::anyhow!(
+                                        "Missing 'type' field"
+                                    )));
+                                }
+                            }
+                        }
+                    };
+
+                    match selected {
+                        Some(index) => {
+                            trace!("Selected choice {}", index);
+                            if let Some((id, _)) = list.iter().nth(index) {
+                                debug!("Updating selected connection id in cache to {}", id);
+                                *cache.data.selected = *id;
+                                cache.write_to_disk().await?;
+                            }
+                        }
+                        None => {
+                            debug!("No change in selection of default connection id");
+                        }
+                    }
                 }
             }
         }
