@@ -244,7 +244,7 @@ impl DistantManagerCtx {
     /// Produces a new test command that configures some distant command
     /// configured with an environment that can talk to a remote distant server
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
-        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).expect("Failed to create cmd");
+        let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
         for subcommand in subcommands {
             cmd.arg(subcommand);
         }
@@ -295,7 +295,7 @@ impl DistantManagerCtx {
 
 /// Path to distant binary
 fn bin_path() -> PathBuf {
-    assert_cmd::cargo::cargo_bin(env!("CARGO_PKG_NAME"))
+    assert_cmd::cargo_bin!().to_path_buf()
 }
 
 fn random_log_file(prefix: &str) -> PathBuf {

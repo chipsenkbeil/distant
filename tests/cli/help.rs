@@ -2,11 +2,8 @@ use assert_cmd::Command;
 
 #[test]
 fn distant_help_should_include_top_level_commands() {
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .arg("--help")
-        .assert()
-        .success();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let output = cmd.arg("--help").assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     for cmd in ["status", "kill", "select", "ssh", "connect", "shell"] {
@@ -19,11 +16,8 @@ fn distant_help_should_include_top_level_commands() {
 
 #[test]
 fn distant_help_should_not_include_removed_manager_commands_at_top_level() {
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .arg("--help")
-        .assert()
-        .success();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let output = cmd.arg("--help").assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     // "list" should not appear as a top-level command
@@ -39,11 +33,8 @@ fn distant_help_should_not_include_removed_manager_commands_at_top_level() {
 
 #[test]
 fn distant_manager_help_should_only_show_daemon_commands() {
-    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .args(["manager", "--help"])
-        .assert()
-        .success();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    let output = cmd.args(["manager", "--help"]).assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     for cmd in ["listen", "version", "service"] {
@@ -62,9 +53,6 @@ fn distant_manager_help_should_only_show_daemon_commands() {
 
 #[test]
 fn distant_manager_list_should_be_unknown_command() {
-    Command::cargo_bin(env!("CARGO_PKG_NAME"))
-        .unwrap()
-        .args(["manager", "list"])
-        .assert()
-        .failure();
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!().into();
+    cmd.args(["manager", "list"]).assert().failure();
 }
