@@ -2,9 +2,9 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::net::common::ConnectionId;
 use crate::net::server::{Reply, RequestCtx, ServerHandler};
+use async_trait::async_trait;
 use log::*;
 
 use crate::protocol::{
@@ -13,25 +13,25 @@ use crate::protocol::{
 };
 
 mod reply;
-use reply::DistantSingleReply;
+use reply::SingleReply;
 
-/// Represents the context provided to the [`DistantApi`] for incoming requests
-pub struct DistantCtx {
+/// Represents the context provided to the [`Api`] for incoming requests
+pub struct Ctx {
     pub connection_id: ConnectionId,
     pub reply: Box<dyn Reply<Data = protocol::Response>>,
 }
 
 /// Represents a [`ServerHandler`] that leverages an API compliant with `distant`
-pub struct DistantApiServerHandler<T>
+pub struct ApiServerHandler<T>
 where
-    T: DistantApi,
+    T: Api,
 {
     api: Arc<T>,
 }
 
-impl<T> DistantApiServerHandler<T>
+impl<T> ApiServerHandler<T>
 where
-    T: DistantApi,
+    T: Api,
 {
     pub fn new(api: T) -> Self {
         Self { api: Arc::new(api) }
@@ -49,7 +49,7 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 /// Interface to support the suite of functionality available with distant,
 /// which can be used to build other servers that are compatible with distant
 #[async_trait]
-pub trait DistantApi {
+pub trait Api {
     /// Invoked whenever a new connection is established.
     #[allow(unused_variables)]
     async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
@@ -66,7 +66,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
+    async fn version(&self, ctx: Ctx) -> io::Result<Version> {
         unsupported("version")
     }
 
@@ -76,7 +76,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_file(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
+    async fn read_file(&self, ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
         unsupported("read_file")
     }
 
@@ -86,7 +86,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_file_text(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<String> {
+    async fn read_file_text(&self, ctx: Ctx, path: PathBuf) -> io::Result<String> {
         unsupported("read_file_text")
     }
 
@@ -97,7 +97,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn write_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
+    async fn write_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         unsupported("write_file")
     }
 
@@ -108,12 +108,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn write_file_text(
-        &self,
-        ctx: DistantCtx,
-        path: PathBuf,
-        data: String,
-    ) -> io::Result<()> {
+    async fn write_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
         unsupported("write_file_text")
     }
 
@@ -124,7 +119,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn append_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
+    async fn append_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         unsupported("append_file")
     }
 
@@ -135,12 +130,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn append_file_text(
-        &self,
-        ctx: DistantCtx,
-        path: PathBuf,
-        data: String,
-    ) -> io::Result<()> {
+    async fn append_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
         unsupported("append_file_text")
     }
 
@@ -156,7 +146,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn read_dir(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         depth: usize,
         absolute: bool,
@@ -173,7 +163,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn create_dir(&self, ctx: DistantCtx, path: PathBuf, all: bool) -> io::Result<()> {
+    async fn create_dir(&self, ctx: Ctx, path: PathBuf, all: bool) -> io::Result<()> {
         unsupported("create_dir")
     }
 
@@ -184,7 +174,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn copy(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    async fn copy(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         unsupported("copy")
     }
 
@@ -195,7 +185,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn remove(&self, ctx: DistantCtx, path: PathBuf, force: bool) -> io::Result<()> {
+    async fn remove(&self, ctx: Ctx, path: PathBuf, force: bool) -> io::Result<()> {
         unsupported("remove")
     }
 
@@ -206,7 +196,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn rename(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    async fn rename(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         unsupported("rename")
     }
 
@@ -221,7 +211,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn watch(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         recursive: bool,
         only: Vec<ChangeKind>,
@@ -236,7 +226,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn unwatch(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<()> {
+    async fn unwatch(&self, ctx: Ctx, path: PathBuf) -> io::Result<()> {
         unsupported("unwatch")
     }
 
@@ -246,7 +236,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn exists(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<bool> {
+    async fn exists(&self, ctx: Ctx, path: PathBuf) -> io::Result<bool> {
         unsupported("exists")
     }
 
@@ -260,7 +250,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn metadata(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -278,7 +268,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn set_permissions(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
@@ -292,7 +282,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn search(&self, ctx: DistantCtx, query: SearchQuery) -> io::Result<SearchId> {
+    async fn search(&self, ctx: Ctx, query: SearchQuery) -> io::Result<SearchId> {
         unsupported("search")
     }
 
@@ -302,7 +292,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn cancel_search(&self, ctx: DistantCtx, id: SearchId) -> io::Result<()> {
+    async fn cancel_search(&self, ctx: Ctx, id: SearchId) -> io::Result<()> {
         unsupported("cancel_search")
     }
 
@@ -317,7 +307,7 @@ pub trait DistantApi {
     #[allow(unused_variables)]
     async fn proc_spawn(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
@@ -332,7 +322,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_kill(&self, ctx: DistantCtx, id: ProcessId) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: Ctx, id: ProcessId) -> io::Result<()> {
         unsupported("proc_kill")
     }
 
@@ -343,7 +333,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_stdin(&self, ctx: DistantCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
+    async fn proc_stdin(&self, ctx: Ctx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         unsupported("proc_stdin")
     }
 
@@ -354,12 +344,7 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_resize_pty(
-        &self,
-        ctx: DistantCtx,
-        id: ProcessId,
-        size: PtySize,
-    ) -> io::Result<()> {
+    async fn proc_resize_pty(&self, ctx: Ctx, id: ProcessId, size: PtySize) -> io::Result<()> {
         unsupported("proc_resize_pty")
     }
 
@@ -367,25 +352,25 @@ pub trait DistantApi {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn system_info(&self, ctx: DistantCtx) -> io::Result<SystemInfo> {
+    async fn system_info(&self, ctx: Ctx) -> io::Result<SystemInfo> {
         unsupported("system_info")
     }
 }
 
 #[async_trait]
-impl<T> ServerHandler for DistantApiServerHandler<T>
+impl<T> ServerHandler for ApiServerHandler<T>
 where
-    T: DistantApi + Send + Sync + 'static,
+    T: Api + Send + Sync + 'static,
 {
     type Request = protocol::Msg<protocol::Request>;
     type Response = protocol::Msg<protocol::Response>;
 
-    /// Overridden to leverage [`DistantApi`] implementation of `on_connect`.
+    /// Overridden to leverage [`Api`] implementation of `on_connect`.
     async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
         T::on_connect(&self.api, id).await
     }
 
-    /// Overridden to leverage [`DistantApi`] implementation of `on_disconnect`.
+    /// Overridden to leverage [`Api`] implementation of `on_disconnect`.
     async fn on_disconnect(&self, id: ConnectionId) -> io::Result<()> {
         T::on_disconnect(&self.api, id).await
     }
@@ -404,9 +389,9 @@ where
         // Process single vs batch requests
         let response = match request.payload {
             protocol::Msg::Single(data) => {
-                let ctx = DistantCtx {
+                let ctx = Ctx {
                     connection_id,
-                    reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
+                    reply: Box::new(SingleReply::from(reply.clone_reply())),
                 };
 
                 let data = handle_request(Arc::clone(&self.api), ctx, data).await;
@@ -434,9 +419,9 @@ where
                         continue;
                     }
 
-                    let ctx = DistantCtx {
+                    let ctx = Ctx {
                         connection_id,
-                        reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
+                        reply: Box::new(SingleReply::from(reply.clone_reply())),
                     };
 
                     let data = handle_request(Arc::clone(&self.api), ctx, data).await;
@@ -461,9 +446,9 @@ where
 
                 for data in list {
                     let api = Arc::clone(&self.api);
-                    let ctx = DistantCtx {
+                    let ctx = Ctx {
                         connection_id,
-                        reply: Box::new(DistantSingleReply::from(reply.clone_reply())),
+                        reply: Box::new(SingleReply::from(reply.clone_reply())),
                     };
 
                     let task = tokio::spawn(async move {
@@ -510,13 +495,9 @@ where
 }
 
 /// Processes an incoming request
-async fn handle_request<T>(
-    api: Arc<T>,
-    ctx: DistantCtx,
-    request: protocol::Request,
-) -> protocol::Response
+async fn handle_request<T>(api: Arc<T>, ctx: Ctx, request: protocol::Request) -> protocol::Response
 where
-    T: DistantApi + Send + Sync,
+    T: Api + Send + Sync,
 {
     match request {
         protocol::Request::Version {} => api

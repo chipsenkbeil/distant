@@ -9,7 +9,7 @@ use distant_core::protocol::{
     DirEntry, Environment, Metadata, Permissions, ProcessId, PtySize, SearchId, SearchQuery,
     SetPermissionsOptions, SystemInfo, Version, PROTOCOL_VERSION,
 };
-use distant_core::{DistantApi, DistantCtx};
+use distant_core::{Api, Ctx};
 use log::*;
 use russh::client::Handle;
 use russh_sftp::client::SftpSession;
@@ -19,8 +19,8 @@ use typed_path::Utf8TypedPath;
 use crate::process::Process;
 use crate::{ClientHandler, SshFamily};
 
-/// Represents implementation of [`DistantApi`] for SSH.
-pub struct SshDistantApi {
+/// Represents implementation of [`Api`] for SSH.
+pub struct SshApi {
     /// Active SSH session handle.
     session: Handle<ClientHandler>,
 
@@ -43,7 +43,7 @@ pub struct SshDistantApi {
     cached_shell: OnceCell<String>,
 }
 
-impl SshDistantApi {
+impl SshApi {
     pub fn new(session: Handle<ClientHandler>, family: SshFamily) -> Self {
         Self {
             session,
@@ -183,8 +183,8 @@ impl SshDistantApi {
 }
 
 #[async_trait]
-impl DistantApi for SshDistantApi {
-    async fn read_file(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
+impl Api for SshApi {
+    async fn read_file(&self, ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
         debug!("[Conn {}] Reading file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
@@ -199,12 +199,12 @@ impl DistantApi for SshDistantApi {
         Ok(contents)
     }
 
-    async fn read_file_text(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<String> {
+    async fn read_file_text(&self, ctx: Ctx, path: PathBuf) -> io::Result<String> {
         let data = self.read_file(ctx, path).await?;
         String::from_utf8(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
-    async fn write_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
+    async fn write_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         debug!("[Conn {}] Writing file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
@@ -219,16 +219,11 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn write_file_text(
-        &self,
-        ctx: DistantCtx,
-        path: PathBuf,
-        data: String,
-    ) -> io::Result<()> {
+    async fn write_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
         self.write_file(ctx, path, data.into_bytes()).await
     }
 
-    async fn append_file(&self, ctx: DistantCtx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
+    async fn append_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
         debug!("[Conn {}] Appending to file {:?}", ctx.connection_id, path);
 
         let sftp = self.get_sftp().await?;
@@ -251,18 +246,13 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn append_file_text(
-        &self,
-        ctx: DistantCtx,
-        path: PathBuf,
-        data: String,
-    ) -> io::Result<()> {
+    async fn append_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
         self.append_file(ctx, path, data.into_bytes()).await
     }
 
     async fn read_dir(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         depth: usize,
         absolute: bool,
@@ -421,7 +411,7 @@ impl DistantApi for SshDistantApi {
         Ok((entries, errors))
     }
 
-    async fn create_dir(&self, ctx: DistantCtx, path: PathBuf, all: bool) -> io::Result<()> {
+    async fn create_dir(&self, ctx: Ctx, path: PathBuf, all: bool) -> io::Result<()> {
         debug!(
             "[Conn {}] Creating directory {:?} (all={})",
             ctx.connection_id, path, all
@@ -460,7 +450,7 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn remove(&self, ctx: DistantCtx, path: PathBuf, force: bool) -> io::Result<()> {
+    async fn remove(&self, ctx: Ctx, path: PathBuf, force: bool) -> io::Result<()> {
         debug!(
             "[Conn {}] Removing {:?} (force={})",
             ctx.connection_id, path, force
@@ -512,7 +502,7 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn copy(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    async fn copy(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         debug!(
             "[Conn {}] Copying {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -539,7 +529,7 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn rename(&self, ctx: DistantCtx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    async fn rename(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
         debug!(
             "[Conn {}] Renaming {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -556,7 +546,7 @@ impl DistantApi for SshDistantApi {
 
     async fn watch(
         &self,
-        _ctx: DistantCtx,
+        _ctx: Ctx,
         _path: PathBuf,
         _recursive: bool,
         _only: Vec<distant_core::protocol::ChangeKind>,
@@ -568,14 +558,14 @@ impl DistantApi for SshDistantApi {
         ))
     }
 
-    async fn unwatch(&self, _ctx: DistantCtx, _path: PathBuf) -> io::Result<()> {
+    async fn unwatch(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "File watching is not supported over SSH",
         ))
     }
 
-    async fn exists(&self, ctx: DistantCtx, path: PathBuf) -> io::Result<bool> {
+    async fn exists(&self, ctx: Ctx, path: PathBuf) -> io::Result<bool> {
         debug!(
             "[Conn {}] Checking existence of {:?}",
             ctx.connection_id, path
@@ -592,7 +582,7 @@ impl DistantApi for SshDistantApi {
 
     async fn metadata(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
@@ -671,7 +661,7 @@ impl DistantApi for SshDistantApi {
 
     async fn set_permissions(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
@@ -721,14 +711,14 @@ impl DistantApi for SshDistantApi {
         Ok(())
     }
 
-    async fn search(&self, _ctx: DistantCtx, _query: SearchQuery) -> io::Result<SearchId> {
+    async fn search(&self, _ctx: Ctx, _query: SearchQuery) -> io::Result<SearchId> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Search is not supported over SSH. Use proc_spawn with find/grep commands instead.",
         ))
     }
 
-    async fn cancel_search(&self, _ctx: DistantCtx, _id: SearchId) -> io::Result<()> {
+    async fn cancel_search(&self, _ctx: Ctx, _id: SearchId) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Search is not supported over SSH",
@@ -737,7 +727,7 @@ impl DistantApi for SshDistantApi {
 
     async fn proc_spawn(
         &self,
-        ctx: DistantCtx,
+        ctx: Ctx,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
@@ -807,7 +797,7 @@ impl DistantApi for SshDistantApi {
         Ok(id)
     }
 
-    async fn proc_kill(&self, ctx: DistantCtx, id: ProcessId) -> io::Result<()> {
+    async fn proc_kill(&self, ctx: Ctx, id: ProcessId) -> io::Result<()> {
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
 
         let mut processes = self.processes.write().await;
@@ -824,7 +814,7 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn proc_stdin(&self, ctx: DistantCtx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
+    async fn proc_stdin(&self, ctx: Ctx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
         debug!(
             "[Conn {}] Sending stdin to process {}",
             ctx.connection_id, id
@@ -851,12 +841,7 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn proc_resize_pty(
-        &self,
-        ctx: DistantCtx,
-        id: ProcessId,
-        size: PtySize,
-    ) -> io::Result<()> {
+    async fn proc_resize_pty(&self, ctx: Ctx, id: ProcessId, size: PtySize) -> io::Result<()> {
         debug!(
             "[Conn {}] Resizing pty for process {} to {:?}",
             ctx.connection_id, id, size
@@ -883,7 +868,7 @@ impl DistantApi for SshDistantApi {
         }
     }
 
-    async fn system_info(&self, ctx: DistantCtx) -> io::Result<SystemInfo> {
+    async fn system_info(&self, ctx: Ctx) -> io::Result<SystemInfo> {
         debug!("[Conn {}] Reading system information", ctx.connection_id);
 
         let is_windows = self.family == SshFamily::Windows;
@@ -944,7 +929,7 @@ impl DistantApi for SshDistantApi {
         })
     }
 
-    async fn version(&self, ctx: DistantCtx) -> io::Result<Version> {
+    async fn version(&self, ctx: Ctx) -> io::Result<Version> {
         debug!("[Conn {}] Querying capabilities", ctx.connection_id);
 
         let capabilities = vec![

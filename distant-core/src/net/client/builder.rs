@@ -13,8 +13,8 @@ mod windows;
 use std::time::Duration;
 use std::{convert, io};
 
-use async_trait::async_trait;
 use crate::auth::AuthHandler;
+use async_trait::async_trait;
 #[cfg(windows)]
 pub use windows::*;
 

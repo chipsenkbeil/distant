@@ -1370,8 +1370,8 @@ impl Format {
 mod tests {
     use std::time::Duration;
 
-    use distant_core::net::common::Host;
     use distant_core::map;
+    use distant_core::net::common::Host;
 
     use super::*;
 

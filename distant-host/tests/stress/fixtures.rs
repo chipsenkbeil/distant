@@ -2,20 +2,20 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
-use distant_core::net::client::{Client, TcpConnector};
+use distant_core::net::client::{Client as NetClient, TcpConnector};
 use distant_core::net::common::PortRange;
 use distant_core::net::server::Server;
-use distant_core::{DistantApiServerHandler, DistantClient};
-use distant_local::Api;
+use distant_core::{ApiServerHandler, Client};
+use distant_host::Api;
 use rstest::*;
 use tokio::sync::mpsc;
 
-pub struct DistantClientCtx {
-    pub client: DistantClient,
+pub struct ClientCtx {
+    pub client: Client,
     _done_tx: mpsc::Sender<()>,
 }
 
-impl DistantClientCtx {
+impl ClientCtx {
     pub async fn initialize() -> Self {
         let ip_addr = "127.0.0.1".parse().unwrap();
         let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
@@ -25,7 +25,7 @@ impl DistantClientCtx {
             if let Ok(api) = Api::initialize(Default::default()) {
                 let port: PortRange = "0".parse().unwrap();
                 let port = {
-                    let handler = DistantApiServerHandler::new(api);
+                    let handler = ApiServerHandler::new(api);
                     let server_ref = Server::new()
                         .handler(handler)
                         .verifier(Verifier::none())
@@ -45,7 +45,7 @@ impl DistantClientCtx {
         let port = started_rx.recv().await.unwrap();
 
         // Now initialize our client
-        let client: DistantClient = Client::build()
+        let client: Client = NetClient::build()
             .auth_handler(DummyAuthHandler)
             .connect_timeout(Duration::from_secs(1))
             .connector(TcpConnector::new(
@@ -57,7 +57,7 @@ impl DistantClientCtx {
             .await
             .unwrap();
 
-        DistantClientCtx {
+        ClientCtx {
             client,
             _done_tx: done_tx,
         }
@@ -65,6 +65,6 @@ impl DistantClientCtx {
 }
 
 #[fixture]
-pub async fn ctx() -> DistantClientCtx {
-    DistantClientCtx::initialize().await
+pub async fn ctx() -> ClientCtx {
+    ClientCtx::initialize().await
 }

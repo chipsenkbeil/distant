@@ -1,6 +1,6 @@
 use assert_fs::prelude::*;
-use distant_core::DistantChannelExt;
-use distant_ssh2::{Ssh, SshFamily, SshOpts};
+use distant_core::ChannelExt;
+use distant_ssh::{Ssh, SshFamily, SshOpts};
 use rstest::*;
 use test_log::test;
 

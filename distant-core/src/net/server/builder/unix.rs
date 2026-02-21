@@ -61,8 +61,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use async_trait::async_trait;
     use crate::auth::DummyAuthHandler;
+    use async_trait::async_trait;
     use tempfile::NamedTempFile;
     use test_log::test;
 

@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use log::*;
 
 use crate::auth::handler::AuthMethodHandler;
-use crate::auth::msg::{Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse};
+use crate::auth::msg::{
+    Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse,
+};
 
 /// Implementation of [`AuthMethodHandler`] that answers challenge requests using a static
 /// [`HeapSecretKey`]. All other portions of method authentication are handled by another

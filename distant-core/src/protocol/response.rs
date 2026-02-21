@@ -1352,7 +1352,9 @@ mod tests {
         use std::path::PathBuf;
 
         use super::*;
-        use crate::protocol::common::{SearchQueryContentsMatch, SearchQueryMatch, SearchQuerySubmatch};
+        use crate::protocol::common::{
+            SearchQueryContentsMatch, SearchQueryMatch, SearchQuerySubmatch,
+        };
 
         #[test]
         fn should_be_able_to_serialize_to_json() {

@@ -18,7 +18,7 @@ const APPENDED_FILE_CONTENTS: &str = indoc! {r#"
 
 #[rstest]
 #[test_log::test]
-fn should_support_writing_stdin_to_file(ctx: DistantManagerCtx) {
+fn should_support_writing_stdin_to_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
 
@@ -39,7 +39,7 @@ fn should_support_writing_stdin_to_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_appending_stdin_to_file(ctx: DistantManagerCtx) {
+fn should_support_appending_stdin_to_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
@@ -61,7 +61,7 @@ fn should_support_appending_stdin_to_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_writing_argument_to_file(ctx: DistantManagerCtx) {
+fn should_support_writing_argument_to_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
 
@@ -82,7 +82,7 @@ fn should_support_writing_argument_to_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_appending_argument_to_file(ctx: DistantManagerCtx) {
+fn should_support_appending_argument_to_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
@@ -104,7 +104,7 @@ fn should_support_appending_argument_to_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-dir").child("missing-file");
 

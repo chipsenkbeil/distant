@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::auth::msg::*;
 use crate::auth::Authenticator;
+use async_trait::async_trait;
 use tokio::sync::{oneshot, RwLock};
 
 use crate::net::manager::data::{ManagerAuthenticationId, ManagerResponse};

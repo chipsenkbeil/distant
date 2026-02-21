@@ -1,8 +1,8 @@
 use std::io;
 
 use async_trait::async_trait;
-use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::boxed_connect_handler;
+use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::Client;
 use distant_core::net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_core::net::manager::{Config, ManagerClient, ManagerServer};

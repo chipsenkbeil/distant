@@ -1107,8 +1107,8 @@ dependencies = [
  "dialoguer",
  "directories",
  "distant-core",
- "distant-local",
- "distant-ssh2",
+ "distant-host",
+ "distant-ssh",
  "env_logger",
  "file-mode",
  "flexi_logger",
@@ -1176,7 +1176,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-local"
+name = "distant-host"
 version = "0.20.0"
 dependencies = [
  "assert_fs",
@@ -1204,7 +1204,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-ssh2"
+name = "distant-ssh"
 version = "0.20.0"
 dependencies = [
  "anyhow",

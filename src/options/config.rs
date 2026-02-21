@@ -98,8 +98,8 @@ mod tests {
     use std::time::Duration;
 
     use common::*;
-    use distant_core::net::common::{Host, Map, PortRange};
     use distant_core::map;
+    use distant_core::net::common::{Host, Map, PortRange};
     use distant_core::net::server::Shutdown;
     use test_log::test;
 

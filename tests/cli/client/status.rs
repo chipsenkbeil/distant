@@ -4,7 +4,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_connections_in_json_mode(ctx: DistantManagerCtx) {
+fn should_output_connections_in_json_mode(ctx: ManagerCtx) {
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
         .assert()
@@ -24,7 +24,7 @@ fn should_output_connections_in_json_mode(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_detail_for_specific_connection(ctx: DistantManagerCtx) {
+fn should_output_detail_for_specific_connection(ctx: ManagerCtx) {
     // First get the connection ID from JSON status
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])

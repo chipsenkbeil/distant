@@ -232,13 +232,13 @@ impl LaunchHandler for SshLaunchHandler {
         debug!("Handling launch of {destination} with options '{options}'");
         let config = ClientLaunchConfig::from(options.clone());
 
-        use distant_ssh2::DistantLaunchOpts;
+        use distant_ssh::LaunchOpts;
         let mut ssh = load_ssh(destination, options).await?;
         let handler = AuthClientSshAuthHandler::new(authenticator);
         let _ = ssh.authenticate(handler).await?;
         let opts = {
-            let opts = DistantLaunchOpts::default();
-            DistantLaunchOpts {
+            let opts = LaunchOpts::default();
+            LaunchOpts {
                 binary: config.distant.bin.unwrap_or(opts.binary),
                 args: config.distant.args.unwrap_or(opts.args),
                 timeout: match options.get("timeout") {
@@ -382,8 +382,8 @@ impl<'a> AuthClientSshAuthHandler<'a> {
 }
 
 #[async_trait]
-impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
-    async fn on_authenticate(&self, event: distant_ssh2::SshAuthEvent) -> io::Result<Vec<String>> {
+impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
+    async fn on_authenticate(&self, event: distant_ssh::SshAuthEvent) -> io::Result<Vec<String>> {
         use std::collections::HashMap;
         let mut options = HashMap::new();
         let mut questions = Vec::new();
@@ -453,9 +453,9 @@ impl<'a> distant_ssh2::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 }
 
-async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh2::Ssh> {
+async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh::Ssh> {
     trace!("load_ssh({destination}, {options})");
-    use distant_ssh2::{Ssh, SshOpts};
+    use distant_ssh::{Ssh, SshOpts};
 
     let host = destination.host.to_string();
 

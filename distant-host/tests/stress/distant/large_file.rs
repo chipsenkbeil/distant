@@ -1,5 +1,5 @@
 use assert_fs::prelude::*;
-use distant_core::DistantChannelExt;
+use distant_core::ChannelExt;
 use rstest::*;
 use test_log::test;
 
@@ -13,7 +13,7 @@ const LARGE_FILE_LEN: usize = MAX_TCP_PACKET_BYTES * 10;
 
 #[rstest]
 #[test(tokio::test)]
-async fn should_handle_large_files(#[future] ctx: DistantClientCtx) {
+async fn should_handle_large_files(#[future] ctx: ClientCtx) {
     let ctx = ctx.await;
     let mut channel = ctx.client.clone_channel();
 

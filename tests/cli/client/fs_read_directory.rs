@@ -89,7 +89,7 @@ fn regex_line(ty: &str, path: &str) -> String {
 
 #[rstest]
 #[test_log::test]
-fn should_print_immediate_files_and_directories_by_default(ctx: DistantManagerCtx) {
+fn should_print_immediate_files_and_directories_by_default(ctx: ManagerCtx) {
     let temp = make_directory();
 
     let expected = regex_pred(&regex_stdout(vec![
@@ -111,7 +111,7 @@ fn should_print_immediate_files_and_directories_by_default(ctx: DistantManagerCt
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]
-fn should_use_absolute_paths_if_specified(ctx: DistantManagerCtx) {
+fn should_use_absolute_paths_if_specified(ctx: ManagerCtx) {
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so the absolute path
@@ -137,7 +137,7 @@ fn should_use_absolute_paths_if_specified(ctx: DistantManagerCtx) {
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]
-fn should_print_all_files_and_directories_if_depth_is_0(ctx: DistantManagerCtx) {
+fn should_print_all_files_and_directories_if_depth_is_0(ctx: ManagerCtx) {
     let temp = make_directory();
 
     let expected = regex_pred(&regex_stdout(vec![
@@ -183,7 +183,7 @@ fn should_print_all_files_and_directories_if_depth_is_0(ctx: DistantManagerCtx) 
 #[rstest]
 #[test_log::test]
 #[cfg_attr(windows, ignore)]
-fn should_include_root_directory_if_specified(ctx: DistantManagerCtx) {
+fn should_include_root_directory_if_specified(ctx: ManagerCtx) {
     let temp = make_directory();
 
     // NOTE: Our root path is always canonicalized, so yielded entry
@@ -208,7 +208,7 @@ fn should_include_root_directory_if_specified(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = make_directory();
     let dir = temp.child("missing-dir");
 

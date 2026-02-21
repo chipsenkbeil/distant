@@ -6,15 +6,15 @@ use crate::protocol;
 
 /// Wrapper around a reply that can be batch or single, converting
 /// a single data into the wrapped type
-pub struct DistantSingleReply(Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>);
+pub struct SingleReply(Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>);
 
-impl From<Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>> for DistantSingleReply {
+impl From<Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>> for SingleReply {
     fn from(reply: Box<dyn Reply<Data = protocol::Msg<protocol::Response>>>) -> Self {
         Self(reply)
     }
 }
 
-impl Reply for DistantSingleReply {
+impl Reply for SingleReply {
     type Data = protocol::Response;
 
     fn send(&self, data: Self::Data) -> io::Result<()> {

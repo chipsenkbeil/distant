@@ -1,8 +1,8 @@
 use std::io;
 use std::ops::{Deref, DerefMut};
 
-use async_trait::async_trait;
 use crate::auth::{AuthHandler, Authenticate, Verifier};
+use async_trait::async_trait;
 use log::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;

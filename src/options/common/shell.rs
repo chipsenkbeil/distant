@@ -36,7 +36,7 @@ impl Shell {
             ShellKind::CmdExe => Ok(format!("{path} /S /C \"{cmd}\"")),
 
             // NOTE: Powershell does not work directly because our splitting logic for arguments on
-            //       distant-local does not handle single quotes. In fact, the splitting logic
+            //       distant-host does not handle single quotes. In fact, the splitting logic
             //       isn't designed for powershell at all. To get around that limitation, we are
             //       using cmd.exe to invoke powershell, which fits closer to our parsing rules.
             //       Crazy, I know! Eventually, we should switch to properly using powershell

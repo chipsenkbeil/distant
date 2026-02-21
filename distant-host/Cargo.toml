@@ -1,6 +1,6 @@
 [package]
-name = "distant-local"
-description = "Library implementing distant API for local interactions"
+name = "distant-host"
+description = "Library implementing the distant API for host-local operations"
 categories = ["network-programming"]
 version = "0.20.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]

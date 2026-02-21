@@ -2,21 +2,19 @@ use std::io;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use distant_core::{
-    DistantApi, DistantApiServerHandler, DistantChannelExt, DistantClient, DistantCtx,
-};
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
-use distant_core::net::client::Client;
+use distant_core::net::client::Client as NetClient;
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
 use distant_core::protocol::PROTOCOL_VERSION;
+use distant_core::{Api, ApiServerHandler, ChannelExt, Client, Ctx};
 
 /// Stands up an inmemory client and server using the given api.
-async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, ServerRef) {
+async fn setup(api: impl Api + Send + Sync + 'static) -> (Client, ServerRef) {
     let (t1, t2) = InmemoryTransport::pair(100);
 
     let server = Server::new()
-        .handler(DistantApiServerHandler::new(api))
+        .handler(ApiServerHandler::new(api))
         .verifier(Verifier::none())
         .version(Version::new(
             PROTOCOL_VERSION.major,
@@ -26,7 +24,7 @@ async fn setup(api: impl DistantApi + Send + Sync + 'static) -> (DistantClient, 
         .start(OneshotListener::from_value(t2))
         .expect("Failed to start server");
 
-    let client: DistantClient = Client::build()
+    let client: Client = NetClient::build()
         .auth_handler(DummyAuthHandler)
         .connector(t1)
         .version(Version::new(
@@ -48,16 +46,16 @@ mod single {
 
     #[test(tokio::test)]
     async fn should_support_single_request_returning_error() {
-        struct TestDistantApi;
+        struct TestApi;
 
         #[async_trait]
-        impl DistantApi for TestDistantApi {
-            async fn read_file(&self, _ctx: DistantCtx, _path: PathBuf) -> io::Result<Vec<u8>> {
+        impl Api for TestApi {
+            async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
                 Err(io::Error::new(io::ErrorKind::NotFound, "test error"))
             }
         }
 
-        let (mut client, _server) = setup(TestDistantApi).await;
+        let (mut client, _server) = setup(TestApi).await;
 
         let error = client.read_file(PathBuf::from("file")).await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
@@ -66,16 +64,16 @@ mod single {
 
     #[test(tokio::test)]
     async fn should_support_single_request_returning_success() {
-        struct TestDistantApi;
+        struct TestApi;
 
         #[async_trait]
-        impl DistantApi for TestDistantApi {
-            async fn read_file(&self, _ctx: DistantCtx, _path: PathBuf) -> io::Result<Vec<u8>> {
+        impl Api for TestApi {
+            async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
                 Ok(b"hello world".to_vec())
             }
         }
 
-        let (mut client, _server) = setup(TestDistantApi).await;
+        let (mut client, _server) = setup(TestApi).await;
 
         let contents = client.read_file(PathBuf::from("file")).await.unwrap();
         assert_eq!(contents, b"hello world");
@@ -93,11 +91,11 @@ mod batch_parallel {
 
     #[test(tokio::test)]
     async fn should_support_multiple_requests_running_in_parallel() {
-        struct TestDistantApi;
+        struct TestApi;
 
         #[async_trait]
-        impl DistantApi for TestDistantApi {
-            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
+        impl Api for TestApi {
+            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "slow" {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -107,7 +105,7 @@ mod batch_parallel {
             }
         }
 
-        let (mut client, _server) = setup(TestDistantApi).await;
+        let (mut client, _server) = setup(TestApi).await;
 
         let request = Request::new(Msg::batch([
             RequestPayload::FileRead {
@@ -145,11 +143,11 @@ mod batch_parallel {
 
     #[test(tokio::test)]
     async fn should_run_all_requests_even_if_some_fail() {
-        struct TestDistantApi;
+        struct TestApi;
 
         #[async_trait]
-        impl DistantApi for TestDistantApi {
-            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
+        impl Api for TestApi {
+            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "fail" {
                     return Err(io::Error::other("test error"));
                 }
@@ -158,7 +156,7 @@ mod batch_parallel {
             }
         }
 
-        let (mut client, _server) = setup(TestDistantApi).await;
+        let (mut client, _server) = setup(TestApi).await;
 
         let request = Request::new(Msg::batch([
             RequestPayload::FileRead {
@@ -209,11 +207,11 @@ mod batch_sequence {
 
     #[test(tokio::test)]
     async fn should_support_multiple_requests_running_in_sequence() {
-        struct TestDistantApi;
+        struct TestApi;
 
         #[async_trait]
-        impl DistantApi for TestDistantApi {
-            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
+        impl Api for TestApi {
+            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "slow" {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
@@ -223,7 +221,7 @@ mod batch_sequence {
             }
         }
 
-        let (mut client, _server) = setup(TestDistantApi).await;
+        let (mut client, _server) = setup(TestApi).await;
 
         let mut request = Request::new(Msg::batch([
             RequestPayload::FileRead {
@@ -264,11 +262,11 @@ mod batch_sequence {
 
     #[test(tokio::test)]
     async fn should_interrupt_any_requests_following_a_failure() {
-        struct TestDistantApi;
+        struct TestApi;
 
         #[async_trait]
-        impl DistantApi for TestDistantApi {
-            async fn read_file(&self, _ctx: DistantCtx, path: PathBuf) -> io::Result<Vec<u8>> {
+        impl Api for TestApi {
+            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
                 if path.to_str().unwrap() == "fail" {
                     return Err(io::Error::other("test error"));
                 }
@@ -277,7 +275,7 @@ mod batch_sequence {
             }
         }
 
-        let (mut client, _server) = setup(TestDistantApi).await;
+        let (mut client, _server) = setup(TestApi).await;
 
         let mut request = Request::new(Msg::batch([
             RequestPayload::FileRead {

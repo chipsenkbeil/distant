@@ -14,8 +14,8 @@ license = "MIT OR Apache-2.0"
 [workspace]
 members = [
     "distant-core",
-    "distant-local",
-    "distant-ssh2",
+    "distant-host",
+    "distant-ssh",
 ]
 
 [workspace.lints.rust]
@@ -40,7 +40,7 @@ config = { version = "0.13.3", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.4", default-features = false }
 distant-core = { version = "=0.20.0", path = "distant-core" }
-distant-local = { version = "=0.20.0", path = "distant-local" }
+distant-host = { version = "=0.20.0", path = "distant-host" }
 directories = "5.0.1"
 file-mode = "0.1.2"
 flexi_logger = "0.25.5"
@@ -65,7 +65,7 @@ winsplit = "0.1.0"
 whoami = "1.4.0"
 
 # Native SSH functionality (always enabled)
-distant-ssh2 = { version = "=0.20.0", path = "distant-ssh2", default-features = false, features = ["serde"] }
+distant-ssh = { version = "=0.20.0", path = "distant-ssh", default-features = false, features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.21"

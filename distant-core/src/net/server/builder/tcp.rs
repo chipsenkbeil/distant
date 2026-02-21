@@ -62,8 +62,8 @@ where
 mod tests {
     use std::net::{Ipv6Addr, SocketAddr};
 
-    use async_trait::async_trait;
     use crate::auth::DummyAuthHandler;
+    use async_trait::async_trait;
     use test_log::test;
 
     use super::*;

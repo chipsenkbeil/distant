@@ -1,17 +1,15 @@
-# distant local
+# distant host
 
-[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![Rustc 1.70.0][distant_rustc_img]][distant_rustc_lnk]
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk]
 
-[distant_crates_img]: https://img.shields.io/crates/v/distant-local.svg
-[distant_crates_lnk]: https://crates.io/crates/distant-local
-[distant_doc_img]: https://docs.rs/distant-local/badge.svg
-[distant_doc_lnk]: https://docs.rs/distant-local
-[distant_rustc_img]: https://img.shields.io/badge/distant_local-rustc_1.70+-lightgray.svg
-[distant_rustc_lnk]: https://blog.rust-lang.org/2023/06/01/Rust-1.70.0.html
+[distant_crates_img]: https://img.shields.io/crates/v/distant-host.svg
+[distant_crates_lnk]: https://crates.io/crates/distant-host
+[distant_doc_img]: https://docs.rs/distant-host/badge.svg
+[distant_doc_lnk]: https://docs.rs/distant-host
 
 ## Details
 
-The `distant-local` library acts as the primary implementation of a distant
+The `distant-host` library acts as the primary implementation of a distant
 server that powers the CLI. The logic acts on the local machine of the server
 and is designed to be used as the foundation for distant operation handling.
 
@@ -21,13 +19,13 @@ You can import the dependency by adding the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-distant-local = "0.20"
+distant-host = "0.20"
 ```
 
 ## Examples
 
 ```rust,no_run
-use distant_local::{Config, new_handler};
+use distant_host::{Config, new_handler};
 
 // Create a server API handler to be used with the server
 let handler = new_handler(Config::default()).unwrap();

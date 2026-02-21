@@ -6,7 +6,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_system_info(ctx: DistantManagerCtx) {
+fn should_output_system_info(ctx: ManagerCtx) {
     ctx.cmd("system-info").assert().success().stdout(format!(
         concat!(
             "Family: {:?}\n",

@@ -6,7 +6,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_support_removing_file(ctx: DistantManagerCtx) {
+fn should_support_removing_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
@@ -23,7 +23,7 @@ fn should_support_removing_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_removing_empty_directory(ctx: DistantManagerCtx) {
+fn should_support_removing_empty_directory(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make an empty directory
@@ -42,7 +42,7 @@ fn should_support_removing_empty_directory(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_removing_nonempty_directory_if_force_specified(ctx: DistantManagerCtx) {
+fn should_support_removing_nonempty_directory_if_force_specified(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -62,7 +62,7 @@ fn should_support_removing_nonempty_directory_if_force_specified(ctx: DistantMan
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory

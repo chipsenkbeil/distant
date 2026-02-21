@@ -13,7 +13,7 @@ use distant_core::protocol::{
     SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
     SystemInfo, Version,
 };
-use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand, Searcher, Watcher};
+use distant_core::{Channel, ChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
 use serde_json::json;
 use tabled::settings::object::Rows;
@@ -470,7 +470,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
             debug!("Opening channel to connection {}", connection_id);
-            let mut channel: DistantChannel = client
+            let mut channel: Channel = client
                 .open_raw_channel(connection_id)
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
@@ -994,7 +994,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
             debug!("Opening channel to connection {}", connection_id);
-            let mut channel: DistantChannel = client
+            let mut channel: Channel = client
                 .open_raw_channel(connection_id)
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
@@ -1242,7 +1242,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
 
             debug!("Opening channel to connection {}", connection_id);
-            let mut channel: DistantChannel = client
+            let mut channel: Channel = client
                 .open_raw_channel(connection_id)
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?

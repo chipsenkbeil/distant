@@ -18,11 +18,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
-use distant_core::net::client::{Client, ClientConfig};
+use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
 use distant_core::protocol::PROTOCOL_VERSION;
-use distant_core::{DistantApiServerHandler, DistantClient, DistantSingleKeyCredentials};
+use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
 use russh::keys::PrivateKey;
@@ -33,7 +33,7 @@ mod api;
 mod process;
 mod utils;
 
-use api::SshDistantApi;
+use api::SshApi;
 
 /// Format a `MethodSet` as a comma-separated string of method names.
 fn format_methods(methods: &russh::MethodSet) -> String {
@@ -139,7 +139,7 @@ pub struct SshOpts {
 
 /// Represents options to be provided when converting an ssh client into a distant client
 #[derive(Clone, Debug)]
-pub struct DistantLaunchOpts {
+pub struct LaunchOpts {
     /// Binary to use for distant server
     pub binary: String,
 
@@ -150,7 +150,7 @@ pub struct DistantLaunchOpts {
     pub timeout: Duration,
 }
 
-impl Default for DistantLaunchOpts {
+impl Default for LaunchOpts {
     fn default() -> Self {
         Self {
             binary: String::from("distant"),
@@ -721,21 +721,21 @@ impl Ssh {
     }
 
     /// Converts into a distant client
-    pub async fn into_distant_client(self) -> io::Result<DistantClient> {
+    pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let api = SshDistantApi::new(self.handle, family);
+        let api = SshApi::new(self.handle, family);
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
         let server = Server::new()
-            .handler(DistantApiServerHandler::new(api))
+            .handler(ApiServerHandler::new(api))
             .verifier(Verifier::none());
 
         tokio::spawn(async move {
             let _ = server.start(OneshotListener::from_value(t2));
         });
 
-        let client = Client::build()
+        let client = NetClient::build()
             .auth_handler(DummyAuthHandler)
             .config(ClientConfig::default())
             .connector(t1)
@@ -747,21 +747,21 @@ impl Ssh {
     }
 
     /// Converts into a pair of distant client and server ref
-    pub async fn into_distant_pair(self) -> io::Result<(DistantClient, ServerRef)> {
+    pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshDistantApi::new(self.handle, family);
+        let api = SshApi::new(self.handle, family);
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
         let server = Server::new()
-            .handler(DistantApiServerHandler::new(api))
+            .handler(ApiServerHandler::new(api))
             .verifier(Verifier::none());
 
         let server_ref = server
             .start(OneshotListener::from_value(t2))
             .map_err(io::Error::other)?;
 
-        let client = Client::build()
+        let client = NetClient::build()
             .auth_handler(DummyAuthHandler)
             .config(ClientConfig::default())
             .connector(t1)
@@ -774,7 +774,7 @@ impl Ssh {
 
     /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
     /// for connecting to the launched server.
-    pub async fn launch(self, opts: DistantLaunchOpts) -> io::Result<DistantSingleKeyCredentials> {
+    pub async fn launch(self, opts: LaunchOpts) -> io::Result<Credentials> {
         debug!("Launching distant server: {} {}", opts.binary, opts.args);
 
         let family = self.detect_family().await?;
@@ -845,7 +845,7 @@ impl Ssh {
                     stdout.extend_from_slice(data);
 
                     if let Some(mut credentials) =
-                        DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
+                        Credentials::find_lax(&String::from_utf8_lossy(&stdout))
                     {
                         credentials.host = host;
                         debug!("Got credentials from launched server");
@@ -865,7 +865,7 @@ impl Ssh {
                 Ok(None) => {
                     // Channel closed — check one last time if credentials appeared
                     if let Some(mut credentials) =
-                        DistantSingleKeyCredentials::find_lax(&String::from_utf8_lossy(&stdout))
+                        Credentials::find_lax(&String::from_utf8_lossy(&stdout))
                     {
                         credentials.host = host;
                         debug!("Got credentials from launched server (on channel close)");
@@ -907,7 +907,7 @@ impl Ssh {
     }
 
     /// Consume [`Ssh`] and launch a distant server, then connect to it as a client.
-    pub async fn launch_and_connect(self, opts: DistantLaunchOpts) -> io::Result<DistantClient> {
+    pub async fn launch_and_connect(self, opts: LaunchOpts) -> io::Result<Client> {
         trace!("ssh::launch_and_connect({:?})", opts);
 
         let timeout = opts.timeout;
@@ -941,7 +941,7 @@ impl Ssh {
         for ip in candidate_ips {
             let addr = SocketAddr::new(ip, credentials.port);
             debug!("Attempting to connect to distant server @ {}", addr);
-            match Client::tcp(addr)
+            match NetClient::tcp(addr)
                 .auth_handler(AuthHandlerMap::new().with_static_key(key.clone()))
                 .connect_timeout(timeout)
                 .version(Version::new(
@@ -973,7 +973,7 @@ mod tests {
 
     #[test]
     fn distant_launch_opts_default() {
-        let opts = DistantLaunchOpts::default();
+        let opts = LaunchOpts::default();
         assert_eq!(opts.binary, "distant");
         assert!(opts.args.is_empty());
         assert_eq!(opts.timeout, Duration::from_secs(15));

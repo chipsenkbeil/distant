@@ -6,7 +6,7 @@ use crate::common::utils::regex_pred;
 
 #[rstest]
 #[test_log::test]
-fn should_execute_program_and_return_exit_status(ctx: DistantManagerCtx) {
+fn should_execute_program_and_return_exit_status(ctx: ManagerCtx) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
     let stdout = regex_pred(".+");
@@ -27,7 +27,7 @@ fn should_execute_program_and_return_exit_status(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_capture_and_print_stdout(ctx: DistantManagerCtx) {
+fn should_capture_and_print_stdout(ctx: ManagerCtx) {
     // distant spawn -- {cmd} [args]
     ctx.cmd("spawn")
         .arg("--")
@@ -46,7 +46,7 @@ fn should_capture_and_print_stdout(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_capture_and_print_stderr(ctx: DistantManagerCtx) {
+fn should_capture_and_print_stderr(ctx: ManagerCtx) {
     // distant spawn -- {cmd} [args]
     ctx.cmd("spawn")
         .arg("--")
@@ -67,7 +67,7 @@ fn should_capture_and_print_stderr(ctx: DistantManagerCtx) {
 #[rstest]
 #[test_log::test]
 #[allow(clippy::zombie_processes)] // Test intentionally spawns child without waiting
-fn should_forward_stdin_to_remote_process(ctx: DistantManagerCtx) {
+fn should_forward_stdin_to_remote_process(ctx: ManagerCtx) {
     use std::io::{BufRead, BufReader, Write};
 
     // distant action proc-spawn {cmd} [args]
@@ -108,7 +108,7 @@ fn should_forward_stdin_to_remote_process(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn reflect_the_exit_code_of_the_process(ctx: DistantManagerCtx) {
+fn reflect_the_exit_code_of_the_process(ctx: ManagerCtx) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
     let stdout = regex_pred(".+");
@@ -129,7 +129,7 @@ fn reflect_the_exit_code_of_the_process(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     // distant spawn -- {cmd} [args]
     ctx.cmd("spawn")
         .arg("--")

@@ -23,7 +23,7 @@ fn mismatched_response() -> io::Error {
 }
 
 /// Provides convenience functions on top of a [`Channel`]
-pub trait DistantChannelExt {
+pub trait ChannelExt {
     /// Appends to a remote file using the data from a collection of bytes
     fn append_file(
         &mut self,
@@ -184,9 +184,7 @@ macro_rules! make_body {
     }};
 }
 
-impl DistantChannelExt
-    for Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>>
-{
+impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>> {
     fn append_file(
         &mut self,
         path: impl Into<PathBuf>,

@@ -619,8 +619,8 @@ where
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use async_trait::async_trait;
     use crate::auth::DummyAuthHandler;
+    use async_trait::async_trait;
     use test_log::test;
 
     use super::*;

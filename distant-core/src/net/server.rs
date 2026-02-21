@@ -2,8 +2,8 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use crate::auth::Verifier;
+use async_trait::async_trait;
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -264,8 +264,8 @@ where
 mod tests {
     use std::time::Duration;
 
-    use async_trait::async_trait;
     use crate::auth::{AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod};
+    use async_trait::async_trait;
     use test_log::test;
     use tokio::sync::mpsc;
 

@@ -1,8 +1,8 @@
 use std::future::Future;
 use std::io;
 
-use async_trait::async_trait;
 use crate::auth::Authenticator;
+use async_trait::async_trait;
 
 use crate::net::client::UntypedClient;
 use crate::net::common::{Destination, Map};

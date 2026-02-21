@@ -12,8 +12,8 @@ use assert_fs::prelude::*;
 use assert_fs::TempDir;
 use async_trait::async_trait;
 use derive_more::{Deref, DerefMut, Display};
-use distant_core::DistantClient;
-use distant_ssh2::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use distant_core::Client;
+use distant_ssh::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use log::*;
 use once_cell::sync::Lazy;
 use rstest::*;
@@ -880,7 +880,7 @@ pub fn sshd() -> Sshd {
 
 /// Fixture to establish a client to an SSH server
 #[fixture]
-pub async fn client(sshd: Sshd) -> Ctx<DistantClient> {
+pub async fn client(sshd: Sshd) -> Ctx<Client> {
     let ssh_client = load_ssh_client(&sshd).await;
     let mut client = ssh_client
         .into_distant_client()

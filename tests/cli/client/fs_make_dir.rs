@@ -6,7 +6,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_report_ok_when_done(ctx: DistantManagerCtx) {
+fn should_report_ok_when_done(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
 
@@ -23,7 +23,7 @@ fn should_report_ok_when_done(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_creating_missing_parent_directories_if_specified(ctx: DistantManagerCtx) {
+fn should_support_creating_missing_parent_directories_if_specified(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir1").child("dir2");
 
@@ -40,7 +40,7 @@ fn should_support_creating_missing_parent_directories_if_specified(ctx: DistantM
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("missing-dir").child("dir");
 

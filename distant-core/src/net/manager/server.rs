@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::auth::msg::AuthenticationResponse;
+use async_trait::async_trait;
 use log::*;
 use tokio::sync::{oneshot, RwLock};
 

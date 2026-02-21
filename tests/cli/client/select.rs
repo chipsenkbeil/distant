@@ -4,7 +4,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_select_connection_by_id(ctx: DistantManagerCtx) {
+fn should_select_connection_by_id(ctx: ManagerCtx) {
     // Get the connection ID from JSON status
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])

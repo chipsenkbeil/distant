@@ -12,7 +12,7 @@ that is a file's contents
 
 #[rstest]
 #[test_log::test]
-fn should_support_renaming_file(ctx: DistantManagerCtx) {
+fn should_support_renaming_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("file");
@@ -33,7 +33,7 @@ fn should_support_renaming_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_renaming_nonempty_directory(ctx: DistantManagerCtx) {
+fn should_support_renaming_nonempty_directory(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -61,7 +61,7 @@ fn should_support_renaming_nonempty_directory(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("dir");

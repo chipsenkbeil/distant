@@ -9,7 +9,7 @@ use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 
-use crate::client::DistantChannel;
+use crate::client::Channel;
 use crate::constants::CLIENT_PIPE_CAPACITY;
 use crate::protocol::{self, Cmd, Environment, ProcessId, PtySize};
 
@@ -80,7 +80,7 @@ impl RemoteCommand {
     /// Spawns the specified process on the remote machine using the given `channel` and `cmd`
     pub async fn spawn(
         &mut self,
-        mut channel: DistantChannel,
+        mut channel: Channel,
         cmd: impl Into<String>,
     ) -> io::Result<RemoteProcess> {
         let cmd = cmd.into();
@@ -481,7 +481,7 @@ impl RemoteStderr {
 /// supporting a kill request to terminate the remote process
 async fn process_outgoing_requests(
     id: ProcessId,
-    mut channel: DistantChannel,
+    mut channel: Channel,
     mut stdin_rx: mpsc::Receiver<Vec<u8>>,
     mut resize_rx: mpsc::Receiver<PtySize>,
     mut kill_rx: mpsc::Receiver<()>,
@@ -591,14 +591,13 @@ mod tests {
     use std::time::Duration;
 
     use crate::net::common::{FramedTransport, InmemoryTransport, Response};
-    use crate::net::Client;
     use test_log::test;
 
     use super::*;
-    use crate::client::DistantClient;
     use crate::protocol::{Error, ErrorKind};
+    use crate::Client;
 
-    fn make_session() -> (FramedTransport<InmemoryTransport>, DistantClient) {
+    fn make_session() -> (FramedTransport<InmemoryTransport>, Client) {
         let (t1, t2) = FramedTransport::pair(100);
         (t1, Client::spawn_inmemory(t2, Default::default()))
     }

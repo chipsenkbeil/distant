@@ -1,6 +1,3 @@
-use crate::net::client::Channel;
-use crate::net::Client;
-
 use crate::protocol;
 
 mod ext;
@@ -9,13 +6,15 @@ mod process;
 mod searcher;
 mod watcher;
 
-/// Represents a [`Client`] that communicates using the distant protocol
-pub type DistantClient =
-    Client<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>>;
+/// Represents a [`crate::net::Client`] that communicates using the distant protocol
+pub type Client =
+    crate::net::Client<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>>;
 
-/// Represents a [`Channel`] that communicates using the distant protocol
-pub type DistantChannel =
-    Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>>;
+/// Represents a [`crate::net::client::Channel`] that communicates using the distant protocol
+pub type Channel = crate::net::client::Channel<
+    protocol::Msg<protocol::Request>,
+    protocol::Msg<protocol::Response>,
+>;
 
 pub use ext::*;
 pub use lsp::*;

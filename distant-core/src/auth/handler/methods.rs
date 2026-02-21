@@ -2,7 +2,9 @@ use std::io;
 
 use async_trait::async_trait;
 
-use crate::auth::msg::{Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse};
+use crate::auth::msg::{
+    Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse,
+};
 
 /// Interface for a handler of authentication requests for a specific authentication method.
 #[async_trait]

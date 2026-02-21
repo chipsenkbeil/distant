@@ -1,8 +1,8 @@
 use std::io;
 
-use async_trait::async_trait;
 use crate::auth::msg::*;
 use crate::auth::{AuthHandler, Authenticate, Authenticator};
+use async_trait::async_trait;
 use log::*;
 
 use crate::net::common::{utils, FramedTransport, Transport};

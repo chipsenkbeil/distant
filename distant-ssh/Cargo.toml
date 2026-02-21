@@ -1,6 +1,6 @@
 [package]
-name = "distant-ssh2"
-description = "Library to enable native ssh-2 protocol for use with distant sessions"
+name = "distant-ssh"
+description = "Library to enable SSH protocol for use with distant sessions"
 categories = ["network-programming"]
 version = "0.20.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
