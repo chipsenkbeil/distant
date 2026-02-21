@@ -1361,6 +1361,8 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             .await
             .with_context(|| format!("Failed to watch {path:?}"))?;
 
+            ui.dim(&format!("Watching {:?}", path));
+
             // Continue to receive and process changes
             while let Some(change) = watcher.next().await {
                 println!(
