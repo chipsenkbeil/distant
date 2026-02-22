@@ -2023,4 +2023,258 @@ mod tests {
         )
         .await;
     }
+
+    // ---- SearchChannel::default (closed channel) ----
+
+    #[test(tokio::test)]
+    async fn default_channel_start_should_fail_with_closed_error() {
+        let channel = SearchChannel::default();
+        let (reply, _rx) = mpsc::unbounded_channel();
+
+        let root = setup_dir(Vec::new());
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf()],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex(".*"),
+            options: Default::default(),
+        };
+
+        let result = channel.start(query, Box::new(reply)).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal search task closed"));
+    }
+
+    #[test(tokio::test)]
+    async fn default_channel_cancel_should_fail_with_closed_error() {
+        let channel = SearchChannel::default();
+        let result = channel.cancel(42).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal search task closed"));
+    }
+
+    // ---- SearchState lifecycle ----
+
+    #[test(tokio::test)]
+    async fn search_state_abort_should_close_internal_task() {
+        let state = SearchState::new();
+        state.abort();
+
+        // Allow time for abort to propagate
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let (reply, _rx) = mpsc::unbounded_channel();
+        let root = setup_dir(Vec::new());
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf()],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex(".*"),
+            options: Default::default(),
+        };
+
+        let result = state.start(query, Box::new(reply)).await;
+        assert!(result.is_err());
+    }
+
+    #[test(tokio::test)]
+    async fn search_state_clone_channel_should_return_working_channel() {
+        let state = SearchState::new();
+        let channel = state.clone_channel();
+
+        let (reply, mut rx) = mpsc::unbounded_channel();
+        let root = setup_dir(Vec::new());
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf()],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::equals(""),
+            options: Default::default(),
+        };
+
+        let search_id = channel.start(query, Box::new(reply)).await.unwrap();
+
+        let data = rx.recv().await;
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
+    }
+
+    // ---- cancel ----
+
+    #[test(tokio::test)]
+    async fn cancel_should_fail_for_nonexistent_search() {
+        let state = SearchState::new();
+        let result = state.cancel(99999).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cancellation failed"));
+    }
+
+    #[test(tokio::test)]
+    async fn cancel_should_succeed_for_active_search() {
+        let root = setup_dir(vec![
+            ("a.txt", "match\nmatch\nmatch"),
+            ("b.txt", "match\nmatch"),
+            ("c.txt", "match"),
+        ]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::unbounded_channel();
+
+        // Start a search
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf()],
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("match"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        // Cancel it immediately
+        let result = state.cancel(search_id).await;
+        assert!(result.is_ok());
+
+        // Drain any remaining messages - we should eventually get SearchDone
+        let mut got_done = false;
+        while let Some(msg) = rx.recv().await {
+            if matches!(msg, Response::SearchDone { .. }) {
+                got_done = true;
+                break;
+            }
+        }
+        assert!(got_done, "Should have received SearchDone after cancel");
+    }
+
+    // ---- Invalid query ----
+
+    #[test(tokio::test)]
+    async fn start_should_fail_with_empty_paths() {
+        let state = SearchState::new();
+        let (reply, _rx) = mpsc::unbounded_channel();
+
+        let query = SearchQuery {
+            paths: vec![],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex(".*"),
+            options: Default::default(),
+        };
+
+        let result = state.start(query, Box::new(reply)).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing paths"));
+    }
+
+    #[test(tokio::test)]
+    async fn start_should_fail_with_invalid_regex() {
+        let state = SearchState::new();
+        let (reply, _rx) = mpsc::unbounded_channel();
+        let root = setup_dir(Vec::new());
+
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf()],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::regex("[invalid"),
+            options: Default::default(),
+        };
+
+        let result = state.start(query, Box::new(reply)).await;
+        assert!(result.is_err());
+    }
+
+    // ---- SearchQueryPathFilter ----
+
+    #[test]
+    fn path_filter_new_should_match_paths_containing_pattern() {
+        let filter = SearchQueryPathFilter::new("foo").unwrap();
+        assert!(filter.filter("/some/foo/bar"));
+        assert!(!filter.filter("/some/baz/bar"));
+    }
+
+    #[test]
+    fn path_filter_new_should_fail_with_invalid_regex() {
+        let result = SearchQueryPathFilter::new("[invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn path_filter_fixed_true_should_always_return_true() {
+        let filter = SearchQueryPathFilter::fixed(true);
+        assert!(filter.filter("/any/path"));
+        assert!(filter.filter(""));
+    }
+
+    #[test]
+    fn path_filter_fixed_false_should_always_return_false() {
+        let filter = SearchQueryPathFilter::fixed(false);
+        assert!(!filter.filter("/any/path"));
+        assert!(!filter.filter(""));
+    }
+
+    // ---- Content target only searches files ----
+
+    #[test(tokio::test)]
+    async fn content_search_should_only_match_files_not_directories() {
+        let root = assert_fs::TempDir::new().unwrap();
+        // Create a directory with "match" in its name and a file with "match" in its content
+        root.child(make_path("match_dir")).create_dir_all().unwrap();
+        root.child(make_path("file.txt"))
+            .write_str("match")
+            .unwrap();
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::unbounded_channel();
+
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf()],
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("match"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let matches = get_matches(rx.recv().await.unwrap())
+            .into_iter()
+            .filter_map(|m| m.into_contents_match())
+            .collect::<Vec<_>>();
+
+        // Only the file should match, not the directory
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].path.to_string_lossy().contains("file.txt"));
+
+        let data = rx.recv().await;
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
+    }
+
+    // ---- Dedup of paths ----
+
+    #[test(tokio::test)]
+    async fn start_should_dedup_identical_paths() {
+        let root = setup_dir(vec![("file.txt", "unique content here")]);
+
+        let state = SearchState::new();
+        let (reply, mut rx) = mpsc::unbounded_channel();
+
+        // Provide the same path twice
+        let query = SearchQuery {
+            paths: vec![root.path().to_path_buf(), root.path().to_path_buf()],
+            target: SearchQueryTarget::Contents,
+            condition: SearchQueryCondition::regex("unique"),
+            options: Default::default(),
+        };
+
+        let search_id = state.start(query, Box::new(reply)).await.unwrap();
+
+        let matches = get_matches(rx.recv().await.unwrap());
+        // Should only get one match despite providing path twice
+        assert_eq!(matches.len(), 1);
+
+        let data = rx.recv().await;
+        assert_eq!(data, Some(Response::SearchDone { id: search_id }));
+    }
 }

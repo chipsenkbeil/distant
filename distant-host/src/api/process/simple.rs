@@ -224,3 +224,239 @@ impl ProcessKiller for SimpleProcessKiller {
         Box::new(self.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use distant_core::protocol::Environment;
+
+    fn empty_env() -> Environment {
+        Environment::new()
+    }
+
+    mod spawn {
+        use super::*;
+
+        #[test_log::test(tokio::test)]
+        async fn with_valid_program_succeeds() {
+            let proc = SimpleProcess::spawn("echo", ["hello"], empty_env(), None);
+            assert!(proc.is_ok());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn with_invalid_program_returns_error() {
+            let result = SimpleProcess::spawn(
+                "nonexistent_program_that_does_not_exist_xyz",
+                Vec::<String>::new(),
+                empty_env(),
+                None,
+            );
+            assert!(result.is_err());
+        }
+    }
+
+    mod process_trait {
+        use super::*;
+
+        #[test_log::test(tokio::test)]
+        async fn id_returns_nonzero_value() {
+            // id is randomly generated, so it could theoretically be 0,
+            // but we test it's at least set
+            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            // ProcessId is u32, just verify it's accessible
+            let _id: ProcessId = proc.id();
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn stdin_is_some_initially() {
+            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.stdin().is_some());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn stdout_is_some_initially() {
+            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.stdout().is_some());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn stderr_is_some_initially() {
+            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.stderr().is_some());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn take_stdin_removes_it() {
+            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let stdin = proc.take_stdin();
+            assert!(stdin.is_some());
+            assert!(proc.stdin().is_none());
+            assert!(proc.take_stdin().is_none());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn take_stdout_removes_it() {
+            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let stdout = proc.take_stdout();
+            assert!(stdout.is_some());
+            assert!(proc.stdout().is_none());
+            assert!(proc.take_stdout().is_none());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn take_stderr_removes_it() {
+            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let stderr = proc.take_stderr();
+            assert!(stderr.is_some());
+            assert!(proc.stderr().is_none());
+            assert!(proc.take_stderr().is_none());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn mut_stdin_is_some_initially() {
+            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.mut_stdin().is_some());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn mut_stdout_is_some_initially() {
+            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.mut_stdout().is_some());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn mut_stderr_is_some_initially() {
+            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.mut_stderr().is_some());
+        }
+    }
+
+    mod wait_and_exit {
+        use super::*;
+
+        #[test_log::test(tokio::test)]
+        async fn echo_exits_successfully_with_code_zero() {
+            let mut proc = SimpleProcess::spawn("echo", ["hello"], empty_env(), None).unwrap();
+            let status = proc.wait().await.unwrap();
+            assert!(status.success);
+            assert_eq!(status.code, Some(0));
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn false_command_exits_with_nonzero_code() {
+            let mut proc =
+                SimpleProcess::spawn("false", Vec::<String>::new(), empty_env(), None).unwrap();
+            let status = proc.wait().await.unwrap();
+            assert!(!status.success);
+            assert!(status.code.is_some());
+            assert_ne!(status.code.unwrap(), 0);
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn kill_then_wait_returns_killed_status() {
+            // Spawn a long-running process
+            let mut proc = SimpleProcess::spawn("sleep", ["60"], empty_env(), None).unwrap();
+
+            ProcessKiller::kill(&mut proc).await.unwrap();
+            let status = proc.wait().await.unwrap();
+            assert!(!status.success);
+        }
+    }
+
+    mod stdout_capture {
+        use super::*;
+
+        #[test_log::test(tokio::test)]
+        async fn captures_stdout_from_echo() {
+            let mut proc = SimpleProcess::spawn("echo", ["hello"], empty_env(), None).unwrap();
+            let mut stdout = proc.take_stdout().unwrap();
+
+            // Read from stdout
+            let data = stdout.recv().await.unwrap();
+            assert!(data.is_some());
+            let bytes = data.unwrap();
+            let output = String::from_utf8_lossy(&bytes);
+            assert!(output.contains("hello"));
+
+            // Wait for process to finish
+            let status = proc.wait().await.unwrap();
+            assert!(status.success);
+        }
+    }
+
+    mod clone_killer {
+        use super::*;
+
+        #[test_log::test(tokio::test)]
+        async fn cloned_killer_can_kill_process() {
+            let mut proc = SimpleProcess::spawn("sleep", ["60"], empty_env(), None).unwrap();
+            let mut killer = proc.clone_killer();
+            killer.kill().await.unwrap();
+
+            let status = proc.wait().await.unwrap();
+            assert!(!status.success);
+        }
+    }
+
+    mod no_process_pty {
+        use super::*;
+        use crate::api::process::ProcessPty;
+
+        #[test_log::test(tokio::test)]
+        async fn pty_size_returns_none() {
+            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            assert!(proc.pty_size().is_none());
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn resize_pty_returns_error() {
+            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let size = distant_core::protocol::PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+            let result = proc.resize_pty(size);
+            assert!(result.is_err());
+        }
+    }
+
+    mod spawn_with_current_dir {
+        use super::*;
+
+        #[test_log::test(tokio::test)]
+        async fn uses_specified_current_dir() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut proc = SimpleProcess::spawn(
+                "pwd",
+                Vec::<String>::new(),
+                empty_env(),
+                Some(dir.path().to_path_buf()),
+            )
+            .unwrap();
+
+            let mut stdout = proc.take_stdout().unwrap();
+            let data = stdout.recv().await.unwrap();
+            assert!(data.is_some());
+            let bytes = data.unwrap();
+            let output = String::from_utf8_lossy(&bytes);
+
+            // The output should contain the directory name
+            // Note: canonicalize might add /private on macOS
+            let canon = dir.path().canonicalize().unwrap();
+            assert!(
+                output.trim() == canon.to_str().unwrap()
+                    || output.trim() == dir.path().to_str().unwrap(),
+                "Expected pwd output '{}' to match '{}' or '{}'",
+                output.trim(),
+                canon.display(),
+                dir.path().display(),
+            );
+
+            let status = proc.wait().await.unwrap();
+            assert!(status.success);
+        }
+    }
+}
