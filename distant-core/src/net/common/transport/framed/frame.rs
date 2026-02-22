@@ -319,4 +319,297 @@ mod tests {
         let item = Frame::read(&mut buf).expect("missing frame");
         assert_eq!(item, b"hello, world");
     }
+
+    // --- Tests for constructors and basic accessors ---
+
+    #[test]
+    fn empty_should_create_frame_with_zero_length() {
+        let frame = Frame::empty();
+        assert!(frame.is_empty());
+        assert_eq!(frame.len(), 0);
+        assert!(!frame.is_nonempty());
+    }
+
+    #[test]
+    fn new_should_borrow_the_provided_bytes() {
+        let data = b"test data";
+        let frame = Frame::new(data);
+        assert_eq!(frame.len(), 9);
+        assert!(!frame.is_empty());
+        assert!(frame.is_nonempty());
+    }
+
+    #[test]
+    fn as_item_should_return_reference_to_item_bytes() {
+        let frame = Frame::new(b"hello");
+        assert_eq!(frame.as_item(), b"hello");
+    }
+
+    #[test]
+    fn as_item_on_empty_frame_should_return_empty_slice() {
+        let frame = Frame::empty();
+        assert_eq!(frame.as_item(), b"");
+    }
+
+    #[test]
+    fn into_item_should_return_cow_with_borrowed_bytes() {
+        let data = b"borrowed";
+        let frame = Frame::new(data);
+        let item = frame.into_item();
+        assert_eq!(item.as_ref(), b"borrowed");
+    }
+
+    #[test]
+    fn into_item_on_owned_frame_should_return_cow_with_owned_bytes() {
+        let frame = OwnedFrame::from(vec![1, 2, 3]);
+        let item = frame.into_item();
+        assert_eq!(item.as_ref(), &[1, 2, 3]);
+    }
+
+    // --- Tests for to_bytes ---
+
+    #[test]
+    fn to_bytes_should_produce_header_and_item() {
+        let frame = Frame::new(b"hi");
+        let bytes = frame.to_bytes();
+        // 8 bytes header (u64 len = 2) + 2 bytes item
+        assert_eq!(bytes.len(), 10);
+        assert_eq!(&bytes[..8], &[0, 0, 0, 0, 0, 0, 0, 2]);
+        assert_eq!(&bytes[8..], b"hi");
+    }
+
+    #[test]
+    fn to_bytes_on_empty_frame_should_produce_only_header() {
+        let frame = Frame::empty();
+        let bytes = frame.to_bytes();
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(bytes, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    // --- Tests for into_owned and as_borrowed ---
+
+    #[test]
+    fn into_owned_should_produce_static_frame_from_borrowed() {
+        let data = vec![10, 20, 30];
+        let frame = Frame::new(&data);
+        let owned: OwnedFrame = frame.into_owned();
+        assert_eq!(owned.as_item(), &[10, 20, 30]);
+    }
+
+    #[test]
+    fn as_borrowed_should_produce_frame_with_same_content() {
+        let frame = OwnedFrame::from(vec![5, 6, 7]);
+        let borrowed = frame.as_borrowed();
+        assert_eq!(borrowed.as_item(), frame.as_item());
+        assert_eq!(borrowed, frame);
+    }
+
+    #[test]
+    fn as_borrowed_on_borrowed_frame() {
+        let data = b"hello";
+        let frame = Frame::new(data);
+        let borrowed = frame.as_borrowed();
+        assert_eq!(borrowed.as_item(), b"hello");
+    }
+
+    // --- Tests for available ---
+
+    #[test]
+    fn available_should_return_true_when_full_frame_present() {
+        let mut buf = BytesMut::new();
+        Frame::new(b"test").write(&mut buf);
+        assert!(Frame::available(&buf));
+    }
+
+    #[test]
+    fn available_should_return_false_when_no_frame_present() {
+        let buf = BytesMut::new();
+        assert!(!Frame::available(&buf));
+    }
+
+    #[test]
+    fn available_should_return_false_when_partial_frame_present() {
+        let mut buf = BytesMut::new();
+        // Write header indicating 100 bytes but only provide 5 bytes of data
+        buf.put_u64(100);
+        buf.put_bytes(0, 5);
+        assert!(!Frame::available(&buf));
+    }
+
+    #[test]
+    fn available_should_not_consume_the_frame() {
+        let mut buf = BytesMut::new();
+        Frame::new(b"test").write(&mut buf);
+
+        let len_before = buf.len();
+        assert!(Frame::available(&buf));
+        assert_eq!(buf.len(), len_before, "available() should not consume src");
+    }
+
+    // --- Tests for From impls ---
+
+    #[test]
+    fn from_byte_slice_should_create_borrowed_frame() {
+        let data: &[u8] = b"slice";
+        let frame = Frame::from(data);
+        assert_eq!(frame.as_item(), b"slice");
+    }
+
+    #[test]
+    fn from_byte_array_ref_should_create_borrowed_frame() {
+        let data: &[u8; 3] = b"abc";
+        let frame = Frame::from(data);
+        assert_eq!(frame.as_item(), b"abc");
+    }
+
+    #[test]
+    fn from_byte_array_should_create_owned_frame() {
+        let frame = OwnedFrame::from([1u8, 2, 3]);
+        assert_eq!(frame.as_item(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn from_vec_should_create_owned_frame() {
+        let frame = OwnedFrame::from(vec![4, 5, 6]);
+        assert_eq!(frame.as_item(), &[4, 5, 6]);
+    }
+
+    #[test]
+    fn from_empty_vec_should_create_empty_owned_frame() {
+        let frame = OwnedFrame::from(vec![]);
+        assert!(frame.is_empty());
+    }
+
+    // --- Tests for AsRef ---
+
+    #[test]
+    fn as_ref_should_return_item_bytes() {
+        let frame = Frame::new(b"ref test");
+        let bytes: &[u8] = frame.as_ref();
+        assert_eq!(bytes, b"ref test");
+    }
+
+    // --- Tests for Extend ---
+
+    #[test]
+    fn extend_should_append_bytes_to_borrowed_frame() {
+        let data = b"hello";
+        let mut frame = Frame::new(data);
+        frame.extend(b", world".iter().copied());
+        assert_eq!(frame.as_item(), b"hello, world");
+    }
+
+    #[test]
+    fn extend_should_append_bytes_to_owned_frame() {
+        let mut frame = OwnedFrame::from(vec![1, 2, 3]);
+        frame.extend(vec![4, 5]);
+        assert_eq!(frame.as_item(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn extend_empty_iterator_should_not_change_frame() {
+        let mut frame = OwnedFrame::from(vec![1, 2, 3]);
+        frame.extend(std::iter::empty::<u8>());
+        assert_eq!(frame.as_item(), &[1, 2, 3]);
+    }
+
+    // --- Tests for PartialEq ---
+
+    #[test]
+    fn partial_eq_with_byte_slice_should_compare_item() {
+        let frame = Frame::new(b"abc");
+        assert_eq!(frame, *b"abc");
+    }
+
+    #[test]
+    fn partial_eq_with_byte_slice_ref() {
+        let frame = Frame::new(b"abc");
+        let slice: &[u8] = b"abc";
+        assert_eq!(frame, slice);
+    }
+
+    #[test]
+    fn partial_eq_with_byte_array() {
+        let frame = Frame::new(b"abc");
+        assert_eq!(frame, [b'a', b'b', b'c']);
+    }
+
+    #[test]
+    fn partial_eq_with_byte_array_ref() {
+        let frame = Frame::new(b"abc");
+        assert_eq!(frame, b"abc");
+    }
+
+    #[test]
+    fn partial_eq_should_return_false_for_different_content() {
+        let frame = Frame::new(b"abc");
+        assert_ne!(frame, *b"xyz");
+    }
+
+    // --- Tests for HEADER_SIZE ---
+
+    #[test]
+    fn header_size_should_be_8_bytes() {
+        assert_eq!(Frame::HEADER_SIZE, 8);
+    }
+
+    // --- Tests for write/read round-trip ---
+
+    #[test]
+    fn write_then_read_should_round_trip_arbitrary_data() {
+        let data = (0u8..=255).collect::<Vec<u8>>();
+        let frame = Frame::new(&data);
+
+        let mut buf = BytesMut::new();
+        frame.write(&mut buf);
+
+        let recovered = Frame::read(&mut buf).expect("missing frame");
+        assert_eq!(recovered.as_item(), data.as_slice());
+    }
+
+    #[test]
+    fn write_then_read_should_round_trip_empty_frame() {
+        let frame = Frame::empty();
+        let mut buf = BytesMut::new();
+        frame.write(&mut buf);
+        // We need at least one extra byte beyond the header for read to proceed
+        buf.put_u8(0xFF);
+
+        let recovered = Frame::read(&mut buf).expect("missing frame");
+        assert!(recovered.is_empty());
+        // The extra byte should remain
+        assert_eq!(buf.as_ref(), &[0xFF]);
+    }
+
+    #[test]
+    fn multiple_frames_should_be_readable_sequentially() {
+        let mut buf = BytesMut::new();
+        Frame::new(b"first").write(&mut buf);
+        Frame::new(b"second").write(&mut buf);
+
+        let f1 = Frame::read(&mut buf).expect("missing first frame");
+        assert_eq!(f1, b"first");
+
+        let f2 = Frame::read(&mut buf).expect("missing second frame");
+        assert_eq!(f2, b"second");
+
+        assert!(Frame::read(&mut buf).is_none());
+    }
+
+    // --- Tests for clone and equality ---
+
+    #[test]
+    fn clone_should_produce_equal_frame() {
+        let frame = OwnedFrame::from(vec![1, 2, 3]);
+        let cloned = frame.clone();
+        assert_eq!(frame, cloned);
+    }
+
+    #[test]
+    fn frames_with_same_content_but_different_ownership_should_be_equal() {
+        let data = b"same";
+        let borrowed = Frame::new(data);
+        let owned = OwnedFrame::from(data.to_vec());
+        assert_eq!(borrowed, owned);
+    }
 }

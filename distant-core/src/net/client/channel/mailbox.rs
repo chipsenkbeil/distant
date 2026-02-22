@@ -325,3 +325,353 @@ impl<T: Send + 'static> Mailbox<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use test_log::test;
+
+    use super::*;
+    use crate::net::common::{Response, UntypedResponse};
+
+    /// Helper to unwrap a try_next result without requiring Debug on MailboxTryNextError.
+    fn unwrap_try_next<T: std::fmt::Debug>(result: Result<T, MailboxTryNextError>) -> T {
+        match result {
+            Ok(v) => v,
+            Err(MailboxTryNextError::Empty) => panic!("Expected Ok, got Err(Empty)"),
+            Err(MailboxTryNextError::Closed) => panic!("Expected Ok, got Err(Closed)"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // PostOffice tests
+    // ---------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn post_office_make_mailbox_and_deliver_round_trip() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        assert!(po.deliver(&"id1".to_string(), 42).await);
+        assert_eq!(mb.next().await, Some(42));
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_deliver_returns_false_for_unknown_id() {
+        let po = PostOffice::<u32>::default();
+        assert!(!po.deliver(&"unknown".to_string(), 1).await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_deliver_returns_false_after_mailbox_cancelled() {
+        let po = PostOffice::<u32>::default();
+        let _mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        // Cancel the mailbox (removes the sender from the map)
+        po.cancel(&"id1".to_string()).await;
+
+        // Now delivery should return false since the mailbox is gone
+        assert!(!po.deliver(&"id1".to_string(), 99).await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_assign_default_mailbox_catches_undelivered() {
+        let po = PostOffice::<u32>::default();
+        let mut default_mb = po.assign_default_mailbox(4).await;
+
+        // Send to a non-existent mailbox — should go to default
+        assert!(po.deliver(&"nonexistent".to_string(), 7).await);
+        assert_eq!(default_mb.next().await, Some(7));
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_remove_default_mailbox_stops_catching() {
+        let po = PostOffice::<u32>::default();
+        let _default_mb = po.assign_default_mailbox(4).await;
+        po.remove_default_mailbox().await;
+
+        // Without a default, delivery to unknown id should return false
+        assert!(!po.deliver(&"nonexistent".to_string(), 7).await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_has_default_mailbox_returns_correct_value() {
+        let po = PostOffice::<u32>::default();
+        assert!(!po.has_default_mailbox().await);
+
+        let _mb = po.assign_default_mailbox(4).await;
+        assert!(po.has_default_mailbox().await);
+
+        po.remove_default_mailbox().await;
+        assert!(!po.has_default_mailbox().await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_cancel_removes_specific_mailbox() {
+        let po = PostOffice::<u32>::default();
+        let _mb1 = po.make_mailbox("a".to_string(), 4).await;
+        let _mb2 = po.make_mailbox("b".to_string(), 4).await;
+
+        po.cancel(&"a".to_string()).await;
+
+        assert!(!po.deliver(&"a".to_string(), 1).await);
+        assert!(po.deliver(&"b".to_string(), 2).await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_cancel_many_removes_multiple() {
+        let po = PostOffice::<u32>::default();
+        let _mb1 = po.make_mailbox("x".to_string(), 4).await;
+        let _mb2 = po.make_mailbox("y".to_string(), 4).await;
+        let _mb3 = po.make_mailbox("z".to_string(), 4).await;
+
+        let ids = vec!["x".to_string(), "y".to_string()];
+        po.cancel_many(ids.iter()).await;
+
+        assert!(!po.deliver(&"x".to_string(), 1).await);
+        assert!(!po.deliver(&"y".to_string(), 2).await);
+        assert!(po.deliver(&"z".to_string(), 3).await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_cancel_all_removes_all() {
+        let po = PostOffice::<u32>::default();
+        let _mb1 = po.make_mailbox("a".to_string(), 4).await;
+        let _mb2 = po.make_mailbox("b".to_string(), 4).await;
+
+        po.cancel_all().await;
+
+        assert!(!po.deliver(&"a".to_string(), 1).await);
+        assert!(!po.deliver(&"b".to_string(), 2).await);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_deliver_response_uses_origin_id() {
+        let po = PostOffice::<Response<u8>>::default();
+        let origin = "origin123".to_string();
+        let mut mb = po.make_mailbox(origin.clone(), 4).await;
+
+        let res = Response::new(origin.clone(), 42u8);
+        assert!(po.deliver_response(res.clone()).await);
+        assert_eq!(mb.next().await.unwrap().payload, 42);
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_deliver_untyped_response_uses_origin_id() {
+        let po = PostOffice::<UntypedResponse<'static>>::default();
+        let origin = "origin456".to_string();
+        let mut mb = po.make_mailbox(origin.clone(), 4).await;
+
+        let res = UntypedResponse {
+            header: Cow::Owned(vec![]),
+            id: Cow::Owned("resp1".to_string()),
+            origin_id: Cow::Owned(origin.clone()),
+            payload: Cow::Owned(vec![0xc3]),
+        };
+        assert!(po.deliver_untyped_response(res.clone()).await);
+        let received = mb.next().await.unwrap();
+        assert_eq!(received.origin_id.as_ref(), origin.as_str());
+    }
+
+    // ---------------------------------------------------------------
+    // Mailbox tests
+    // ---------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn mailbox_id_returns_assigned_id() {
+        let po = PostOffice::<u32>::default();
+        let mb = po.make_mailbox("test_id".to_string(), 4).await;
+        assert_eq!(mb.id(), "test_id");
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_try_next_returns_empty_when_nothing_queued() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+        match mb.try_next() {
+            Err(MailboxTryNextError::Empty) => {}
+            other => panic!("Expected Empty, got {:?}", other.ok()),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_try_next_returns_value_when_available() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+        po.deliver(&"id1".to_string(), 99).await;
+        assert_eq!(unwrap_try_next(mb.try_next()), 99);
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_try_next_returns_closed_after_sender_dropped() {
+        let (tx, rx) = mpsc::channel::<u32>(4);
+        drop(tx);
+        let mut mb = Mailbox {
+            id: "closed".to_string(),
+            rx: Box::new(rx),
+        };
+        match mb.try_next() {
+            Err(MailboxTryNextError::Closed) => {}
+            other => panic!("Expected Closed, got {:?}", other.ok()),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_next_returns_some_when_value_delivered() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        // Deliver in a separate task so we do not deadlock on next()
+        let po2 = po.clone();
+        tokio::spawn(async move {
+            po2.deliver(&"id1".to_string(), 55).await;
+        });
+
+        assert_eq!(mb.next().await, Some(55));
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_next_returns_none_after_cancel() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        let po2 = po.clone();
+        tokio::spawn(async move {
+            po2.cancel(&"id1".to_string()).await;
+        });
+
+        assert_eq!(mb.next().await, None);
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_next_timeout_returns_error_on_timeout() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        let result = mb.next_timeout(Duration::from_millis(10)).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_next_timeout_returns_value_before_timeout() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+        po.deliver(&"id1".to_string(), 77).await;
+
+        let result = mb.next_timeout(Duration::from_secs(1)).await;
+        assert_eq!(result.unwrap(), Some(77));
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_close_allows_draining_existing_values() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        // Deliver one value before close
+        po.deliver(&"id1".to_string(), 10).await;
+        mb.close();
+
+        // Already-queued value is still available after close
+        assert_eq!(unwrap_try_next(mb.try_next()), 10);
+
+        // After close + drain, try_next should report closed
+        match mb.try_next() {
+            Err(MailboxTryNextError::Closed) => {}
+            other => panic!("Expected Closed after drain, got {:?}", other.ok()),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_map_transforms_values() {
+        let po = PostOffice::<u32>::default();
+        let mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        // map u32 -> String
+        let mut mapped = mb.map(|v| format!("val={v}"));
+        assert_eq!(mapped.id(), "id1");
+
+        po.deliver(&"id1".to_string(), 3).await;
+        assert_eq!(mapped.next().await, Some("val=3".to_string()));
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_map_opt_filters_and_transforms() {
+        let po = PostOffice::<u32>::default();
+        let mb = po.make_mailbox("id1".to_string(), 4).await;
+
+        // Only keep even values, converted to strings
+        let mut mapped = mb.map_opt(|v| if v % 2 == 0 { Some(v * 10) } else { None });
+        assert_eq!(mapped.id(), "id1");
+
+        // Deliver odd (filtered out), then even (kept)
+        po.deliver(&"id1".to_string(), 1).await;
+        po.deliver(&"id1".to_string(), 4).await;
+
+        // We should get the even value (4*10 = 40), the odd one is skipped
+        assert_eq!(mapped.next().await, Some(40));
+    }
+
+    #[test(tokio::test)]
+    async fn mailbox_map_opt_try_next_returns_empty_when_filtered() {
+        let po = PostOffice::<u32>::default();
+        let mb = po.make_mailbox("id1".to_string(), 4).await;
+        let mut mapped = mb.map_opt(|v| if v > 100 { Some(v) } else { None });
+
+        // Deliver a value that will be filtered
+        po.deliver(&"id1".to_string(), 5).await;
+
+        // try_next should see the value but filter it and return Empty
+        match mapped.try_next() {
+            Err(MailboxTryNextError::Empty) => {}
+            other => panic!("Expected Empty, got {:?}", other.ok()),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_deliver_multiple_values_to_same_mailbox() {
+        let po = PostOffice::<u32>::default();
+        let mut mb = po.make_mailbox("id1".to_string(), 10).await;
+
+        for i in 0..5 {
+            assert!(po.deliver(&"id1".to_string(), i).await);
+        }
+
+        for i in 0..5 {
+            assert_eq!(unwrap_try_next(mb.try_next()), i);
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_default_mailbox_replaced_on_reassign() {
+        let po = PostOffice::<u32>::default();
+        let _mb1 = po.assign_default_mailbox(4).await;
+        let mut mb2 = po.assign_default_mailbox(4).await;
+
+        // Deliver to non-existent id — should go to the new default
+        po.deliver(&"nope".to_string(), 123).await;
+        assert_eq!(mb2.next().await, Some(123));
+    }
+
+    #[test(tokio::test)]
+    async fn post_office_specific_mailbox_takes_priority_over_default() {
+        let po = PostOffice::<u32>::default();
+        let mut specific = po.make_mailbox("specific".to_string(), 4).await;
+        let mut default = po.assign_default_mailbox(4).await;
+
+        // Deliver to the specific id — should NOT go to default
+        assert!(po.deliver(&"specific".to_string(), 1).await);
+        assert_eq!(unwrap_try_next(specific.try_next()), 1);
+
+        // Nothing should be in the default
+        match default.try_next() {
+            Err(MailboxTryNextError::Empty) => {}
+            other => panic!("Expected Empty from default, got {:?}", other.ok()),
+        }
+
+        // Deliver to unknown id — should go to default
+        assert!(po.deliver(&"unknown".to_string(), 2).await);
+        assert_eq!(unwrap_try_next(default.try_next()), 2);
+    }
+}

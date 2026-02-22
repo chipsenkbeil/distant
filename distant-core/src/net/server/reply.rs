@@ -161,3 +161,278 @@ impl<T: Send + 'static> Reply for QueuedServerReply<T> {
         Box::new(self.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::common::Response;
+    use tokio::sync::mpsc;
+
+    // ---- UnboundedSender Reply impl ----
+
+    #[test_log::test(tokio::test)]
+    async fn unbounded_sender_reply_send_should_succeed() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        Reply::send(&tx, "hello".to_string()).unwrap();
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received, "hello");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn unbounded_sender_reply_send_should_fail_when_receiver_dropped() {
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        drop(rx);
+        let result = Reply::send(&tx, "hello".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn unbounded_sender_clone_reply_returns_working_sender() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let cloned = Reply::clone_reply(&tx);
+        cloned.send("from clone".to_string()).unwrap();
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received, "from clone");
+    }
+
+    // ---- ServerReply ----
+
+    fn make_server_reply() -> (
+        ServerReply<String>,
+        mpsc::UnboundedReceiver<Response<String>>,
+    ) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test-origin".to_string(),
+            tx,
+        };
+        (reply, rx)
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_send_creates_response_with_correct_origin_id() {
+        let (reply, mut rx) = make_server_reply();
+        reply.send("payload".to_string()).unwrap();
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.origin_id, "test-origin");
+        assert_eq!(response.payload, "payload");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_send_fails_when_receiver_dropped() {
+        let (reply, rx) = make_server_reply();
+        drop(rx);
+        let result = reply.send("payload".to_string());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_is_closed_returns_false_when_receiver_alive() {
+        let (reply, _rx) = make_server_reply();
+        assert!(!reply.is_closed());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_is_closed_returns_true_when_receiver_dropped() {
+        let (reply, rx) = make_server_reply();
+        drop(rx);
+        assert!(reply.is_closed());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_clone_shares_tx() {
+        let (reply, mut rx) = make_server_reply();
+        let cloned = reply.clone();
+        cloned.send("from clone".to_string()).unwrap();
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.origin_id, "test-origin");
+        assert_eq!(response.payload, "from clone");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_clone_preserves_origin_id() {
+        let (reply, _rx) = make_server_reply();
+        let cloned = reply.clone();
+        assert_eq!(cloned.origin_id, "test-origin");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_trait_impl_send_works() {
+        let (reply, mut rx) = make_server_reply();
+        Reply::send(&reply, "via trait".to_string()).unwrap();
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.payload, "via trait");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_trait_impl_clone_reply_works() {
+        let (reply, mut rx) = make_server_reply();
+        let cloned = Reply::clone_reply(&reply);
+        cloned.send("via trait clone".to_string()).unwrap();
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.payload, "via trait clone");
+    }
+
+    // ---- ServerReply::queue -> QueuedServerReply ----
+
+    #[test_log::test(tokio::test)]
+    async fn server_reply_queue_creates_queued_reply_in_hold_mode() {
+        let (reply, _rx) = make_server_reply();
+        let queued = reply.queue();
+        // By default, hold is true so send should queue, not send immediately
+        queued.send("queued".to_string()).unwrap();
+        // Nothing should be received yet
+    }
+
+    // ---- QueuedServerReply ----
+
+    fn make_queued_reply() -> (
+        QueuedServerReply<String>,
+        mpsc::UnboundedReceiver<Response<String>>,
+    ) {
+        let (reply, rx) = make_server_reply();
+        (reply.queue(), rx)
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_send_while_held_queues_data() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.send("first".to_string()).unwrap();
+        queued.send("second".to_string()).unwrap();
+
+        // Nothing should have been sent through yet
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_send_while_not_held_sends_immediately() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.hold(false);
+        queued.send("immediate".to_string()).unwrap();
+
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.payload, "immediate");
+        assert_eq!(response.origin_id, "test-origin");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_send_before_inserts_at_front_of_queue() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.send("second".to_string()).unwrap();
+        queued.send("third".to_string()).unwrap();
+        queued.send_before("first".to_string()).unwrap();
+
+        queued.flush(false).unwrap();
+
+        let r1 = rx.recv().await.unwrap();
+        let r2 = rx.recv().await.unwrap();
+        let r3 = rx.recv().await.unwrap();
+        assert_eq!(r1.payload, "first");
+        assert_eq!(r2.payload, "second");
+        assert_eq!(r3.payload, "third");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_send_before_while_not_held_sends_immediately() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.hold(false);
+        queued.send_before("immediate".to_string()).unwrap();
+
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.payload, "immediate");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_flush_sends_all_queued_and_clears() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.send("a".to_string()).unwrap();
+        queued.send("b".to_string()).unwrap();
+        queued.send("c".to_string()).unwrap();
+
+        queued.flush(true).unwrap();
+
+        let r1 = rx.recv().await.unwrap();
+        let r2 = rx.recv().await.unwrap();
+        let r3 = rx.recv().await.unwrap();
+        assert_eq!(r1.payload, "a");
+        assert_eq!(r2.payload, "b");
+        assert_eq!(r3.payload, "c");
+
+        // Queue should be empty; sending again should queue (hold=true was passed to flush)
+        queued.send("d".to_string()).unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_flush_with_hold_false_allows_direct_send_after() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.send("queued".to_string()).unwrap();
+
+        queued.flush(false).unwrap();
+
+        let r1 = rx.recv().await.unwrap();
+        assert_eq!(r1.payload, "queued");
+
+        // After flush with hold=false, new sends go directly
+        queued.send("direct".to_string()).unwrap();
+        let r2 = rx.recv().await.unwrap();
+        assert_eq!(r2.payload, "direct");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_is_closed_returns_false_when_receiver_alive() {
+        let (queued, _rx) = make_queued_reply();
+        assert!(!queued.is_closed());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_is_closed_returns_true_when_receiver_dropped() {
+        let (queued, rx) = make_queued_reply();
+        drop(rx);
+        assert!(queued.is_closed());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_clone_shares_queue_and_hold() {
+        let (queued, mut rx) = make_queued_reply();
+        let cloned = queued.clone();
+
+        // Send via clone, should be queued
+        cloned.send("from clone".to_string()).unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Flush via original, should send the cloned message too
+        queued.flush(false).unwrap();
+        let r1 = rx.recv().await.unwrap();
+        assert_eq!(r1.payload, "from clone");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_trait_impl_send_works() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.hold(false);
+        Reply::send(&queued, "via trait".to_string()).unwrap();
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.payload, "via trait");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_trait_impl_clone_reply_works() {
+        let (queued, mut rx) = make_queued_reply();
+        queued.hold(false);
+        let cloned = Reply::clone_reply(&queued);
+        cloned.send("via trait clone".to_string()).unwrap();
+        let response = rx.recv().await.unwrap();
+        assert_eq!(response.payload, "via trait clone");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn queued_reply_flush_fails_when_receiver_dropped() {
+        let (queued, rx) = make_queued_reply();
+        queued.send("data".to_string()).unwrap();
+        drop(rx);
+        let result = queued.flush(false);
+        assert!(result.is_err());
+    }
+}

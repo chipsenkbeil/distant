@@ -331,4 +331,269 @@ mod tests {
             format!("{SCHEME}://:{key}@[::1]:12345")
         );
     }
+
+    #[test]
+    fn display_should_include_username_when_present() {
+        let key = KEY.as_str();
+        let credentials = Credentials {
+            host: Host::Name(HOST.to_string()),
+            port: PORT,
+            username: Some(USER.to_string()),
+            key: key.parse().unwrap(),
+        };
+
+        assert_eq!(
+            credentials.to_string(),
+            format!("{SCHEME}://{USER}:{key}@{HOST}:{PORT}")
+        );
+    }
+
+    #[test]
+    fn display_should_include_username_with_ipv6() {
+        let key = KEY.as_str();
+        let credentials = Credentials {
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: PORT,
+            username: Some(USER.to_string()),
+            key: key.parse().unwrap(),
+        };
+
+        assert_eq!(
+            credentials.to_string(),
+            format!("{SCHEME}://{USER}:{key}@[::1]:{PORT}")
+        );
+    }
+
+    #[test]
+    fn display_should_handle_ipv4_with_username() {
+        let key = KEY.as_str();
+        let credentials = Credentials {
+            host: Host::Ipv4(Ipv4Addr::new(192, 168, 1, 1)),
+            port: 8080,
+            username: Some("admin".to_string()),
+            key: key.parse().unwrap(),
+        };
+
+        assert_eq!(
+            credentials.to_string(),
+            format!("{SCHEME}://admin:{key}@192.168.1.1:8080")
+        );
+    }
+
+    #[test]
+    fn from_str_should_parse_valid_credentials_without_username() {
+        let credentials: Credentials = CREDENTIALS_STR_NO_USER.parse().unwrap();
+        assert_eq!(credentials.host, Host::Name(HOST.to_string()));
+        assert_eq!(credentials.port, PORT);
+        assert!(credentials.username.is_none());
+    }
+
+    #[test]
+    fn from_str_should_parse_valid_credentials_with_username() {
+        let credentials: Credentials = CREDENTIALS_STR_USER.parse().unwrap();
+        assert_eq!(credentials.host, Host::Name(HOST.to_string()));
+        assert_eq!(credentials.port, PORT);
+        assert_eq!(credentials.username.as_deref(), Some(USER));
+    }
+
+    #[test]
+    fn from_str_should_fail_with_wrong_scheme() {
+        let key = KEY.as_str();
+        let s = format!("ssh://:{key}@{HOST}:{PORT}");
+        let result: Result<Credentials, _> = s.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_str_should_fail_when_port_is_missing() {
+        let key = KEY.as_str();
+        let s = format!("distant://:{key}@{HOST}");
+        let result: Result<Credentials, _> = s.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_str_should_fail_when_key_is_missing() {
+        let s = format!("distant://@{HOST}:{PORT}");
+        let result: Result<Credentials, _> = s.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_str_should_fail_with_invalid_key() {
+        let s = format!("distant://:not-a-valid-hex-key@{HOST}:{PORT}");
+        let result: Result<Credentials, _> = s.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_str_should_parse_ipv4_host() {
+        let key = KEY.as_str();
+        let s = format!("distant://:{key}@127.0.0.1:{PORT}");
+        let credentials: Credentials = s.parse().unwrap();
+        assert_eq!(credentials.host, Host::Ipv4(Ipv4Addr::LOCALHOST));
+        assert_eq!(credentials.port, PORT);
+    }
+
+    #[test]
+    fn from_str_should_parse_ipv6_host() {
+        let key = KEY.as_str();
+        let s = format!("distant://:{key}@[::1]:{PORT}");
+        let credentials: Credentials = s.parse().unwrap();
+        assert_eq!(credentials.host, Host::Ipv6(Ipv6Addr::LOCALHOST));
+        assert_eq!(credentials.port, PORT);
+    }
+
+    #[test]
+    fn round_trip_display_and_parse_should_preserve_credentials_with_hostname() {
+        let credentials = &*CREDENTIALS_NO_USER;
+        let s = credentials.to_string();
+        let parsed: Credentials = s.parse().unwrap();
+        assert_eq!(&parsed, credentials);
+    }
+
+    #[test]
+    fn round_trip_display_and_parse_should_preserve_credentials_with_username() {
+        let credentials = &*CREDENTIALS_USER;
+        let s = credentials.to_string();
+        let parsed: Credentials = s.parse().unwrap();
+        assert_eq!(&parsed, credentials);
+    }
+
+    #[test]
+    fn round_trip_display_and_parse_should_preserve_ipv4_credentials() {
+        let key = KEY.as_str();
+        let credentials = Credentials {
+            host: Host::Ipv4(Ipv4Addr::LOCALHOST),
+            port: PORT,
+            username: None,
+            key: key.parse().unwrap(),
+        };
+        let s = credentials.to_string();
+        let parsed: Credentials = s.parse().unwrap();
+        assert_eq!(parsed, credentials);
+    }
+
+    #[test]
+    fn round_trip_display_and_parse_should_preserve_ipv6_credentials() {
+        let key = KEY.as_str();
+        let credentials = Credentials {
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: PORT,
+            username: None,
+            key: key.parse().unwrap(),
+        };
+        let s = credentials.to_string();
+        let parsed: Credentials = s.parse().unwrap();
+        assert_eq!(parsed, credentials);
+    }
+
+    #[test]
+    fn round_trip_display_and_parse_should_preserve_ipv6_credentials_with_username() {
+        let key = KEY.as_str();
+        let credentials = Credentials {
+            host: Host::Ipv6(Ipv6Addr::LOCALHOST),
+            port: PORT,
+            username: Some(USER.to_string()),
+            key: key.parse().unwrap(),
+        };
+        let s = credentials.to_string();
+        let parsed: Credentials = s.parse().unwrap();
+        assert_eq!(parsed, credentials);
+    }
+
+    #[test]
+    fn serde_json_round_trip_should_preserve_credentials() {
+        let credentials = &*CREDENTIALS_NO_USER;
+        let json = serde_json::to_string(credentials).unwrap();
+        let deserialized: Credentials = serde_json::from_str(&json).unwrap();
+        assert_eq!(&deserialized, credentials);
+    }
+
+    #[test]
+    fn serde_json_round_trip_should_preserve_credentials_with_username() {
+        let credentials = &*CREDENTIALS_USER;
+        let json = serde_json::to_string(credentials).unwrap();
+        let deserialized: Credentials = serde_json::from_str(&json).unwrap();
+        assert_eq!(&deserialized, credentials);
+    }
+
+    #[test]
+    fn try_to_destination_should_produce_valid_destination() {
+        let credentials = &*CREDENTIALS_USER;
+        let dest = credentials.try_to_destination().unwrap();
+
+        assert_eq!(dest.scheme.as_deref(), Some("distant"));
+        assert_eq!(dest.username.as_deref(), Some(USER));
+        assert!(dest.password.is_some());
+        assert_eq!(dest.host, Host::Name(HOST.to_string()));
+        assert_eq!(dest.port, Some(PORT));
+    }
+
+    #[test]
+    fn try_to_destination_should_produce_valid_destination_without_username() {
+        let credentials = &*CREDENTIALS_NO_USER;
+        let dest = credentials.try_to_destination().unwrap();
+
+        assert_eq!(dest.scheme.as_deref(), Some("distant"));
+        assert!(dest.username.is_none());
+        assert!(dest.password.is_some());
+        assert_eq!(dest.host, Host::Name(HOST.to_string()));
+        assert_eq!(dest.port, Some(PORT));
+    }
+
+    #[test]
+    fn try_from_credentials_for_destination_should_match_try_to_destination() {
+        let credentials = &*CREDENTIALS_USER;
+        let dest1 = credentials.try_to_destination().unwrap();
+        let dest2: Destination = Destination::try_from(credentials.clone()).unwrap();
+        assert_eq!(dest1, dest2);
+    }
+
+    #[test]
+    fn find_strict_should_be_equivalent_to_find_with_strict_true() {
+        let result_strict = Credentials::find_strict(CREDENTIALS_STR_NO_USER.as_str());
+        let result_find = Credentials::find(CREDENTIALS_STR_NO_USER.as_str(), true);
+        assert_eq!(result_strict, result_find);
+    }
+
+    #[test]
+    fn find_lax_should_be_equivalent_to_find_with_strict_false() {
+        let result_lax = Credentials::find_lax(CREDENTIALS_STR_NO_USER.as_str());
+        let result_find = Credentials::find(CREDENTIALS_STR_NO_USER.as_str(), false);
+        assert_eq!(result_lax, result_find);
+    }
+
+    #[test]
+    fn find_strict_should_reject_non_boundary_prefix() {
+        let s = format!("x{}", CREDENTIALS_STR_NO_USER.as_str());
+        assert!(Credentials::find_strict(&s).is_none());
+    }
+
+    #[test]
+    fn find_lax_should_accept_non_boundary_prefix() {
+        let s = format!("x{}", CREDENTIALS_STR_NO_USER.as_str());
+        let result = Credentials::find_lax(&s);
+        assert_eq!(result.unwrap(), *CREDENTIALS_NO_USER);
+    }
+
+    #[test]
+    fn find_should_return_none_for_empty_string() {
+        assert!(Credentials::find("", true).is_none());
+        assert!(Credentials::find("", false).is_none());
+    }
+
+    #[test]
+    fn find_should_handle_trailing_content_after_credentials() {
+        let s = format!("{}\n\nsome trailing text", CREDENTIALS_STR_NO_USER.as_str());
+        let result = Credentials::find(&s, true);
+        assert_eq!(result.unwrap(), *CREDENTIALS_NO_USER);
+    }
+
+    #[test]
+    fn clone_should_produce_equal_credentials() {
+        let credentials = &*CREDENTIALS_USER;
+        let cloned = credentials.clone();
+        assert_eq!(&cloned, credentials);
+    }
 }

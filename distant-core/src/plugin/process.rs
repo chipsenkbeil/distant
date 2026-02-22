@@ -384,3 +384,348 @@ impl Plugin for ProcessPlugin {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use test_log::test;
+
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // ProcessPlugin construction and Plugin trait methods
+    // -----------------------------------------------------------------------
+
+    fn make_plugin(name: &str, path: &str, schemes: Option<Vec<String>>) -> ProcessPlugin {
+        ProcessPlugin {
+            name: name.to_string(),
+            path: PathBuf::from(path),
+            schemes,
+        }
+    }
+
+    #[test]
+    fn name_returns_the_configured_name() {
+        let plugin = make_plugin("ssh", "/usr/bin/distant-ssh", None);
+        assert_eq!(plugin.name(), "ssh");
+    }
+
+    #[test]
+    fn schemes_defaults_to_name_when_none() {
+        let plugin = make_plugin("docker", "/usr/bin/distant-docker", None);
+        assert_eq!(plugin.schemes(), vec!["docker".to_string()]);
+    }
+
+    #[test]
+    fn schemes_returns_configured_schemes_when_some() {
+        let plugin = make_plugin(
+            "docker",
+            "/usr/bin/distant-docker",
+            Some(vec!["docker".into(), "docker-compose".into()]),
+        );
+        assert_eq!(
+            plugin.schemes(),
+            vec!["docker".to_string(), "docker-compose".to_string()]
+        );
+    }
+
+    #[test]
+    fn schemes_returns_empty_vec_when_configured_as_empty() {
+        let plugin = make_plugin("test", "/bin/test", Some(vec![]));
+        let schemes = plugin.schemes();
+        assert!(schemes.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // map_to_args helper
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn map_to_args_returns_empty_for_empty_map() {
+        let map = Map::new();
+        let args = map_to_args(&map);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn map_to_args_produces_flag_format() {
+        let mut map = Map::new();
+        map.insert("port".to_string(), "22".to_string());
+        let args = map_to_args(&map);
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], "--port=22");
+    }
+
+    #[test]
+    fn map_to_args_handles_multiple_entries() {
+        let mut map = Map::new();
+        map.insert("host".to_string(), "localhost".to_string());
+        map.insert("port".to_string(), "8080".to_string());
+        let args = map_to_args(&map);
+        assert_eq!(args.len(), 2);
+        // HashMap order is nondeterministic, so check that both are present
+        assert!(args.contains(&"--host=localhost".to_string()));
+        assert!(args.contains(&"--port=8080".to_string()));
+    }
+
+    #[test]
+    fn map_to_args_handles_empty_value() {
+        let mut map = Map::new();
+        map.insert("flag".to_string(), String::new());
+        let args = map_to_args(&map);
+        assert_eq!(args, vec!["--flag="]);
+    }
+
+    // -----------------------------------------------------------------------
+    // plugin_error_to_io mapping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn plugin_error_to_io_maps_not_found() {
+        let err = PluginError {
+            kind: "not_found".to_string(),
+            description: "file missing".to_string(),
+        };
+        let io_err = plugin_error_to_io(err);
+        assert_eq!(io_err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(io_err.to_string(), "file missing");
+    }
+
+    #[test]
+    fn plugin_error_to_io_maps_permission_denied() {
+        let err = PluginError {
+            kind: "permission_denied".to_string(),
+            description: "access denied".to_string(),
+        };
+        let io_err = plugin_error_to_io(err);
+        assert_eq!(io_err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn plugin_error_to_io_maps_connection_refused() {
+        let err = PluginError {
+            kind: "connection_refused".to_string(),
+            description: "refused".to_string(),
+        };
+        let io_err = plugin_error_to_io(err);
+        assert_eq!(io_err.kind(), io::ErrorKind::ConnectionRefused);
+    }
+
+    #[test]
+    fn plugin_error_to_io_maps_unsupported() {
+        let err = PluginError {
+            kind: "unsupported".to_string(),
+            description: "not supported".to_string(),
+        };
+        let io_err = plugin_error_to_io(err);
+        assert_eq!(io_err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn plugin_error_to_io_maps_unknown_kind_to_other() {
+        let err = PluginError {
+            kind: "something_else".to_string(),
+            description: "mysterious error".to_string(),
+        };
+        let io_err = plugin_error_to_io(err);
+        assert_eq!(io_err.kind(), io::ErrorKind::Other);
+        assert_eq!(io_err.to_string(), "mysterious error");
+    }
+
+    // -----------------------------------------------------------------------
+    // default_error_kind
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_error_kind_returns_other() {
+        assert_eq!(default_error_kind(), "other");
+    }
+
+    // -----------------------------------------------------------------------
+    // SetupMessage deserialization (JSON-lines protocol)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn setup_message_deserializes_ready() {
+        let json = r#"{"ready": true}"#;
+        let msg: SetupMessage = serde_json::from_str(json).expect("parse ready");
+        assert!(matches!(msg, SetupMessage::Ready { ready: true }));
+    }
+
+    #[test]
+    fn setup_message_deserializes_destination() {
+        let json = r#"{"destination": "ssh://user@host:22"}"#;
+        let msg: SetupMessage = serde_json::from_str(json).expect("parse destination");
+        match msg {
+            SetupMessage::Destination { destination } => {
+                assert_eq!(destination, "ssh://user@host:22");
+            }
+            _ => panic!("expected Destination variant"),
+        }
+    }
+
+    #[test]
+    fn setup_message_deserializes_error_with_kind() {
+        let json = r#"{"error": {"kind": "not_found", "description": "binary not found"}}"#;
+        let msg: SetupMessage = serde_json::from_str(json).expect("parse error");
+        match msg {
+            SetupMessage::Error { error } => {
+                assert_eq!(error.kind, "not_found");
+                assert_eq!(error.description, "binary not found");
+            }
+            _ => panic!("expected Error variant"),
+        }
+    }
+
+    #[test]
+    fn setup_message_deserializes_error_with_default_kind() {
+        let json = r#"{"error": {"description": "something went wrong"}}"#;
+        let msg: SetupMessage = serde_json::from_str(json).expect("parse error");
+        match msg {
+            SetupMessage::Error { error } => {
+                assert_eq!(error.kind, "other");
+                assert_eq!(error.description, "something went wrong");
+            }
+            _ => panic!("expected Error variant"),
+        }
+    }
+
+    #[test]
+    fn setup_message_deserializes_auth_challenge() {
+        let json = r#"{
+            "auth_challenge": {
+                "questions": [
+                    {"text": "Password:", "label": "password"}
+                ],
+                "options": {"method": "keyboard-interactive"}
+            }
+        }"#;
+        let msg: SetupMessage = serde_json::from_str(json).expect("parse auth_challenge");
+        match msg {
+            SetupMessage::AuthChallenge { auth_challenge } => {
+                assert_eq!(auth_challenge.questions.len(), 1);
+                assert_eq!(auth_challenge.questions[0].text, "Password:");
+                assert_eq!(auth_challenge.questions[0].label, "password");
+                assert_eq!(
+                    auth_challenge.options.get("method").map(String::as_str),
+                    Some("keyboard-interactive")
+                );
+            }
+            _ => panic!("expected AuthChallenge variant"),
+        }
+    }
+
+    #[test]
+    fn setup_message_deserializes_auth_challenge_with_defaults() {
+        // Minimal auth_challenge: only text is required on questions, label and options default
+        let json = r#"{"auth_challenge": {"questions": [{"text": "Enter code:"}]}}"#;
+        let msg: SetupMessage = serde_json::from_str(json).expect("parse auth_challenge");
+        match msg {
+            SetupMessage::AuthChallenge { auth_challenge } => {
+                assert_eq!(auth_challenge.questions.len(), 1);
+                assert_eq!(auth_challenge.questions[0].text, "Enter code:");
+                assert_eq!(auth_challenge.questions[0].label, "");
+                assert!(auth_challenge.questions[0].options.is_empty());
+                assert!(auth_challenge.options.is_empty());
+            }
+            _ => panic!("expected AuthChallenge variant"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // AuthResponseMsg serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auth_response_msg_serializes_correctly() {
+        let msg = AuthResponseMsg {
+            auth_response: AuthResponseInner {
+                answers: vec!["my_password".to_string()],
+            },
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse back");
+        assert_eq!(
+            parsed["auth_response"]["answers"][0].as_str(),
+            Some("my_password")
+        );
+    }
+
+    #[test]
+    fn auth_response_msg_serializes_multiple_answers() {
+        let msg = AuthResponseMsg {
+            auth_response: AuthResponseInner {
+                answers: vec!["answer1".to_string(), "answer2".to_string()],
+            },
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse back");
+        let answers = parsed["auth_response"]["answers"]
+            .as_array()
+            .expect("answers should be array");
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0].as_str(), Some("answer1"));
+        assert_eq!(answers[1].as_str(), Some("answer2"));
+    }
+
+    #[test]
+    fn auth_response_msg_serializes_empty_answers() {
+        let msg = AuthResponseMsg {
+            auth_response: AuthResponseInner { answers: vec![] },
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse back");
+        let answers = parsed["auth_response"]["answers"]
+            .as_array()
+            .expect("answers should be array");
+        assert!(answers.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // connect/launch with nonexistent binary (error path)
+    //
+    // These tests verify that when the external binary does not exist,
+    // connect() and launch() return an appropriate io::Error. This
+    // exercises the spawn error handling without needing a real plugin
+    // binary.
+    // -----------------------------------------------------------------------
+
+    use crate::auth::TestAuthenticator;
+
+    #[test(tokio::test)]
+    async fn connect_fails_with_nonexistent_binary() {
+        let plugin = make_plugin("fake", "/nonexistent/path/to/plugin", None);
+        let dest: Destination = "ssh://localhost".parse().expect("parse destination");
+        let options = Map::new();
+
+        let mut auth = TestAuthenticator::default();
+        let result = plugin.connect(&dest, &options, &mut auth).await;
+        assert!(result.is_err(), "expected error for nonexistent binary");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.to_string().contains("fake"),
+            "error message should mention plugin name, got: {}",
+            err
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn launch_fails_with_nonexistent_binary() {
+        let plugin = make_plugin("fake", "/nonexistent/path/to/plugin", None);
+        let dest: Destination = "ssh://localhost".parse().expect("parse destination");
+        let options = Map::new();
+
+        let mut auth = TestAuthenticator::default();
+        let result = plugin.launch(&dest, &options, &mut auth).await;
+        assert!(result.is_err(), "expected error for nonexistent binary");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.to_string().contains("fake"),
+            "error message should mention plugin name, got: {}",
+            err
+        );
+    }
+}
