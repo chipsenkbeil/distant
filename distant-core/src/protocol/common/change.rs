@@ -429,5 +429,432 @@ mod tests {
             let kind: ChangeKind = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(kind, ChangeKind::CloseWrite);
         }
+
+        #[test]
+        fn is_access_should_return_true_for_access_family() {
+            assert!(ChangeKind::Access.is_access());
+            assert!(ChangeKind::CloseWrite.is_access());
+            assert!(ChangeKind::CloseNoWrite.is_access());
+            assert!(ChangeKind::Open.is_access());
+        }
+
+        #[test]
+        fn is_access_should_return_false_for_non_access_kinds() {
+            assert!(!ChangeKind::Create.is_access());
+            assert!(!ChangeKind::Delete.is_access());
+            assert!(!ChangeKind::Modify.is_access());
+            assert!(!ChangeKind::Attribute.is_access());
+            assert!(!ChangeKind::Rename.is_access());
+            assert!(!ChangeKind::Unknown.is_access());
+        }
+
+        #[test]
+        fn is_create_should_return_true_only_for_create() {
+            assert!(ChangeKind::Create.is_create());
+            assert!(!ChangeKind::Delete.is_create());
+            assert!(!ChangeKind::Modify.is_create());
+        }
+
+        #[test]
+        fn is_delete_should_return_true_only_for_delete() {
+            assert!(ChangeKind::Delete.is_delete());
+            assert!(!ChangeKind::Create.is_delete());
+            assert!(!ChangeKind::Modify.is_delete());
+        }
+
+        #[test]
+        fn is_modify_should_return_true_for_modify_family() {
+            assert!(ChangeKind::Modify.is_modify());
+            assert!(ChangeKind::Attribute.is_modify());
+        }
+
+        #[test]
+        fn is_modify_should_return_false_for_non_modify_kinds() {
+            assert!(!ChangeKind::Create.is_modify());
+            assert!(!ChangeKind::Delete.is_modify());
+            assert!(!ChangeKind::Access.is_modify());
+            assert!(!ChangeKind::Rename.is_modify());
+            assert!(!ChangeKind::Unknown.is_modify());
+        }
+
+        #[test]
+        fn is_rename_should_return_true_only_for_rename() {
+            assert!(ChangeKind::Rename.is_rename());
+            assert!(!ChangeKind::Create.is_rename());
+            assert!(!ChangeKind::Modify.is_rename());
+        }
+
+        #[test]
+        fn is_unknown_should_return_true_only_for_unknown() {
+            assert!(ChangeKind::Unknown.is_unknown());
+            assert!(!ChangeKind::Create.is_unknown());
+            assert!(!ChangeKind::Access.is_unknown());
+        }
+
+        #[test]
+        fn variants_should_return_all_variant_names() {
+            let names = ChangeKind::variants();
+            assert_eq!(names.len(), 10);
+            assert!(names.contains(&"access"));
+            assert!(names.contains(&"attribute"));
+            assert!(names.contains(&"close_write"));
+            assert!(names.contains(&"close_no_write"));
+            assert!(names.contains(&"create"));
+            assert!(names.contains(&"delete"));
+            assert!(names.contains(&"modify"));
+            assert!(names.contains(&"open"));
+            assert!(names.contains(&"rename"));
+            assert!(names.contains(&"unknown"));
+        }
+
+        #[test]
+        fn all_should_return_sorted_vec_of_all_variants() {
+            let all = ChangeKind::all();
+            assert_eq!(all.len(), 10);
+            // Verify it is sorted by checking each consecutive pair
+            for window in all.windows(2) {
+                assert!(window[0] <= window[1]);
+            }
+        }
+
+        #[test]
+        fn bitor_should_produce_change_kind_set_with_both_kinds() {
+            let set = ChangeKind::Access | ChangeKind::Create;
+            assert!(set.contains(&ChangeKind::Access));
+            assert!(set.contains(&ChangeKind::Create));
+            assert_eq!(set.len(), 2);
+        }
+
+        #[test]
+        fn bitor_same_kind_should_produce_set_with_one_element() {
+            let set = ChangeKind::Access | ChangeKind::Access;
+            assert!(set.contains(&ChangeKind::Access));
+            assert_eq!(set.len(), 1);
+        }
+    }
+
+    mod change_kind_set_ops {
+        use super::*;
+
+        #[test]
+        fn bitor_set_with_set_should_merge() {
+            let a = ChangeKindSet::new([ChangeKind::Access, ChangeKind::Create]);
+            let b = ChangeKindSet::new([ChangeKind::Delete, ChangeKind::Modify]);
+            let merged = a | b;
+            assert_eq!(merged.len(), 4);
+            assert!(merged.contains(&ChangeKind::Access));
+            assert!(merged.contains(&ChangeKind::Create));
+            assert!(merged.contains(&ChangeKind::Delete));
+            assert!(merged.contains(&ChangeKind::Modify));
+        }
+
+        #[test]
+        fn bitor_set_with_kind_should_add_kind() {
+            let set = ChangeKindSet::new([ChangeKind::Access]);
+            let result = set | ChangeKind::Delete;
+            assert_eq!(result.len(), 2);
+            assert!(result.contains(&ChangeKind::Access));
+            assert!(result.contains(&ChangeKind::Delete));
+        }
+
+        #[test]
+        fn bitor_kind_with_set_should_add_kind() {
+            let set = ChangeKindSet::new([ChangeKind::Access]);
+            let result = ChangeKind::Delete | set;
+            assert_eq!(result.len(), 2);
+            assert!(result.contains(&ChangeKind::Access));
+            assert!(result.contains(&ChangeKind::Delete));
+        }
+
+        #[test]
+        fn sub_set_from_set_should_remove_elements() {
+            let a =
+                ChangeKindSet::new([ChangeKind::Access, ChangeKind::Create, ChangeKind::Delete]);
+            let b = ChangeKindSet::new([ChangeKind::Create]);
+            let result = a - b;
+            assert_eq!(result.len(), 2);
+            assert!(result.contains(&ChangeKind::Access));
+            assert!(result.contains(&ChangeKind::Delete));
+            assert!(!result.contains(&ChangeKind::Create));
+        }
+
+        #[test]
+        fn sub_ref_set_from_ref_set_should_remove_elements() {
+            let a = ChangeKindSet::new([ChangeKind::Access, ChangeKind::Create]);
+            let b = ChangeKindSet::new([ChangeKind::Access]);
+            let result = &a - &b;
+            assert_eq!(result.len(), 1);
+            assert!(result.contains(&ChangeKind::Create));
+        }
+
+        #[test]
+        fn from_str_should_parse_single_kind() {
+            let set: ChangeKindSet = "access".parse().unwrap();
+            assert_eq!(set.len(), 1);
+            assert!(set.contains(&ChangeKind::Access));
+        }
+
+        #[test]
+        fn from_str_should_parse_comma_separated_kinds() {
+            let set: ChangeKindSet = "access,create,delete".parse().unwrap();
+            assert_eq!(set.len(), 3);
+            assert!(set.contains(&ChangeKind::Access));
+            assert!(set.contains(&ChangeKind::Create));
+            assert!(set.contains(&ChangeKind::Delete));
+        }
+
+        #[test]
+        fn from_str_should_trim_whitespace() {
+            let set: ChangeKindSet = " access , create ".parse().unwrap();
+            assert_eq!(set.len(), 2);
+            assert!(set.contains(&ChangeKind::Access));
+            assert!(set.contains(&ChangeKind::Create));
+        }
+
+        #[test]
+        fn from_str_should_fail_on_invalid_kind() {
+            let result: Result<ChangeKindSet, _> = "not_a_kind".parse();
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn display_should_produce_sorted_comma_separated_output() {
+            let set = ChangeKindSet::new([ChangeKind::Delete, ChangeKind::Access]);
+            let s = set.to_string();
+            assert_eq!(s, "access,delete");
+        }
+
+        #[test]
+        fn empty_set_should_display_as_empty_string() {
+            let set = ChangeKindSet::empty();
+            assert_eq!(set.to_string(), "");
+        }
+
+        #[test]
+        fn all_should_contain_every_variant() {
+            let all = ChangeKindSet::all();
+            assert_eq!(all.len(), 10);
+            assert!(all.contains(&ChangeKind::Access));
+            assert!(all.contains(&ChangeKind::Attribute));
+            assert!(all.contains(&ChangeKind::CloseWrite));
+            assert!(all.contains(&ChangeKind::CloseNoWrite));
+            assert!(all.contains(&ChangeKind::Create));
+            assert!(all.contains(&ChangeKind::Delete));
+            assert!(all.contains(&ChangeKind::Modify));
+            assert!(all.contains(&ChangeKind::Open));
+            assert!(all.contains(&ChangeKind::Rename));
+            assert!(all.contains(&ChangeKind::Unknown));
+        }
+
+        #[test]
+        fn default_should_be_empty() {
+            let set = ChangeKindSet::default();
+            assert!(set.is_empty());
+        }
+
+        #[test]
+        fn from_single_kind_should_create_set_with_one_element() {
+            let set = ChangeKindSet::from(ChangeKind::Create);
+            assert_eq!(set.len(), 1);
+            assert!(set.contains(&ChangeKind::Create));
+        }
+
+        #[test]
+        fn from_vec_should_create_set() {
+            let set = ChangeKindSet::from(vec![ChangeKind::Access, ChangeKind::Modify]);
+            assert_eq!(set.len(), 2);
+        }
+
+        #[test]
+        fn into_sorted_vec_should_return_sorted_kinds() {
+            let set =
+                ChangeKindSet::new([ChangeKind::Unknown, ChangeKind::Access, ChangeKind::Create]);
+            let sorted = set.into_sorted_vec();
+            for window in sorted.windows(2) {
+                assert!(window[0] <= window[1]);
+            }
+            assert_eq!(sorted.len(), 3);
+        }
+
+        #[test]
+        fn eq_should_compare_by_contents() {
+            let a = ChangeKindSet::new([ChangeKind::Access, ChangeKind::Create]);
+            let b = ChangeKindSet::new([ChangeKind::Create, ChangeKind::Access]);
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn hash_should_be_consistent_for_equal_sets() {
+            use std::collections::hash_map::DefaultHasher;
+            let a = ChangeKindSet::new([ChangeKind::Access, ChangeKind::Create]);
+            let b = ChangeKindSet::new([ChangeKind::Create, ChangeKind::Access]);
+
+            let mut ha = DefaultHasher::new();
+            a.hash(&mut ha);
+            let mut hb = DefaultHasher::new();
+            b.hash(&mut hb);
+            assert_eq!(ha.finish(), hb.finish());
+        }
+    }
+
+    mod change_details {
+        use super::*;
+
+        #[test]
+        fn is_empty_should_return_true_when_all_fields_are_none() {
+            let details = ChangeDetails::default();
+            assert!(details.is_empty());
+        }
+
+        #[test]
+        fn is_empty_should_return_false_when_attribute_is_set() {
+            let details = ChangeDetails {
+                attribute: Some(ChangeDetailsAttribute::Ownership),
+                ..Default::default()
+            };
+            assert!(!details.is_empty());
+        }
+
+        #[test]
+        fn is_empty_should_return_false_when_renamed_is_set() {
+            let details = ChangeDetails {
+                renamed: Some(PathBuf::from("/new/name")),
+                ..Default::default()
+            };
+            assert!(!details.is_empty());
+        }
+
+        #[test]
+        fn is_empty_should_return_false_when_timestamp_is_set() {
+            let details = ChangeDetails {
+                timestamp: Some(12345),
+                ..Default::default()
+            };
+            assert!(!details.is_empty());
+        }
+
+        #[test]
+        fn is_empty_should_return_false_when_extra_is_set() {
+            let details = ChangeDetails {
+                extra: Some("extra info".to_string()),
+                ..Default::default()
+            };
+            assert!(!details.is_empty());
+        }
+    }
+
+    mod change_details_attribute {
+        use super::*;
+
+        #[test]
+        fn should_serialize_all_variants_to_json() {
+            assert_eq!(
+                serde_json::to_value(ChangeDetailsAttribute::Ownership).unwrap(),
+                serde_json::json!("ownership")
+            );
+            assert_eq!(
+                serde_json::to_value(ChangeDetailsAttribute::Permissions).unwrap(),
+                serde_json::json!("permissions")
+            );
+            assert_eq!(
+                serde_json::to_value(ChangeDetailsAttribute::Timestamp).unwrap(),
+                serde_json::json!("timestamp")
+            );
+        }
+
+        #[test]
+        fn should_deserialize_all_variants_from_json() {
+            assert_eq!(
+                serde_json::from_value::<ChangeDetailsAttribute>(serde_json::json!("ownership"))
+                    .unwrap(),
+                ChangeDetailsAttribute::Ownership
+            );
+            assert_eq!(
+                serde_json::from_value::<ChangeDetailsAttribute>(serde_json::json!("permissions"))
+                    .unwrap(),
+                ChangeDetailsAttribute::Permissions
+            );
+            assert_eq!(
+                serde_json::from_value::<ChangeDetailsAttribute>(serde_json::json!("timestamp"))
+                    .unwrap(),
+                ChangeDetailsAttribute::Timestamp
+            );
+        }
+    }
+
+    mod change {
+        use super::*;
+
+        #[test]
+        fn should_serialize_to_json_without_empty_details() {
+            let change = Change {
+                timestamp: 1000,
+                kind: ChangeKind::Create,
+                path: PathBuf::from("/tmp/file.txt"),
+                details: ChangeDetails::default(),
+            };
+
+            let value = serde_json::to_value(&change).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "timestamp": 1000,
+                    "kind": "create",
+                    "path": "/tmp/file.txt",
+                })
+            );
+            // details should be omitted when empty
+            assert!(value.get("details").is_none());
+        }
+
+        #[test]
+        fn should_serialize_to_json_with_non_empty_details() {
+            let change = Change {
+                timestamp: 2000,
+                kind: ChangeKind::Rename,
+                path: PathBuf::from("/old/name"),
+                details: ChangeDetails {
+                    renamed: Some(PathBuf::from("/new/name")),
+                    ..Default::default()
+                },
+            };
+
+            let value = serde_json::to_value(&change).unwrap();
+            assert_eq!(value["details"]["renamed"], serde_json::json!("/new/name"));
+        }
+
+        #[test]
+        fn should_roundtrip_through_json() {
+            let change = Change {
+                timestamp: 3000,
+                kind: ChangeKind::Modify,
+                path: PathBuf::from("/some/path"),
+                details: ChangeDetails {
+                    attribute: Some(ChangeDetailsAttribute::Permissions),
+                    timestamp: Some(4000),
+                    extra: Some("info".to_string()),
+                    ..Default::default()
+                },
+            };
+
+            let json = serde_json::to_value(&change).unwrap();
+            let restored: Change = serde_json::from_value(json).unwrap();
+            assert_eq!(restored, change);
+        }
+
+        #[test]
+        fn should_deserialize_from_json_without_details_field() {
+            let value = serde_json::json!({
+                "timestamp": 500,
+                "kind": "delete",
+                "path": "/gone",
+            });
+
+            let change: Change = serde_json::from_value(value).unwrap();
+            assert_eq!(change.timestamp, 500);
+            assert_eq!(change.kind, ChangeKind::Delete);
+            assert_eq!(change.path, PathBuf::from("/gone"));
+            assert!(change.details.is_empty());
+        }
     }
 }

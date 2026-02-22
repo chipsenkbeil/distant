@@ -311,5 +311,170 @@ mod tests {
             let kind: ErrorKind = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(kind, ErrorKind::AddrInUse);
         }
+
+        #[test]
+        fn roundtrip_through_io_error_kind_for_all_mapped_variants() {
+            let pairs: &[(ErrorKind, io::ErrorKind)] = &[
+                (ErrorKind::NotFound, io::ErrorKind::NotFound),
+                (ErrorKind::PermissionDenied, io::ErrorKind::PermissionDenied),
+                (
+                    ErrorKind::ConnectionRefused,
+                    io::ErrorKind::ConnectionRefused,
+                ),
+                (ErrorKind::ConnectionReset, io::ErrorKind::ConnectionReset),
+                (
+                    ErrorKind::ConnectionAborted,
+                    io::ErrorKind::ConnectionAborted,
+                ),
+                (ErrorKind::NotConnected, io::ErrorKind::NotConnected),
+                (ErrorKind::AddrInUse, io::ErrorKind::AddrInUse),
+                (ErrorKind::AddrNotAvailable, io::ErrorKind::AddrNotAvailable),
+                (ErrorKind::BrokenPipe, io::ErrorKind::BrokenPipe),
+                (ErrorKind::AlreadyExists, io::ErrorKind::AlreadyExists),
+                (ErrorKind::WouldBlock, io::ErrorKind::WouldBlock),
+                (ErrorKind::InvalidInput, io::ErrorKind::InvalidInput),
+                (ErrorKind::InvalidData, io::ErrorKind::InvalidData),
+                (ErrorKind::TimedOut, io::ErrorKind::TimedOut),
+                (ErrorKind::WriteZero, io::ErrorKind::WriteZero),
+                (ErrorKind::Interrupted, io::ErrorKind::Interrupted),
+                (ErrorKind::Other, io::ErrorKind::Other),
+                (ErrorKind::UnexpectedEof, io::ErrorKind::UnexpectedEof),
+                (ErrorKind::Unsupported, io::ErrorKind::Unsupported),
+                (ErrorKind::OutOfMemory, io::ErrorKind::OutOfMemory),
+            ];
+
+            for &(error_kind, io_kind) in pairs {
+                // ErrorKind -> io::ErrorKind
+                let converted_io: io::ErrorKind = error_kind.into();
+                assert_eq!(
+                    converted_io, io_kind,
+                    "ErrorKind::{error_kind} -> io::ErrorKind failed"
+                );
+
+                // io::ErrorKind -> ErrorKind
+                let converted_back: ErrorKind = io_kind.into();
+                assert_eq!(
+                    converted_back, error_kind,
+                    "io::ErrorKind -> ErrorKind::{error_kind} failed"
+                );
+            }
+        }
+
+        #[test]
+        fn variants_without_io_mapping_should_convert_to_io_other() {
+            let unmapped = [
+                ErrorKind::Loop,
+                ErrorKind::TaskCancelled,
+                ErrorKind::TaskPanicked,
+                ErrorKind::Unknown,
+            ];
+            for kind in unmapped {
+                let io_kind: io::ErrorKind = kind.into();
+                assert_eq!(
+                    io_kind,
+                    io::ErrorKind::Other,
+                    "ErrorKind::{kind} should map to io::ErrorKind::Other"
+                );
+            }
+        }
+    }
+
+    mod error_construction {
+        use super::*;
+
+        #[test]
+        fn from_str_should_create_error_with_other_kind() {
+            let error = Error::from("something failed");
+            assert_eq!(error.kind, ErrorKind::Other);
+            assert_eq!(error.description, "something failed");
+        }
+
+        #[test]
+        fn from_string_should_create_error_with_other_kind() {
+            let error = Error::from(String::from("something failed"));
+            assert_eq!(error.kind, ErrorKind::Other);
+            assert_eq!(error.description, "something failed");
+        }
+
+        #[test]
+        fn from_io_error_should_preserve_kind() {
+            let io_err = io::Error::new(io::ErrorKind::NotFound, "file missing");
+            let error = Error::from(io_err);
+            assert_eq!(error.kind, ErrorKind::NotFound);
+            assert!(error.description.contains("file missing"));
+        }
+
+        #[test]
+        fn into_io_error_should_preserve_kind_and_description() {
+            let error = Error {
+                kind: ErrorKind::PermissionDenied,
+                description: "access denied".to_string(),
+            };
+            let io_err: io::Error = error.into();
+            assert_eq!(io_err.kind(), io::ErrorKind::PermissionDenied);
+            assert!(io_err.to_string().contains("access denied"));
+        }
+
+        #[test]
+        fn to_io_error_should_create_io_error_with_matching_kind() {
+            let error = Error {
+                kind: ErrorKind::TimedOut,
+                description: "deadline exceeded".to_string(),
+            };
+            let io_err = error.to_io_error();
+            assert_eq!(io_err.kind(), io::ErrorKind::TimedOut);
+            assert!(io_err.to_string().contains("deadline exceeded"));
+        }
+
+        #[test]
+        fn display_should_show_kind_and_description() {
+            let error = Error {
+                kind: ErrorKind::NotFound,
+                description: "file not found".to_string(),
+            };
+            let displayed = error.to_string();
+            assert!(displayed.contains("NotFound"));
+            assert!(displayed.contains("file not found"));
+        }
+
+        #[test]
+        fn json_roundtrip_for_all_error_kinds() {
+            let all_kinds = [
+                ErrorKind::NotFound,
+                ErrorKind::PermissionDenied,
+                ErrorKind::ConnectionRefused,
+                ErrorKind::ConnectionReset,
+                ErrorKind::ConnectionAborted,
+                ErrorKind::NotConnected,
+                ErrorKind::AddrInUse,
+                ErrorKind::AddrNotAvailable,
+                ErrorKind::BrokenPipe,
+                ErrorKind::AlreadyExists,
+                ErrorKind::WouldBlock,
+                ErrorKind::InvalidInput,
+                ErrorKind::InvalidData,
+                ErrorKind::TimedOut,
+                ErrorKind::WriteZero,
+                ErrorKind::Interrupted,
+                ErrorKind::Other,
+                ErrorKind::UnexpectedEof,
+                ErrorKind::Unsupported,
+                ErrorKind::OutOfMemory,
+                ErrorKind::Loop,
+                ErrorKind::TaskCancelled,
+                ErrorKind::TaskPanicked,
+                ErrorKind::Unknown,
+            ];
+
+            for kind in all_kinds {
+                let error = Error {
+                    kind,
+                    description: format!("test {kind}"),
+                };
+                let json = serde_json::to_value(&error).unwrap();
+                let restored: Error = serde_json::from_value(json).unwrap();
+                assert_eq!(restored, error);
+            }
+        }
     }
 }

@@ -70,4 +70,63 @@ mod tests {
         let cmd: Cmd = rmp_serde::decode::from_slice(&buf).unwrap();
         assert_eq!(cmd, Cmd::new("echo some text"));
     }
+
+    #[test]
+    fn new_should_accept_str() {
+        let cmd = Cmd::new("ls -la");
+        assert_eq!(&*cmd, "ls -la");
+    }
+
+    #[test]
+    fn new_should_accept_string() {
+        let cmd = Cmd::new(String::from("ls -la"));
+        assert_eq!(&*cmd, "ls -la");
+    }
+
+    #[test]
+    fn deref_should_provide_string_access() {
+        let cmd = Cmd::new("echo hello");
+        let s: &String = &cmd;
+        assert_eq!(s, "echo hello");
+    }
+
+    #[test]
+    fn deref_mut_should_provide_mutable_string_access() {
+        let mut cmd = Cmd::new("echo");
+        cmd.push_str(" world");
+        assert_eq!(&*cmd, "echo world");
+    }
+
+    #[test]
+    fn display_should_show_inner_string() {
+        let cmd = Cmd::new("cat /etc/hosts");
+        assert_eq!(cmd.to_string(), "cat /etc/hosts");
+    }
+
+    #[test]
+    fn from_string_should_create_cmd() {
+        let cmd: Cmd = String::from("pwd").into();
+        assert_eq!(&*cmd, "pwd");
+    }
+
+    #[test]
+    fn into_string_should_extract_inner() {
+        let cmd = Cmd::new("whoami");
+        let s: String = cmd.into();
+        assert_eq!(s, "whoami");
+    }
+
+    #[test]
+    fn equality_should_compare_inner_strings() {
+        let a = Cmd::new("test");
+        let b = Cmd::new("test");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn inequality_should_detect_different_strings() {
+        let a = Cmd::new("foo");
+        let b = Cmd::new("bar");
+        assert_ne!(a, b);
+    }
 }
