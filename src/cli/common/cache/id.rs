@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn clone_produces_equal_display() {
         let id = CacheId::<u64>::try_from(String::from("42")).unwrap();
-        let cloned = id.clone();
+        let cloned = id;
         assert_eq!(id.to_string(), cloned.to_string());
     }
 

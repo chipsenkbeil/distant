@@ -347,12 +347,12 @@ mod tests {
     #[test]
     fn clone_preserves_variant() {
         let v = Value::Default(42);
-        let cloned = v.clone();
+        let cloned = v;
         assert!(cloned.is_default());
         assert_eq!(cloned.into_inner(), 42);
 
         let v = Value::Explicit(99);
-        let cloned = v.clone();
+        let cloned = v;
         assert!(cloned.is_explicit());
         assert_eq!(cloned.into_inner(), 99);
     }

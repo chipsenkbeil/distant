@@ -161,7 +161,7 @@ mod tests {
     async fn on_challenge_uses_empty_string_when_prompt_fails() {
         let mut handler = PromptAuthMethodHandler::new(
             |_: &str| Ok("ignored".to_string()),
-            |_: &str| Err(io::Error::new(io::ErrorKind::Other, "prompt failed")),
+            |_: &str| Err(io::Error::other("prompt failed")),
         );
 
         let challenge = make_challenge(vec!["Password: "]);
@@ -294,7 +294,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn on_verification_host_kind_when_text_prompt_fails_returns_error() {
         let mut handler = PromptAuthMethodHandler::new(
-            |_: &str| Err(io::Error::new(io::ErrorKind::Other, "prompt failed")),
+            |_: &str| Err(io::Error::other("prompt failed")),
             |_: &str| Ok("ignored".to_string()),
         );
 

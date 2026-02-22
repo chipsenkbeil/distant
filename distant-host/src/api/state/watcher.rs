@@ -518,7 +518,7 @@ mod tests {
     #[test(tokio::test)]
     async fn watcher_state_deref_provides_channel() {
         let state = WatcherBuilder::new().initialize().unwrap();
-        let _channel: &WatcherChannel = &*state;
+        let _channel: &WatcherChannel = &state;
     }
 
     #[test(tokio::test)]

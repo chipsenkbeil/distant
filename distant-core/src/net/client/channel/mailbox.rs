@@ -426,7 +426,7 @@ mod tests {
         let _mb2 = po.make_mailbox("y".to_string(), 4).await;
         let _mb3 = po.make_mailbox("z".to_string(), 4).await;
 
-        let ids = vec!["x".to_string(), "y".to_string()];
+        let ids = ["x".to_string(), "y".to_string()];
         po.cancel_many(ids.iter()).await;
 
         assert!(!po.deliver(&"x".to_string(), 1).await);

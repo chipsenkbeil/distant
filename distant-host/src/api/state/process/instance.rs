@@ -562,7 +562,7 @@ mod tests {
         struct ErrorChannel;
         impl OutputChannel for ErrorChannel {
             fn recv(&mut self) -> FutureReturn<'_, io::Result<Option<Vec<u8>>>> {
-                Box::pin(async { Err(io::Error::new(io::ErrorKind::Other, "read error")) })
+                Box::pin(async { Err(io::Error::other("read error")) })
             }
         }
 
@@ -579,7 +579,7 @@ mod tests {
         struct ErrorChannel;
         impl OutputChannel for ErrorChannel {
             fn recv(&mut self) -> FutureReturn<'_, io::Result<Option<Vec<u8>>>> {
-                Box::pin(async { Err(io::Error::new(io::ErrorKind::Other, "stderr error")) })
+                Box::pin(async { Err(io::Error::other("stderr error")) })
             }
         }
 

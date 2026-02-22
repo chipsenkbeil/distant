@@ -435,7 +435,7 @@ mod tests {
         };
         let cloned = original.clone();
         assert_eq!(original, cloned);
-        assert_eq!(cloned.success, true);
+        assert!(cloned.success);
         assert_eq!(cloned.stdout, b"output data");
         assert_eq!(cloned.stderr, b"error data");
     }

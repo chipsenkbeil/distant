@@ -154,7 +154,7 @@ mod tests {
 
         #[test]
         fn from_io_error_without_raw_os_error_should_have_code_none() {
-            let err = io::Error::new(io::ErrorKind::Other, "custom error");
+            let err = io::Error::other("custom error");
             let status = ExitStatus::from(err);
             assert!(!status.success);
             assert_eq!(status.code, None);

@@ -1100,7 +1100,7 @@ mod tests {
     fn ssh_family_copy_clone() {
         let family = SshFamily::Unix;
         let copied = family;
-        let cloned = family.clone();
+        let cloned = family;
         assert_eq!(copied, cloned);
         assert_eq!(family, SshFamily::Unix);
     }

@@ -384,18 +384,18 @@ mod tests {
 
         #[test]
         fn should_convert_f32() {
-            let value = Value::from(3.14f32);
+            let value = Value::from(3.25f32);
             assert!(value.is_f64());
             // f32 -> f64 conversion may lose precision, so check approximate
             let f = value.as_f64().unwrap();
-            assert!((f - 3.14).abs() < 0.01);
+            assert!((f - 3.25).abs() < 0.01);
         }
 
         #[test]
         fn should_convert_f64() {
-            let value = Value::from(2.718281828f64);
+            let value = Value::from(2.5f64);
             assert!(value.is_f64());
-            assert!((value.as_f64().unwrap() - 2.718281828).abs() < 1e-9);
+            assert!((value.as_f64().unwrap() - 2.5).abs() < 1e-9);
         }
 
         #[test]

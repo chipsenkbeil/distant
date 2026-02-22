@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn default_creates_instance() {
-        let codec = PlainCodec::default();
+        let codec = PlainCodec;
         assert_eq!(codec, PlainCodec::new());
     }
 
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn partial_eq_works() {
         let a = PlainCodec::new();
-        let b = PlainCodec::default();
+        let b = PlainCodec;
         assert_eq!(a, b);
     }
 

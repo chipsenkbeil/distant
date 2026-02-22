@@ -563,30 +563,28 @@ mod tests {
             &'a mut self,
             _: Challenge,
         ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
-            Box::pin(async move { Err(io::Error::new(io::ErrorKind::Other, "challenge failed")) })
+            Box::pin(async move { Err(io::Error::other("challenge failed")) })
         }
 
         fn on_verification<'a>(
             &'a mut self,
             _: Verification,
         ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
-            Box::pin(
-                async move { Err(io::Error::new(io::ErrorKind::Other, "verification failed")) },
-            )
+            Box::pin(async move { Err(io::Error::other("verification failed")) })
         }
 
         fn on_info<'a>(
             &'a mut self,
             _: Info,
         ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
-            Box::pin(async move { Err(io::Error::new(io::ErrorKind::Other, "info failed")) })
+            Box::pin(async move { Err(io::Error::other("info failed")) })
         }
 
         fn on_error<'a>(
             &'a mut self,
             _: Error,
         ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
-            Box::pin(async move { Err(io::Error::new(io::ErrorKind::Other, "error failed")) })
+            Box::pin(async move { Err(io::Error::other("error failed")) })
         }
     }
 
@@ -1187,13 +1185,13 @@ mod tests {
     #[test(tokio::test)]
     async fn proxy_auth_handler_propagates_authenticator_errors() {
         let mut authenticator = TestAuthenticator {
-            initialize: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "init failed"))),
-            challenge: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "challenge failed"))),
-            verify: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "verify failed"))),
-            info: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "info failed"))),
-            error: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "error failed"))),
-            start_method: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "start failed"))),
-            finished: Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "finished failed"))),
+            initialize: Box::new(|_| Err(io::Error::other("init failed"))),
+            challenge: Box::new(|_| Err(io::Error::other("challenge failed"))),
+            verify: Box::new(|_| Err(io::Error::other("verify failed"))),
+            info: Box::new(|_| Err(io::Error::other("info failed"))),
+            error: Box::new(|_| Err(io::Error::other("error failed"))),
+            start_method: Box::new(|_| Err(io::Error::other("start failed"))),
+            finished: Box::new(|| Err(io::Error::other("finished failed"))),
         };
 
         let mut handler = ProxyAuthHandler::new(&mut authenticator);
@@ -1378,13 +1376,13 @@ mod tests {
     #[test(tokio::test)]
     async fn dyn_auth_handler_propagates_inner_errors() {
         let mut inner = TestAuthHandler {
-            on_initialization: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "init err"))),
-            on_challenge: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "challenge err"))),
-            on_verification: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "verify err"))),
-            on_info: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "info err"))),
-            on_error: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "error err"))),
-            on_start_method: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "start err"))),
-            on_finished: Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "finished err"))),
+            on_initialization: Box::new(|_| Err(io::Error::other("init err"))),
+            on_challenge: Box::new(|_| Err(io::Error::other("challenge err"))),
+            on_verification: Box::new(|_| Err(io::Error::other("verify err"))),
+            on_info: Box::new(|_| Err(io::Error::other("info err"))),
+            on_error: Box::new(|_| Err(io::Error::other("error err"))),
+            on_start_method: Box::new(|_| Err(io::Error::other("start err"))),
+            on_finished: Box::new(|| Err(io::Error::other("finished err"))),
         };
 
         let mut handler = DynAuthHandler::from(&mut inner);

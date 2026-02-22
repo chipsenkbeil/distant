@@ -463,8 +463,8 @@ mod tests {
 
     #[test]
     fn try_from_f64_positive() {
-        let s = Seconds::try_from(3.14f64).unwrap();
-        assert_eq!(*s, Duration::from_secs_f64(3.14));
+        let s = Seconds::try_from(2.75f64).unwrap();
+        assert_eq!(*s, Duration::from_secs_f64(2.75));
     }
 
     #[test]

@@ -563,7 +563,7 @@ mod tests {
     fn heap_secret_key_should_eq_byte_array_ref() {
         let key = HeapSecretKey::from(vec![1, 2, 3, 4]);
         let arr: &[u8; 4] = &[1, 2, 3, 4];
-        assert!(arr == &key);
+        assert!(arr == key);
     }
 
     #[test]
@@ -572,7 +572,7 @@ mod tests {
         let slice: &[u8] = &[5, 6, 7];
         assert!(key == *slice);
         assert!(*slice == key);
-        assert!(slice == &key);
+        assert!(slice == key);
     }
 
     #[test]
@@ -590,7 +590,7 @@ mod tests {
         let s = String::from("hello");
         assert!(key == s);
         assert!(s == key);
-        assert!(&s == &key);
+        assert!(s == key);
     }
 
     #[test]

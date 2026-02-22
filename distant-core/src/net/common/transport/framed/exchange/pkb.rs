@@ -130,8 +130,7 @@ mod tests {
         let pk = generate_public_key();
         let pkb = PublicKeyBytes::from(pk);
         let json = serde_json::to_string(&pkb).expect("Serialize failed");
-        let deserialized: PublicKeyBytes =
-            serde_json::from_str(&json).expect("Deserialize failed");
+        let deserialized: PublicKeyBytes = serde_json::from_str(&json).expect("Deserialize failed");
         assert_eq!(pkb, deserialized);
     }
 
@@ -140,8 +139,7 @@ mod tests {
         let pk = generate_public_key();
         let pkb = PublicKeyBytes::from(pk);
         let json = serde_json::to_string(&pkb).expect("Serialize failed");
-        let deserialized: PublicKeyBytes =
-            serde_json::from_str(&json).expect("Deserialize failed");
+        let deserialized: PublicKeyBytes = serde_json::from_str(&json).expect("Deserialize failed");
         let recovered_pk =
             PublicKey::try_from(deserialized).expect("Should convert back to PublicKey");
         assert_eq!(pk, recovered_pk);

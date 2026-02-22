@@ -1193,6 +1193,7 @@ dependencies = [
  "rand 0.8.5",
  "rstest",
  "shell-words",
+ "tempfile",
  "test-log",
  "tokio",
  "walkdir",

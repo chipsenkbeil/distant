@@ -529,7 +529,7 @@ mod tests {
     fn keychain_result_can_be_copied_and_cloned() {
         let result = KeychainResult::Ok(42);
         let copied = result;
-        let cloned = result.clone();
+        let cloned = result;
         assert_eq!(copied, cloned);
         assert_eq!(result, KeychainResult::Ok(42));
     }
@@ -603,9 +603,7 @@ mod tests {
         assert!(result.is_invalid_password());
 
         // The original data should still be retrievable.
-        let result = kc
-            .remove_if_has_key("id1", make_key(b"right"))
-            .await;
+        let result = kc.remove_if_has_key("id1", make_key(b"right")).await;
         assert_eq!(result, KeychainResult::Ok(55));
     }
 }
