@@ -492,3 +492,994 @@ impl AuthMethodHandler for TestAuthHandler {
         Box::pin(async move { (self.on_error)(error) })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::authenticator::TestAuthenticator;
+    use test_log::test;
+
+    // ---------------------------------------------------------------------------
+    // Helper: a simple AuthMethodHandler for use in tests that records what it
+    // receives and returns canned responses.
+    // ---------------------------------------------------------------------------
+    struct RecordingMethodHandler {
+        challenge_answers: Vec<String>,
+        verification_valid: bool,
+    }
+
+    impl RecordingMethodHandler {
+        fn new(answers: Vec<String>, valid: bool) -> Self {
+            Self {
+                challenge_answers: answers,
+                verification_valid: valid,
+            }
+        }
+    }
+
+    impl AuthMethodHandler for RecordingMethodHandler {
+        fn on_challenge<'a>(
+            &'a mut self,
+            _challenge: Challenge,
+        ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+            Box::pin(async move {
+                Ok(ChallengeResponse {
+                    answers: self.challenge_answers.clone(),
+                })
+            })
+        }
+
+        fn on_verification<'a>(
+            &'a mut self,
+            _verification: Verification,
+        ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+            Box::pin(async move {
+                Ok(VerificationResponse {
+                    valid: self.verification_valid,
+                })
+            })
+        }
+
+        fn on_info<'a>(
+            &'a mut self,
+            _info: Info,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn on_error<'a>(
+            &'a mut self,
+            _error: Error,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+            Box::pin(async move { Ok(()) })
+        }
+    }
+
+    /// A method handler that always fails, useful for testing error propagation.
+    struct FailingMethodHandler;
+
+    impl AuthMethodHandler for FailingMethodHandler {
+        fn on_challenge<'a>(
+            &'a mut self,
+            _: Challenge,
+        ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+            Box::pin(async move { Err(io::Error::new(io::ErrorKind::Other, "challenge failed")) })
+        }
+
+        fn on_verification<'a>(
+            &'a mut self,
+            _: Verification,
+        ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+            Box::pin(
+                async move { Err(io::Error::new(io::ErrorKind::Other, "verification failed")) },
+            )
+        }
+
+        fn on_info<'a>(
+            &'a mut self,
+            _: Info,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+            Box::pin(async move { Err(io::Error::new(io::ErrorKind::Other, "info failed")) })
+        }
+
+        fn on_error<'a>(
+            &'a mut self,
+            _: Error,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+            Box::pin(async move { Err(io::Error::new(io::ErrorKind::Other, "error failed")) })
+        }
+    }
+
+    // Helper to create a simple challenge
+    fn make_challenge() -> Challenge {
+        Challenge {
+            questions: vec![Question::new("test-question")],
+            options: HashMap::new(),
+        }
+    }
+
+    // Helper to create a simple verification
+    fn make_verification() -> Verification {
+        Verification {
+            kind: VerificationKind::Host,
+            text: "verify-text".to_string(),
+        }
+    }
+
+    // Helper to create a simple info
+    fn make_info() -> Info {
+        Info {
+            text: "info-text".to_string(),
+        }
+    }
+
+    // Helper to create a simple error
+    fn make_error() -> Error {
+        Error {
+            kind: ErrorKind::Error,
+            text: "error-text".to_string(),
+        }
+    }
+
+    // =======================================================================
+    // DummyAuthHandler tests
+    // =======================================================================
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_challenge_returns_unsupported() {
+        let mut handler = DummyAuthHandler;
+        let err = handler.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_verification_returns_unsupported() {
+        let mut handler = DummyAuthHandler;
+        let err = handler
+            .on_verification(make_verification())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_info_returns_unsupported() {
+        let mut handler = DummyAuthHandler;
+        let err = handler.on_info(make_info()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_error_returns_unsupported() {
+        let mut handler = DummyAuthHandler;
+        let err = handler.on_error(make_error()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_initialization_returns_all_methods() {
+        let mut handler = DummyAuthHandler;
+        let init = Initialization {
+            methods: vec!["method_a".to_string(), "method_b".to_string()],
+        };
+        let response = handler.on_initialization(init.clone()).await.unwrap();
+        assert_eq!(response.methods, init.methods);
+    }
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_start_method_succeeds() {
+        let mut handler = DummyAuthHandler;
+        let start = StartMethod {
+            method: "some_method".to_string(),
+        };
+        handler.on_start_method(start).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn dummy_auth_handler_on_finished_succeeds() {
+        let mut handler = DummyAuthHandler;
+        handler.on_finished().await.unwrap();
+    }
+
+    // =======================================================================
+    // SingleAuthHandler tests
+    // =======================================================================
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_delegates_on_challenge() {
+        let inner = RecordingMethodHandler::new(vec!["answer1".to_string()], true);
+        let mut handler = SingleAuthHandler::new(inner);
+        let response = handler.on_challenge(make_challenge()).await.unwrap();
+        assert_eq!(response.answers, vec!["answer1".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_delegates_on_verification() {
+        let inner = RecordingMethodHandler::new(vec![], false);
+        let mut handler = SingleAuthHandler::new(inner);
+        let response = handler.on_verification(make_verification()).await.unwrap();
+        assert!(!response.valid);
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_delegates_on_info() {
+        let inner = RecordingMethodHandler::new(vec![], true);
+        let mut handler = SingleAuthHandler::new(inner);
+        handler.on_info(make_info()).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_delegates_on_error() {
+        let inner = RecordingMethodHandler::new(vec![], true);
+        let mut handler = SingleAuthHandler::new(inner);
+        handler.on_error(make_error()).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_propagates_inner_failure() {
+        let mut handler = SingleAuthHandler::new(FailingMethodHandler);
+        let err = handler.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "challenge failed");
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_on_initialization_returns_all_methods() {
+        let inner = RecordingMethodHandler::new(vec![], true);
+        let mut handler = SingleAuthHandler::new(inner);
+        let init = Initialization {
+            methods: vec!["x".to_string(), "y".to_string()],
+        };
+        let response = handler.on_initialization(init.clone()).await.unwrap();
+        assert_eq!(response.methods, init.methods);
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_on_start_method_succeeds() {
+        let inner = RecordingMethodHandler::new(vec![], true);
+        let mut handler = SingleAuthHandler::new(inner);
+        handler
+            .on_start_method(StartMethod {
+                method: "m".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn single_auth_handler_on_finished_succeeds() {
+        let inner = RecordingMethodHandler::new(vec![], true);
+        let mut handler = SingleAuthHandler::new(inner);
+        handler.on_finished().await.unwrap();
+    }
+
+    // =======================================================================
+    // AuthHandlerMap tests
+    // =======================================================================
+
+    #[test]
+    fn auth_handler_map_new_creates_empty_map_with_empty_active_id() {
+        let map = AuthHandlerMap::new();
+        assert_eq!(map.active_id(), "");
+    }
+
+    #[test]
+    fn auth_handler_map_default_creates_empty_map() {
+        let map = AuthHandlerMap::default();
+        assert_eq!(map.active_id(), "");
+    }
+
+    #[test]
+    fn auth_handler_map_set_active_id_and_active_id() {
+        let mut map = AuthHandlerMap::new();
+        map.set_active_id("my_method");
+        assert_eq!(map.active_id(), "my_method");
+    }
+
+    #[test]
+    fn auth_handler_map_insert_method_handler_returns_none_for_new_id() {
+        let mut map = AuthHandlerMap::new();
+        let prev = map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        assert!(prev.is_none());
+    }
+
+    #[test]
+    fn auth_handler_map_insert_method_handler_returns_previous_for_existing_id() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        let prev = map.insert_method_handler(
+            "method_a",
+            RecordingMethodHandler::new(vec!["replaced".to_string()], false),
+        );
+        assert!(prev.is_some());
+    }
+
+    #[test]
+    fn auth_handler_map_remove_method_handler_returns_some_for_existing() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        let removed = map.remove_method_handler("method_a");
+        assert!(removed.is_some());
+    }
+
+    #[test]
+    fn auth_handler_map_remove_method_handler_returns_none_for_missing() {
+        let mut map = AuthHandlerMap::new();
+        let removed = map.remove_method_handler("nonexistent");
+        assert!(removed.is_none());
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_method_handler_returns_some_for_existing() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        assert!(map.get_mut_method_handler("method_a").is_some());
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_method_handler_returns_none_for_missing() {
+        let mut map = AuthHandlerMap::new();
+        assert!(map.get_mut_method_handler("nonexistent").is_none());
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_active_method_handler_returns_none_when_no_active() {
+        let mut map = AuthHandlerMap::new();
+        // Active id is "" by default, no handler registered for ""
+        assert!(map.get_mut_active_method_handler().is_none());
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_active_method_handler_returns_none_when_active_not_in_map() {
+        let mut map = AuthHandlerMap::new();
+        map.set_active_id("missing_method");
+        assert!(map.get_mut_active_method_handler().is_none());
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_active_method_handler_returns_some_when_active_in_map() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        map.set_active_id("method_a");
+        assert!(map.get_mut_active_method_handler().is_some());
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_active_method_handler_or_error_returns_err_when_no_active() {
+        let mut map = AuthHandlerMap::new();
+        match map.get_mut_active_method_handler_or_error() {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::Other);
+                assert!(err.to_string().contains("No active handler"));
+            }
+            Ok(_) => panic!("Expected error but got Ok"),
+        }
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_active_method_handler_or_error_returns_err_when_active_not_in_map()
+    {
+        let mut map = AuthHandlerMap::new();
+        map.set_active_id("missing");
+        match map.get_mut_active_method_handler_or_error() {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::Other);
+                assert!(err.to_string().contains("No active handler for missing"));
+            }
+            Ok(_) => panic!("Expected error but got Ok"),
+        }
+    }
+
+    #[test]
+    fn auth_handler_map_get_mut_active_method_handler_or_error_returns_ok_when_active_found() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        map.set_active_id("method_a");
+        assert!(map.get_mut_active_method_handler_or_error().is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_on_initialization_filters_to_known_methods() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("known_a", RecordingMethodHandler::new(vec![], true));
+        map.insert_method_handler("known_b", RecordingMethodHandler::new(vec![], true));
+
+        let init = Initialization {
+            methods: vec![
+                "known_a".to_string(),
+                "unknown".to_string(),
+                "known_b".to_string(),
+            ],
+        };
+        let response = map.on_initialization(init).await.unwrap();
+        assert_eq!(response.methods.len(), 2);
+        assert!(response.methods.contains(&"known_a".to_string()));
+        assert!(response.methods.contains(&"known_b".to_string()));
+        assert!(!response.methods.contains(&"unknown".to_string()));
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_on_initialization_returns_empty_when_no_methods_match() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("my_method", RecordingMethodHandler::new(vec![], true));
+
+        let init = Initialization {
+            methods: vec!["other_method".to_string()],
+        };
+        let response = map.on_initialization(init).await.unwrap();
+        assert!(response.methods.is_empty());
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_on_start_method_sets_active_id() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+
+        let start = StartMethod {
+            method: "method_a".to_string(),
+        };
+        map.on_start_method(start).await.unwrap();
+        assert_eq!(map.active_id(), "method_a");
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_on_finished_succeeds() {
+        let mut map = AuthHandlerMap::new();
+        map.on_finished().await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_challenge_delegates_to_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler(
+            "method_a",
+            RecordingMethodHandler::new(vec!["ans".to_string()], true),
+        );
+        map.set_active_id("method_a");
+
+        let response = map.on_challenge(make_challenge()).await.unwrap();
+        assert_eq!(response.answers, vec!["ans".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_verification_delegates_to_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], false));
+        map.set_active_id("method_a");
+
+        let response = map.on_verification(make_verification()).await.unwrap();
+        assert!(!response.valid);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_info_delegates_to_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        map.set_active_id("method_a");
+
+        map.on_info(make_info()).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_error_delegates_to_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
+        map.set_active_id("method_a");
+
+        map.on_error(make_error()).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_challenge_fails_when_no_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        let err = map.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_verification_fails_when_no_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        let err = map.on_verification(make_verification()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_info_fails_when_no_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        let err = map.on_info(make_info()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_error_fails_when_no_active_handler() {
+        let mut map = AuthHandlerMap::new();
+        let err = map.on_error(make_error()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_challenge_fails_when_active_id_not_in_map() {
+        let mut map = AuthHandlerMap::new();
+        map.set_active_id("nonexistent");
+        let err = map.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(
+            err.to_string()
+                .contains("No active handler for nonexistent"),
+            "Unexpected error message: {}",
+            err
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_with_static_key_inserts_static_key_handler() {
+        let mut map = AuthHandlerMap::new().with_static_key("my-secret");
+        map.set_active_id("static_key");
+
+        // The static key handler responds to "key" label challenges
+        let challenge = Challenge {
+            questions: vec![Question::new("key")],
+            options: HashMap::new(),
+        };
+        let response = map.on_challenge(challenge).await.unwrap();
+        assert_eq!(response.answers, vec!["my-secret".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_with_static_key_appears_in_initialization_filter() {
+        let map = AuthHandlerMap::new().with_static_key("secret");
+        let init = Initialization {
+            methods: vec!["static_key".to_string(), "other".to_string()],
+        };
+        // We need a mutable reference for on_initialization
+        let mut map = map;
+        let response = map.on_initialization(init).await.unwrap();
+        assert_eq!(response.methods, vec!["static_key".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn auth_handler_map_active_handler_propagates_inner_errors() {
+        let mut map = AuthHandlerMap::new();
+        map.insert_method_handler("fail_method", FailingMethodHandler);
+        map.set_active_id("fail_method");
+
+        let err = map.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.to_string(), "challenge failed");
+
+        let err = map.on_verification(make_verification()).await.unwrap_err();
+        assert_eq!(err.to_string(), "verification failed");
+
+        let err = map.on_info(make_info()).await.unwrap_err();
+        assert_eq!(err.to_string(), "info failed");
+
+        let err = map.on_error(make_error()).await.unwrap_err();
+        assert_eq!(err.to_string(), "error failed");
+    }
+
+    // =======================================================================
+    // ProxyAuthHandler tests
+    // =======================================================================
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_initialization() {
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_init| {
+                Ok(InitializationResponse {
+                    methods: vec!["proxied".to_string()],
+                })
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        let init = Initialization {
+            methods: vec!["a".to_string(), "b".to_string()],
+        };
+        let response = handler.on_initialization(init).await.unwrap();
+        assert_eq!(response.methods, vec!["proxied".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_start_method() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut authenticator = TestAuthenticator {
+            start_method: Box::new(move |sm| {
+                tx.send(sm.method.clone()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        handler
+            .on_start_method(StartMethod {
+                method: "my_method".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(rx.recv().unwrap(), "my_method");
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_finished() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut authenticator = TestAuthenticator {
+            finished: Box::new(move || {
+                tx.send(()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        handler.on_finished().await.unwrap();
+        rx.recv().unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_challenge() {
+        let mut authenticator = TestAuthenticator {
+            challenge: Box::new(|_c| {
+                Ok(ChallengeResponse {
+                    answers: vec!["proxy-answer".to_string()],
+                })
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        let response = handler.on_challenge(make_challenge()).await.unwrap();
+        assert_eq!(response.answers, vec!["proxy-answer".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_verification() {
+        let mut authenticator = TestAuthenticator {
+            verify: Box::new(|_v| Ok(VerificationResponse { valid: false })),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        let response = handler.on_verification(make_verification()).await.unwrap();
+        assert!(!response.valid);
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_info() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut authenticator = TestAuthenticator {
+            info: Box::new(move |info| {
+                tx.send(info.text.clone()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        handler.on_info(make_info()).await.unwrap();
+        assert_eq!(rx.recv().unwrap(), "info-text");
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_delegates_on_error() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut authenticator = TestAuthenticator {
+            error: Box::new(move |err| {
+                tx.send(err.text.clone()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+        handler.on_error(make_error()).await.unwrap();
+        assert_eq!(rx.recv().unwrap(), "error-text");
+    }
+
+    #[test(tokio::test)]
+    async fn proxy_auth_handler_propagates_authenticator_errors() {
+        let mut authenticator = TestAuthenticator {
+            initialize: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "init failed"))),
+            challenge: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "challenge failed"))),
+            verify: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "verify failed"))),
+            info: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "info failed"))),
+            error: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "error failed"))),
+            start_method: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "start failed"))),
+            finished: Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "finished failed"))),
+        };
+
+        let mut handler = ProxyAuthHandler::new(&mut authenticator);
+
+        let err = handler
+            .on_initialization(Initialization { methods: vec![] })
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "init failed");
+
+        let err = handler
+            .on_start_method(StartMethod {
+                method: "m".to_string(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "start failed");
+
+        let err = handler.on_finished().await.unwrap_err();
+        assert_eq!(err.to_string(), "finished failed");
+
+        let err = handler.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.to_string(), "challenge failed");
+
+        let err = handler
+            .on_verification(make_verification())
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "verify failed");
+
+        let err = handler.on_info(make_info()).await.unwrap_err();
+        assert_eq!(err.to_string(), "info failed");
+
+        let err = handler.on_error(make_error()).await.unwrap_err();
+        assert_eq!(err.to_string(), "error failed");
+    }
+
+    // =======================================================================
+    // DynAuthHandler tests
+    // =======================================================================
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_initialization() {
+        let mut inner = TestAuthHandler {
+            on_initialization: Box::new(|_| {
+                Ok(InitializationResponse {
+                    methods: vec!["dyn_method".to_string()],
+                })
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        let init = Initialization {
+            methods: vec!["a".to_string()],
+        };
+        let response = handler.on_initialization(init).await.unwrap();
+        assert_eq!(response.methods, vec!["dyn_method".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_start_method() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut inner = TestAuthHandler {
+            on_start_method: Box::new(move |sm| {
+                tx.send(sm.method.clone()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        handler
+            .on_start_method(StartMethod {
+                method: "target".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(rx.recv().unwrap(), "target");
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_finished() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut inner = TestAuthHandler {
+            on_finished: Box::new(move || {
+                tx.send(()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        handler.on_finished().await.unwrap();
+        rx.recv().unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_challenge() {
+        let mut inner = TestAuthHandler {
+            on_challenge: Box::new(|_| {
+                Ok(ChallengeResponse {
+                    answers: vec!["dyn-answer".to_string()],
+                })
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        let response = handler.on_challenge(make_challenge()).await.unwrap();
+        assert_eq!(response.answers, vec!["dyn-answer".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_verification() {
+        let mut inner = TestAuthHandler {
+            on_verification: Box::new(|_| Ok(VerificationResponse { valid: false })),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        let response = handler.on_verification(make_verification()).await.unwrap();
+        assert!(!response.valid);
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_info() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut inner = TestAuthHandler {
+            on_info: Box::new(move |info| {
+                tx.send(info.text.clone()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        handler.on_info(make_info()).await.unwrap();
+        assert_eq!(rx.recv().unwrap(), "info-text");
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_delegates_on_error() {
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+
+        let mut inner = TestAuthHandler {
+            on_error: Box::new(move |err| {
+                tx.send(err.text.clone()).unwrap();
+                Ok(())
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::new(&mut inner);
+        handler.on_error(make_error()).await.unwrap();
+        assert_eq!(rx.recv().unwrap(), "error-text");
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_from_conversion() {
+        let mut inner = TestAuthHandler {
+            on_challenge: Box::new(|_| {
+                Ok(ChallengeResponse {
+                    answers: vec!["from-conversion".to_string()],
+                })
+            }),
+            ..Default::default()
+        };
+
+        let mut handler = DynAuthHandler::from(&mut inner);
+        let response = handler.on_challenge(make_challenge()).await.unwrap();
+        assert_eq!(response.answers, vec!["from-conversion".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn dyn_auth_handler_propagates_inner_errors() {
+        let mut inner = TestAuthHandler {
+            on_initialization: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "init err"))),
+            on_challenge: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "challenge err"))),
+            on_verification: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "verify err"))),
+            on_info: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "info err"))),
+            on_error: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "error err"))),
+            on_start_method: Box::new(|_| Err(io::Error::new(io::ErrorKind::Other, "start err"))),
+            on_finished: Box::new(|| Err(io::Error::new(io::ErrorKind::Other, "finished err"))),
+        };
+
+        let mut handler = DynAuthHandler::from(&mut inner);
+
+        let err = handler
+            .on_initialization(Initialization { methods: vec![] })
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "init err");
+
+        let err = handler
+            .on_start_method(StartMethod {
+                method: "m".to_string(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "start err");
+
+        let err = handler.on_finished().await.unwrap_err();
+        assert_eq!(err.to_string(), "finished err");
+
+        let err = handler.on_challenge(make_challenge()).await.unwrap_err();
+        assert_eq!(err.to_string(), "challenge err");
+
+        let err = handler
+            .on_verification(make_verification())
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "verify err");
+
+        let err = handler.on_info(make_info()).await.unwrap_err();
+        assert_eq!(err.to_string(), "info err");
+
+        let err = handler.on_error(make_error()).await.unwrap_err();
+        assert_eq!(err.to_string(), "error err");
+    }
+
+    // =======================================================================
+    // TestAuthHandler tests (verify the test helper itself works correctly)
+    // =======================================================================
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_initialization_returns_all_methods() {
+        let mut handler = TestAuthHandler::default();
+        let init = Initialization {
+            methods: vec!["a".to_string(), "b".to_string()],
+        };
+        let response = handler.on_initialization(init.clone()).await.unwrap();
+        assert_eq!(response.methods, init.methods);
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_challenge_echoes_question_text() {
+        let mut handler = TestAuthHandler::default();
+        let challenge = Challenge {
+            questions: vec![Question::new("q1"), Question::new("q2")],
+            options: HashMap::new(),
+        };
+        let response = handler.on_challenge(challenge).await.unwrap();
+        assert_eq!(response.answers, vec!["q1".to_string(), "q2".to_string()]);
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_verification_returns_valid() {
+        let mut handler = TestAuthHandler::default();
+        let response = handler.on_verification(make_verification()).await.unwrap();
+        assert!(response.valid);
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_info_succeeds() {
+        let mut handler = TestAuthHandler::default();
+        handler.on_info(make_info()).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_error_succeeds() {
+        let mut handler = TestAuthHandler::default();
+        handler.on_error(make_error()).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_start_method_succeeds() {
+        let mut handler = TestAuthHandler::default();
+        handler
+            .on_start_method(StartMethod {
+                method: "m".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_handler_default_on_finished_succeeds() {
+        let mut handler = TestAuthHandler::default();
+        handler.on_finished().await.unwrap();
+    }
+}
