@@ -226,6 +226,7 @@ impl ProcessKiller for SimpleProcessKiller {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
