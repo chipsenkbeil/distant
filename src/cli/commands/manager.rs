@@ -317,4 +317,53 @@ mod tests {
             assert_eq!(key, &key.to_lowercase(), "scheme should be lowercase");
         }
     }
+
+    // -------------------------------------------------------
+    // build_plugin_map — with extra CLI plugins
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_with_extra_plugins() {
+        let extras = vec![(
+            "myplugin".to_string(),
+            PathBuf::from("/usr/local/bin/myplugin"),
+        )];
+        let map = build_plugin_map(extras).unwrap();
+        // Should contain builtins plus the extra
+        assert!(map.contains_key("distant"));
+        assert!(map.contains_key("ssh"));
+        assert!(map.contains_key("myplugin"), "missing 'myplugin' scheme");
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — duplicate scheme detection
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_rejects_duplicate_builtin_scheme() {
+        // Trying to register a plugin with scheme "ssh" should fail
+        // because SSH is already a builtin
+        let extras = vec![("ssh".to_string(), PathBuf::from("/usr/local/bin/other-ssh"))];
+        let result = build_plugin_map(extras);
+        assert!(result.is_err(), "should reject duplicate 'ssh' scheme");
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("ssh") && err.contains("already registered"),
+            "error should mention scheme conflict: {err}"
+        );
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — multiple extra plugins
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_with_multiple_extra_plugins() {
+        let extras = vec![
+            ("docker".to_string(), PathBuf::from("/bin/docker-plugin")),
+            ("k8s".to_string(), PathBuf::from("/bin/k8s-plugin")),
+        ];
+        let map = build_plugin_map(extras).unwrap();
+        assert!(map.contains_key("docker"));
+        assert!(map.contains_key("k8s"));
+        assert!(map.contains_key("distant"));
+        assert!(map.contains_key("ssh"));
+    }
 }

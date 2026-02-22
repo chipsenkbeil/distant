@@ -297,3 +297,225 @@ fn windows_main() -> MainResult {
         Format::Json => result.json(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // suggestions_for_error
+    // -------------------------------------------------------
+    #[test]
+    fn suggestions_for_manager_connection_errors() {
+        let suggestions = suggestions_for_error("failed to connect to manager");
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions
+                .iter()
+                .any(|(cmd, _)| cmd.contains("manager listen")),
+            "expected manager listen suggestion"
+        );
+    }
+
+    #[test]
+    fn suggestions_for_no_such_file() {
+        let suggestions = suggestions_for_error("no such file or directory");
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn suggestions_for_connection_refused() {
+        let suggestions = suggestions_for_error("connection refused by remote host");
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn suggestions_for_no_unix_socket() {
+        let suggestions = suggestions_for_error("no unix socket found");
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn suggestions_for_no_windows_pipe() {
+        let suggestions = suggestions_for_error("no windows pipe available");
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn suggestions_for_no_active_connections() {
+        let suggestions = suggestions_for_error("no active connections found");
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions.iter().any(|(cmd, _)| cmd.contains("ssh")),
+            "expected ssh suggestion"
+        );
+    }
+
+    #[test]
+    fn suggestions_for_authentication_error() {
+        let suggestions = suggestions_for_error("authentication failed");
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions.iter().any(|(cmd, _)| cmd.contains("ssh-add")),
+            "expected ssh-add suggestion"
+        );
+    }
+
+    #[test]
+    fn suggestions_for_auth_failed() {
+        let suggestions = suggestions_for_error("auth failed for user");
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn suggestions_for_permission_denied() {
+        let suggestions = suggestions_for_error("permission denied by remote");
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn suggestions_for_multiple_active_connections() {
+        let suggestions = suggestions_for_error("multiple active connections detected");
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions.iter().any(|(cmd, _)| cmd.contains("status")),
+            "expected status suggestion"
+        );
+    }
+
+    #[test]
+    fn suggestions_for_unrelated_error_returns_empty() {
+        let suggestions = suggestions_for_error("something completely different happened");
+        assert!(suggestions.is_empty());
+    }
+
+    // -------------------------------------------------------
+    // CliError
+    // -------------------------------------------------------
+    #[test]
+    fn cli_error_failure_is_exit_1() {
+        match CliError::FAILURE {
+            CliError::Exit(code) => assert_eq!(code, 1),
+            _ => panic!("Expected Exit variant"),
+        }
+    }
+
+    #[test]
+    fn cli_error_display_exit() {
+        let err = CliError::Exit(42);
+        let display = format!("{err}");
+        assert!(display.contains("42"), "got: {display}");
+    }
+
+    #[test]
+    fn cli_error_display_error() {
+        let err = CliError::Error(anyhow::anyhow!("test error"));
+        let display = format!("{err}");
+        assert!(display.contains("test error"), "got: {display}");
+    }
+
+    // -------------------------------------------------------
+    // MainResult construction and conversion
+    // -------------------------------------------------------
+    #[test]
+    fn main_result_new_wraps_ok() {
+        let result = MainResult::new(Ok(()));
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_shell_sets_format() {
+        let result = MainResult::new(Ok(())).shell();
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_json_sets_format() {
+        let result = MainResult::new(Ok(())).json();
+        assert_eq!(result.format, Format::Json);
+    }
+
+    #[test]
+    fn main_result_from_cli_result_ok() {
+        let cli_result: CliResult = Ok(());
+        let result = MainResult::from(cli_result);
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_from_cli_result_err() {
+        let cli_result: CliResult = Err(CliError::Exit(1));
+        let result = MainResult::from(cli_result);
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_from_anyhow_error() {
+        let err = anyhow::anyhow!("test error");
+        let result = MainResult::from(err);
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_from_anyhow_result_ok() {
+        let res: anyhow::Result<()> = Ok(());
+        let result = MainResult::from(res);
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_from_anyhow_result_err() {
+        let res: anyhow::Result<()> = Err(anyhow::anyhow!("bad"));
+        let result = MainResult::from(res);
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    #[test]
+    fn main_result_from_options_error_config() {
+        let err = OptionsError::Config(anyhow::anyhow!("config failed"));
+        let result = MainResult::from(err);
+        assert_eq!(result.format, Format::Shell);
+    }
+
+    // -------------------------------------------------------
+    // format_error_for_shell - doesn't panic
+    // -------------------------------------------------------
+    #[test]
+    fn format_error_for_shell_does_not_panic() {
+        let err = anyhow::anyhow!("test error");
+        format_error_for_shell(&err);
+    }
+
+    #[test]
+    fn format_error_for_shell_with_cause_chain() {
+        let inner = anyhow::anyhow!("inner error");
+        let outer = anyhow::anyhow!(inner).context("outer error");
+        format_error_for_shell(&outer);
+    }
+
+    #[test]
+    fn format_error_for_shell_with_connection_manager_error() {
+        let err = anyhow::anyhow!("failed to connect to manager");
+        format_error_for_shell(&err);
+    }
+
+    #[test]
+    fn format_error_for_shell_with_auth_error() {
+        let err = anyhow::anyhow!("authentication failed for user");
+        format_error_for_shell(&err);
+    }
+
+    #[test]
+    fn format_error_for_shell_with_no_active_connections_error() {
+        let err = anyhow::anyhow!("no active connections available");
+        format_error_for_shell(&err);
+    }
+
+    #[test]
+    fn format_error_for_shell_with_multiple_connections_error() {
+        let err = anyhow::anyhow!("multiple active connections found");
+        format_error_for_shell(&err);
+    }
+}

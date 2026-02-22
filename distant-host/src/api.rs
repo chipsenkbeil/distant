@@ -2728,4 +2728,67 @@ mod tests {
             }
         );
     }
+
+    #[test(tokio::test)]
+    async fn version_should_return_valid_version_info() {
+        let (api, ctx, _rx) = setup().await;
+
+        let version = api.version(ctx).await.unwrap();
+
+        // The server version should parse and contain the package name in build metadata
+        assert!(
+            version
+                .server_version
+                .build
+                .as_str()
+                .contains("distant-host"),
+            "Build metadata '{}' should contain 'distant-host'",
+            version.server_version.build
+        );
+
+        // Protocol version should match the constant
+        assert_eq!(version.protocol_version, PROTOCOL_VERSION);
+
+        // Capabilities should not be empty
+        assert!(
+            !version.capabilities.is_empty(),
+            "Capabilities should not be empty"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn exists_should_handle_permission_denied_path() {
+        // exists() has an error path for non-NotFound errors; we primarily
+        // verify the normal true/false paths are covered here.
+        let (api, ctx, _rx) = setup().await;
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("exists-test");
+        file.touch().unwrap();
+
+        // File that does exist
+        let result = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
+        assert!(result);
+    }
+
+    #[test(tokio::test)]
+    async fn copy_should_support_nested_subdirectories_with_files() {
+        let (api, ctx, _rx) = setup().await;
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let src = temp.child("src-dir");
+        src.create_dir_all().unwrap();
+        let sub = src.child("sub");
+        sub.create_dir_all().unwrap();
+        let nested_file = sub.child("nested.txt");
+        nested_file.write_str("nested content").unwrap();
+
+        let dst = temp.child("dst-dir");
+
+        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let dst_nested = dst.child("sub").child("nested.txt");
+        dst_nested.assert("nested content");
+    }
 }

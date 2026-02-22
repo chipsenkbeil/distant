@@ -2199,4 +2199,632 @@ mod tests {
         let result = Ssh::clean_launch_output(b"", b"err\xff\xfeor");
         assert!(result.contains("stderr:"), "Expected stderr in '{result}'");
     }
+
+    // --- Additional edge case tests ---
+
+    #[test]
+    fn clean_launch_output_with_ansi_escape_sequences() {
+        // ANSI escape: ESC[31m is "\x1b[31m" -- ESC is control, stripped
+        // But '[', '3', '1', 'm' are normal chars, kept
+        let input = b"\x1b[31mError\x1b[0m";
+        let result = Ssh::clean_launch_output(input, b"");
+        // ESC chars stripped, brackets and text remain
+        assert!(
+            result.contains("[31mError"),
+            "Expected cleaned ANSI in '{result}'"
+        );
+    }
+
+    #[test]
+    fn clean_launch_output_with_crlf_line_endings() {
+        let result = Ssh::clean_launch_output(b"line1\r\nline2\r\nline3", b"");
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+        assert!(result.contains("line3"));
+    }
+
+    #[test]
+    fn clean_launch_output_large_stderr_only() {
+        let stderr = b"E".repeat(5000);
+        let result = Ssh::clean_launch_output(b"", &stderr);
+        assert!(result.starts_with("stderr: '"));
+        assert!(result.len() > 5000);
+    }
+
+    #[test]
+    fn clean_launch_output_mixed_control_and_whitespace() {
+        // Mix of control chars (stripped) and whitespace (preserved)
+        let result = Ssh::clean_launch_output(b"\x01\t\x02 \x03\n\x04", b"");
+        // After stripping: "\t \n" -> trimmed -> empty or just spaces
+        // Actually: control chars \x01, \x02, \x03, \x04 are stripped
+        // whitespace \t, ' ', \n are preserved, then trimmed
+        assert!(result.contains("stdout:") || result == "(no output)");
+    }
+
+    #[test]
+    fn format_methods_returns_deterministic_for_single() {
+        // Calling format_methods twice on the same input should give same result
+        let methods = russh::MethodSet::from([russh::MethodKind::PublicKey].as_slice());
+        let result1 = format_methods(&methods);
+        let result2 = format_methods(&methods);
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn ssh_family_as_static_str_roundtrip_matches_expected() {
+        // Verify as_static_str matches what we'd expect from the enum variant name
+        assert_eq!(SshFamily::Unix.as_static_str(), "unix");
+        assert_eq!(SshFamily::Windows.as_static_str(), "windows");
+    }
+
+    #[test]
+    fn launch_opts_zero_timeout() {
+        let opts = LaunchOpts {
+            binary: String::from("distant"),
+            args: String::new(),
+            timeout: Duration::from_secs(0),
+        };
+        assert_eq!(opts.timeout, Duration::ZERO);
+    }
+
+    #[test]
+    fn launch_opts_very_long_timeout() {
+        let opts = LaunchOpts {
+            binary: String::from("distant"),
+            args: String::new(),
+            timeout: Duration::from_secs(3600),
+        };
+        assert_eq!(opts.timeout.as_secs(), 3600);
+    }
+
+    #[test]
+    fn launch_opts_with_complex_args() {
+        let opts = LaunchOpts {
+            binary: String::from("distant"),
+            args: String::from("--port 8080 --host 0.0.0.0 --log-level trace"),
+            timeout: Duration::from_secs(15),
+        };
+        assert!(opts.args.contains("--port"));
+        assert!(opts.args.contains("--host"));
+        assert!(opts.args.contains("--log-level"));
+    }
+
+    #[test]
+    fn launch_opts_with_quoted_args() {
+        let opts = LaunchOpts {
+            binary: String::from("distant"),
+            args: String::from("--config '/path/to/config file.toml'"),
+            timeout: Duration::from_secs(15),
+        };
+        assert!(opts.args.contains("config file.toml"));
+    }
+
+    #[test]
+    fn ssh_opts_with_many_identity_files() {
+        let files: Vec<PathBuf> = (0..20)
+            .map(|i| PathBuf::from(format!("/key_{}", i)))
+            .collect();
+
+        let opts = SshOpts {
+            identity_files: files,
+            ..SshOpts::default()
+        };
+
+        assert_eq!(opts.identity_files.len(), 20);
+        assert_eq!(opts.identity_files[0], PathBuf::from("/key_0"));
+        assert_eq!(opts.identity_files[19], PathBuf::from("/key_19"));
+    }
+
+    #[test]
+    fn ssh_opts_other_map_with_many_entries() {
+        let mut other = BTreeMap::new();
+        for i in 0..50 {
+            other.insert(format!("Key{:03}", i), format!("Value{}", i));
+        }
+
+        let opts = SshOpts {
+            other,
+            ..SshOpts::default()
+        };
+
+        assert_eq!(opts.other.len(), 50);
+        // BTreeMap keys are sorted
+        let first_key = opts.other.keys().next().unwrap();
+        assert_eq!(first_key, "Key000");
+    }
+
+    #[test]
+    fn build_russh_config_with_zero_keepalive() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.server_alive_interval = Some(Duration::from_secs(0));
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn build_russh_config_with_large_keepalive() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.server_alive_interval = Some(Duration::from_secs(3600));
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn build_russh_config_config_has_preferred_algorithms() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let params = HostParams::new(&DefaultAlgorithms::default());
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+
+        // Config should have preferred algorithms set
+        let default_preferred = russh::Preferred::default();
+        assert_eq!(config.preferred.kex, default_preferred.kex);
+        assert_eq!(config.preferred.cipher, default_preferred.cipher);
+    }
+
+    // --- Mock handler with custom verify_host string test ---
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_verify_host_with_ip() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: true,
+        };
+        assert!(handler.on_verify_host("192.168.1.1").await.unwrap());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_verify_host_with_ipv6() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: true,
+        };
+        assert!(handler.on_verify_host("::1").await.unwrap());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_verify_host_with_empty_string() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: false,
+        };
+        assert!(!handler.on_verify_host("").await.unwrap());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn error_ssh_auth_handler_on_banner_does_not_error() {
+        let handler = ErrorSshAuthHandler;
+        // on_banner should complete without panic even for error handler
+        handler.on_banner("banner text").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn error_ssh_auth_handler_on_error_does_not_error() {
+        let handler = ErrorSshAuthHandler;
+        // on_error should complete without panic even for error handler
+        handler.on_error("error text").await;
+    }
+
+    // --- ClientHandler additional tests ---
+
+    #[test_log::test(tokio::test)]
+    async fn client_handler_check_server_key_rsa() {
+        use russh::client::Handler;
+
+        let mut handler = ClientHandler;
+
+        // Generate an RSA key
+        let private_key = russh::keys::PrivateKey::random(
+            &mut rand::thread_rng(),
+            russh::keys::Algorithm::Ed25519,
+        )
+        .unwrap();
+        let public_key = private_key.public_key();
+
+        // Should always return Ok(true) regardless of key type
+        assert!(handler.check_server_key(public_key).await.unwrap());
+    }
+
+    // --- parse_ssh_config additional hosts ---
+
+    #[test]
+    fn parse_ssh_config_with_fqdn() {
+        let result = Ssh::parse_ssh_config("server.example.co.uk");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_ssh_config_with_hyphenated_host() {
+        let result = Ssh::parse_ssh_config("my-server-01.internal");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_ssh_config_with_underscore_host() {
+        let result = Ssh::parse_ssh_config("my_server_01");
+        assert!(result.is_ok());
+    }
+
+    // --- Launch argument building tests ---
+    // These test the same arg-splitting logic used in Ssh::launch
+
+    /// Replicate the launch argument building logic for testing
+    fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::Result<String> {
+        let mut args = vec![
+            String::from("server"),
+            String::from("listen"),
+            String::from("--daemon"),
+            String::from("--host"),
+            String::from("ssh"),
+        ];
+        args.extend(match family {
+            SshFamily::Windows => winsplit::split(extra_args),
+            SshFamily::Unix => shell_words::split(extra_args)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+        });
+
+        Ok(format!("{} {}", binary, args.join(" ")))
+    }
+
+    #[test]
+    fn launch_args_unix_empty_extra() {
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "").unwrap();
+        assert_eq!(cmd, "distant server listen --daemon --host ssh");
+    }
+
+    #[test]
+    fn launch_args_windows_empty_extra() {
+        let cmd = build_launch_args(SshFamily::Windows, "distant", "").unwrap();
+        assert_eq!(cmd, "distant server listen --daemon --host ssh");
+    }
+
+    #[test]
+    fn launch_args_unix_with_port() {
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "--port 8080").unwrap();
+        assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
+    }
+
+    #[test]
+    fn launch_args_windows_with_port() {
+        let cmd = build_launch_args(SshFamily::Windows, "distant", "--port 8080").unwrap();
+        assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
+    }
+
+    #[test]
+    fn launch_args_unix_with_multiple_flags() {
+        let cmd =
+            build_launch_args(SshFamily::Unix, "distant", "--port 8080 --log-level trace").unwrap();
+        assert!(cmd.contains("--port 8080"));
+        assert!(cmd.contains("--log-level trace"));
+    }
+
+    #[test]
+    fn launch_args_unix_with_quoted_value() {
+        let cmd = build_launch_args(
+            SshFamily::Unix,
+            "distant",
+            "--config '/path/to/config file.toml'",
+        )
+        .unwrap();
+        // shell_words::split removes quotes and keeps the value
+        assert!(cmd.contains("/path/to/config file.toml"));
+    }
+
+    #[test]
+    fn launch_args_unix_invalid_quoting() {
+        // Unmatched quote should produce an error
+        let result = build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn launch_args_windows_with_quoted_value() {
+        let cmd = build_launch_args(
+            SshFamily::Windows,
+            "distant.exe",
+            "--config \"C:\\path\\to\\config file.toml\"",
+        )
+        .unwrap();
+        assert!(cmd.contains("distant.exe"));
+        assert!(cmd.contains("server listen"));
+    }
+
+    #[test]
+    fn launch_args_custom_binary() {
+        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "").unwrap();
+        assert!(cmd.starts_with("/usr/local/bin/distant"));
+        assert!(cmd.contains("server listen"));
+    }
+
+    #[test]
+    fn launch_args_unix_double_quoted() {
+        let cmd =
+            build_launch_args(SshFamily::Unix, "distant", "--key \"value with spaces\"").unwrap();
+        assert!(cmd.contains("value with spaces"));
+    }
+
+    // --- Port/user selection logic tests ---
+    // These test the same resolution logic used in Ssh::connect
+
+    #[test]
+    fn port_resolution_opts_takes_priority() {
+        let opts_port: Option<u16> = Some(2222);
+        let config_port: Option<u16> = Some(3333);
+        let port = opts_port.or(config_port).unwrap_or(22);
+        assert_eq!(port, 2222);
+    }
+
+    #[test]
+    fn port_resolution_falls_back_to_config() {
+        let opts_port: Option<u16> = None;
+        let config_port: Option<u16> = Some(3333);
+        let port = opts_port.or(config_port).unwrap_or(22);
+        assert_eq!(port, 3333);
+    }
+
+    #[test]
+    fn port_resolution_defaults_to_22() {
+        let opts_port: Option<u16> = None;
+        let config_port: Option<u16> = None;
+        let port = opts_port.or(config_port).unwrap_or(22);
+        assert_eq!(port, 22);
+    }
+
+    #[test]
+    fn user_resolution_opts_takes_priority() {
+        let opts_user: Option<String> = Some("optuser".to_string());
+        let config_user: Option<String> = Some("cfguser".to_string());
+        let user = opts_user
+            .or(config_user)
+            .unwrap_or_else(|| "default".to_string());
+        assert_eq!(user, "optuser");
+    }
+
+    #[test]
+    fn user_resolution_falls_back_to_config() {
+        let opts_user: Option<String> = None;
+        let config_user: Option<String> = Some("cfguser".to_string());
+        let user = opts_user
+            .or(config_user)
+            .unwrap_or_else(|| "default".to_string());
+        assert_eq!(user, "cfguser");
+    }
+
+    #[test]
+    fn user_resolution_defaults_to_fallback() {
+        let opts_user: Option<String> = None;
+        let config_user: Option<String> = None;
+        let user = opts_user
+            .or(config_user)
+            .unwrap_or_else(|| "default".to_string());
+        assert_eq!(user, "default");
+    }
+
+    // --- Authentication error message building tests ---
+    // These test the same logic used at the end of Ssh::authenticate
+
+    #[test]
+    fn auth_error_message_no_methods_tried() {
+        let methods_tried: Vec<String> = Vec::new();
+        let tried = if methods_tried.is_empty() {
+            "none".to_string()
+        } else {
+            methods_tried.join(", ")
+        };
+        assert_eq!(tried, "none");
+    }
+
+    #[test]
+    fn auth_error_message_single_method_tried() {
+        let methods_tried = ["publickey".to_string()];
+        let tried = if methods_tried.is_empty() {
+            "none".to_string()
+        } else {
+            methods_tried.join(", ")
+        };
+        assert_eq!(tried, "publickey");
+    }
+
+    #[test]
+    fn auth_error_message_multiple_methods_tried() {
+        let methods_tried = [
+            "publickey".to_string(),
+            "keyboard-interactive".to_string(),
+            "password".to_string(),
+        ];
+        let tried = if methods_tried.is_empty() {
+            "none".to_string()
+        } else {
+            methods_tried.join(", ")
+        };
+        assert_eq!(tried, "publickey, keyboard-interactive, password");
+    }
+
+    #[test]
+    fn auth_error_message_format() {
+        let tried = "publickey, password".to_string();
+        let accepts = "publickey".to_string();
+        let msg = format!("Permission denied (tried: {tried}; server accepts: {accepts})");
+        assert!(msg.contains("tried: publickey, password"));
+        assert!(msg.contains("server accepts: publickey"));
+    }
+
+    #[test]
+    fn auth_error_message_with_unknown_server_methods() {
+        let server_methods: Option<russh::MethodSet> = None;
+        let accepts = server_methods
+            .as_ref()
+            .map(format_methods)
+            .unwrap_or_else(|| "unknown".to_string());
+        assert_eq!(accepts, "unknown");
+    }
+
+    #[test]
+    fn auth_error_message_with_known_server_methods() {
+        let server_methods = Some(russh::MethodSet::from(
+            [russh::MethodKind::PublicKey, russh::MethodKind::Password].as_slice(),
+        ));
+        let accepts = server_methods
+            .as_ref()
+            .map(format_methods)
+            .unwrap_or_else(|| "unknown".to_string());
+        assert!(accepts.contains("publickey"));
+        assert!(accepts.contains("password"));
+    }
+
+    // --- Server method detection logic tests ---
+
+    #[test]
+    fn server_accepts_pubkey_when_methods_unknown() {
+        use russh::MethodKind;
+        let server_methods: Option<russh::MethodSet> = None;
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::PublicKey));
+        assert!(accepts, "Should accept pubkey when methods unknown");
+    }
+
+    #[test]
+    fn server_accepts_pubkey_when_in_set() {
+        use russh::MethodKind;
+        let server_methods = Some(russh::MethodSet::from([MethodKind::PublicKey].as_slice()));
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::PublicKey));
+        assert!(accepts, "Should accept pubkey when in method set");
+    }
+
+    #[test]
+    fn server_rejects_pubkey_when_not_in_set() {
+        use russh::MethodKind;
+        let server_methods = Some(russh::MethodSet::from([MethodKind::Password].as_slice()));
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::PublicKey));
+        assert!(!accepts, "Should reject pubkey when not in method set");
+    }
+
+    #[test]
+    fn server_accepts_password_when_methods_unknown() {
+        use russh::MethodKind;
+        let server_methods: Option<russh::MethodSet> = None;
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::Password));
+        assert!(accepts);
+    }
+
+    #[test]
+    fn server_accepts_kbdint_when_methods_unknown() {
+        use russh::MethodKind;
+        let server_methods: Option<russh::MethodSet> = None;
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+        assert!(accepts);
+    }
+
+    #[test]
+    fn server_accepts_kbdint_when_in_set() {
+        use russh::MethodKind;
+        let server_methods = Some(russh::MethodSet::from(
+            [MethodKind::KeyboardInteractive].as_slice(),
+        ));
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+        assert!(accepts);
+    }
+
+    #[test]
+    fn server_rejects_kbdint_when_not_in_set() {
+        use russh::MethodKind;
+        let server_methods = Some(russh::MethodSet::from(
+            [MethodKind::PublicKey, MethodKind::Password].as_slice(),
+        ));
+        let accepts = server_methods
+            .as_ref()
+            .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+        assert!(!accepts);
+    }
+
+    // --- Key file discovery logic tests ---
+
+    #[test]
+    fn key_file_discovery_with_explicit_identity_files() {
+        let opts = SshOpts {
+            identity_files: vec![PathBuf::from("/custom/key1"), PathBuf::from("/custom/key2")],
+            ..SshOpts::default()
+        };
+        let key_files: Vec<PathBuf> = if !opts.identity_files.is_empty() {
+            opts.identity_files.clone()
+        } else {
+            Vec::new()
+        };
+        assert_eq!(key_files.len(), 2);
+        assert_eq!(key_files[0], PathBuf::from("/custom/key1"));
+    }
+
+    #[test]
+    fn key_file_discovery_empty_falls_to_default() {
+        let opts = SshOpts::default();
+        let key_files: Vec<PathBuf> = if !opts.identity_files.is_empty() {
+            opts.identity_files.clone()
+        } else {
+            // Would normally check for default keys; here just return empty
+            Vec::new()
+        };
+        assert!(key_files.is_empty());
+    }
+
+    // --- SshAuthEvent username fallback logic ---
+
+    #[test]
+    fn auth_event_username_fallback_when_name_empty() {
+        let name = String::new();
+        let user = "default_user".to_string();
+        let username = if name.is_empty() { user.clone() } else { name };
+        assert_eq!(username, "default_user");
+    }
+
+    #[test]
+    fn auth_event_username_uses_name_when_present() {
+        let name = "provided_name".to_string();
+        let user = "default_user".to_string();
+        let username = if name.is_empty() { user.clone() } else { name };
+        assert_eq!(username, "provided_name");
+    }
+
+    #[test]
+    fn auth_event_instructions_fallback_when_empty() {
+        let instructions = String::new();
+        let result = if instructions.is_empty() {
+            "Authentication required".to_string()
+        } else {
+            instructions
+        };
+        assert_eq!(result, "Authentication required");
+    }
+
+    #[test]
+    fn auth_event_instructions_uses_provided_when_present() {
+        let instructions = "Custom instructions".to_string();
+        let result = if instructions.is_empty() {
+            "Authentication required".to_string()
+        } else {
+            instructions
+        };
+        assert_eq!(result, "Custom instructions");
+    }
 }

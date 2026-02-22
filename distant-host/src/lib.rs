@@ -19,3 +19,14 @@ pub type Handler = ApiServerHandler<Api>;
 pub fn new_handler(config: Config) -> std::io::Result<Handler> {
     Ok(Handler::new(Api::initialize(config)?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_log::test(tokio::test)]
+    async fn new_handler_should_succeed_with_default_config() {
+        let handler = new_handler(Config::default());
+        assert!(handler.is_ok());
+    }
+}

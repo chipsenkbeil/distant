@@ -578,4 +578,142 @@ mod tests {
         set.insert(Seconds::from(5u64));
         assert_eq!(set.len(), 1);
     }
+
+    // -------------------------------------------------------
+    // Serde deserialization via TOML (exercises visit_i64/visit_str visitors)
+    // -------------------------------------------------------
+    #[test]
+    fn deserialize_seconds_from_toml_integer() {
+        #[derive(serde::Deserialize, Debug)]
+        struct W {
+            val: Seconds,
+        }
+        let w: W = toml_edit::de::from_str("val = 42").unwrap();
+        assert_eq!(*w.val, Duration::from_secs(42));
+    }
+
+    #[test]
+    fn deserialize_seconds_from_toml_float() {
+        #[derive(serde::Deserialize, Debug)]
+        struct W {
+            val: Seconds,
+        }
+        let w: W = toml_edit::de::from_str("val = 3.5").unwrap();
+        let diff = w.val.as_secs_f64() - 3.5;
+        assert!(diff.abs() < 0.01, "Expected ~3.5, got diff: {diff}");
+    }
+
+    #[test]
+    fn deserialize_seconds_from_toml_string() {
+        #[derive(serde::Deserialize, Debug)]
+        struct W {
+            val: Seconds,
+        }
+        let w: W = toml_edit::de::from_str(r#"val = "2.5""#).unwrap();
+        assert_eq!(*w.val, Duration::from_secs_f64(2.5));
+    }
+
+    #[test]
+    fn deserialize_negative_seconds_from_toml_fails() {
+        #[derive(serde::Deserialize, Debug)]
+        struct W {
+            val: Seconds,
+        }
+        let result: Result<W, _> = toml_edit::de::from_str("val = -5");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_negative_string_seconds_from_toml_fails() {
+        #[derive(serde::Deserialize, Debug)]
+        struct W {
+            val: Seconds,
+        }
+        let result: Result<W, _> = toml_edit::de::from_str(r#"val = "-1""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_non_number_string_from_toml_fails() {
+        #[derive(serde::Deserialize, Debug)]
+        struct W {
+            val: Seconds,
+        }
+        let result: Result<W, _> = toml_edit::de::from_str(r#"val = "abc""#);
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------
+    // Serde round-trip with TOML (exercises integer visitors)
+    // -------------------------------------------------------
+    #[test]
+    fn serde_round_trip_toml_integer() {
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct Wrapper {
+            seconds: Seconds,
+        }
+
+        let original = Wrapper {
+            seconds: Seconds::from(10u32),
+        };
+        let toml_str = toml_edit::ser::to_string_pretty(&original).unwrap();
+        let restored: Wrapper = toml_edit::de::from_str(&toml_str).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn serde_round_trip_toml_float() {
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct Wrapper {
+            seconds: Seconds,
+        }
+
+        let original = Wrapper {
+            seconds: Seconds::try_from(2.5f64).unwrap(),
+        };
+        let toml_str = toml_edit::ser::to_string_pretty(&original).unwrap();
+        let restored: Wrapper = toml_edit::de::from_str(&toml_str).unwrap();
+        // Floating point round-trip may not be exact, just check it's close
+        let diff = restored.seconds.as_secs_f64() - original.seconds.as_secs_f64();
+        assert!(diff.abs() < 0.01, "Expected close values, got diff: {diff}");
+    }
+
+    // -------------------------------------------------------
+    // Error trait impls
+    // -------------------------------------------------------
+    #[test]
+    fn parse_seconds_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ParseSecondsError::NotANumber);
+        let _ = format!("{err}");
+    }
+
+    #[test]
+    fn negative_seconds_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(NegativeSeconds);
+        let _ = format!("{err}");
+    }
+
+    // -------------------------------------------------------
+    // Clone and Copy
+    // -------------------------------------------------------
+    #[test]
+    fn seconds_is_copy() {
+        let a = Seconds::from(5u32);
+        let b = a; // Copy
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn seconds_clone() {
+        let a = Seconds::from(5u32);
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn parse_seconds_error_is_copy() {
+        let a = ParseSecondsError::NotANumber;
+        let b = a; // Copy
+        assert_eq!(a, b);
+    }
 }

@@ -629,4 +629,79 @@ mod tests {
             canonical_temp.display()
         );
     }
+
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn spawn_should_succeed_with_pty() {
+        let (reply, mut rx) = make_reply();
+
+        let size = distant_core::protocol::PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let instance = ProcessInstance::spawn(
+            "echo pty_test".to_string(),
+            Environment::new(),
+            None,
+            Some(size),
+            reply,
+        )
+        .unwrap();
+
+        assert!(!instance.cmd.is_empty());
+        assert!(instance.id > 0);
+
+        // PTY processes should still produce output and a done signal
+        let mut got_done = false;
+        while let Some(resp) = rx.recv().await {
+            if let Response::ProcDone { success, .. } = resp {
+                assert!(success);
+                got_done = true;
+                break;
+            }
+        }
+        assert!(got_done, "Never received ProcDone from pty process");
+    }
+
+    #[test(tokio::test)]
+    async fn drop_should_attempt_to_kill_running_process() {
+        let (reply, mut rx) = make_reply();
+
+        let cmd = if cfg!(windows) {
+            "cmd /C ping -n 100 127.0.0.1"
+        } else {
+            "sleep 60"
+        };
+
+        let instance =
+            ProcessInstance::spawn(cmd.to_string(), Environment::new(), None, None, reply).unwrap();
+
+        let id = instance.id;
+
+        // Drop the instance, which should trigger the kill logic
+        drop(instance);
+
+        // Give some time for the async kill to propagate
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // We should eventually receive ProcDone
+        let mut got_done = false;
+        while let Ok(resp) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await
+        {
+            match resp {
+                Some(Response::ProcDone { id: done_id, .. }) => {
+                    assert_eq!(done_id, id);
+                    got_done = true;
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        assert!(got_done, "Never received ProcDone after dropping instance");
+    }
 }

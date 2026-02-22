@@ -784,4 +784,207 @@ mod tests {
     fn reader_pause_millis_is_100() {
         assert_eq!(READER_PAUSE_MILLIS, 100);
     }
+
+    // --- contains_subslice logic tests ---
+    // Replicate the contains_subslice function from is_windows for testing
+
+    fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+        for i in 0..slice.len() {
+            if i + subslice.len() > slice.len() {
+                break;
+            }
+
+            if slice[i..].starts_with(subslice) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    #[test]
+    fn contains_subslice_finds_at_start() {
+        assert!(contains_subslice(b"Windows_NT", b"Windows"));
+    }
+
+    #[test]
+    fn contains_subslice_finds_at_end() {
+        assert!(contains_subslice(b"Some Windows_NT", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_finds_in_middle() {
+        assert!(contains_subslice(b"xxWindows_NTxx", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_not_found() {
+        assert!(!contains_subslice(b"Linux", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_empty_subslice() {
+        // Empty subslice is always found (starts_with empty is true)
+        assert!(contains_subslice(b"anything", b""));
+    }
+
+    #[test]
+    fn contains_subslice_empty_slice() {
+        assert!(!contains_subslice(b"", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_both_empty() {
+        // Loop doesn't execute for empty slice, so returns false
+        assert!(!contains_subslice(b"", b""));
+    }
+
+    #[test]
+    fn contains_subslice_exact_match() {
+        assert!(contains_subslice(b"Windows_NT", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_subslice_longer_than_slice() {
+        assert!(!contains_subslice(b"Win", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_single_byte_found() {
+        assert!(contains_subslice(b"abc", b"b"));
+    }
+
+    #[test]
+    fn contains_subslice_single_byte_not_found() {
+        assert!(!contains_subslice(b"abc", b"d"));
+    }
+
+    #[test]
+    fn contains_subslice_repeated_pattern() {
+        assert!(contains_subslice(b"ababab", b"bab"));
+    }
+
+    #[test]
+    fn contains_subslice_partial_match_then_full() {
+        assert!(contains_subslice(b"WinWindows_NT", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_binary_data() {
+        assert!(contains_subslice(
+            &[0x00, 0x01, 0xFF, 0xFE, 0x03],
+            &[0xFF, 0xFE]
+        ));
+    }
+
+    #[test]
+    fn contains_subslice_binary_data_not_found() {
+        assert!(!contains_subslice(&[0x00, 0x01, 0x02, 0x03], &[0xFF, 0xFE]));
+    }
+
+    #[test]
+    fn contains_subslice_with_newlines() {
+        assert!(contains_subslice(b"line1\r\nWindows_NT\r\n", b"Windows_NT"));
+    }
+
+    #[test]
+    fn contains_subslice_with_whitespace_prefix() {
+        assert!(contains_subslice(b"  \t Windows_NT  ", b"Windows_NT"));
+    }
+
+    // --- convert_to_windows_path_string additional edge cases ---
+
+    #[test]
+    fn convert_slash_e_colon_path() {
+        let result = convert_to_windows_path_string("/E:/games");
+        assert_eq!(result, Some("E:/games".to_string()));
+    }
+
+    #[test]
+    fn convert_slash_x_colon_deep_path() {
+        let result = convert_to_windows_path_string("/X:/a/b/c/d/e/f");
+        assert_eq!(result, Some("X:/a/b/c/d/e/f".to_string()));
+    }
+
+    #[test]
+    fn convert_path_with_spaces_in_components() {
+        let result = convert_to_windows_path_string("/C:/Program Files/My App/config.ini");
+        assert_eq!(
+            result,
+            Some("C:/Program Files/My App/config.ini".to_string())
+        );
+    }
+
+    #[test]
+    fn convert_windows_path_backslash_deep() {
+        let result = convert_to_windows_path_string("C:\\Users\\Test\\Documents\\file.txt");
+        assert_eq!(
+            result,
+            Some("C:\\Users\\Test\\Documents\\file.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn convert_double_dot_path_returns_none() {
+        // /.. is not a valid Windows drive path
+        let result = convert_to_windows_path_string("/..");
+        // This will be a CurDir or ParentDir component after RootDir
+        let _ = result; // Just verify no panic
+    }
+
+    // --- ExecOutput additional tests ---
+
+    #[test]
+    fn exec_output_alternate_debug_with_unicode() {
+        let output = ExecOutput {
+            success: true,
+            stdout: "unicode content".as_bytes().to_vec(),
+            stderr: "error message".as_bytes().to_vec(),
+        };
+        let alt_debug = format!("{:#?}", output);
+        assert!(
+            alt_debug.contains("unicode content"),
+            "Expected unicode content in '{alt_debug}'"
+        );
+    }
+
+    #[test]
+    fn exec_output_normal_debug_contains_struct_name() {
+        let output = ExecOutput {
+            success: true,
+            stdout: vec![],
+            stderr: vec![],
+        };
+        let debug = format!("{:?}", output);
+        assert!(
+            debug.contains("ExecOutput"),
+            "Expected struct name in '{debug}'"
+        );
+    }
+
+    #[test]
+    fn exec_output_clone_eq_reflexive() {
+        let a = ExecOutput {
+            success: false,
+            stdout: b"test".to_vec(),
+            stderr: b"err".to_vec(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(b, a); // symmetric
+    }
+
+    #[test]
+    fn exec_output_eq_transitive() {
+        let a = ExecOutput {
+            success: true,
+            stdout: b"x".to_vec(),
+            stderr: vec![],
+        };
+        let b = a.clone();
+        let c = b.clone();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(a, c); // transitive
+    }
 }

@@ -4490,4 +4490,1114 @@ mod tests {
     fn distant_manager_select_should_not_parse() {
         assert!(Options::try_parse_from(["distant", "manager", "select"]).is_err());
     }
+
+    // -------------------------------------------------------
+    // format() method tests for DistantSubcommand and children
+    // -------------------------------------------------------
+    #[test]
+    fn format_api_returns_json() {
+        let cmd = ClientSubcommand::Api {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            timeout: None,
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
+    fn format_shell_returns_shell() {
+        let cmd = ClientSubcommand::Shell {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            current_dir: None,
+            environment: Default::default(),
+            cmd: None,
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn format_spawn_returns_shell() {
+        let cmd = ClientSubcommand::Spawn {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            current_dir: None,
+            environment: Default::default(),
+            lsp: None,
+            shell: None,
+            pty: false,
+            cmd_str: None,
+            cmd: vec![],
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn format_ssh_returns_shell() {
+        let cmd = ClientSubcommand::Ssh {
+            cache: PathBuf::new(),
+            options: Default::default(),
+            network: NetworkSettings::default(),
+            current_dir: None,
+            environment: Default::default(),
+            new: false,
+            destination: Box::new("test://host".parse().unwrap()),
+            cmd: None,
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn format_system_info_returns_shell() {
+        let cmd = ClientSubcommand::SystemInfo {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn format_connect_returns_specified_format() {
+        let cmd = ClientSubcommand::Connect {
+            cache: PathBuf::new(),
+            options: Default::default(),
+            network: NetworkSettings::default(),
+            format: Format::Json,
+            new: false,
+            destination: Box::new("test://host".parse().unwrap()),
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
+    fn format_launch_returns_specified_format() {
+        let cmd = ClientSubcommand::Launch {
+            cache: PathBuf::new(),
+            distant_bin: None,
+            distant_bind_server: None,
+            distant_args: None,
+            options: Default::default(),
+            network: NetworkSettings::default(),
+            format: Format::Shell,
+            destination: Box::new("test://host".parse().unwrap()),
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn format_status_returns_specified_format() {
+        let cmd = ClientSubcommand::Status {
+            id: None,
+            format: Format::Json,
+            network: NetworkSettings::default(),
+            cache: PathBuf::new(),
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
+    fn format_version_returns_specified_format() {
+        let cmd = ClientSubcommand::Version {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            format: Format::Json,
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
+    fn format_kill_returns_specified_format() {
+        let cmd = ClientSubcommand::Kill {
+            format: Format::Json,
+            id: None,
+            network: NetworkSettings::default(),
+            cache: PathBuf::new(),
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
+    fn format_select_returns_specified_format() {
+        let cmd = ClientSubcommand::Select {
+            format: Format::Json,
+            connection: None,
+            network: NetworkSettings::default(),
+            cache: PathBuf::new(),
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
+    fn format_filesystem_returns_shell() {
+        let cmd = ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Copy {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            src: PathBuf::from("a"),
+            dst: PathBuf::from("b"),
+        });
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn distant_subcommand_format_delegates_correctly() {
+        let sub = DistantSubcommand::Client(ClientSubcommand::Api {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            timeout: None,
+        });
+        assert!(sub.format().is_json());
+
+        let sub = DistantSubcommand::Generate(GenerateSubcommand::Config { output: None });
+        assert_eq!(sub.format(), Format::Shell);
+
+        let sub = DistantSubcommand::Server(ServerSubcommand::Listen {
+            host: Value::Default(BindAddress::Any),
+            port: Value::Default(distant_core::net::common::PortRange::EPHEMERAL),
+            use_ipv6: false,
+            shutdown: Value::Default(distant_core::net::server::Shutdown::Never),
+            current_dir: None,
+            daemon: false,
+            watch: ServerListenWatchOptions {
+                watch_polling: false,
+                watch_poll_interval: None,
+                watch_compare_contents: false,
+                watch_debounce_timeout: Value::Default(Seconds::try_from(0.5).unwrap()),
+                watch_debounce_tick_rate: None,
+            },
+            key_from_stdin: false,
+            output_to_local_pipe: None,
+        });
+        assert_eq!(sub.format(), Format::Shell);
+
+        let sub = DistantSubcommand::Manager(ManagerSubcommand::Listen {
+            access: None,
+            daemon: false,
+            user: false,
+            plugin: Vec::new(),
+            network: NetworkSettings::default(),
+        });
+        assert_eq!(sub.format(), Format::Shell);
+
+        let sub = DistantSubcommand::Manager(ManagerSubcommand::Version {
+            format: Format::Json,
+            network: NetworkSettings::default(),
+        });
+        assert!(sub.format().is_json());
+
+        let sub = DistantSubcommand::Manager(ManagerSubcommand::Service(
+            ManagerServiceSubcommand::Start {
+                kind: None,
+                user: false,
+            },
+        ));
+        assert_eq!(sub.format(), Format::Shell);
+    }
+
+    // -------------------------------------------------------
+    // cache_path() method tests
+    // -------------------------------------------------------
+    #[test]
+    fn cache_path_returns_correct_path_for_each_client_subcommand() {
+        let cache = PathBuf::from("/test/cache");
+        let net = NetworkSettings::default();
+
+        let cases: Vec<ClientSubcommand> = vec![
+            ClientSubcommand::Api {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                timeout: None,
+            },
+            ClientSubcommand::Connect {
+                cache: cache.clone(),
+                options: Default::default(),
+                network: net.clone(),
+                format: Format::Shell,
+                new: false,
+                destination: Box::new("test://host".parse().unwrap()),
+            },
+            ClientSubcommand::Launch {
+                cache: cache.clone(),
+                distant_bin: None,
+                distant_bind_server: None,
+                distant_args: None,
+                options: Default::default(),
+                network: net.clone(),
+                format: Format::Shell,
+                destination: Box::new("test://host".parse().unwrap()),
+            },
+            ClientSubcommand::Shell {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                current_dir: None,
+                environment: Default::default(),
+                cmd: None,
+            },
+            ClientSubcommand::Spawn {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                current_dir: None,
+                environment: Default::default(),
+                lsp: None,
+                shell: None,
+                pty: false,
+                cmd_str: None,
+                cmd: vec![],
+            },
+            ClientSubcommand::SystemInfo {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+            },
+            ClientSubcommand::Version {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                format: Format::Shell,
+            },
+            ClientSubcommand::Ssh {
+                cache: cache.clone(),
+                options: Default::default(),
+                network: net.clone(),
+                current_dir: None,
+                environment: Default::default(),
+                new: false,
+                destination: Box::new("test://host".parse().unwrap()),
+                cmd: None,
+            },
+            ClientSubcommand::Status {
+                id: None,
+                format: Format::Shell,
+                network: net.clone(),
+                cache: cache.clone(),
+            },
+            ClientSubcommand::Kill {
+                format: Format::Shell,
+                id: None,
+                network: net.clone(),
+                cache: cache.clone(),
+            },
+            ClientSubcommand::Select {
+                format: Format::Shell,
+                connection: None,
+                network: net.clone(),
+                cache: cache.clone(),
+            },
+        ];
+
+        for cmd in &cases {
+            assert_eq!(
+                cmd.cache_path(),
+                cache.as_path(),
+                "cache_path failed for {:?}",
+                std::mem::discriminant(cmd)
+            );
+        }
+    }
+
+    #[test]
+    fn cache_path_filesystem_subcommands() {
+        let cache = PathBuf::from("/test/cache");
+        let net = NetworkSettings::default();
+
+        let fs_cases: Vec<ClientFileSystemSubcommand> = vec![
+            ClientFileSystemSubcommand::Copy {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                src: PathBuf::from("a"),
+                dst: PathBuf::from("b"),
+            },
+            ClientFileSystemSubcommand::Exists {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::MakeDir {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                all: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Metadata {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                canonicalize: false,
+                resolve_file_type: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Read {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                depth: 1,
+                absolute: false,
+                canonicalize: false,
+                include_root: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Remove {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                force: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Rename {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                src: PathBuf::from("a"),
+                dst: PathBuf::from("b"),
+            },
+            ClientFileSystemSubcommand::Search {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                target: CliSearchQueryTarget::Contents,
+                condition: CliSearchQueryCondition::regex("test"),
+                options: Default::default(),
+                paths: vec![],
+            },
+            ClientFileSystemSubcommand::SetPermissions {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                recursive: false,
+                follow_symlinks: false,
+                mode: String::from("644"),
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Watch {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                recursive: false,
+                only: vec![],
+                except: vec![],
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Write {
+                cache: cache.clone(),
+                connection: None,
+                network: net.clone(),
+                append: false,
+                path: PathBuf::from("a"),
+                data: None,
+            },
+        ];
+
+        for fs_cmd in &fs_cases {
+            assert_eq!(
+                fs_cmd.cache_path(),
+                cache.as_path(),
+                "cache_path failed for filesystem {:?}",
+                std::mem::discriminant(fs_cmd)
+            );
+        }
+
+        // Also test through ClientSubcommand::FileSystem wrapper
+        let cmd = ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Copy {
+            cache: cache.clone(),
+            connection: None,
+            network: net.clone(),
+            src: PathBuf::from("a"),
+            dst: PathBuf::from("b"),
+        });
+        assert_eq!(cmd.cache_path(), cache.as_path());
+    }
+
+    // -------------------------------------------------------
+    // network_settings() method tests
+    // -------------------------------------------------------
+    #[test]
+    fn network_settings_returns_correct_ref_for_each_client_subcommand() {
+        let net = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/test/socket")),
+            windows_pipe: Some(String::from("test-pipe")),
+        };
+
+        let cmd = ClientSubcommand::Api {
+            cache: PathBuf::new(),
+            connection: None,
+            network: net.clone(),
+            timeout: None,
+        };
+        assert_eq!(cmd.network_settings(), &net);
+
+        let cmd = ClientSubcommand::Ssh {
+            cache: PathBuf::new(),
+            options: Default::default(),
+            network: net.clone(),
+            current_dir: None,
+            environment: Default::default(),
+            new: false,
+            destination: Box::new("test://host".parse().unwrap()),
+            cmd: None,
+        };
+        assert_eq!(cmd.network_settings(), &net);
+
+        let cmd = ClientSubcommand::Status {
+            id: None,
+            format: Format::Shell,
+            network: net.clone(),
+            cache: PathBuf::new(),
+        };
+        assert_eq!(cmd.network_settings(), &net);
+
+        let cmd = ClientSubcommand::Kill {
+            format: Format::Shell,
+            id: None,
+            network: net.clone(),
+            cache: PathBuf::new(),
+        };
+        assert_eq!(cmd.network_settings(), &net);
+
+        let cmd = ClientSubcommand::Select {
+            format: Format::Shell,
+            connection: None,
+            network: net.clone(),
+            cache: PathBuf::new(),
+        };
+        assert_eq!(cmd.network_settings(), &net);
+
+        // FileSystem wrapper
+        let cmd = ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Copy {
+            cache: PathBuf::new(),
+            connection: None,
+            network: net.clone(),
+            src: PathBuf::from("a"),
+            dst: PathBuf::from("b"),
+        });
+        assert_eq!(cmd.network_settings(), &net);
+    }
+
+    #[test]
+    fn network_settings_filesystem_subcommands() {
+        let net = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/test/socket")),
+            windows_pipe: Some(String::from("test-pipe")),
+        };
+
+        let fs_cmds: Vec<ClientFileSystemSubcommand> = vec![
+            ClientFileSystemSubcommand::Exists {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::MakeDir {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                all: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Metadata {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                canonicalize: false,
+                resolve_file_type: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Read {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                depth: 1,
+                absolute: false,
+                canonicalize: false,
+                include_root: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Remove {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                force: false,
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Rename {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                src: PathBuf::from("a"),
+                dst: PathBuf::from("b"),
+            },
+            ClientFileSystemSubcommand::Search {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                target: CliSearchQueryTarget::Contents,
+                condition: CliSearchQueryCondition::regex("test"),
+                options: Default::default(),
+                paths: vec![],
+            },
+            ClientFileSystemSubcommand::SetPermissions {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                recursive: false,
+                follow_symlinks: false,
+                mode: String::from("644"),
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Watch {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                recursive: false,
+                only: vec![],
+                except: vec![],
+                path: PathBuf::from("a"),
+            },
+            ClientFileSystemSubcommand::Write {
+                cache: PathBuf::new(),
+                connection: None,
+                network: net.clone(),
+                append: false,
+                path: PathBuf::from("a"),
+                data: None,
+            },
+        ];
+
+        for fs_cmd in &fs_cmds {
+            assert_eq!(
+                fs_cmd.network_settings(),
+                &net,
+                "network_settings failed for {:?}",
+                std::mem::discriminant(fs_cmd)
+            );
+        }
+    }
+
+    // -------------------------------------------------------
+    // parse_plugin_flag tests
+    // -------------------------------------------------------
+    #[test]
+    fn parse_plugin_flag_valid() {
+        let (name, path) =
+            parse_plugin_flag("docker=/usr/local/bin/distant-plugin-docker").unwrap();
+        assert_eq!(name, "docker");
+        assert_eq!(path, PathBuf::from("/usr/local/bin/distant-plugin-docker"));
+    }
+
+    #[test]
+    fn parse_plugin_flag_simple() {
+        let (name, path) = parse_plugin_flag("myplugin=./plugin").unwrap();
+        assert_eq!(name, "myplugin");
+        assert_eq!(path, PathBuf::from("./plugin"));
+    }
+
+    #[test]
+    fn parse_plugin_flag_empty_name_fails() {
+        assert!(parse_plugin_flag("=/some/path").is_err());
+    }
+
+    #[test]
+    fn parse_plugin_flag_empty_path_fails() {
+        assert!(parse_plugin_flag("name=").is_err());
+    }
+
+    #[test]
+    fn parse_plugin_flag_no_equals_fails() {
+        assert!(parse_plugin_flag("noequalssign").is_err());
+    }
+
+    #[test]
+    fn parse_plugin_flag_empty_string_fails() {
+        assert!(parse_plugin_flag("").is_err());
+    }
+
+    // -------------------------------------------------------
+    // Format::is_json tests
+    // -------------------------------------------------------
+    #[test]
+    fn format_is_json_returns_true_for_json() {
+        assert!(Format::Json.is_json());
+    }
+
+    #[test]
+    fn format_is_json_returns_false_for_shell() {
+        assert!(!Format::Shell.is_json());
+    }
+
+    #[test]
+    fn format_default_is_shell() {
+        assert_eq!(Format::default(), Format::Shell);
+    }
+
+    // -------------------------------------------------------
+    // ManagerSubcommand::is_listen / IsVariant
+    // -------------------------------------------------------
+    #[test]
+    fn manager_subcommand_is_listen_returns_true_for_listen() {
+        let cmd = ManagerSubcommand::Listen {
+            access: None,
+            daemon: false,
+            user: false,
+            plugin: Vec::new(),
+            network: NetworkSettings::default(),
+        };
+        assert!(cmd.is_listen());
+    }
+
+    #[test]
+    fn manager_subcommand_is_listen_returns_false_for_version() {
+        let cmd = ManagerSubcommand::Version {
+            format: Format::Shell,
+            network: NetworkSettings::default(),
+        };
+        assert!(!cmd.is_listen());
+    }
+
+    #[test]
+    fn manager_subcommand_is_listen_returns_false_for_service() {
+        let cmd = ManagerSubcommand::Service(ManagerServiceSubcommand::Start {
+            kind: None,
+            user: false,
+        });
+        assert!(!cmd.is_listen());
+    }
+
+    // -------------------------------------------------------
+    // GenerateSubcommand::format tests
+    // -------------------------------------------------------
+    #[test]
+    fn generate_config_format_is_shell() {
+        let cmd = GenerateSubcommand::Config { output: None };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    #[test]
+    fn generate_completion_format_is_shell() {
+        let cmd = GenerateSubcommand::Completion {
+            output: None,
+            shell: ClapCompleteShell::Bash,
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    // -------------------------------------------------------
+    // ServerSubcommand::format tests
+    // -------------------------------------------------------
+    #[test]
+    fn server_listen_format_is_shell() {
+        let cmd = ServerSubcommand::Listen {
+            host: Value::Default(BindAddress::Any),
+            port: Value::Default(distant_core::net::common::PortRange::EPHEMERAL),
+            use_ipv6: false,
+            shutdown: Value::Default(distant_core::net::server::Shutdown::Never),
+            current_dir: None,
+            daemon: false,
+            watch: ServerListenWatchOptions {
+                watch_polling: false,
+                watch_poll_interval: None,
+                watch_compare_contents: false,
+                watch_debounce_timeout: Value::Default(Seconds::try_from(0.5).unwrap()),
+                watch_debounce_tick_rate: None,
+            },
+            key_from_stdin: false,
+            output_to_local_pipe: None,
+        };
+        assert_eq!(cmd.format(), Format::Shell);
+    }
+
+    // -------------------------------------------------------
+    // Ssh merge tests
+    // -------------------------------------------------------
+    #[test]
+    fn distant_ssh_should_support_merging_with_config() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Ssh {
+                cache: PathBuf::new(),
+                options: map!(),
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+                current_dir: None,
+                environment: Default::default(),
+                new: false,
+                destination: Box::new("test://host".parse().unwrap()),
+                cmd: None,
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                connect: ClientConnectConfig {
+                    options: map!("hello" -> "world"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Ssh {
+                    cache: PathBuf::new(),
+                    options: map!("hello" -> "world"),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                    current_dir: None,
+                    environment: Default::default(),
+                    new: false,
+                    destination: Box::new("test://host".parse().unwrap()),
+                    cmd: None,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_ssh_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Ssh {
+                cache: PathBuf::new(),
+                options: map!("cli_key" -> "cli_val"),
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+                current_dir: None,
+                environment: Default::default(),
+                new: false,
+                destination: Box::new("test://host".parse().unwrap()),
+                cmd: None,
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                connect: ClientConnectConfig {
+                    options: map!("cli_key" -> "config_val", "config_key" -> "config_val"),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Ssh {
+                    cache: PathBuf::new(),
+                    options: map!("cli_key" -> "cli_val", "config_key" -> "config_val"),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                    current_dir: None,
+                    environment: Default::default(),
+                    new: false,
+                    destination: Box::new("test://host".parse().unwrap()),
+                    cmd: None,
+                }),
+            }
+        );
+    }
+
+    // -------------------------------------------------------
+    // CLI parsing tests for subcommands
+    // -------------------------------------------------------
+    #[test]
+    fn distant_ssh_should_parse_basic() {
+        let options = Options::try_parse_from(["distant", "ssh", "user@host"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Ssh {
+                destination,
+                cmd,
+                new,
+                ..
+            }) => {
+                assert_eq!(destination.host.to_string(), "host");
+                assert!(cmd.is_none());
+                assert!(!new);
+            }
+            other => panic!("Expected Ssh, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_ssh_should_parse_with_command() {
+        let options =
+            Options::try_parse_from(["distant", "ssh", "user@host", "--", "ls", "-la"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Ssh { cmd, .. }) => {
+                assert_eq!(cmd, Some(vec!["ls".to_string(), "-la".to_string()]));
+            }
+            other => panic!("Expected Ssh, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_ssh_should_parse_with_new_flag() {
+        let options = Options::try_parse_from(["distant", "ssh", "--new", "user@host"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Ssh { new, .. }) => {
+                assert!(new);
+            }
+            other => panic!("Expected Ssh with --new, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_server_listen_should_parse_defaults() {
+        let options = Options::try_parse_from(["distant", "server", "listen"]).unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                use_ipv6,
+                daemon,
+                key_from_stdin,
+                ..
+            }) => {
+                assert!(!use_ipv6);
+                assert!(!daemon);
+                assert!(!key_from_stdin);
+            }
+            other => panic!("Expected Server Listen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_server_listen_should_parse_with_flags() {
+        let options = Options::try_parse_from([
+            "distant",
+            "server",
+            "listen",
+            "--use-ipv6",
+            "--daemon",
+            "--key-from-stdin",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                use_ipv6,
+                daemon,
+                key_from_stdin,
+                ..
+            }) => {
+                assert!(use_ipv6);
+                assert!(daemon);
+                assert!(key_from_stdin);
+            }
+            other => panic!("Expected Server Listen with flags, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_generate_config_should_parse() {
+        let options = Options::try_parse_from(["distant", "generate", "config"]).unwrap();
+        match options.command {
+            DistantSubcommand::Generate(GenerateSubcommand::Config { output }) => {
+                assert!(output.is_none());
+            }
+            other => panic!("Expected Generate Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_generate_completion_should_parse() {
+        let options =
+            Options::try_parse_from(["distant", "generate", "completion", "bash"]).unwrap();
+        match options.command {
+            DistantSubcommand::Generate(GenerateSubcommand::Completion { output, shell }) => {
+                assert!(output.is_none());
+                assert_eq!(shell, ClapCompleteShell::Bash);
+            }
+            other => panic!("Expected Generate Completion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_listen_should_parse_with_plugin() {
+        let options = Options::try_parse_from([
+            "distant",
+            "manager",
+            "listen",
+            "--plugin",
+            "docker=/usr/local/bin/docker-plugin",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Manager(ManagerSubcommand::Listen { plugin, .. }) => {
+                assert_eq!(plugin.len(), 1);
+                assert_eq!(plugin[0].0, "docker");
+                assert_eq!(plugin[0].1, PathBuf::from("/usr/local/bin/docker-plugin"));
+            }
+            other => panic!("Expected Manager Listen with plugin, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_listen_should_parse_with_multiple_plugins() {
+        let options = Options::try_parse_from([
+            "distant",
+            "manager",
+            "listen",
+            "--plugin",
+            "a=/path/a",
+            "--plugin",
+            "b=/path/b",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Manager(ManagerSubcommand::Listen { plugin, .. }) => {
+                assert_eq!(plugin.len(), 2);
+            }
+            other => panic!("Expected Manager Listen with plugins, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_service_install_should_parse() {
+        let options =
+            Options::try_parse_from(["distant", "manager", "service", "install", "--user"])
+                .unwrap();
+        match options.command {
+            DistantSubcommand::Manager(ManagerSubcommand::Service(
+                ManagerServiceSubcommand::Install { user, kind, args },
+            )) => {
+                assert!(user);
+                assert!(kind.is_none());
+                assert!(args.is_empty());
+            }
+            other => panic!("Expected Manager Service Install, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_service_uninstall_should_parse() {
+        let options =
+            Options::try_parse_from(["distant", "manager", "service", "uninstall"]).unwrap();
+        match options.command {
+            DistantSubcommand::Manager(ManagerSubcommand::Service(
+                ManagerServiceSubcommand::Uninstall { user, kind },
+            )) => {
+                assert!(!user);
+                assert!(kind.is_none());
+            }
+            other => panic!("Expected Manager Service Uninstall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_service_start_should_parse() {
+        let options = Options::try_parse_from(["distant", "manager", "service", "start"]).unwrap();
+        match options.command {
+            DistantSubcommand::Manager(ManagerSubcommand::Service(
+                ManagerServiceSubcommand::Start { user, kind },
+            )) => {
+                assert!(!user);
+                assert!(kind.is_none());
+            }
+            other => panic!("Expected Manager Service Start, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_manager_service_stop_should_parse() {
+        let options = Options::try_parse_from(["distant", "manager", "service", "stop"]).unwrap();
+        match options.command {
+            DistantSubcommand::Manager(ManagerSubcommand::Service(
+                ManagerServiceSubcommand::Stop { user, kind },
+            )) => {
+                assert!(!user);
+                assert!(kind.is_none());
+            }
+            other => panic!("Expected Manager Service Stop, got {other:?}"),
+        }
+    }
+
+    // -------------------------------------------------------
+    // ManagerServiceSubcommand IsVariant
+    // -------------------------------------------------------
+    #[test]
+    fn manager_service_subcommand_is_variant() {
+        let start = ManagerServiceSubcommand::Start {
+            kind: None,
+            user: false,
+        };
+        assert!(start.is_start());
+        assert!(!start.is_stop());
+        assert!(!start.is_install());
+        assert!(!start.is_uninstall());
+
+        let stop = ManagerServiceSubcommand::Stop {
+            kind: None,
+            user: false,
+        };
+        assert!(stop.is_stop());
+    }
+
+    // -------------------------------------------------------
+    // DistantSubcommand IsVariant
+    // -------------------------------------------------------
+    #[test]
+    fn distant_subcommand_is_variant() {
+        let client = DistantSubcommand::Client(ClientSubcommand::Api {
+            cache: PathBuf::new(),
+            connection: None,
+            network: NetworkSettings::default(),
+            timeout: None,
+        });
+        assert!(client.is_client());
+        assert!(!client.is_server());
+        assert!(!client.is_manager());
+        assert!(!client.is_generate());
+    }
 }
