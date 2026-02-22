@@ -612,4 +612,479 @@ mod tests {
 
         client.kill(123).await.unwrap();
     }
+
+    // ---- version tests ----
+
+    #[tokio::test]
+    async fn version_should_return_version_from_successful_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            let version = SemVer::new(1, 2, 3);
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Version { version },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let version = client.version().await.unwrap();
+        assert_eq!(version, SemVer::new(1, 2, 3));
+    }
+
+    #[tokio::test]
+    async fn version_should_report_error_if_receives_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, test_error_response()))
+                .await
+                .unwrap();
+        });
+
+        let err = client.version().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), test_error().to_string());
+    }
+
+    #[tokio::test]
+    async fn version_should_report_error_if_receives_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        let err = client.version().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    // ---- launch tests ----
+
+    #[tokio::test]
+    async fn launch_should_return_destination_from_successful_response() {
+        let (mut client, mut transport) = setup();
+
+        let expected_dest: Destination = "scheme://launched-host".parse().unwrap();
+        let expected_dest_clone = expected_dest.clone();
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Launched {
+                        destination: expected_dest_clone,
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let dest = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dest, expected_dest);
+    }
+
+    #[tokio::test]
+    async fn launch_should_report_error_if_receives_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, test_error_response()))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), test_error().to_string());
+    }
+
+    #[tokio::test]
+    async fn launch_should_report_error_if_receives_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn launch_should_report_eof_error_if_mailbox_closes_without_launched() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let _request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Drop transport without sending a Launched response
+            drop(transport);
+        });
+
+        let err = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn connect_should_report_eof_error_if_mailbox_closes_without_connected() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let _request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Drop transport without sending a Connected response
+            drop(transport);
+        });
+
+        let err = client
+            .connect(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn launch_should_handle_auth_finished_then_launched() {
+        let (mut client, mut transport) = setup();
+
+        let expected_dest: Destination = "scheme://launched".parse().unwrap();
+        let expected_dest_clone = expected_dest.clone();
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Send auth finished first
+            transport
+                .write_frame_for(&Response::new(
+                    request.id.clone(),
+                    ManagerResponse::Authenticate {
+                        id: 1,
+                        msg: Authentication::Finished,
+                    },
+                ))
+                .await
+                .unwrap();
+
+            // Then send launched
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Launched {
+                        destination: expected_dest_clone,
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let dest = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dest, expected_dest);
+    }
+
+    #[tokio::test]
+    async fn connect_should_handle_auth_finished_then_connected() {
+        let (mut client, mut transport) = setup();
+
+        let expected_id = 42;
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Send auth finished first
+            transport
+                .write_frame_for(&Response::new(
+                    request.id.clone(),
+                    ManagerResponse::Authenticate {
+                        id: 1,
+                        msg: Authentication::Finished,
+                    },
+                ))
+                .await
+                .unwrap();
+
+            // Then send connected
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Connected { id: expected_id },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let id = client
+            .connect(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap();
+        assert_eq!(id, expected_id);
+    }
+
+    #[tokio::test]
+    async fn launch_should_return_permission_denied_on_fatal_auth_error() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Authenticate {
+                        id: 1,
+                        msg: Authentication::Error(crate::auth::msg::Error::fatal("access denied")),
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn connect_should_return_permission_denied_on_fatal_auth_error() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Authenticate {
+                        id: 1,
+                        msg: Authentication::Error(crate::auth::msg::Error::fatal("access denied")),
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .connect(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn launch_should_continue_on_non_fatal_auth_error() {
+        let (mut client, mut transport) = setup();
+
+        let expected_dest: Destination = "scheme://launched".parse().unwrap();
+        let expected_dest_clone = expected_dest.clone();
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Send non-fatal auth error (should be logged but not abort)
+            transport
+                .write_frame_for(&Response::new(
+                    request.id.clone(),
+                    ManagerResponse::Authenticate {
+                        id: 1,
+                        msg: Authentication::Error(crate::auth::msg::Error::non_fatal("try again")),
+                    },
+                ))
+                .await
+                .unwrap();
+
+            // Then send launched
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Launched {
+                        destination: expected_dest_clone,
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let dest = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dest, expected_dest);
+    }
+
+    #[tokio::test]
+    async fn launch_should_handle_auth_info_then_launched() {
+        let (mut client, mut transport) = setup();
+
+        let expected_dest: Destination = "scheme://launched".parse().unwrap();
+        let expected_dest_clone = expected_dest.clone();
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Send auth info
+            transport
+                .write_frame_for(&Response::new(
+                    request.id.clone(),
+                    ManagerResponse::Authenticate {
+                        id: 1,
+                        msg: Authentication::Info(crate::auth::msg::Info {
+                            text: "some info".to_string(),
+                        }),
+                    },
+                ))
+                .await
+                .unwrap();
+
+            // Then send launched
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Launched {
+                        destination: expected_dest_clone,
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let dest = client
+            .launch(
+                "scheme://host".parse::<Destination>().unwrap(),
+                "key=value".parse::<Map>().unwrap(),
+                DummyAuthHandler,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dest, expected_dest);
+    }
 }

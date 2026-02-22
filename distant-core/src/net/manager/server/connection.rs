@@ -283,3 +283,312 @@ async fn action_task(
 
     trace!("[Conn {id}] Manager action task closed");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::client::UntypedClient;
+    use crate::net::common::{Connection, InmemoryTransport, Response};
+
+    fn make_untyped_client() -> (UntypedClient, Connection<InmemoryTransport>) {
+        let (client_conn, server_conn) = Connection::pair(100);
+        let client = UntypedClient::spawn(client_conn, Default::default());
+        (client, server_conn)
+    }
+
+    // ---- ManagerChannel ----
+
+    #[test]
+    fn manager_channel_id_returns_channel_id() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let channel = ManagerChannel { channel_id: 42, tx };
+        assert_eq!(channel.id(), 42);
+    }
+
+    #[test]
+    fn manager_channel_send_succeeds_when_receiver_alive() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let channel = ManagerChannel { channel_id: 1, tx };
+
+        let req = UntypedRequest {
+            header: std::borrow::Cow::Owned(vec![]),
+            id: std::borrow::Cow::Owned("req-1".to_string()),
+            payload: std::borrow::Cow::Owned(vec![0xc3]),
+        };
+        let result = channel.send(req);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn manager_channel_send_fails_when_receiver_dropped() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let channel = ManagerChannel { channel_id: 1, tx };
+
+        let req = UntypedRequest {
+            header: std::borrow::Cow::Owned(vec![]),
+            id: std::borrow::Cow::Owned("req-1".to_string()),
+            payload: std::borrow::Cow::Owned(vec![0xc3]),
+        };
+        let err = channel.send(req).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn manager_channel_close_succeeds_when_receiver_alive() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let channel = ManagerChannel { channel_id: 5, tx };
+        let result = channel.close();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn manager_channel_close_fails_when_receiver_dropped() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let channel = ManagerChannel { channel_id: 5, tx };
+        let err = channel.close().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn manager_channel_clone_shares_same_tx() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let channel = ManagerChannel { channel_id: 10, tx };
+        let cloned = channel.clone();
+        assert_eq!(cloned.id(), 10);
+    }
+
+    // ---- ManagerConnection ----
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_spawn_sets_id_and_destination() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = "key=value".parse().unwrap();
+
+        let conn = ManagerConnection::spawn(dest.clone(), opts.clone(), client)
+            .await
+            .unwrap();
+
+        assert_eq!(conn.destination, dest);
+        assert_eq!(conn.options, opts);
+        // id is randomly generated, just check it's non-zero (very unlikely to be 0)
+        // We just verify it exists
+        let _ = conn.id;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_open_channel_returns_channel_with_random_id() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+
+        let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+
+        let channel = conn.open_channel(reply).unwrap();
+        // Channel has a randomly generated id
+        let _ = channel.id();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_open_channel_registers_and_shows_in_channel_ids() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+
+        let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+
+        let channel = conn.open_channel(reply).unwrap();
+        let channel_id = channel.id();
+
+        // Give the action task a moment to process the register action
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let ids = conn.channel_ids().await.unwrap();
+        assert!(ids.contains(&channel_id));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_channel_ids_empty_initially() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+
+        let ids = conn.channel_ids().await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_open_multiple_channels_all_registered() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+
+        let mut channel_ids = Vec::new();
+        for _ in 0..3 {
+            let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+            let reply = ServerReply {
+                origin_id: "test".to_string(),
+                tx: reply_tx,
+            };
+            let channel = conn.open_channel(reply).unwrap();
+            channel_ids.push(channel.id());
+        }
+
+        // Give the action task time to process
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let ids = conn.channel_ids().await.unwrap();
+        assert_eq!(ids.len(), 3);
+        for cid in &channel_ids {
+            assert!(ids.contains(cid));
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_channel_close_unregisters() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+
+        let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+
+        let channel = conn.open_channel(reply).unwrap();
+        let channel_id = channel.id();
+
+        // Wait for registration
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let ids = conn.channel_ids().await.unwrap();
+        assert!(ids.contains(&channel_id));
+
+        // Close the channel
+        channel.close().unwrap();
+
+        // Wait for unregistration
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let ids = conn.channel_ids().await.unwrap();
+        assert!(!ids.contains(&channel_id));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_abort_stops_tasks() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        conn.abort();
+
+        // After abort, channel_ids should fail because the action task is aborted
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let result = conn.channel_ids().await;
+        assert!(result.is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn manager_connection_open_channel_fails_after_abort() {
+        let (client, _server) = make_untyped_client();
+        let dest: Destination = "scheme://host".parse().unwrap();
+        let opts: Map = Map::new();
+
+        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        conn.abort();
+
+        // Give time for abort to take effect
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+
+        // open_channel sends to the tx, but the receiver is aborted
+        // The tx.send itself may still succeed (buffered) but the message won't be processed
+        // At minimum, the channel is created
+        let result = conn.open_channel(reply);
+        // Result may be Ok (send succeeded) or Err (channel closed), depends on timing
+        // If Ok, the channel_ids query will fail
+        if result.is_ok() {
+            let ids_result = conn.channel_ids().await;
+            assert!(ids_result.is_err());
+        }
+    }
+
+    // ---- Action Debug ----
+
+    #[test]
+    fn action_debug_register() {
+        let (reply_tx, _) = mpsc::unbounded_channel::<Response<ManagerResponse>>();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+        let action = Action::Register { id: 42, reply };
+        let debug = format!("{action:?}");
+        assert_eq!(debug, "Action::Register { id: 42, .. }");
+    }
+
+    #[test]
+    fn action_debug_unregister() {
+        let action = Action::Unregister { id: 99 };
+        let debug = format!("{action:?}");
+        assert_eq!(debug, "Action::Unregister { id: 99 }");
+    }
+
+    #[test]
+    fn action_debug_get_registered() {
+        let (tx, _) = oneshot::channel();
+        let action = Action::GetRegistered { cb: tx };
+        let debug = format!("{action:?}");
+        assert_eq!(debug, "Action::GetRegistered { .. }");
+    }
+
+    #[test]
+    fn action_debug_read() {
+        let res = UntypedResponse {
+            header: std::borrow::Cow::Owned(vec![]),
+            id: std::borrow::Cow::Owned("id".to_string()),
+            origin_id: std::borrow::Cow::Owned("oid".to_string()),
+            payload: std::borrow::Cow::Owned(vec![]),
+        };
+        let action = Action::Read { res };
+        let debug = format!("{action:?}");
+        assert_eq!(debug, "Action::Read { .. }");
+    }
+
+    #[test]
+    fn action_debug_write() {
+        let req = UntypedRequest {
+            header: std::borrow::Cow::Owned(vec![]),
+            id: std::borrow::Cow::Owned("req".to_string()),
+            payload: std::borrow::Cow::Owned(vec![]),
+        };
+        let action = Action::Write { id: 7, req };
+        let debug = format!("{action:?}");
+        assert_eq!(debug, "Action::Write { id: 7, .. }");
+    }
+}

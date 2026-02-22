@@ -709,3 +709,689 @@ where
             .unwrap_or_else(protocol::Response::from),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tokio::sync::mpsc;
+
+    use crate::net::common::{Header, Request, Response};
+    use crate::net::server::{RequestCtx, ServerHandler, ServerReply};
+    use crate::protocol::{self, Msg, Version};
+
+    // ---------------------------------------------------------------
+    // unsupported() helper
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn unsupported_returns_error_with_unsupported_kind() {
+        let result: io::Result<()> = unsupported("test_op");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn unsupported_error_message_contains_label() {
+        let result: io::Result<()> = unsupported("my_feature");
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("my_feature"));
+        assert!(err.to_string().contains("unsupported"));
+    }
+
+    // ---------------------------------------------------------------
+    // Default Api trait methods return Unsupported
+    // ---------------------------------------------------------------
+
+    /// A minimal Api impl that uses all defaults (everything unsupported).
+    struct DefaultApi;
+    impl Api for DefaultApi {}
+
+    fn make_ctx() -> (Ctx, mpsc::UnboundedReceiver<protocol::Response>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let ctx = Ctx {
+            connection_id: 1,
+            reply: Box::new(tx),
+        };
+        (ctx, rx)
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_version_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.version(ctx).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_read_file_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.read_file(ctx, PathBuf::from("/tmp")).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_read_file_text_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .read_file_text(ctx, PathBuf::from("/tmp"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_write_file_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .write_file(ctx, PathBuf::from("/tmp"), vec![1])
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_write_file_text_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .write_file_text(ctx, PathBuf::from("/tmp"), String::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_append_file_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .append_file(ctx, PathBuf::from("/tmp"), vec![1])
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_append_file_text_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .append_file_text(ctx, PathBuf::from("/tmp"), String::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_read_dir_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .read_dir(ctx, PathBuf::from("/tmp"), 1, false, false, false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_create_dir_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .create_dir(ctx, PathBuf::from("/tmp"), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_copy_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .copy(ctx, PathBuf::from("/a"), PathBuf::from("/b"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_remove_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .remove(ctx, PathBuf::from("/tmp"), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_rename_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .rename(ctx, PathBuf::from("/a"), PathBuf::from("/b"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_watch_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .watch(ctx, PathBuf::from("/tmp"), false, vec![], vec![])
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_unwatch_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.unwatch(ctx, PathBuf::from("/tmp")).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_exists_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.exists(ctx, PathBuf::from("/tmp")).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_metadata_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .metadata(ctx, PathBuf::from("/tmp"), false, false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_set_permissions_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .set_permissions(
+                ctx,
+                PathBuf::from("/tmp"),
+                Permissions::default(),
+                SetPermissionsOptions::default(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_search_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .search(
+                ctx,
+                SearchQuery {
+                    paths: vec![PathBuf::from("/tmp")],
+                    target: protocol::SearchQueryTarget::Path,
+                    condition: protocol::SearchQueryCondition::Regex {
+                        value: String::from(".*"),
+                    },
+                    options: Default::default(),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_cancel_search_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.cancel_search(ctx, 42).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_proc_spawn_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .proc_spawn(ctx, String::from("echo"), Default::default(), None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_proc_kill_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.proc_kill(ctx, 0).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_proc_stdin_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.proc_stdin(ctx, 0, vec![1]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_proc_resize_pty_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .proc_resize_pty(
+                ctx,
+                0,
+                PtySize {
+                    rows: 24,
+                    cols: 80,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_system_info_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.system_info(ctx).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_on_connect_returns_ok() {
+        let api = DefaultApi;
+        assert!(api.on_connect(1).await.is_ok());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_on_disconnect_returns_ok() {
+        let api = DefaultApi;
+        assert!(api.on_disconnect(1).await.is_ok());
+    }
+
+    // ---------------------------------------------------------------
+    // Mock Api that overrides a few methods for testing on_request
+    // ---------------------------------------------------------------
+
+    struct MockApi;
+
+    impl Api for MockApi {
+        async fn version(&self, _ctx: Ctx) -> io::Result<Version> {
+            Ok(Version {
+                server_version: semver::Version::new(1, 0, 0),
+                protocol_version: semver::Version::new(0, 1, 0),
+                capabilities: vec![String::from("test")],
+            })
+        }
+
+        async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
+            Ok(vec![1, 2, 3])
+        }
+
+        async fn system_info(&self, _ctx: Ctx) -> io::Result<SystemInfo> {
+            Ok(SystemInfo {
+                family: String::from("unix"),
+                os: String::from("linux"),
+                arch: String::from("x86_64"),
+                current_dir: PathBuf::from("/home"),
+                main_separator: '/',
+                username: String::from("test"),
+                shell: String::from("/bin/sh"),
+            })
+        }
+
+        async fn exists(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    use crate::protocol::semver;
+
+    type TestCtx = RequestCtx<Msg<protocol::Request>, Msg<protocol::Response>>;
+    type TestRx = mpsc::UnboundedReceiver<Response<Msg<protocol::Response>>>;
+
+    /// Helper to build a RequestCtx for the ApiServerHandler
+    fn make_request_ctx(payload: Msg<protocol::Request>, header: Header) -> (TestCtx, TestRx) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: String::from("test"),
+            tx,
+        };
+        let request = Request {
+            header,
+            id: String::from("req-1"),
+            payload,
+        };
+        let ctx = RequestCtx {
+            connection_id: 1,
+            request,
+            reply,
+        };
+        (ctx, rx)
+    }
+
+    // ---------------------------------------------------------------
+    // ApiServerHandler::on_request - single requests
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_single_version_returns_version_response() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) =
+            make_request_ctx(Msg::Single(protocol::Request::Version {}), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::Version(v) => {
+                assert_eq!(v.server_version, semver::Version::new(1, 0, 0));
+            }
+            other => panic!("Expected Version response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_single_read_file_returns_blob() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Single(protocol::Request::FileRead {
+                path: PathBuf::from("/test"),
+            }),
+            Header::new(),
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::Blob { data } => assert_eq!(data, [1, 2, 3]),
+            other => panic!("Expected Blob response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_single_system_info_returns_system_info() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) =
+            make_request_ctx(Msg::Single(protocol::Request::SystemInfo {}), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::SystemInfo(info) => {
+                assert_eq!(info.family, "unix");
+                assert_eq!(info.os, "linux");
+            }
+            other => panic!("Expected SystemInfo response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_single_unsupported_method_returns_error() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Single(protocol::Request::FileReadText {
+                path: PathBuf::from("/test"),
+            }),
+            Header::new(),
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        assert!(msg.is_error());
+    }
+
+    // ---------------------------------------------------------------
+    // ApiServerHandler::on_request - batch parallel (no sequence header)
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_batch_parallel_all_succeed() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Batch(vec![
+                protocol::Request::Version {},
+                protocol::Request::SystemInfo {},
+            ]),
+            Header::new(),
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert_eq!(batch.len(), 2);
+        assert!(batch[0].is_version());
+        assert!(batch[1].is_system_info());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_batch_parallel_some_fail_all_run() {
+        let handler = ApiServerHandler::new(MockApi);
+        // FileReadText is unsupported in our MockApi, but Version is supported.
+        // In parallel mode, all should run regardless of failures.
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Batch(vec![
+                protocol::Request::FileReadText {
+                    path: PathBuf::from("/missing"),
+                },
+                protocol::Request::Version {},
+                protocol::Request::FileWriteText {
+                    path: PathBuf::from("/x"),
+                    text: String::from("data"),
+                },
+            ]),
+            Header::new(),
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert_eq!(batch.len(), 3);
+        // First is an error (unsupported)
+        assert!(batch[0].is_error());
+        // Second succeeds
+        assert!(batch[1].is_version());
+        // Third is an error (unsupported)
+        assert!(batch[2].is_error());
+    }
+
+    // ---------------------------------------------------------------
+    // ApiServerHandler::on_request - batch sequential (sequence=true)
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_batch_sequence_all_succeed() {
+        let handler = ApiServerHandler::new(MockApi);
+        let mut header = Header::new();
+        header.insert("sequence", true);
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Batch(vec![
+                protocol::Request::Version {},
+                protocol::Request::SystemInfo {},
+                protocol::Request::Exists {
+                    path: PathBuf::from("/tmp"),
+                },
+            ]),
+            header,
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert_eq!(batch.len(), 3);
+        assert!(batch[0].is_version());
+        assert!(batch[1].is_system_info());
+        match &batch[2] {
+            protocol::Response::Exists { value } => assert!(value),
+            other => panic!("Expected Exists response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_batch_sequence_fail_fast_cancels_remaining() {
+        let handler = ApiServerHandler::new(MockApi);
+        let mut header = Header::new();
+        header.insert("sequence", true);
+        // First request succeeds, second fails (unsupported), third should be interrupted
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Batch(vec![
+                protocol::Request::Version {},
+                protocol::Request::FileReadText {
+                    path: PathBuf::from("/missing"),
+                },
+                protocol::Request::SystemInfo {},
+            ]),
+            header,
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert_eq!(batch.len(), 3);
+        // First succeeds
+        assert!(batch[0].is_version());
+        // Second is an error (unsupported)
+        assert!(batch[1].is_error());
+        // Third should be Interrupted (canceled)
+        match &batch[2] {
+            protocol::Response::Error(e) => {
+                assert_eq!(e.kind, protocol::ErrorKind::Interrupted);
+                assert!(e.description.contains("earlier error"));
+            }
+            other => panic!("Expected Interrupted error, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_batch_sequence_first_fails_all_remaining_interrupted() {
+        let handler = ApiServerHandler::new(MockApi);
+        let mut header = Header::new();
+        header.insert("sequence", true);
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Batch(vec![
+                protocol::Request::FileReadText {
+                    path: PathBuf::from("/missing"),
+                },
+                protocol::Request::Version {},
+                protocol::Request::SystemInfo {},
+            ]),
+            header,
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert_eq!(batch.len(), 3);
+        assert!(batch[0].is_error());
+        // Remaining are all interrupted
+        for item in &batch[1..] {
+            match item {
+                protocol::Response::Error(e) => {
+                    assert_eq!(e.kind, protocol::ErrorKind::Interrupted);
+                }
+                other => panic!("Expected Interrupted error, got {other:?}"),
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // ApiServerHandler::on_connect / on_disconnect delegate to Api
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn server_handler_on_connect_delegates_to_api() {
+        let handler = ApiServerHandler::new(MockApi);
+        assert!(ServerHandler::on_connect(&handler, 42).await.is_ok());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn server_handler_on_disconnect_delegates_to_api() {
+        let handler = ApiServerHandler::new(MockApi);
+        assert!(ServerHandler::on_disconnect(&handler, 42).await.is_ok());
+    }
+
+    // ---------------------------------------------------------------
+    // handle_request dispatching for remaining request types
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn handle_request_exists_returns_exists_response() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) = make_request_ctx(
+            Msg::Single(protocol::Request::Exists {
+                path: PathBuf::from("/test"),
+            }),
+            Header::new(),
+        );
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::Exists { value } => assert!(value),
+            other => panic!("Expected Exists response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_empty_batch_returns_empty_batch() {
+        let handler = ApiServerHandler::new(MockApi);
+        let (ctx, mut rx) = make_request_ctx(Msg::Batch(vec![]), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert!(batch.is_empty());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn on_request_empty_batch_sequence_returns_empty_batch() {
+        let handler = ApiServerHandler::new(MockApi);
+        let mut header = Header::new();
+        header.insert("sequence", true);
+        let (ctx, mut rx) = make_request_ctx(Msg::Batch(vec![]), header);
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let batch = resp.payload.into_batch().unwrap();
+        assert!(batch.is_empty());
+    }
+}
