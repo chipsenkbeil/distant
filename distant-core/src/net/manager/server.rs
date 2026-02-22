@@ -22,9 +22,6 @@ pub use config::*;
 mod connection;
 pub use connection::*;
 
-mod handler;
-pub use handler::*;
-
 /// Represents a manager of multiple server connections.
 pub struct ManagerServer {
     /// Configuration settings for the server
@@ -80,19 +77,17 @@ impl ManagerServer {
         }
         .to_lowercase();
 
-        let credentials = {
-            let handler = self.config.launch_handlers.get(&scheme).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("No launch handler registered for {scheme}"),
-                )
-            })?;
-            handler
-                .launch(&destination, &options, &mut authenticator)
-                .await?
-        };
+        let plugin = self.config.plugins.get(&scheme).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("No plugin registered for scheme '{scheme}'"),
+            )
+        })?;
+        let destination = plugin
+            .launch(&destination, &options, &mut authenticator)
+            .await?;
 
-        Ok(credentials)
+        Ok(destination)
     }
 
     /// Connects to a new server at the specified `destination` using the given `options` information
@@ -119,17 +114,15 @@ impl ManagerServer {
         }
         .to_lowercase();
 
-        let client = {
-            let handler = self.config.connect_handlers.get(&scheme).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("No connect handler registered for {scheme}"),
-                )
-            })?;
-            handler
-                .connect(&destination, &options, &mut authenticator)
-                .await?
-        };
+        let plugin = self.config.plugins.get(&scheme).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("No plugin registered for scheme '{scheme}'"),
+            )
+        })?;
+        let client = plugin
+            .connect(&destination, &options, &mut authenticator)
+            .await?;
 
         let connection = ManagerConnection::spawn(destination, options, client).await?;
         let id = connection.id;
@@ -377,13 +370,79 @@ impl ServerHandler for ManagerServer {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::Pin;
+
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::auth::Authenticator;
     use crate::net::client::UntypedClient;
     use crate::net::common::FramedTransport;
     use crate::net::server::ServerReply;
-    use crate::{boxed_connect_handler, boxed_launch_handler};
+    use crate::plugin::Plugin;
+
+    /// Test plugin that returns an error from both launch and connect.
+    struct FailPlugin {
+        error_msg: String,
+    }
+
+    impl Plugin for FailPlugin {
+        fn name(&self) -> &str {
+            "fail"
+        }
+
+        fn connect<'a>(
+            &'a self,
+            _destination: &'a Destination,
+            _options: &'a Map,
+            _authenticator: &'a mut dyn Authenticator,
+        ) -> Pin<Box<dyn std::future::Future<Output = io::Result<UntypedClient>> + Send + 'a>>
+        {
+            Box::pin(async { Err(io::Error::other(self.error_msg.clone())) })
+        }
+
+        fn launch<'a>(
+            &'a self,
+            _destination: &'a Destination,
+            _options: &'a Map,
+            _authenticator: &'a mut dyn Authenticator,
+        ) -> Pin<Box<dyn std::future::Future<Output = io::Result<Destination>> + Send + 'a>>
+        {
+            Box::pin(async { Err(io::Error::other(self.error_msg.clone())) })
+        }
+    }
+
+    /// Test plugin that returns a fixed destination from launch and a detached client from connect.
+    struct SuccessPlugin {
+        launch_dest: String,
+    }
+
+    impl Plugin for SuccessPlugin {
+        fn name(&self) -> &str {
+            "success"
+        }
+
+        fn connect<'a>(
+            &'a self,
+            _destination: &'a Destination,
+            _options: &'a Map,
+            _authenticator: &'a mut dyn Authenticator,
+        ) -> Pin<Box<dyn std::future::Future<Output = io::Result<UntypedClient>> + Send + 'a>>
+        {
+            Box::pin(async { Ok(detached_untyped_client()) })
+        }
+
+        fn launch<'a>(
+            &'a self,
+            _destination: &'a Destination,
+            _options: &'a Map,
+            _authenticator: &'a mut dyn Authenticator,
+        ) -> Pin<Box<dyn std::future::Future<Output = io::Result<Destination>> + Send + 'a>>
+        {
+            let dest = self.launch_dest.clone();
+            Box::pin(async move { Ok(dest.parse::<Destination>().unwrap()) })
+        }
+    }
 
     fn test_config() -> Config {
         Config {
@@ -391,8 +450,7 @@ mod tests {
             connect_fallback_scheme: "distant".to_string(),
             connection_buffer_size: 100,
             user: false,
-            launch_handlers: HashMap::new(),
-            connect_handlers: HashMap::new(),
+            plugins: HashMap::new(),
         }
     }
 
@@ -437,12 +495,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn launch_should_fail_if_handler_tied_to_scheme_fails() {
+    async fn launch_should_fail_if_plugin_tied_to_scheme_fails() {
         let mut config = test_config();
 
-        let handler = boxed_launch_handler!(|_a, _b, _c| { Err(io::Error::other("test failure")) });
-
-        config.launch_handlers.insert("scheme".to_string(), handler);
+        let plugin = Arc::new(FailPlugin {
+            error_msg: "test failure".to_string(),
+        });
+        config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
         let destination = "scheme://host".parse::<Destination>().unwrap();
@@ -459,11 +518,10 @@ mod tests {
     async fn launch_should_return_new_destination_on_success() {
         let mut config = test_config();
 
-        let handler = boxed_launch_handler!(|_a, _b, _c| {
-            Ok("scheme2://host2".parse::<Destination>().unwrap())
+        let plugin = Arc::new(SuccessPlugin {
+            launch_dest: "scheme2://host2".to_string(),
         });
-
-        config.launch_handlers.insert("scheme".to_string(), handler);
+        config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
         let destination = "scheme://host".parse::<Destination>().unwrap();
@@ -493,15 +551,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_should_fail_if_handler_tied_to_scheme_fails() {
+    async fn connect_should_fail_if_plugin_tied_to_scheme_fails() {
         let mut config = test_config();
 
-        let handler =
-            boxed_connect_handler!(|_a, _b, _c| { Err(io::Error::other("test failure")) });
-
-        config
-            .connect_handlers
-            .insert("scheme".to_string(), handler);
+        let plugin = Arc::new(FailPlugin {
+            error_msg: "test failure".to_string(),
+        });
+        config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
         let destination = "scheme://host".parse::<Destination>().unwrap();
@@ -518,11 +574,10 @@ mod tests {
     async fn connect_should_return_id_of_new_connection_on_success() {
         let mut config = test_config();
 
-        let handler = boxed_connect_handler!(|_a, _b, _c| { Ok(detached_untyped_client()) });
-
-        config
-            .connect_handlers
-            .insert("scheme".to_string(), handler);
+        let plugin: Arc<dyn Plugin> = Arc::new(SuccessPlugin {
+            launch_dest: String::new(),
+        });
+        config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
         let destination = "scheme://host".parse::<Destination>().unwrap();

@@ -6,15 +6,15 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 
-use distant_core::net::auth::msg::*;
-use distant_core::net::auth::{
+use distant_core::auth::msg::*;
+use distant_core::auth::{
     AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
     StaticKeyAuthMethodHandler,
 };
 use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::{Destination, Map, SecretKey32, Version};
-use distant_core::net::manager::{ConnectHandler, LaunchHandler};
 use distant_core::protocol::PROTOCOL_VERSION;
+use distant_core::Plugin;
 use log::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -32,12 +32,16 @@ fn invalid(label: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid {label}"))
 }
 
-/// Supports launching locally through the manager as defined by `manager://...`
-pub struct ManagerLaunchHandler {
+/// Plugin for launching a local distant server process and connecting to distant TCP servers.
+///
+/// Handles the `"distant"` scheme. Launch spawns a local `distant server listen` process
+/// and reads the resulting destination from its stdout. Connect establishes a TCP connection
+/// to an already-running distant server, supporting both static key and challenge-based auth.
+pub struct DistantPlugin {
     shutdown: watch::Sender<bool>,
 }
 
-impl ManagerLaunchHandler {
+impl DistantPlugin {
     pub fn new() -> Self {
         Self {
             shutdown: watch::channel(false).0,
@@ -48,17 +52,110 @@ impl ManagerLaunchHandler {
     pub fn shutdown(&self) {
         let _ = self.shutdown.send(true);
     }
+
+    async fn try_connect(
+        ips: Vec<IpAddr>,
+        port: u16,
+        mut auth_handler: impl AuthHandler,
+    ) -> io::Result<UntypedClient> {
+        let mut err = None;
+        for ip in ips {
+            let addr = SocketAddr::new(ip, port);
+            debug!("Attempting to connect to distant server @ {}", addr);
+
+            match Client::tcp(addr)
+                .auth_handler(DynAuthHandler::from(&mut auth_handler))
+                .config(ClientConfig {
+                    reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
+                        base: Duration::from_secs(1),
+                        factor: 2.0,
+                        max_duration: Some(Duration::from_secs(10)),
+                        max_retries: None,
+                        timeout: None,
+                    },
+                    ..Default::default()
+                })
+                .connect_timeout(Duration::from_secs(180))
+                .version(Version::new(
+                    PROTOCOL_VERSION.major,
+                    PROTOCOL_VERSION.minor,
+                    PROTOCOL_VERSION.patch,
+                ))
+                .connect_untyped()
+                .await
+            {
+                Ok(client) => return Ok(client),
+                Err(x) => err = Some(x),
+            }
+        }
+
+        Err(err.expect("Err set above"))
+    }
 }
 
-impl Drop for ManagerLaunchHandler {
-    /// Terminates waiting for any servers spawned by this handler, which in turn should
-    /// shut them down.
+impl Drop for DistantPlugin {
     fn drop(&mut self) {
         self.shutdown();
     }
 }
 
-impl LaunchHandler for ManagerLaunchHandler {
+impl Plugin for DistantPlugin {
+    fn name(&self) -> &str {
+        "distant"
+    }
+
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling connect of {destination} with options '{options}'");
+            let host = destination.host.to_string();
+            let port = destination.port.ok_or_else(|| missing("port"))?;
+
+            debug!("Looking up host {host} @ port {port}");
+            let mut candidate_ips = tokio::net::lookup_host(format!("{host}:{port}"))
+                .await
+                .map_err(|x| {
+                    io::Error::new(
+                        x.kind(),
+                        format!("{host} needs to be resolvable outside of ssh: {x}"),
+                    )
+                })?
+                .map(|addr| addr.ip())
+                .collect::<Vec<IpAddr>>();
+            candidate_ips.sort_unstable();
+            candidate_ips.dedup();
+            if candidate_ips.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    format!("Unable to resolve {host}:{port}"),
+                ));
+            }
+
+            // For legacy reasons, we need to support a static key being provided
+            // via part of the destination OR an option, and attempt to use it
+            // during authentication if it is provided
+            if let Some(key) = destination
+                .password
+                .as_deref()
+                .or_else(|| options.get("key").map(|s| s.as_str()))
+            {
+                let key = key.parse::<SecretKey32>().map_err(|_| invalid("key"))?;
+                Self::try_connect(
+                    candidate_ips,
+                    port,
+                    SingleAuthHandler::new(StaticKeyAuthMethodHandler::simple(key)),
+                )
+                .await
+            } else {
+                Self::try_connect(candidate_ips, port, ProxyAuthHandler::new(authenticator)).await
+            }
+        })
+    }
+
     fn launch<'a>(
         &'a self,
         destination: &'a Destination,
@@ -133,7 +230,7 @@ impl LaunchHandler for ManagerLaunchHandler {
             }
 
             // Spawn it and wait to get the communicated destination
-            // NOTE: Server will persist until this handler is dropped
+            // NOTE: Server will persist until this plugin is dropped
             let mut command = Command::new(program);
             command
                 .kill_on_drop(true)
@@ -159,7 +256,7 @@ impl LaunchHandler for ManagerLaunchHandler {
                             // self-terminates then we get a ZOMBIE process! Oh no!
                             //
                             // This also replaces the need to store the children within the
-                            // handler itself and instead uses a watch update to kill the
+                            // plugin itself and instead uses a watch update to kill the
                             // task in advance in the case where the child hasn't terminated.
                             tokio::spawn(async move {
                                 // We don't actually care about the result, just that we're done
@@ -220,10 +317,32 @@ impl LaunchHandler for ManagerLaunchHandler {
     }
 }
 
-/// Supports launching remotely via SSH as defined by `ssh://...`
-pub struct SshLaunchHandler;
+/// Plugin for launching and connecting via SSH.
+///
+/// Handles the `"ssh"` scheme. Launch uses SSH to start a distant server on the remote host.
+/// Connect establishes a direct SSH connection and wraps it as a distant client.
+pub struct SshPlugin;
 
-impl LaunchHandler for SshLaunchHandler {
+impl Plugin for SshPlugin {
+    fn name(&self) -> &str {
+        "ssh"
+    }
+
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling connect of {destination} with options '{options}'");
+            let mut ssh = load_ssh(destination, options).await?;
+            let handler = AuthClientSshAuthHandler::new(authenticator);
+            ssh.authenticate(handler).await?;
+            Ok(ssh.into_distant_client().await?.into_untyped_client())
+        })
+    }
+
     fn launch<'a>(
         &'a self,
         destination: &'a Destination,
@@ -254,126 +373,6 @@ impl LaunchHandler for SshLaunchHandler {
 
             debug!("Launching via ssh: {opts:?}");
             ssh.launch(opts).await?.try_to_destination()
-        })
-    }
-}
-
-/// Supports connecting to a remote distant TCP server as defined by `distant://...`
-pub struct DistantConnectHandler;
-
-impl DistantConnectHandler {
-    async fn try_connect(
-        ips: Vec<IpAddr>,
-        port: u16,
-        mut auth_handler: impl AuthHandler,
-    ) -> io::Result<UntypedClient> {
-        // Try each IP address with the same port to see if one works
-        let mut err = None;
-        for ip in ips {
-            let addr = SocketAddr::new(ip, port);
-            debug!("Attempting to connect to distant server @ {}", addr);
-
-            match Client::tcp(addr)
-                .auth_handler(DynAuthHandler::from(&mut auth_handler))
-                .config(ClientConfig {
-                    reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
-                        base: Duration::from_secs(1),
-                        factor: 2.0,
-                        max_duration: Some(Duration::from_secs(10)),
-                        max_retries: None,
-                        timeout: None,
-                    },
-                    ..Default::default()
-                })
-                .connect_timeout(Duration::from_secs(180))
-                .version(Version::new(
-                    PROTOCOL_VERSION.major,
-                    PROTOCOL_VERSION.minor,
-                    PROTOCOL_VERSION.patch,
-                ))
-                .connect_untyped()
-                .await
-            {
-                Ok(client) => return Ok(client),
-                Err(x) => err = Some(x),
-            }
-        }
-
-        // If all failed, return the last error we got
-        Err(err.expect("Err set above"))
-    }
-}
-
-impl ConnectHandler for DistantConnectHandler {
-    fn connect<'a>(
-        &'a self,
-        destination: &'a Destination,
-        options: &'a Map,
-        authenticator: &'a mut dyn Authenticator,
-    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
-        Box::pin(async move {
-            debug!("Handling connect of {destination} with options '{options}'");
-            let host = destination.host.to_string();
-            let port = destination.port.ok_or_else(|| missing("port"))?;
-
-            debug!("Looking up host {host} @ port {port}");
-            let mut candidate_ips = tokio::net::lookup_host(format!("{host}:{port}"))
-                .await
-                .map_err(|x| {
-                    io::Error::new(
-                        x.kind(),
-                        format!("{host} needs to be resolvable outside of ssh: {x}"),
-                    )
-                })?
-                .map(|addr| addr.ip())
-                .collect::<Vec<IpAddr>>();
-            candidate_ips.sort_unstable();
-            candidate_ips.dedup();
-            if candidate_ips.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    format!("Unable to resolve {host}:{port}"),
-                ));
-            }
-
-            // For legacy reasons, we need to support a static key being provided
-            // via part of the destination OR an option, and attempt to use it
-            // during authentication if it is provided
-            if let Some(key) = destination
-                .password
-                .as_deref()
-                .or_else(|| options.get("key").map(|s| s.as_str()))
-            {
-                let key = key.parse::<SecretKey32>().map_err(|_| invalid("key"))?;
-                Self::try_connect(
-                    candidate_ips,
-                    port,
-                    SingleAuthHandler::new(StaticKeyAuthMethodHandler::simple(key)),
-                )
-                .await
-            } else {
-                Self::try_connect(candidate_ips, port, ProxyAuthHandler::new(authenticator)).await
-            }
-        })
-    }
-}
-
-/// Supports connecting to a remote SSH server as defined by `ssh://...`
-pub struct SshConnectHandler;
-
-impl ConnectHandler for SshConnectHandler {
-    fn connect<'a>(
-        &'a self,
-        destination: &'a Destination,
-        options: &'a Map,
-        authenticator: &'a mut dyn Authenticator,
-    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
-        Box::pin(async move {
-            debug!("Handling connect of {destination} with options '{options}'");
-            let mut ssh = load_ssh(destination, options).await?;
-            let handler = AuthClientSshAuthHandler::new(authenticator);
-            ssh.authenticate(handler).await?;
-            Ok(ssh.into_distant_client().await?.into_untyped_client())
         })
     }
 }
@@ -496,7 +495,7 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
         verbose: match options
             .get("verbose")
             .or_else(|| options.get("ssh.verbose"))
-            .or_else(|| options.get("client.verbose")) // Add generic client.verbose support
+            .or_else(|| options.get("client.verbose"))
         {
             Some(s) => s.parse().map_err(|_| invalid("verbose"))?,
             None => false,

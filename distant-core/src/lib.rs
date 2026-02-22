@@ -16,5 +16,9 @@ pub mod auth;
 /// Network functionality.
 pub mod net;
 
+/// Plugin trait and adapters.
+pub mod plugin;
+pub use plugin::Plugin;
+
 /// Protocol structures.
 pub mod protocol;

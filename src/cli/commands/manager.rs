@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Context;
-use distant_core::net::manager::{Config as NetManagerConfig, ConnectHandler, LaunchHandler};
+use distant_core::net::manager::Config as NetManagerConfig;
+use distant_core::Plugin;
 use log::*;
 use once_cell::sync::Lazy;
 use service_manager::{
@@ -26,6 +28,44 @@ static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
 });
 
 mod handlers;
+mod plugins_config;
+
+/// Collect all plugins (built-in + external from config) and register them by scheme.
+/// Returns an error if two plugins claim the same scheme.
+fn build_plugin_map(
+    extra_plugins: Vec<(String, PathBuf)>,
+) -> anyhow::Result<HashMap<String, Arc<dyn Plugin>>> {
+    let mut map: HashMap<String, Arc<dyn Plugin>> = HashMap::new();
+
+    // Built-in plugins
+    let builtins: Vec<Arc<dyn Plugin>> = vec![
+        Arc::new(handlers::DistantPlugin::new()),
+        Arc::new(handlers::SshPlugin),
+    ];
+
+    // External plugins from config file + CLI flags
+    let external = plugins_config::load_external_plugins(extra_plugins)?;
+
+    let all_plugins = builtins.into_iter().chain(external);
+
+    for plugin in all_plugins {
+        for scheme in plugin.schemes() {
+            let scheme = scheme.to_lowercase();
+            if let Some(existing) = map.get(&scheme) {
+                anyhow::bail!(
+                    "Scheme '{}' is already registered by plugin '{}', \
+                     cannot also register it for plugin '{}'",
+                    scheme,
+                    existing.name(),
+                    plugin.name()
+                );
+            }
+            map.insert(scheme, Arc::clone(&plugin));
+        }
+    }
+
+    Ok(map)
+}
 
 pub fn run(cmd: ManagerSubcommand) -> CliResult {
     match &cmd {
@@ -167,6 +207,7 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
             daemon: _daemon,
             network,
             user,
+            plugin: extra_plugins,
         } => {
             #[cfg(unix)]
             let access = access.unwrap_or_default();
@@ -183,34 +224,15 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
                     "global".to_string()
                 }
             );
+
+            let plugins = build_plugin_map(extra_plugins).context("Failed to register plugins")?;
+
             let manager = Manager {
                 #[cfg(unix)]
                 access,
                 config: NetManagerConfig {
                     user,
-                    launch_handlers: {
-                        let mut handlers: HashMap<String, Box<dyn LaunchHandler>> = HashMap::new();
-                        handlers.insert(
-                            "manager".to_string(),
-                            Box::new(handlers::ManagerLaunchHandler::new()),
-                        );
-
-                        handlers.insert("ssh".to_string(), Box::new(handlers::SshLaunchHandler));
-
-                        handlers
-                    },
-                    connect_handlers: {
-                        let mut handlers: HashMap<String, Box<dyn ConnectHandler>> = HashMap::new();
-
-                        handlers.insert(
-                            "distant".to_string(),
-                            Box::new(handlers::DistantConnectHandler),
-                        );
-
-                        handlers.insert("ssh".to_string(), Box::new(handlers::SshConnectHandler));
-
-                        handlers
-                    },
+                    plugins,
                     ..Default::default()
                 },
                 network,
