@@ -195,3 +195,296 @@ impl ShellKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // ShellKind::identify – bare names
+    // -------------------------------------------------------
+    #[test]
+    fn identify_bare_name_case_insensitive() {
+        assert_eq!(ShellKind::identify("bash"), Some(ShellKind::Bash));
+        assert_eq!(ShellKind::identify("BASH"), Some(ShellKind::Bash));
+        assert_eq!(ShellKind::identify("Bash"), Some(ShellKind::Bash));
+    }
+
+    #[test]
+    fn identify_all_known_bare_names() {
+        let cases = vec![
+            ("ash", ShellKind::Ash),
+            ("bash", ShellKind::Bash),
+            ("cmd", ShellKind::CmdExe),
+            ("cmd.exe", ShellKind::CmdExe),
+            ("csh", ShellKind::Csh),
+            ("dash", ShellKind::Dash),
+            ("elvish", ShellKind::Elvish),
+            ("fish", ShellKind::Fish),
+            ("ksh", ShellKind::Ksh),
+            ("loksh", ShellKind::Loksh),
+            ("mksh", ShellKind::Mksh),
+            ("nu", ShellKind::Nu),
+            ("pdksh", ShellKind::Pdksh),
+            ("powershell", ShellKind::PowerShell),
+            ("powershell.exe", ShellKind::PowerShell),
+            ("rc", ShellKind::Rc),
+            ("scsh", ShellKind::Scsh),
+            ("sh", ShellKind::Sh),
+            ("tcsh", ShellKind::Tcsh),
+            ("zsh", ShellKind::Zsh),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(
+                ShellKind::identify(name),
+                Some(expected),
+                "failed for bare name: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn identify_returns_none_for_unknown_shell() {
+        assert_eq!(ShellKind::identify("unknown_shell"), None);
+        assert_eq!(ShellKind::identify(""), None);
+    }
+
+    // -------------------------------------------------------
+    // ShellKind::identify – Unix paths
+    // -------------------------------------------------------
+    #[test]
+    fn identify_unix_path() {
+        assert_eq!(ShellKind::identify("/bin/bash"), Some(ShellKind::Bash));
+        assert_eq!(ShellKind::identify("/usr/bin/zsh"), Some(ShellKind::Zsh));
+        assert_eq!(
+            ShellKind::identify("/usr/local/bin/fish"),
+            Some(ShellKind::Fish)
+        );
+        assert_eq!(ShellKind::identify("/bin/sh"), Some(ShellKind::Sh));
+    }
+
+    // -------------------------------------------------------
+    // ShellKind::identify – Windows paths
+    // -------------------------------------------------------
+    #[test]
+    fn identify_windows_path() {
+        assert_eq!(
+            ShellKind::identify(r"C:\Windows\System32\cmd.exe"),
+            Some(ShellKind::CmdExe)
+        );
+        assert_eq!(
+            ShellKind::identify(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            Some(ShellKind::PowerShell)
+        );
+    }
+
+    // -------------------------------------------------------
+    // ShellKind::is_posix
+    // -------------------------------------------------------
+    #[test]
+    fn is_posix_returns_true_for_posix_shells() {
+        let posix = vec![
+            ShellKind::Ash,
+            ShellKind::Bash,
+            ShellKind::Csh,
+            ShellKind::Dash,
+            ShellKind::Fish,
+            ShellKind::Ksh,
+            ShellKind::Loksh,
+            ShellKind::Mksh,
+            ShellKind::Pdksh,
+            ShellKind::Scsh,
+            ShellKind::Sh,
+            ShellKind::Tcsh,
+            ShellKind::Zsh,
+        ];
+        for kind in posix {
+            assert!(kind.is_posix(), "{kind:?} should be POSIX");
+        }
+    }
+
+    #[test]
+    fn is_posix_returns_false_for_non_posix_shells() {
+        let non_posix = vec![
+            ShellKind::CmdExe,
+            ShellKind::PowerShell,
+            ShellKind::Rc,
+            ShellKind::Elvish,
+            ShellKind::Nu,
+        ];
+        for kind in non_posix {
+            assert!(!kind.is_posix(), "{kind:?} should NOT be POSIX");
+        }
+    }
+
+    // -------------------------------------------------------
+    // Shell::from_str (parsing)
+    // -------------------------------------------------------
+    #[test]
+    fn parse_shell_from_bare_name() {
+        let shell: Shell = "bash".parse().unwrap();
+        assert_eq!(shell.path, "bash");
+        assert_eq!(shell.kind, ShellKind::Bash);
+    }
+
+    #[test]
+    fn parse_shell_from_unix_path() {
+        let shell: Shell = "/usr/bin/zsh".parse().unwrap();
+        assert_eq!(shell.path, "/usr/bin/zsh");
+        assert_eq!(shell.kind, ShellKind::Zsh);
+    }
+
+    #[test]
+    fn parse_shell_from_windows_path() {
+        let shell: Shell = r"C:\Windows\System32\cmd.exe".parse().unwrap();
+        assert_eq!(shell.path, r"C:\Windows\System32\cmd.exe");
+        assert_eq!(shell.kind, ShellKind::CmdExe);
+    }
+
+    #[test]
+    fn parse_shell_trims_whitespace() {
+        let shell: Shell = "  bash  ".parse().unwrap();
+        assert_eq!(shell.path, "bash");
+        assert_eq!(shell.kind, ShellKind::Bash);
+    }
+
+    #[test]
+    fn parse_shell_error_for_unknown() {
+        let result = "totally_unknown".parse::<Shell>();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Unsupported shell"));
+    }
+
+    // -------------------------------------------------------
+    // Shell::is_posix delegates to ShellKind::is_posix
+    // -------------------------------------------------------
+    #[test]
+    fn shell_is_posix_delegates_correctly() {
+        let bash: Shell = "bash".parse().unwrap();
+        assert!(bash.is_posix());
+
+        let cmd: Shell = "cmd.exe".parse().unwrap();
+        assert!(!cmd.is_posix());
+    }
+
+    // -------------------------------------------------------
+    // Shell::make_cmd_string – cmd.exe
+    // -------------------------------------------------------
+    #[test]
+    fn make_cmd_string_cmd_exe() {
+        let shell: Shell = "cmd.exe".parse().unwrap();
+        let result = shell.make_cmd_string("echo hello").unwrap();
+        assert_eq!(result, r#"cmd.exe /S /C "echo hello""#);
+    }
+
+    // -------------------------------------------------------
+    // Shell::make_cmd_string – powershell
+    // -------------------------------------------------------
+    #[test]
+    fn make_cmd_string_powershell_basic() {
+        let shell: Shell = "powershell.exe".parse().unwrap();
+        let result = shell.make_cmd_string("Get-Process").unwrap();
+        assert_eq!(
+            result,
+            r#"cmd.exe /S /C "powershell.exe -Command Get-Process""#
+        );
+    }
+
+    #[test]
+    fn make_cmd_string_powershell_escapes_double_quotes() {
+        let shell: Shell = "powershell.exe".parse().unwrap();
+        let result = shell.make_cmd_string(r#"echo "hi""#).unwrap();
+        assert_eq!(
+            result,
+            r#"cmd.exe /S /C "powershell.exe -Command echo ""hi""""#
+        );
+    }
+
+    // -------------------------------------------------------
+    // Shell::make_cmd_string – rc / elvish (single-quote doubling)
+    // -------------------------------------------------------
+    #[test]
+    fn make_cmd_string_rc_basic() {
+        let shell: Shell = "rc".parse().unwrap();
+        let result = shell.make_cmd_string("echo hello").unwrap();
+        assert_eq!(result, "rc -c 'echo hello'");
+    }
+
+    #[test]
+    fn make_cmd_string_elvish_escapes_single_quotes() {
+        let shell: Shell = "elvish".parse().unwrap();
+        let result = shell.make_cmd_string("echo 'world'").unwrap();
+        assert_eq!(result, "elvish -c 'echo ''world'''");
+    }
+
+    // -------------------------------------------------------
+    // Shell::make_cmd_string – nu
+    // -------------------------------------------------------
+    #[test]
+    fn make_cmd_string_nu_no_special_chars() {
+        let shell: Shell = "nu".parse().unwrap();
+        let result = shell.make_cmd_string("echo hello").unwrap();
+        assert_eq!(result, "nu -c 'echo hello'");
+    }
+
+    #[test]
+    fn make_cmd_string_nu_with_single_quotes_uses_backticks() {
+        let shell: Shell = "nu".parse().unwrap();
+        let result = shell.make_cmd_string("echo 'hello'").unwrap();
+        assert_eq!(result, "nu -c `echo 'hello'`");
+    }
+
+    #[test]
+    fn make_cmd_string_nu_with_backticks_uses_single_quotes() {
+        let shell: Shell = "nu".parse().unwrap();
+        let result = shell.make_cmd_string("echo `hello`").unwrap();
+        assert_eq!(result, "nu -c 'echo `hello`'");
+    }
+
+    #[test]
+    fn make_cmd_string_nu_with_both_quotes_and_backticks_fails() {
+        let shell: Shell = "nu".parse().unwrap();
+        let result = shell.make_cmd_string("echo 'hello' `world`");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("unable to escape single quotes and backticks"));
+    }
+
+    // -------------------------------------------------------
+    // Shell::make_cmd_string – POSIX shells (single-quote trick)
+    // -------------------------------------------------------
+    #[test]
+    fn make_cmd_string_posix_basic() {
+        let shell: Shell = "bash".parse().unwrap();
+        let result = shell.make_cmd_string("echo hello").unwrap();
+        assert_eq!(result, "bash -c 'echo hello'");
+    }
+
+    #[test]
+    fn make_cmd_string_posix_escapes_single_quotes() {
+        let shell: Shell = "/bin/sh".parse().unwrap();
+        let result = shell.make_cmd_string("echo 'world'").unwrap();
+        assert_eq!(result, r"/bin/sh -c 'echo '\''world'\'''");
+    }
+
+    #[test]
+    fn make_cmd_string_posix_with_unix_path() {
+        let shell: Shell = "/usr/bin/zsh".parse().unwrap();
+        let result = shell.make_cmd_string("ls -la").unwrap();
+        assert_eq!(result, "/usr/bin/zsh -c 'ls -la'");
+    }
+
+    // -------------------------------------------------------
+    // Shell::make_cmd_string – windows path for cmd.exe
+    // -------------------------------------------------------
+    #[test]
+    fn make_cmd_string_cmd_exe_windows_path() {
+        let shell: Shell = r"C:\Windows\System32\cmd.exe".parse().unwrap();
+        let result = shell.make_cmd_string("dir").unwrap();
+        assert_eq!(result, r#"C:\Windows\System32\cmd.exe /S /C "dir""#);
+    }
+}

@@ -282,3 +282,300 @@ mod ser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // FromStr
+    // -------------------------------------------------------
+    #[test]
+    fn from_str_integer_seconds() {
+        let s: Seconds = "5".parse().unwrap();
+        assert_eq!(*s, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn from_str_fractional_seconds() {
+        let s: Seconds = "1.5".parse().unwrap();
+        assert_eq!(*s, Duration::from_secs_f64(1.5));
+    }
+
+    #[test]
+    fn from_str_zero() {
+        let s: Seconds = "0".parse().unwrap();
+        assert_eq!(*s, Duration::ZERO);
+    }
+
+    #[test]
+    fn from_str_negative_fails() {
+        let result = "-1".parse::<Seconds>();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseSecondsError::NegativeSeconds);
+    }
+
+    #[test]
+    fn from_str_not_a_number_fails() {
+        let result = "abc".parse::<Seconds>();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseSecondsError::NotANumber);
+    }
+
+    #[test]
+    fn from_str_empty_fails() {
+        let result = "".parse::<Seconds>();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), ParseSecondsError::NotANumber);
+    }
+
+    // -------------------------------------------------------
+    // Display
+    // -------------------------------------------------------
+    #[test]
+    fn display_shows_float_seconds() {
+        let s = Seconds::from(5u32);
+        // as_secs_f32 of 5 seconds should print "5"
+        let display = s.to_string();
+        assert!(display.starts_with("5"), "got: {display}");
+    }
+
+    #[test]
+    fn display_fractional() {
+        let s = Seconds::try_from(1.5f64).unwrap();
+        let display = s.to_string();
+        assert!(display.starts_with("1.5"), "got: {display}");
+    }
+
+    // -------------------------------------------------------
+    // Deref / DerefMut
+    // -------------------------------------------------------
+    #[test]
+    fn deref_gives_duration() {
+        let s = Seconds::from(10u64);
+        let d: &Duration = &s;
+        assert_eq!(d.as_secs(), 10);
+    }
+
+    #[test]
+    fn deref_mut_allows_modification() {
+        let mut s = Seconds::from(10u64);
+        *s = Duration::from_secs(20);
+        assert_eq!(s.as_secs(), 20);
+    }
+
+    // -------------------------------------------------------
+    // TryFrom signed integers
+    // -------------------------------------------------------
+    #[test]
+    fn try_from_i8_positive() {
+        let s = Seconds::try_from(5i8).unwrap();
+        assert_eq!(*s, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn try_from_i8_negative_fails() {
+        assert!(Seconds::try_from(-1i8).is_err());
+    }
+
+    #[test]
+    fn try_from_i16_positive() {
+        let s = Seconds::try_from(100i16).unwrap();
+        assert_eq!(*s, Duration::from_secs(100));
+    }
+
+    #[test]
+    fn try_from_i16_negative_fails() {
+        assert!(Seconds::try_from(-1i16).is_err());
+    }
+
+    #[test]
+    fn try_from_i32_positive() {
+        let s = Seconds::try_from(3600i32).unwrap();
+        assert_eq!(*s, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn try_from_i32_negative_fails() {
+        assert!(Seconds::try_from(-1i32).is_err());
+    }
+
+    #[test]
+    fn try_from_i64_positive() {
+        let s = Seconds::try_from(86400i64).unwrap();
+        assert_eq!(*s, Duration::from_secs(86400));
+    }
+
+    #[test]
+    fn try_from_i64_negative_fails() {
+        assert!(Seconds::try_from(-1i64).is_err());
+    }
+
+    // -------------------------------------------------------
+    // From unsigned integers
+    // -------------------------------------------------------
+    #[test]
+    fn from_u8() {
+        let s = Seconds::from(42u8);
+        assert_eq!(*s, Duration::from_secs(42));
+    }
+
+    #[test]
+    fn from_u16() {
+        let s = Seconds::from(1000u16);
+        assert_eq!(*s, Duration::from_secs(1000));
+    }
+
+    #[test]
+    fn from_u32() {
+        let s = Seconds::from(60000u32);
+        assert_eq!(*s, Duration::from_secs(60000));
+    }
+
+    #[test]
+    fn from_u64() {
+        let s = Seconds::from(1_000_000u64);
+        assert_eq!(*s, Duration::from_secs(1_000_000));
+    }
+
+    // -------------------------------------------------------
+    // TryFrom floats
+    // -------------------------------------------------------
+    #[test]
+    fn try_from_f32_positive() {
+        let s = Seconds::try_from(2.5f32).unwrap();
+        assert_eq!(*s, Duration::from_secs_f32(2.5));
+    }
+
+    #[test]
+    fn try_from_f32_zero() {
+        let s = Seconds::try_from(0.0f32).unwrap();
+        assert_eq!(*s, Duration::ZERO);
+    }
+
+    #[test]
+    fn try_from_f32_negative_fails() {
+        let result = Seconds::try_from(-0.1f32);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_from_f64_positive() {
+        let s = Seconds::try_from(3.14f64).unwrap();
+        assert_eq!(*s, Duration::from_secs_f64(3.14));
+    }
+
+    #[test]
+    fn try_from_f64_zero() {
+        let s = Seconds::try_from(0.0f64).unwrap();
+        assert_eq!(*s, Duration::ZERO);
+    }
+
+    #[test]
+    fn try_from_f64_negative_fails() {
+        let result = Seconds::try_from(-0.1f64);
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------
+    // From / Into Duration
+    // -------------------------------------------------------
+    #[test]
+    fn from_duration() {
+        let d = Duration::from_secs(7);
+        let s = Seconds::from(d);
+        assert_eq!(*s, d);
+    }
+
+    #[test]
+    fn into_duration() {
+        let s = Seconds::from(7u64);
+        let d: Duration = s.into();
+        assert_eq!(d, Duration::from_secs(7));
+    }
+
+    // -------------------------------------------------------
+    // Error types
+    // -------------------------------------------------------
+    #[test]
+    fn parse_seconds_error_display() {
+        assert_eq!(
+            ParseSecondsError::NegativeSeconds.to_string(),
+            "seconds cannot be negative"
+        );
+        assert_eq!(
+            ParseSecondsError::NotANumber.to_string(),
+            "seconds must be a number"
+        );
+    }
+
+    #[test]
+    fn negative_seconds_error_display() {
+        assert_eq!(NegativeSeconds.to_string(), "seconds cannot be negative");
+    }
+
+    #[test]
+    fn negative_seconds_converts_to_parse_error() {
+        let err: ParseSecondsError = NegativeSeconds.into();
+        assert_eq!(err, ParseSecondsError::NegativeSeconds);
+    }
+
+    // -------------------------------------------------------
+    // Serialization (serde)
+    // -------------------------------------------------------
+    #[test]
+    fn serialize_seconds_to_json() {
+        let s = Seconds::from(5u32);
+        let json = serde_json::to_string(&s).unwrap();
+        // Should serialize as a float
+        let val: f64 = serde_json::from_str(&json).unwrap();
+        assert!((val - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn deserialize_seconds_from_integer_json() {
+        let s: Seconds = serde_json::from_str("10").unwrap();
+        assert_eq!(*s, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn deserialize_seconds_from_float_json() {
+        let s: Seconds = serde_json::from_str("2.5").unwrap();
+        assert_eq!(*s, Duration::from_secs_f64(2.5));
+    }
+
+    #[test]
+    fn deserialize_seconds_from_zero_json() {
+        let s: Seconds = serde_json::from_str("0").unwrap();
+        assert_eq!(*s, Duration::ZERO);
+    }
+
+    #[test]
+    fn deserialize_negative_seconds_fails() {
+        let result: Result<Seconds, _> = serde_json::from_str("-5");
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------
+    // Hash + Eq
+    // -------------------------------------------------------
+    #[test]
+    fn seconds_equality() {
+        let a = Seconds::from(5u64);
+        let b = Seconds::from(5u64);
+        let c = Seconds::from(10u64);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn seconds_hash_consistency() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Seconds::from(5u64));
+        set.insert(Seconds::from(5u64));
+        assert_eq!(set.len(), 1);
+    }
+}
