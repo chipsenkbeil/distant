@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::{BoxedConnectHandler, BoxedLaunchHandler};
+use crate::plugin::Plugin;
 
 /// Configuration settings for a manager.
 pub struct Config {
@@ -16,11 +17,9 @@ pub struct Config {
     /// If listening as local user
     pub user: bool,
 
-    /// Handlers to use for launch requests
-    pub launch_handlers: HashMap<String, BoxedLaunchHandler>,
-
-    /// Handlers to use for connect requests
-    pub connect_handlers: HashMap<String, BoxedConnectHandler>,
+    /// Plugins keyed by scheme. Each scheme maps to a plugin that handles
+    /// both launch and connect for that scheme.
+    pub plugins: HashMap<String, Arc<dyn Plugin>>,
 }
 
 impl Default for Config {
@@ -34,8 +33,7 @@ impl Default for Config {
 
             connection_buffer_size: 100,
             user: false,
-            launch_handlers: HashMap::new(),
-            connect_handlers: HashMap::new(),
+            plugins: HashMap::new(),
         }
     }
 }

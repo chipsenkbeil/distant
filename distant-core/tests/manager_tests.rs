@@ -1,11 +1,15 @@
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
 
-use distant_core::boxed_connect_handler;
+use distant_core::auth::Authenticator;
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
-use distant_core::net::client::Client;
+use distant_core::net::client::{Client, UntypedClient};
 use distant_core::net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_core::net::manager::{Config, ManagerClient, ManagerServer};
 use distant_core::net::server::{RequestCtx, Server, ServerHandler};
+use distant_core::Plugin;
 use log::*;
 use test_log::test;
 
@@ -22,14 +26,21 @@ impl ServerHandler for TestServerHandler {
     }
 }
 
-#[test(tokio::test)]
-async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_manager() {
-    let (t1, t2) = InmemoryTransport::pair(100);
+/// Test plugin that spawns an in-memory server on connect.
+struct TestPlugin;
 
-    let mut config = Config::default();
-    config.connect_handlers.insert(
-        "scheme".to_string(),
-        boxed_connect_handler!(|_a, _b, _c| {
+impl Plugin for TestPlugin {
+    fn name(&self) -> &str {
+        "scheme"
+    }
+
+    fn connect<'a>(
+        &'a self,
+        _destination: &'a Destination,
+        _options: &'a Map,
+        _authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async {
             let (t1, t2) = InmemoryTransport::pair(100);
 
             // Spawn a server on one end and connect to it on the other
@@ -45,8 +56,18 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_
                 .await?;
 
             Ok(client)
-        }),
-    );
+        })
+    }
+}
+
+#[test(tokio::test)]
+async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_manager() {
+    let (t1, t2) = InmemoryTransport::pair(100);
+
+    let mut config = Config::default();
+    config
+        .plugins
+        .insert("scheme".to_string(), Arc::new(TestPlugin));
 
     info!("Starting manager");
     let _manager_ref = ManagerServer::new(config)

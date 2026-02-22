@@ -1148,6 +1148,18 @@ impl GenerateSubcommand {
     }
 }
 
+/// Parse a `NAME=PATH` string into a `(String, PathBuf)` for the `--plugin` flag.
+fn parse_plugin_flag(s: &str) -> Result<(String, PathBuf), String> {
+    match s.split_once('=') {
+        Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+            Ok((name.to_string(), PathBuf::from(path)))
+        }
+        _ => Err(format!(
+            "invalid plugin spec '{s}': expected NAME=PATH (e.g. docker=/usr/local/bin/distant-plugin-docker)"
+        )),
+    }
+}
+
 /// Subcommands for `distant manager`.
 #[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
@@ -1168,6 +1180,11 @@ pub enum ManagerSubcommand {
         /// If specified, will listen on a user-local unix socket or local windows named pipe
         #[clap(long)]
         user: bool,
+
+        /// Register an external plugin (NAME=PATH). Scheme defaults to NAME.
+        /// Can be specified multiple times.
+        #[clap(long = "plugin", value_parser = parse_plugin_flag)]
+        plugin: Vec<(String, PathBuf)>,
 
         #[clap(flatten)]
         network: NetworkSettings,
@@ -4017,6 +4034,7 @@ mod tests {
                 access: None,
                 daemon: false,
                 user: false,
+                plugin: Vec::new(),
                 network: NetworkSettings {
                     unix_socket: None,
                     windows_pipe: None,
@@ -4051,6 +4069,7 @@ mod tests {
                     access: Some(AccessControl::Group),
                     daemon: false,
                     user: false,
+                    plugin: Vec::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
                         windows_pipe: Some(String::from("config-windows-pipe")),
@@ -4072,6 +4091,7 @@ mod tests {
                 access: Some(AccessControl::Owner),
                 daemon: false,
                 user: false,
+                plugin: Vec::new(),
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
                     windows_pipe: Some(String::from("cli-windows-pipe")),
@@ -4106,6 +4126,7 @@ mod tests {
                     access: Some(AccessControl::Owner),
                     daemon: false,
                     user: false,
+                    plugin: Vec::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
                         windows_pipe: Some(String::from("cli-windows-pipe")),
