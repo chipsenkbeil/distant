@@ -1,8 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::{fmt, io};
 
-use async_trait::async_trait;
-
 use super::{Interest, Ready, Reconnectable, Transport};
 
 mod pipe;
@@ -48,20 +46,22 @@ impl fmt::Debug for WindowsPipeTransport {
     }
 }
 
-#[async_trait]
 impl Reconnectable for WindowsPipeTransport {
-    async fn reconnect(&mut self) -> io::Result<()> {
-        // We cannot reconnect from server-side
-        if self.inner.is_server() {
-            return Err(io::Error::from(io::ErrorKind::Unsupported));
-        }
+    fn reconnect<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            // We cannot reconnect from server-side
+            if self.inner.is_server() {
+                return Err(io::Error::from(io::ErrorKind::Unsupported));
+            }
 
-        self.inner = NamedPipe::connect_as_client(&self.addr).await?;
-        Ok(())
+            self.inner = NamedPipe::connect_as_client(&self.addr).await?;
+            Ok(())
+        })
     }
 }
 
-#[async_trait]
 impl Transport for WindowsPipeTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         match &self.inner {
@@ -77,11 +77,16 @@ impl Transport for WindowsPipeTransport {
         }
     }
 
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        match &self.inner {
-            NamedPipe::Client(x) => x.ready(interest).await,
-            NamedPipe::Server(x) => x.ready(interest).await,
-        }
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<Ready>> + Send + 'a>> {
+        Box::pin(async move {
+            match &self.inner {
+                NamedPipe::Client(x) => x.ready(interest).await,
+                NamedPipe::Server(x) => x.ready(interest).await,
+            }
+        })
     }
 }
 

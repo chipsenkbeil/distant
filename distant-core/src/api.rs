@@ -1,10 +1,10 @@
+use std::future::Future;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::net::common::ConnectionId;
 use crate::net::server::{Reply, RequestCtx, ServerHandler};
-use async_trait::async_trait;
 use log::*;
 
 use crate::protocol::{
@@ -48,26 +48,25 @@ fn unsupported<T>(label: &str) -> io::Result<T> {
 
 /// Interface to support the suite of functionality available with distant,
 /// which can be used to build other servers that are compatible with distant
-#[async_trait]
 pub trait Api {
     /// Invoked whenever a new connection is established.
     #[allow(unused_variables)]
-    async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
-        Ok(())
+    fn on_connect(&self, id: ConnectionId) -> impl Future<Output = io::Result<()>> + Send {
+        async { Ok(()) }
     }
 
     /// Invoked whenever an existing connection is dropped.
     #[allow(unused_variables)]
-    async fn on_disconnect(&self, id: ConnectionId) -> io::Result<()> {
-        Ok(())
+    fn on_disconnect(&self, id: ConnectionId) -> impl Future<Output = io::Result<()>> + Send {
+        async { Ok(()) }
     }
 
     /// Retrieves information about the server's capabilities.
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn version(&self, ctx: Ctx) -> io::Result<Version> {
-        unsupported("version")
+    fn version(&self, ctx: Ctx) -> impl Future<Output = io::Result<Version>> + Send {
+        async { unsupported("version") }
     }
 
     /// Reads bytes from a file.
@@ -76,8 +75,12 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_file(&self, ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-        unsupported("read_file")
+    fn read_file(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+    ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+        async { unsupported("read_file") }
     }
 
     /// Reads bytes from a file as text.
@@ -86,8 +89,12 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_file_text(&self, ctx: Ctx, path: PathBuf) -> io::Result<String> {
-        unsupported("read_file_text")
+    fn read_file_text(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+    ) -> impl Future<Output = io::Result<String>> + Send {
+        async { unsupported("read_file_text") }
     }
 
     /// Writes bytes to a file, overwriting the file if it exists.
@@ -97,8 +104,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn write_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
-        unsupported("write_file")
+    fn write_file(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+        data: Vec<u8>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("write_file") }
     }
 
     /// Writes text to a file, overwriting the file if it exists.
@@ -108,8 +120,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn write_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
-        unsupported("write_file_text")
+    fn write_file_text(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+        data: String,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("write_file_text") }
     }
 
     /// Writes bytes to the end of a file, creating it if it is missing.
@@ -119,8 +136,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn append_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
-        unsupported("append_file")
+    fn append_file(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+        data: Vec<u8>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("append_file") }
     }
 
     /// Writes bytes to the end of a file, creating it if it is missing.
@@ -130,8 +152,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn append_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
-        unsupported("append_file_text")
+    fn append_file_text(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+        data: String,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("append_file_text") }
     }
 
     /// Reads entries from a directory.
@@ -144,7 +171,7 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn read_dir(
+    fn read_dir(
         &self,
         ctx: Ctx,
         path: PathBuf,
@@ -152,8 +179,8 @@ pub trait Api {
         absolute: bool,
         canonicalize: bool,
         include_root: bool,
-    ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
-        unsupported("read_dir")
+    ) -> impl Future<Output = io::Result<(Vec<DirEntry>, Vec<io::Error>)>> + Send {
+        async { unsupported("read_dir") }
     }
 
     /// Creates a directory.
@@ -163,8 +190,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn create_dir(&self, ctx: Ctx, path: PathBuf, all: bool) -> io::Result<()> {
-        unsupported("create_dir")
+    fn create_dir(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+        all: bool,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("create_dir") }
     }
 
     /// Copies some file or directory.
@@ -174,8 +206,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn copy(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
-        unsupported("copy")
+    fn copy(
+        &self,
+        ctx: Ctx,
+        src: PathBuf,
+        dst: PathBuf,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("copy") }
     }
 
     /// Removes some file or directory.
@@ -185,8 +222,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn remove(&self, ctx: Ctx, path: PathBuf, force: bool) -> io::Result<()> {
-        unsupported("remove")
+    fn remove(
+        &self,
+        ctx: Ctx,
+        path: PathBuf,
+        force: bool,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("remove") }
     }
 
     /// Renames some file or directory.
@@ -196,8 +238,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn rename(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
-        unsupported("rename")
+    fn rename(
+        &self,
+        ctx: Ctx,
+        src: PathBuf,
+        dst: PathBuf,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("rename") }
     }
 
     /// Watches a file or directory for changes.
@@ -209,15 +256,15 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn watch(
+    fn watch(
         &self,
         ctx: Ctx,
         path: PathBuf,
         recursive: bool,
         only: Vec<ChangeKind>,
         except: Vec<ChangeKind>,
-    ) -> io::Result<()> {
-        unsupported("watch")
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("watch") }
     }
 
     /// Removes a file or directory from being watched.
@@ -226,8 +273,8 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn unwatch(&self, ctx: Ctx, path: PathBuf) -> io::Result<()> {
-        unsupported("unwatch")
+    fn unwatch(&self, ctx: Ctx, path: PathBuf) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("unwatch") }
     }
 
     /// Checks if the specified path exists.
@@ -236,8 +283,8 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn exists(&self, ctx: Ctx, path: PathBuf) -> io::Result<bool> {
-        unsupported("exists")
+    fn exists(&self, ctx: Ctx, path: PathBuf) -> impl Future<Output = io::Result<bool>> + Send {
+        async { unsupported("exists") }
     }
 
     /// Reads metadata for a file or directory.
@@ -248,14 +295,14 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn metadata(
+    fn metadata(
         &self,
         ctx: Ctx,
         path: PathBuf,
         canonicalize: bool,
         resolve_file_type: bool,
-    ) -> io::Result<Metadata> {
-        unsupported("metadata")
+    ) -> impl Future<Output = io::Result<Metadata>> + Send {
+        async { unsupported("metadata") }
     }
 
     /// Sets permissions for a file, directory, or symlink.
@@ -266,14 +313,14 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn set_permissions(
+    fn set_permissions(
         &self,
         ctx: Ctx,
         path: PathBuf,
         permissions: Permissions,
         options: SetPermissionsOptions,
-    ) -> io::Result<()> {
-        unsupported("set_permissions")
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("set_permissions") }
     }
 
     /// Searches files for matches based on a query.
@@ -282,8 +329,12 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn search(&self, ctx: Ctx, query: SearchQuery) -> io::Result<SearchId> {
-        unsupported("search")
+    fn search(
+        &self,
+        ctx: Ctx,
+        query: SearchQuery,
+    ) -> impl Future<Output = io::Result<SearchId>> + Send {
+        async { unsupported("search") }
     }
 
     /// Cancels an actively-ongoing search.
@@ -292,8 +343,8 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn cancel_search(&self, ctx: Ctx, id: SearchId) -> io::Result<()> {
-        unsupported("cancel_search")
+    fn cancel_search(&self, ctx: Ctx, id: SearchId) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("cancel_search") }
     }
 
     /// Spawns a new process, returning its id.
@@ -305,15 +356,15 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_spawn(
+    fn proc_spawn(
         &self,
         ctx: Ctx,
         cmd: String,
         environment: Environment,
         current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
-    ) -> io::Result<ProcessId> {
-        unsupported("proc_spawn")
+    ) -> impl Future<Output = io::Result<ProcessId>> + Send {
+        async { unsupported("proc_spawn") }
     }
 
     /// Kills a running process by its id.
@@ -322,8 +373,8 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_kill(&self, ctx: Ctx, id: ProcessId) -> io::Result<()> {
-        unsupported("proc_kill")
+    fn proc_kill(&self, ctx: Ctx, id: ProcessId) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("proc_kill") }
     }
 
     /// Sends data to the stdin of the process with the specified id.
@@ -333,8 +384,13 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_stdin(&self, ctx: Ctx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
-        unsupported("proc_stdin")
+    fn proc_stdin(
+        &self,
+        ctx: Ctx,
+        id: ProcessId,
+        data: Vec<u8>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("proc_stdin") }
     }
 
     /// Resizes the PTY of the process with the specified id.
@@ -344,20 +400,24 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn proc_resize_pty(&self, ctx: Ctx, id: ProcessId, size: PtySize) -> io::Result<()> {
-        unsupported("proc_resize_pty")
+    fn proc_resize_pty(
+        &self,
+        ctx: Ctx,
+        id: ProcessId,
+        size: PtySize,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("proc_resize_pty") }
     }
 
     /// Retrieves information about the system.
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    async fn system_info(&self, ctx: Ctx) -> io::Result<SystemInfo> {
-        unsupported("system_info")
+    fn system_info(&self, ctx: Ctx) -> impl Future<Output = io::Result<SystemInfo>> + Send {
+        async { unsupported("system_info") }
     }
 }
 
-#[async_trait]
 impl<T> ServerHandler for ApiServerHandler<T>
 where
     T: Api + Send + Sync + 'static,

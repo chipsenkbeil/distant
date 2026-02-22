@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use distant_core::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::Client;
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Request};
@@ -8,7 +7,6 @@ use test_log::test;
 
 struct TestServerHandler;
 
-#[async_trait]
 impl ServerHandler for TestServerHandler {
     type Request = (u8, String);
     type Response = String;

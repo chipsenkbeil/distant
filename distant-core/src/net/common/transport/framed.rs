@@ -1,8 +1,8 @@
 use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 use std::{fmt, io};
 
-use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use log::*;
 use serde::de::DeserializeOwned;
@@ -853,13 +853,12 @@ impl<T: Transport> FramedTransport<T> {
     }
 }
 
-#[async_trait]
 impl<T> Reconnectable for FramedTransport<T>
 where
     T: Transport,
 {
-    async fn reconnect(&mut self) -> io::Result<()> {
-        Reconnectable::reconnect(&mut self.inner).await
+    fn reconnect<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Reconnectable::reconnect(&mut self.inner).await })
     }
 }
 

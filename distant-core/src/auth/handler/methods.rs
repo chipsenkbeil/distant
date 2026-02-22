@@ -1,31 +1,39 @@
+use std::future::Future;
 use std::io;
-
-use async_trait::async_trait;
+use std::pin::Pin;
 
 use crate::auth::msg::{
     Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse,
 };
 
 /// Interface for a handler of authentication requests for a specific authentication method.
-#[async_trait]
 pub trait AuthMethodHandler: Send {
     /// Callback when a challenge is received, returning answers to the given questions.
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse>;
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>>;
 
     /// Callback when a verification request is received, returning true if approvided or false if
     /// unapproved.
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse>;
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>>;
 
     /// Callback when information is received. To fail, return an error from this function.
-    async fn on_info(&mut self, info: Info) -> io::Result<()>;
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
     /// Callback when an error is received. Regardless of the result returned, this will terminate
     /// the authenticator. In the situation where a custom error would be preferred, have this
     /// callback return an error.
-    async fn on_error(&mut self, error: Error) -> io::Result<()>;
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 }
 
 mod prompt;

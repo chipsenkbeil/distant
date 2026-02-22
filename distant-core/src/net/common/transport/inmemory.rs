@@ -1,7 +1,6 @@
 use std::io;
 use std::sync::{Mutex, MutexGuard};
 
-use async_trait::async_trait;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::sync::mpsc::{self};
 
@@ -106,23 +105,25 @@ impl InmemoryTransport {
     }
 }
 
-#[async_trait]
 impl Reconnectable for InmemoryTransport {
     /// Once the underlying channels have closed, there is no way for this transport to
     /// re-establish those channels; therefore, reconnecting will fail with
     /// [`ErrorKind::ConnectionRefused`] if either underlying channel has closed.
     ///
     /// [`ErrorKind::ConnectionRefused`]: io::ErrorKind::ConnectionRefused
-    async fn reconnect(&mut self) -> io::Result<()> {
-        if self.tx.is_closed() || self.is_rx_closed() {
-            Err(io::Error::from(io::ErrorKind::ConnectionRefused))
-        } else {
-            Ok(())
-        }
+    fn reconnect<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            if self.tx.is_closed() || self.is_rx_closed() {
+                Err(io::Error::from(io::ErrorKind::ConnectionRefused))
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
-#[async_trait]
 impl Transport for InmemoryTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         // Lock our internal storage to ensure that nothing else mutates it for the lifetime of
@@ -149,30 +150,35 @@ impl Transport for InmemoryTransport {
         }
     }
 
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        let mut status = Ready::EMPTY;
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<Ready>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut status = Ready::EMPTY;
 
-        if interest.is_readable() {
-            // TODO: Replace `self.is_rx_closed()` with `self.rx.is_closed()` once the tokio issue
-            //       is resolved that adds `is_closed` to the `mpsc::Receiver`
-            //
-            // See https://github.com/tokio-rs/tokio/issues/4638
-            status |= if self.is_rx_closed() && self.buf.lock().unwrap().is_none() {
-                Ready::READ_CLOSED
-            } else {
-                Ready::READABLE
-            };
-        }
+            if interest.is_readable() {
+                // TODO: Replace `self.is_rx_closed()` with `self.rx.is_closed()` once the tokio issue
+                //       is resolved that adds `is_closed` to the `mpsc::Receiver`
+                //
+                // See https://github.com/tokio-rs/tokio/issues/4638
+                status |= if self.is_rx_closed() && self.buf.lock().unwrap().is_none() {
+                    Ready::READ_CLOSED
+                } else {
+                    Ready::READABLE
+                };
+            }
 
-        if interest.is_writable() {
-            status |= if self.tx.is_closed() {
-                Ready::WRITE_CLOSED
-            } else {
-                Ready::WRITABLE
-            };
-        }
+            if interest.is_writable() {
+                status |= if self.tx.is_closed() {
+                    Ready::WRITE_CLOSED
+                } else {
+                    Ready::WRITABLE
+                };
+            }
 
-        Ok(status)
+            Ok(status)
+        })
     }
 }
 

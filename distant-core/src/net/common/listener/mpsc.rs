@@ -1,6 +1,5 @@
 use std::io;
 
-use async_trait::async_trait;
 use derive_more::From;
 use tokio::sync::mpsc;
 
@@ -20,7 +19,6 @@ impl<T: Send> MpscListener<T> {
     }
 }
 
-#[async_trait]
 impl<T: Send> Listener for MpscListener<T> {
     type Output = T;
 

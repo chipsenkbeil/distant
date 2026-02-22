@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::future::Future;
 use std::io;
-
-use async_trait::async_trait;
+use std::pin::Pin;
 
 use crate::auth::authenticator::Authenticator;
 use crate::auth::msg::*;
@@ -11,28 +11,32 @@ mod methods;
 pub use methods::*;
 
 /// Interface for a handler of authentication requests for all methods.
-#[async_trait]
 pub trait AuthHandler: AuthMethodHandler + Send {
     /// Callback when authentication is beginning, providing available authentication methods and
     /// returning selected authentication methods to pursue.
-    async fn on_initialization(
-        &mut self,
+    fn on_initialization<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        Ok(InitializationResponse {
-            methods: initialization.methods,
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(InitializationResponse {
+                methods: initialization.methods,
+            })
         })
     }
 
     /// Callback when authentication starts for a specific method.
     #[allow(unused_variables)]
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        Ok(())
+    fn on_start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Ok(()) })
     }
 
     /// Callback when authentication is finished and no more requests will be received.
-    async fn on_finished(&mut self) -> io::Result<()> {
-        Ok(())
+    fn on_finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Ok(()) })
     }
 }
 
@@ -40,25 +44,35 @@ pub trait AuthHandler: AuthMethodHandler + Send {
 /// instantly fail.
 pub struct DummyAuthHandler;
 
-#[async_trait]
 impl AuthHandler for DummyAuthHandler {}
 
-#[async_trait]
 impl AuthMethodHandler for DummyAuthHandler {
-    async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-        Err(io::Error::from(io::ErrorKind::Unsupported))
+    fn on_challenge<'a>(
+        &'a mut self,
+        _: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move { Err(io::Error::from(io::ErrorKind::Unsupported)) })
     }
 
-    async fn on_verification(&mut self, _: Verification) -> io::Result<VerificationResponse> {
-        Err(io::Error::from(io::ErrorKind::Unsupported))
+    fn on_verification<'a>(
+        &'a mut self,
+        _: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move { Err(io::Error::from(io::ErrorKind::Unsupported)) })
     }
 
-    async fn on_info(&mut self, _: Info) -> io::Result<()> {
-        Err(io::Error::from(io::ErrorKind::Unsupported))
+    fn on_info<'a>(
+        &'a mut self,
+        _: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Err(io::Error::from(io::ErrorKind::Unsupported)) })
     }
 
-    async fn on_error(&mut self, _: Error) -> io::Result<()> {
-        Err(io::Error::from(io::ErrorKind::Unsupported))
+    fn on_error<'a>(
+        &'a mut self,
+        _: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Err(io::Error::from(io::ErrorKind::Unsupported)) })
     }
 }
 
@@ -71,28 +85,35 @@ impl SingleAuthHandler {
     }
 }
 
-#[async_trait]
 impl AuthHandler for SingleAuthHandler {}
 
-#[async_trait]
 impl AuthMethodHandler for SingleAuthHandler {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        self.0.on_challenge(challenge).await
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move { self.0.on_challenge(challenge).await })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        self.0.on_verification(verification).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move { self.0.on_verification(verification).await })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        self.0.on_info(info).await
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { self.0.on_info(info).await })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        self.0.on_error(error).await
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { self.0.on_error(error).await })
     }
 }
 
@@ -190,54 +211,76 @@ impl Default for AuthHandlerMap {
     }
 }
 
-#[async_trait]
 impl AuthHandler for AuthHandlerMap {
-    async fn on_initialization(
-        &mut self,
+    fn on_initialization<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        let methods = initialization
-            .methods
-            .into_iter()
-            .filter(|method| self.map.contains_key(method.as_str()))
-            .collect();
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            let methods = initialization
+                .methods
+                .into_iter()
+                .filter(|method| self.map.contains_key(method.as_str()))
+                .collect();
 
-        Ok(InitializationResponse { methods })
+            Ok(InitializationResponse { methods })
+        })
     }
 
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        self.set_active_id(start_method.method);
-        Ok(())
+    fn on_start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.set_active_id(start_method.method);
+            Ok(())
+        })
     }
 
-    async fn on_finished(&mut self) -> io::Result<()> {
-        Ok(())
+    fn on_finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Ok(()) })
     }
 }
 
-#[async_trait]
 impl AuthMethodHandler for AuthHandlerMap {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        let handler = self.get_mut_active_method_handler_or_error()?;
-        handler.on_challenge(challenge).await
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            let handler = self.get_mut_active_method_handler_or_error()?;
+            handler.on_challenge(challenge).await
+        })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        let handler = self.get_mut_active_method_handler_or_error()?;
-        handler.on_verification(verification).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            let handler = self.get_mut_active_method_handler_or_error()?;
+            handler.on_verification(verification).await
+        })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        let handler = self.get_mut_active_method_handler_or_error()?;
-        handler.on_info(info).await
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let handler = self.get_mut_active_method_handler_or_error()?;
+            handler.on_info(info).await
+        })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        let handler = self.get_mut_active_method_handler_or_error()?;
-        handler.on_error(error).await
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let handler = self.get_mut_active_method_handler_or_error()?;
+            handler.on_error(error).await
+        })
     }
 }
 
@@ -250,43 +293,53 @@ impl<'a> ProxyAuthHandler<'a> {
     }
 }
 
-#[async_trait]
 impl<'a> AuthHandler for ProxyAuthHandler<'a> {
-    async fn on_initialization(
-        &mut self,
+    fn on_initialization<'b>(
+        &'b mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        Authenticator::initialize(self.0, initialization).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::initialize(self.0, initialization).await })
     }
 
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        Authenticator::start_method(self.0, start_method).await
+    fn on_start_method<'b>(
+        &'b mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::start_method(self.0, start_method).await })
     }
 
-    async fn on_finished(&mut self) -> io::Result<()> {
-        Authenticator::finished(self.0).await
+    fn on_finished<'b>(&'b mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::finished(self.0).await })
     }
 }
 
-#[async_trait]
 impl<'a> AuthMethodHandler for ProxyAuthHandler<'a> {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        Authenticator::challenge(self.0, challenge).await
+    fn on_challenge<'b>(
+        &'b mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::challenge(self.0, challenge).await })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'b>(
+        &'b mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        Authenticator::verify(self.0, verification).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::verify(self.0, verification).await })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        Authenticator::info(self.0, info).await
+    fn on_info<'b>(
+        &'b mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::info(self.0, info).await })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        Authenticator::error(self.0, error).await
+    fn on_error<'b>(
+        &'b mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { Authenticator::error(self.0, error).await })
     }
 }
 
@@ -306,43 +359,53 @@ impl<'a, T: AuthHandler> From<&'a mut T> for DynAuthHandler<'a> {
     }
 }
 
-#[async_trait]
 impl<'a> AuthHandler for DynAuthHandler<'a> {
-    async fn on_initialization(
-        &mut self,
+    fn on_initialization<'b>(
+        &'b mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        self.0.on_initialization(initialization).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_initialization(initialization).await })
     }
 
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        self.0.on_start_method(start_method).await
+    fn on_start_method<'b>(
+        &'b mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_start_method(start_method).await })
     }
 
-    async fn on_finished(&mut self) -> io::Result<()> {
-        self.0.on_finished().await
+    fn on_finished<'b>(&'b mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_finished().await })
     }
 }
 
-#[async_trait]
 impl<'a> AuthMethodHandler for DynAuthHandler<'a> {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        self.0.on_challenge(challenge).await
+    fn on_challenge<'b>(
+        &'b mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_challenge(challenge).await })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'b>(
+        &'b mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        self.0.on_verification(verification).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_verification(verification).await })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        self.0.on_info(info).await
+    fn on_info<'b>(
+        &'b mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_info(info).await })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        self.0.on_error(error).await
+    fn on_error<'b>(
+        &'b mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'b>> {
+        Box::pin(async move { self.0.on_error(error).await })
     }
 }
 
@@ -379,43 +442,53 @@ impl Default for TestAuthHandler {
 }
 
 #[cfg(any(test, feature = "tests"))]
-#[async_trait]
 impl AuthHandler for TestAuthHandler {
-    async fn on_initialization(
-        &mut self,
+    fn on_initialization<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        (self.on_initialization)(initialization)
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.on_initialization)(initialization) })
     }
 
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        (self.on_start_method)(start_method)
+    fn on_start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.on_start_method)(start_method) })
     }
 
-    async fn on_finished(&mut self) -> io::Result<()> {
-        (self.on_finished)()
+    fn on_finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.on_finished)() })
     }
 }
 
 #[cfg(any(test, feature = "tests"))]
-#[async_trait]
 impl AuthMethodHandler for TestAuthHandler {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        (self.on_challenge)(challenge)
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.on_challenge)(challenge) })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        (self.on_verification)(verification)
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.on_verification)(verification) })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        (self.on_info)(info)
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.on_info)(info) })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        (self.on_error)(error)
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.on_error)(error) })
     }
 }

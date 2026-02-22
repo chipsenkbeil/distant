@@ -1,7 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::{fmt, io, mem};
 
-use async_trait::async_trait;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
 use super::Listener;
@@ -45,7 +44,6 @@ impl fmt::Debug for WindowsPipeListener {
     }
 }
 
-#[async_trait]
 impl Listener for WindowsPipeListener {
     type Output = WindowsPipeTransport;
 

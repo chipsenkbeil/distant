@@ -63,7 +63,6 @@ mod tests {
     use std::net::{Ipv6Addr, SocketAddr};
 
     use crate::auth::DummyAuthHandler;
-    use async_trait::async_trait;
     use test_log::test;
 
     use super::*;
@@ -73,7 +72,6 @@ mod tests {
 
     pub struct TestServerHandler;
 
-    #[async_trait]
     impl ServerHandler for TestServerHandler {
         type Request = String;
         type Response = String;

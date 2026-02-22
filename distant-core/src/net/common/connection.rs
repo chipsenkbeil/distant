@@ -1,8 +1,9 @@
+use std::future::Future;
 use std::io;
 use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
 
 use crate::auth::{AuthHandler, Authenticate, Verifier};
-use async_trait::async_trait;
 use log::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -82,7 +83,6 @@ impl<T> Drop for Connection<T> {
     }
 }
 
-#[async_trait]
 impl<T> Reconnectable for Connection<T>
 where
     T: Transport,
@@ -101,81 +101,85 @@ where
     /// For a server, this will fail as unsupported.
     ///
     /// [`reconnect`]: Reconnectable::reconnect
-    async fn reconnect(&mut self) -> io::Result<()> {
-        async fn reconnect_client<T: Transport>(
-            id: ConnectionId,
-            reauth_otp: HeapSecretKey,
-            transport: &mut FramedTransport<T>,
-        ) -> io::Result<(ConnectionId, HeapSecretKey)> {
-            // Re-establish a raw connection
-            debug!("[Conn {id}] Re-establishing connection");
-            Reconnectable::reconnect(transport).await?;
+    fn reconnect<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            async fn reconnect_client<T: Transport>(
+                id: ConnectionId,
+                reauth_otp: HeapSecretKey,
+                transport: &mut FramedTransport<T>,
+            ) -> io::Result<(ConnectionId, HeapSecretKey)> {
+                // Re-establish a raw connection
+                debug!("[Conn {id}] Re-establishing connection");
+                Reconnectable::reconnect(transport).await?;
 
-            // Wait for exactly version bytes (24 where 8 bytes for major, minor, patch)
-            // but with a reconnect we don't actually validate it because we did that
-            // the first time we connected
-            //
-            // NOTE: We do this with the raw transport and not the framed version!
-            debug!("[Conn {id}] Waiting for server version");
-            if transport.as_mut_inner().read_exact(&mut [0u8; 24]).await? != 24 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Wrong version byte len received",
-                ));
+                // Wait for exactly version bytes (24 where 8 bytes for major, minor, patch)
+                // but with a reconnect we don't actually validate it because we did that
+                // the first time we connected
+                //
+                // NOTE: We do this with the raw transport and not the framed version!
+                debug!("[Conn {id}] Waiting for server version");
+                if transport.as_mut_inner().read_exact(&mut [0u8; 24]).await? != 24 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Wrong version byte len received",
+                    ));
+                }
+
+                // Perform a handshake to ensure that the connection is properly established and encrypted
+                debug!("[Conn {id}] Performing handshake");
+                transport.client_handshake().await?;
+
+                // Communicate that we are an existing connection
+                debug!("[Conn {id}] Performing re-authentication");
+                transport
+                    .write_frame_for(&ConnectType::Reconnect {
+                        id,
+                        otp: reauth_otp.unprotected_into_bytes(),
+                    })
+                    .await?;
+
+                // Derive an OTP for reauthentication
+                debug!("[Conn {id}] Deriving future OTP for reauthentication");
+                let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
+
+                Ok((id, reauth_otp))
             }
 
-            // Perform a handshake to ensure that the connection is properly established and encrypted
-            debug!("[Conn {id}] Performing handshake");
-            transport.client_handshake().await?;
-
-            // Communicate that we are an existing connection
-            debug!("[Conn {id}] Performing re-authentication");
-            transport
-                .write_frame_for(&ConnectType::Reconnect {
+            match self {
+                Self::Client {
                     id,
-                    otp: reauth_otp.unprotected_into_bytes(),
-                })
-                .await?;
+                    transport,
+                    reauth_otp,
+                } => {
+                    // Freeze our backup as we don't want the connection logic to alter it, attempt to
+                    // perform the reconnection, and unfreeze our backup regardless of the result
+                    let (new_id, new_reauth_otp) = {
+                        transport.backup.freeze();
+                        let result = reconnect_client(*id, reauth_otp.clone(), transport).await;
+                        transport.backup.unfreeze();
+                        result?
+                    };
 
-            // Derive an OTP for reauthentication
-            debug!("[Conn {id}] Deriving future OTP for reauthentication");
-            let reauth_otp = transport.exchange_keys().await?.into_heap_secret_key();
+                    // Perform synchronization
+                    debug!("[Conn {id}] Synchronizing frame state");
+                    transport.synchronize().await?;
 
-            Ok((id, reauth_otp))
-        }
+                    // Everything has succeeded, so we now will update our id and reauth otp
+                    info!(
+                        "[Conn {id}] Reconnect completed successfully! Assigning new id {new_id}"
+                    );
+                    *id = new_id;
+                    *reauth_otp = new_reauth_otp;
 
-        match self {
-            Self::Client {
-                id,
-                transport,
-                reauth_otp,
-            } => {
-                // Freeze our backup as we don't want the connection logic to alter it, attempt to
-                // perform the reconnection, and unfreeze our backup regardless of the result
-                let (new_id, new_reauth_otp) = {
-                    transport.backup.freeze();
-                    let result = reconnect_client(*id, reauth_otp.clone(), transport).await;
-                    transport.backup.unfreeze();
-                    result?
-                };
+                    Ok(())
+                }
 
-                // Perform synchronization
-                debug!("[Conn {id}] Synchronizing frame state");
-                transport.synchronize().await?;
-
-                // Everything has succeeded, so we now will update our id and reauth otp
-                info!("[Conn {id}] Reconnect completed successfully! Assigning new id {new_id}");
-                *id = new_id;
-                *reauth_otp = new_reauth_otp;
-
-                Ok(())
+                Self::Server { .. } => Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Server connection cannot reconnect",
+                )),
             }
-
-            Self::Server { .. } => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Server connection cannot reconnect",
-            )),
-        }
+        })
     }
 }
 

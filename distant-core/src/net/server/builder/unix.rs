@@ -62,7 +62,6 @@ where
 #[cfg(test)]
 mod tests {
     use crate::auth::DummyAuthHandler;
-    use async_trait::async_trait;
     use tempfile::NamedTempFile;
     use test_log::test;
 
@@ -73,7 +72,6 @@ mod tests {
 
     pub struct TestServerHandler;
 
-    #[async_trait]
     impl ServerHandler for TestServerHandler {
         type Request = String;
         type Response = String;

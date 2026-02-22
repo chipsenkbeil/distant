@@ -10,11 +10,11 @@ pub use unix::*;
 #[cfg(windows)]
 mod windows;
 
+use std::future::Future;
 use std::time::Duration;
 use std::{convert, io};
 
 use crate::auth::AuthHandler;
-use async_trait::async_trait;
 #[cfg(windows)]
 pub use windows::*;
 
@@ -23,15 +23,13 @@ use crate::net::client::{Client, UntypedClient};
 use crate::net::common::{Connection, Transport, Version};
 
 /// Interface that performs the connection to produce a [`Transport`] for use by the [`Client`].
-#[async_trait]
 pub trait Connector {
     /// Type of transport produced by the connection.
     type Transport: Transport + 'static;
 
-    async fn connect(self) -> io::Result<Self::Transport>;
+    fn connect(self) -> impl Future<Output = io::Result<Self::Transport>> + Send;
 }
 
-#[async_trait]
 impl<T: Transport + 'static> Connector for T {
     type Transport = T;
 

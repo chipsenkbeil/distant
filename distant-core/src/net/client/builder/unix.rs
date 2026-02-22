@@ -1,8 +1,6 @@
 use std::io;
 use std::path::PathBuf;
 
-use async_trait::async_trait;
-
 use super::Connector;
 use crate::net::common::UnixSocketTransport;
 
@@ -23,7 +21,6 @@ impl<T: Into<PathBuf>> From<T> for UnixSocketConnector {
     }
 }
 
-#[async_trait]
 impl Connector for UnixSocketConnector {
     type Transport = UnixSocketTransport;
 

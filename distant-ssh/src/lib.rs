@@ -10,13 +10,13 @@ pub struct ReadmeDoctests;
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fs::File;
+use std::future::Future;
 use std::io::{self, BufReader, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
@@ -161,108 +161,125 @@ impl Default for LaunchOpts {
 }
 
 /// Interface to handle various events during ssh authentication
-#[async_trait]
 pub trait SshAuthHandler {
     /// Invoked whenever a series of authentication prompts need to be displayed and responded to,
     /// receiving one event at a time and returning a collection of answers matching the total
     /// prompts provided in the event
-    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>>;
+    fn on_authenticate(
+        &self,
+        event: SshAuthEvent,
+    ) -> impl Future<Output = io::Result<Vec<String>>> + Send;
 
     /// Invoked when the host is unknown for a new ssh connection, receiving the host as a str and
     /// returning true if the host is acceptable or false if the host (and thereby ssh client)
     /// should be declined
-    async fn on_verify_host(&self, host: &str) -> io::Result<bool>;
+    fn on_verify_host<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> impl Future<Output = io::Result<bool>> + Send + 'a;
 
     /// Invoked when receiving a banner from the ssh server, receiving the banner as a str, useful
     /// to display to the user
-    async fn on_banner(&self, text: &str);
+    fn on_banner<'a>(&'a self, text: &'a str) -> impl Future<Output = ()> + Send + 'a;
 
     /// Invoked when an error is encountered, receiving the error as a str
-    async fn on_error(&self, text: &str);
+    fn on_error<'a>(&'a self, text: &'a str) -> impl Future<Output = ()> + Send + 'a;
 }
 
 /// Implementation of [`SshAuthHandler`] that prompts locally for authentication and verification
 /// events
 pub struct LocalSshAuthHandler;
 
-#[async_trait]
 impl SshAuthHandler for LocalSshAuthHandler {
-    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
-        trace!("[local] on_authenticate({event:?})");
-        let task = tokio::task::spawn_blocking(move || {
-            if !event.username.is_empty() {
-                eprintln!("Authentication for {}", event.username);
-            }
-
-            if !event.instructions.is_empty() {
-                eprintln!("{}", event.instructions);
-            }
-
-            let mut answers = Vec::new();
-            for prompt in &event.prompts {
-                // Contains all prompt lines including same line
-                let mut prompt_lines = prompt.prompt.split('\n').collect::<Vec<_>>();
-
-                // Line that is prompt on same line as answer
-                let prompt_line = prompt_lines.pop().unwrap();
-
-                // Go ahead and display all other lines
-                for line in prompt_lines.into_iter() {
-                    eprintln!("{line}");
+    fn on_authenticate(
+        &self,
+        event: SshAuthEvent,
+    ) -> impl Future<Output = io::Result<Vec<String>>> + Send {
+        async move {
+            trace!("[local] on_authenticate({event:?})");
+            let task = tokio::task::spawn_blocking(move || {
+                if !event.username.is_empty() {
+                    eprintln!("Authentication for {}", event.username);
                 }
 
-                let answer = if prompt.echo {
-                    eprint!("{prompt_line}");
-                    std::io::stderr().lock().flush()?;
+                if !event.instructions.is_empty() {
+                    eprintln!("{}", event.instructions);
+                }
 
-                    let mut answer = String::new();
-                    std::io::stdin().read_line(&mut answer)?;
-                    answer
-                } else {
-                    rpassword::prompt_password(prompt_line)?
-                };
+                let mut answers = Vec::new();
+                for prompt in &event.prompts {
+                    // Contains all prompt lines including same line
+                    let mut prompt_lines = prompt.prompt.split('\n').collect::<Vec<_>>();
 
-                answers.push(answer);
-            }
-            Ok(answers)
-        });
+                    // Line that is prompt on same line as answer
+                    let prompt_line = prompt_lines.pop().unwrap();
 
-        task.await.map_err(io::Error::other)?
+                    // Go ahead and display all other lines
+                    for line in prompt_lines.into_iter() {
+                        eprintln!("{line}");
+                    }
+
+                    let answer = if prompt.echo {
+                        eprint!("{prompt_line}");
+                        std::io::stderr().lock().flush()?;
+
+                        let mut answer = String::new();
+                        std::io::stdin().read_line(&mut answer)?;
+                        answer
+                    } else {
+                        rpassword::prompt_password(prompt_line)?
+                    };
+
+                    answers.push(answer);
+                }
+                Ok(answers)
+            });
+
+            task.await.map_err(io::Error::other)?
+        }
     }
 
-    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
-        trace!("[local] on_verify_host({host})");
-        eprintln!("{host}");
-        let task = tokio::task::spawn_blocking(|| {
-            eprint!("Enter [y/N]> ");
-            std::io::stderr().lock().flush()?;
+    fn on_verify_host<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> impl Future<Output = io::Result<bool>> + Send + 'a {
+        async move {
+            trace!("[local] on_verify_host({host})");
+            eprintln!("{host}");
+            let task = tokio::task::spawn_blocking(|| {
+                eprint!("Enter [y/N]> ");
+                std::io::stderr().lock().flush()?;
 
-            let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer)?;
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
 
-            trace!("Verify? Answer = '{answer}'");
-            match answer.as_str().trim() {
-                "y" | "Y" | "yes" | "YES" => Ok(true),
-                _ => Ok(false),
-            }
-        });
+                trace!("Verify? Answer = '{answer}'");
+                match answer.as_str().trim() {
+                    "y" | "Y" | "yes" | "YES" => Ok(true),
+                    _ => Ok(false),
+                }
+            });
 
-        task.await.map_err(io::Error::other)?
+            task.await.map_err(io::Error::other)?
+        }
     }
 
-    async fn on_banner(&self, _text: &str) {
-        trace!("[local] on_banner({_text})");
+    fn on_banner<'a>(&'a self, _text: &'a str) -> impl Future<Output = ()> + Send + 'a {
+        async move {
+            trace!("[local] on_banner({_text})");
+        }
     }
 
-    async fn on_error(&self, _text: &str) {
-        trace!("[local] on_error({_text})");
+    fn on_error<'a>(&'a self, _text: &'a str) -> impl Future<Output = ()> + Send + 'a {
+        async move {
+            trace!("[local] on_error({_text})");
+        }
     }
 }
 
 /// Handles SSH client events from the russh connection, including host key verification.
 struct ClientHandler;
 
-#[async_trait]
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
 

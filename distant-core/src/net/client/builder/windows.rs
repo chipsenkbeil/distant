@@ -1,8 +1,6 @@
 use std::ffi::OsString;
 use std::io;
 
-use async_trait::async_trait;
-
 use super::Connector;
 use crate::net::common::WindowsPipeTransport;
 
@@ -36,7 +34,6 @@ impl<T: Into<OsString>> From<T> for WindowsPipeConnector {
     }
 }
 
-#[async_trait]
 impl Connector for WindowsPipeConnector {
     type Transport = WindowsPipeTransport;
 

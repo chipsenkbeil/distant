@@ -2,7 +2,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
-use async_trait::async_trait;
 use tokio::net::{UnixListener, UnixStream};
 
 use super::Listener;
@@ -76,7 +75,6 @@ impl fmt::Debug for UnixSocketListener {
     }
 }
 
-#[async_trait]
 impl Listener for UnixSocketListener {
     type Output = UnixSocketTransport;
 

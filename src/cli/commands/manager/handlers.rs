@@ -1,10 +1,11 @@
+use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{
     AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
@@ -57,201 +58,203 @@ impl Drop for ManagerLaunchHandler {
     }
 }
 
-#[async_trait]
 impl LaunchHandler for ManagerLaunchHandler {
-    async fn launch(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        _authenticator: &mut dyn Authenticator,
-    ) -> io::Result<Destination> {
-        debug!("Handling launch of {destination} with options '{options}'");
-        let config = ClientLaunchConfig::from(options.clone());
+    fn launch<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        _authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling launch of {destination} with options '{options}'");
+            let config = ClientLaunchConfig::from(options.clone());
 
-        // Get the path to the distant binary, ensuring it exists and is executable
-        let program = which::which(match config.distant.bin {
-            Some(bin) => PathBuf::from(bin),
-            None => std::env::current_exe().unwrap_or_else(|_| {
-                PathBuf::from(if cfg!(windows) {
-                    "distant.exe"
-                } else {
-                    "distant"
-                })
-            }),
-        })
-        .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
+            // Get the path to the distant binary, ensuring it exists and is executable
+            let program = which::which(match config.distant.bin {
+                Some(bin) => PathBuf::from(bin),
+                None => std::env::current_exe().unwrap_or_else(|_| {
+                    PathBuf::from(if cfg!(windows) {
+                        "distant.exe"
+                    } else {
+                        "distant"
+                    })
+                }),
+            })
+            .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
 
-        // Build our command to run
-        let mut args = vec![
-            String::from("server"),
-            String::from("listen"),
-            String::from("--host"),
-            // Disallow `ssh` from being used as the host
-            config
-                .distant
-                .bind_server
-                .as_ref()
-                .filter(|x| !x.is_ssh())
-                .unwrap_or(&BindAddress::Any)
-                .to_string(),
-        ];
+            // Build our command to run
+            let mut args = vec![
+                String::from("server"),
+                String::from("listen"),
+                String::from("--host"),
+                // Disallow `ssh` from being used as the host
+                config
+                    .distant
+                    .bind_server
+                    .as_ref()
+                    .filter(|x| !x.is_ssh())
+                    .unwrap_or(&BindAddress::Any)
+                    .to_string(),
+            ];
 
-        if let Some(port) = destination.port {
-            args.push("--port".to_string());
-            args.push(port.to_string());
-        }
-
-        // Add any options arguments to the command
-        if let Some(options_args) = config.distant.args {
-            let mut distant_args = options_args.as_str();
-
-            // Detect if our args are wrapped in quotes, and strip the outer quotes
-            loop {
-                if let Some(args) = distant_args
-                    .strip_prefix('"')
-                    .and_then(|s| s.strip_suffix('"'))
-                {
-                    distant_args = args;
-                } else if let Some(args) = distant_args
-                    .strip_prefix('\'')
-                    .and_then(|s| s.strip_suffix('\''))
-                {
-                    distant_args = args;
-                } else {
-                    break;
-                }
+            if let Some(port) = destination.port {
+                args.push("--port".to_string());
+                args.push(port.to_string());
             }
 
-            // NOTE: Split arguments based on whether we are running on windows or unix
-            args.extend(if cfg!(windows) {
-                winsplit::split(distant_args)
-            } else {
-                shell_words::split(distant_args)
-                    .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?
-            });
-        }
+            // Add any options arguments to the command
+            if let Some(options_args) = config.distant.args {
+                let mut distant_args = options_args.as_str();
 
-        // Spawn it and wait to get the communicated destination
-        // NOTE: Server will persist until this handler is dropped
-        let mut command = Command::new(program);
-        command
-            .kill_on_drop(true)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        debug!("Launching local server by spawning command: {command:?}");
-        let mut child = command.spawn()?;
-
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-
-        let mut line = String::new();
-        loop {
-            match stdout.read_line(&mut line).await {
-                Ok(n) if n > 0 => {
-                    if let Ok(destination) = line[..n].trim().parse::<Destination>() {
-                        let mut rx = self.shutdown.subscribe();
-
-                        // Wait for the process to complete in a task. We have to do this
-                        // to properly check the exit status, otherwise if the server
-                        // self-terminates then we get a ZOMBIE process! Oh no!
-                        //
-                        // This also replaces the need to store the children within the
-                        // handler itself and instead uses a watch update to kill the
-                        // task in advance in the case where the child hasn't terminated.
-                        tokio::spawn(async move {
-                            // We don't actually care about the result, just that we're done
-                            loop {
-                                tokio::select! {
-                                    result = rx.changed() => {
-                                        if result.is_err() {
-                                            break;
-                                        }
-
-                                        if *rx.borrow_and_update() {
-                                            break;
-                                        }
-                                    }
-                                    _ = child.wait() => {
-                                        break;
-                                    }
-                                }
-                            }
-                        });
-
-                        break Ok(destination);
+                // Detect if our args are wrapped in quotes, and strip the outer quotes
+                loop {
+                    if let Some(args) = distant_args
+                        .strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                    {
+                        distant_args = args;
+                    } else if let Some(args) = distant_args
+                        .strip_prefix('\'')
+                        .and_then(|s| s.strip_suffix('\''))
+                    {
+                        distant_args = args;
                     } else {
-                        line.clear();
+                        break;
                     }
                 }
 
-                // If we reach the point of no more data, then fail with EOF
-                Ok(_) => {
-                    // Ensure that the server is terminated
-                    child.kill().await?;
+                // NOTE: Split arguments based on whether we are running on windows or unix
+                args.extend(if cfg!(windows) {
+                    winsplit::split(distant_args)
+                } else {
+                    shell_words::split(distant_args)
+                        .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?
+                });
+            }
 
-                    // Get any remaining output from the server's stderr to use for clues
-                    let output = &child.wait_with_output().await?;
-                    let stderr = String::from_utf8_lossy(&output.stderr);
+            // Spawn it and wait to get the communicated destination
+            // NOTE: Server will persist until this handler is dropped
+            let mut command = Command::new(program);
+            command
+                .kill_on_drop(true)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
-                    break Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        if stderr.trim().is_empty() {
-                            "Missing output destination".to_string()
+            debug!("Launching local server by spawning command: {command:?}");
+            let mut child = command.spawn()?;
+
+            let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+            let mut line = String::new();
+            loop {
+                match stdout.read_line(&mut line).await {
+                    Ok(n) if n > 0 => {
+                        if let Ok(destination) = line[..n].trim().parse::<Destination>() {
+                            let mut rx = self.shutdown.subscribe();
+
+                            // Wait for the process to complete in a task. We have to do this
+                            // to properly check the exit status, otherwise if the server
+                            // self-terminates then we get a ZOMBIE process! Oh no!
+                            //
+                            // This also replaces the need to store the children within the
+                            // handler itself and instead uses a watch update to kill the
+                            // task in advance in the case where the child hasn't terminated.
+                            tokio::spawn(async move {
+                                // We don't actually care about the result, just that we're done
+                                loop {
+                                    tokio::select! {
+                                        result = rx.changed() => {
+                                            if result.is_err() {
+                                                break;
+                                            }
+
+                                            if *rx.borrow_and_update() {
+                                                break;
+                                            }
+                                        }
+                                        _ = child.wait() => {
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+
+                            break Ok(destination);
                         } else {
-                            format!("Missing output destination due to error: {stderr}")
-                        },
-                    ));
-                }
+                            line.clear();
+                        }
+                    }
 
-                // If we fail to read a line, we assume that the child has completed
-                // and we missed it, so capture the stderr to report issues
-                Err(x) => {
-                    let output = child.wait_with_output().await?;
-                    break Err(io::Error::other(
-                        String::from_utf8(output.stderr).unwrap_or_else(|_| x.to_string()),
-                    ));
+                    // If we reach the point of no more data, then fail with EOF
+                    Ok(_) => {
+                        // Ensure that the server is terminated
+                        child.kill().await?;
+
+                        // Get any remaining output from the server's stderr to use for clues
+                        let output = &child.wait_with_output().await?;
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+
+                        break Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            if stderr.trim().is_empty() {
+                                "Missing output destination".to_string()
+                            } else {
+                                format!("Missing output destination due to error: {stderr}")
+                            },
+                        ));
+                    }
+
+                    // If we fail to read a line, we assume that the child has completed
+                    // and we missed it, so capture the stderr to report issues
+                    Err(x) => {
+                        let output = child.wait_with_output().await?;
+                        break Err(io::Error::other(
+                            String::from_utf8(output.stderr).unwrap_or_else(|_| x.to_string()),
+                        ));
+                    }
                 }
             }
-        }
+        })
     }
 }
 
 /// Supports launching remotely via SSH as defined by `ssh://...`
 pub struct SshLaunchHandler;
 
-#[async_trait]
 impl LaunchHandler for SshLaunchHandler {
-    async fn launch(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<Destination> {
-        debug!("Handling launch of {destination} with options '{options}'");
-        let config = ClientLaunchConfig::from(options.clone());
+    fn launch<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling launch of {destination} with options '{options}'");
+            let config = ClientLaunchConfig::from(options.clone());
 
-        use distant_ssh::LaunchOpts;
-        let mut ssh = load_ssh(destination, options).await?;
-        let handler = AuthClientSshAuthHandler::new(authenticator);
-        let _ = ssh.authenticate(handler).await?;
-        let opts = {
-            let opts = LaunchOpts::default();
-            LaunchOpts {
-                binary: config.distant.bin.unwrap_or(opts.binary),
-                args: config.distant.args.unwrap_or(opts.args),
-                timeout: match options.get("timeout") {
-                    Some(s) => std::time::Duration::from_millis(
-                        s.parse::<u64>().map_err(|_| invalid("timeout"))?,
-                    ),
-                    None => opts.timeout,
-                },
-            }
-        };
+            use distant_ssh::LaunchOpts;
+            let mut ssh = load_ssh(destination, options).await?;
+            let handler = AuthClientSshAuthHandler::new(authenticator);
+            ssh.authenticate(handler).await?;
+            let opts = {
+                let opts = LaunchOpts::default();
+                LaunchOpts {
+                    binary: config.distant.bin.unwrap_or(opts.binary),
+                    args: config.distant.args.unwrap_or(opts.args),
+                    timeout: match options.get("timeout") {
+                        Some(s) => std::time::Duration::from_millis(
+                            s.parse::<u64>().map_err(|_| invalid("timeout"))?,
+                        ),
+                        None => opts.timeout,
+                    },
+                }
+            };
 
-        debug!("Launching via ssh: {opts:?}");
-        ssh.launch(opts).await?.try_to_destination()
+            debug!("Launching via ssh: {opts:?}");
+            ssh.launch(opts).await?.try_to_destination()
+        })
     }
 }
 
@@ -301,75 +304,77 @@ impl DistantConnectHandler {
     }
 }
 
-#[async_trait]
 impl ConnectHandler for DistantConnectHandler {
-    async fn connect(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<UntypedClient> {
-        debug!("Handling connect of {destination} with options '{options}'");
-        let host = destination.host.to_string();
-        let port = destination.port.ok_or_else(|| missing("port"))?;
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling connect of {destination} with options '{options}'");
+            let host = destination.host.to_string();
+            let port = destination.port.ok_or_else(|| missing("port"))?;
 
-        debug!("Looking up host {host} @ port {port}");
-        let mut candidate_ips = tokio::net::lookup_host(format!("{host}:{port}"))
-            .await
-            .map_err(|x| {
-                io::Error::new(
-                    x.kind(),
-                    format!("{host} needs to be resolvable outside of ssh: {x}"),
+            debug!("Looking up host {host} @ port {port}");
+            let mut candidate_ips = tokio::net::lookup_host(format!("{host}:{port}"))
+                .await
+                .map_err(|x| {
+                    io::Error::new(
+                        x.kind(),
+                        format!("{host} needs to be resolvable outside of ssh: {x}"),
+                    )
+                })?
+                .map(|addr| addr.ip())
+                .collect::<Vec<IpAddr>>();
+            candidate_ips.sort_unstable();
+            candidate_ips.dedup();
+            if candidate_ips.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    format!("Unable to resolve {host}:{port}"),
+                ));
+            }
+
+            // For legacy reasons, we need to support a static key being provided
+            // via part of the destination OR an option, and attempt to use it
+            // during authentication if it is provided
+            if let Some(key) = destination
+                .password
+                .as_deref()
+                .or_else(|| options.get("key").map(|s| s.as_str()))
+            {
+                let key = key.parse::<SecretKey32>().map_err(|_| invalid("key"))?;
+                Self::try_connect(
+                    candidate_ips,
+                    port,
+                    SingleAuthHandler::new(StaticKeyAuthMethodHandler::simple(key)),
                 )
-            })?
-            .map(|addr| addr.ip())
-            .collect::<Vec<IpAddr>>();
-        candidate_ips.sort_unstable();
-        candidate_ips.dedup();
-        if candidate_ips.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::AddrNotAvailable,
-                format!("Unable to resolve {host}:{port}"),
-            ));
-        }
-
-        // For legacy reasons, we need to support a static key being provided
-        // via part of the destination OR an option, and attempt to use it
-        // during authentication if it is provided
-        if let Some(key) = destination
-            .password
-            .as_deref()
-            .or_else(|| options.get("key").map(|s| s.as_str()))
-        {
-            let key = key.parse::<SecretKey32>().map_err(|_| invalid("key"))?;
-            Self::try_connect(
-                candidate_ips,
-                port,
-                SingleAuthHandler::new(StaticKeyAuthMethodHandler::simple(key)),
-            )
-            .await
-        } else {
-            Self::try_connect(candidate_ips, port, ProxyAuthHandler::new(authenticator)).await
-        }
+                .await
+            } else {
+                Self::try_connect(candidate_ips, port, ProxyAuthHandler::new(authenticator)).await
+            }
+        })
     }
 }
 
 /// Supports connecting to a remote SSH server as defined by `ssh://...`
 pub struct SshConnectHandler;
 
-#[async_trait]
 impl ConnectHandler for SshConnectHandler {
-    async fn connect(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<UntypedClient> {
-        debug!("Handling connect of {destination} with options '{options}'");
-        let mut ssh = load_ssh(destination, options).await?;
-        let handler = AuthClientSshAuthHandler::new(authenticator);
-        let _ = ssh.authenticate(handler).await?;
-        Ok(ssh.into_distant_client().await?.into_untyped_client())
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling connect of {destination} with options '{options}'");
+            let mut ssh = load_ssh(destination, options).await?;
+            let handler = AuthClientSshAuthHandler::new(authenticator);
+            ssh.authenticate(handler).await?;
+            Ok(ssh.into_distant_client().await?.into_untyped_client())
+        })
     }
 }
 
@@ -381,7 +386,6 @@ impl<'a> AuthClientSshAuthHandler<'a> {
     }
 }
 
-#[async_trait]
 impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     async fn on_authenticate(&self, event: distant_ssh::SshAuthEvent) -> io::Result<Vec<String>> {
         use std::collections::HashMap;
@@ -410,7 +414,7 @@ impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
             .answers)
     }
 
-    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+    async fn on_verify_host<'b>(&'b self, host: &'b str) -> io::Result<bool> {
         Ok(self
             .0
             .lock()
@@ -423,7 +427,7 @@ impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
             .valid)
     }
 
-    async fn on_banner(&self, text: &str) {
+    async fn on_banner<'b>(&'b self, text: &'b str) {
         if let Err(x) = self
             .0
             .lock()
@@ -437,7 +441,7 @@ impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
         }
     }
 
-    async fn on_error(&self, text: &str) {
+    async fn on_error<'b>(&'b self, text: &'b str) {
         if let Err(x) = self
             .0
             .lock()

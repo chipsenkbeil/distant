@@ -1,9 +1,9 @@
+use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::auth::Verifier;
-use async_trait::async_trait;
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -51,7 +51,6 @@ pub struct Server<T> {
 }
 
 /// Interface for a handler that receives connections and requests
-#[async_trait]
 pub trait ServerHandler: Send {
     /// Type of data received by the server
     type Request;
@@ -61,19 +60,22 @@ pub trait ServerHandler: Send {
 
     /// Invoked upon a new connection becoming established.
     #[allow(unused_variables)]
-    async fn on_connect(&self, id: ConnectionId) -> io::Result<()> {
-        Ok(())
+    fn on_connect(&self, id: ConnectionId) -> impl Future<Output = io::Result<()>> + Send {
+        async { Ok(()) }
     }
 
     /// Invoked upon an existing connection getting dropped.
     #[allow(unused_variables)]
-    async fn on_disconnect(&self, id: ConnectionId) -> io::Result<()> {
-        Ok(())
+    fn on_disconnect(&self, id: ConnectionId) -> impl Future<Output = io::Result<()>> + Send {
+        async { Ok(()) }
     }
 
     /// Invoked upon receiving a request from a client. The server should process this
     /// request, which can be found in `ctx`, and send one or more replies in response.
-    async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>);
+    fn on_request(
+        &self,
+        ctx: RequestCtx<Self::Request, Self::Response>,
+    ) -> impl Future<Output = ()> + Send;
 }
 
 impl Server<()> {
@@ -265,7 +267,6 @@ mod tests {
     use std::time::Duration;
 
     use crate::auth::{AuthenticationMethod, DummyAuthHandler, NoneAuthenticationMethod};
-    use async_trait::async_trait;
     use test_log::test;
     use tokio::sync::mpsc;
 
@@ -280,7 +281,6 @@ mod tests {
 
     pub struct TestServerHandler;
 
-    #[async_trait]
     impl ServerHandler for TestServerHandler {
         type Request = u16;
         type Response = String;

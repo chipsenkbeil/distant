@@ -1,46 +1,62 @@
+use std::future::Future;
 use std::io;
-
-use async_trait::async_trait;
+use std::pin::Pin;
 
 use crate::auth::handler::AuthHandler;
 use crate::auth::msg::*;
 
 /// Represents an interface for authenticating with a server.
-#[async_trait]
 pub trait Authenticate {
     /// Performs authentication by leveraging the `handler` for any received challenge.
-    async fn authenticate(&mut self, mut handler: impl AuthHandler) -> io::Result<()>;
+    fn authenticate(
+        &mut self,
+        handler: impl AuthHandler,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// Represents an interface for submitting challenges for authentication.
-#[async_trait]
 pub trait Authenticator: Send {
     /// Issues an initialization notice and returns the response indicating which authentication
     /// methods to pursue
-    async fn initialize(
-        &mut self,
+    fn initialize<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse>;
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>>;
 
     /// Issues a challenge and returns the answers to the `questions` asked.
-    async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse>;
+    fn challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>>;
 
     /// Requests verification of some `kind` and `text`, returning true if passed verification.
-    async fn verify(&mut self, verification: Verification) -> io::Result<VerificationResponse>;
+    fn verify<'a>(
+        &'a mut self,
+        verification: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>>;
 
     /// Reports information with no response expected.
-    async fn info(&mut self, info: Info) -> io::Result<()>;
+    fn info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
     /// Reports an error occurred during authentication, consuming the authenticator since no more
     /// challenges should be issued.
-    async fn error(&mut self, error: Error) -> io::Result<()>;
+    fn error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
     /// Reports that the authentication has started for a specific method.
-    async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()>;
+    fn start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
     /// Reports that the authentication has finished successfully, consuming the authenticator
     /// since no more challenges should be issued.
-    async fn finished(&mut self) -> io::Result<()>;
+    fn finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 }
 
 /// Represents an implementator of [`Authenticator`] used purely for testing purposes.
@@ -75,36 +91,50 @@ impl Default for TestAuthenticator {
 }
 
 #[cfg(any(test, feature = "tests"))]
-#[async_trait]
 impl Authenticator for TestAuthenticator {
-    async fn initialize(
-        &mut self,
+    fn initialize<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        (self.initialize)(initialization)
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.initialize)(initialization) })
     }
 
-    async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        (self.challenge)(challenge)
+    fn challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.challenge)(challenge) })
     }
 
-    async fn verify(&mut self, verification: Verification) -> io::Result<VerificationResponse> {
-        (self.verify)(verification)
+    fn verify<'a>(
+        &'a mut self,
+        verification: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.verify)(verification) })
     }
 
-    async fn info(&mut self, info: Info) -> io::Result<()> {
-        (self.info)(info)
+    fn info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.info)(info) })
     }
 
-    async fn error(&mut self, error: Error) -> io::Result<()> {
-        (self.error)(error)
+    fn error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.error)(error) })
     }
 
-    async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        (self.start_method)(start_method)
+    fn start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.start_method)(start_method) })
     }
 
-    async fn finished(&mut self) -> io::Result<()> {
-        (self.finished)()
+    fn finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.finished)() })
     }
 }

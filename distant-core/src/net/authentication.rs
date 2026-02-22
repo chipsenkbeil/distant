@@ -1,8 +1,9 @@
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 
 use crate::auth::msg::*;
 use crate::auth::{AuthHandler, Authenticate, Authenticator};
-use async_trait::async_trait;
 use log::*;
 
 use crate::net::common::{utils, FramedTransport, Transport};
@@ -59,7 +60,6 @@ macro_rules! next_frame_as {
     }};
 }
 
-#[async_trait]
 impl<T> Authenticate for FramedTransport<T>
 where
     T: Transport,
@@ -109,57 +109,85 @@ where
     }
 }
 
-#[async_trait]
 impl<T> Authenticator for FramedTransport<T>
 where
     T: Transport,
 {
-    async fn initialize(
-        &mut self,
+    fn initialize<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        trace!("Authenticator::initialize({initialization:?})");
-        write_frame!(self, Authentication::Initialization(initialization));
-        let response = next_frame_as!(self, AuthenticationResponse, Initialization);
-        Ok(response)
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::initialize({initialization:?})");
+            write_frame!(self, Authentication::Initialization(initialization));
+            let response = next_frame_as!(self, AuthenticationResponse, Initialization);
+            Ok(response)
+        })
     }
 
-    async fn challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        trace!("Authenticator::challenge({challenge:?})");
-        write_frame!(self, Authentication::Challenge(challenge));
-        let response = next_frame_as!(self, AuthenticationResponse, Challenge);
-        Ok(response)
+    fn challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::challenge({challenge:?})");
+            write_frame!(self, Authentication::Challenge(challenge));
+            let response = next_frame_as!(self, AuthenticationResponse, Challenge);
+            Ok(response)
+        })
     }
 
-    async fn verify(&mut self, verification: Verification) -> io::Result<VerificationResponse> {
-        trace!("Authenticator::verify({verification:?})");
-        write_frame!(self, Authentication::Verification(verification));
-        let response = next_frame_as!(self, AuthenticationResponse, Verification);
-        Ok(response)
+    fn verify<'a>(
+        &'a mut self,
+        verification: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::verify({verification:?})");
+            write_frame!(self, Authentication::Verification(verification));
+            let response = next_frame_as!(self, AuthenticationResponse, Verification);
+            Ok(response)
+        })
     }
 
-    async fn info(&mut self, info: Info) -> io::Result<()> {
-        trace!("Authenticator::info({info:?})");
-        write_frame!(self, Authentication::Info(info));
-        Ok(())
+    fn info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::info({info:?})");
+            write_frame!(self, Authentication::Info(info));
+            Ok(())
+        })
     }
 
-    async fn error(&mut self, error: Error) -> io::Result<()> {
-        trace!("Authenticator::error({error:?})");
-        write_frame!(self, Authentication::Error(error));
-        Ok(())
+    fn error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::error({error:?})");
+            write_frame!(self, Authentication::Error(error));
+            Ok(())
+        })
     }
 
-    async fn start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        trace!("Authenticator::start_method({start_method:?})");
-        write_frame!(self, Authentication::StartMethod(start_method));
-        Ok(())
+    fn start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::start_method({start_method:?})");
+            write_frame!(self, Authentication::StartMethod(start_method));
+            Ok(())
+        })
     }
 
-    async fn finished(&mut self) -> io::Result<()> {
-        trace!("Authenticator::finished()");
-        write_frame!(self, Authentication::Finished);
-        Ok(())
+    fn finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("Authenticator::finished()");
+            write_frame!(self, Authentication::Finished);
+            Ok(())
+        })
     }
 }
 

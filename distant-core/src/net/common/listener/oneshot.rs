@@ -1,6 +1,6 @@
+use std::future::Future;
 use std::io;
 
-use async_trait::async_trait;
 use derive_more::From;
 use tokio::sync::oneshot;
 
@@ -28,21 +28,23 @@ impl<T: Send> OneshotListener<T> {
     }
 }
 
-#[async_trait]
 impl<T: Send> Listener for OneshotListener<T> {
     type Output = T;
 
     /// First call to accept will return listener tied to [`OneshotListener`] while future
     /// calls will yield an error of `io::ErrorKind::ConnectionAborted`
-    async fn accept(&mut self) -> io::Result<Self::Output> {
-        match self.inner.take() {
-            Some(rx) => rx
-                .await
-                .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x)),
-            None => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "Oneshot listener has concluded",
-            )),
+    fn accept(&mut self) -> impl Future<Output = io::Result<Self::Output>> + Send {
+        let inner = self.inner.take();
+        async move {
+            match inner {
+                Some(rx) => rx
+                    .await
+                    .map_err(|x| io::Error::new(io::ErrorKind::BrokenPipe, x)),
+                None => Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "Oneshot listener has concluded",
+                )),
+            }
         }
     }
 }

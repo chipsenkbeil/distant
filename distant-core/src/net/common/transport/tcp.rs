@@ -1,7 +1,6 @@
 use std::net::IpAddr;
 use std::{fmt, io};
 
-use async_trait::async_trait;
 use tokio::net::{TcpStream, ToSocketAddrs};
 
 use super::{Interest, Ready, Reconnectable, Transport};
@@ -46,15 +45,17 @@ impl fmt::Debug for TcpTransport {
     }
 }
 
-#[async_trait]
 impl Reconnectable for TcpTransport {
-    async fn reconnect(&mut self) -> io::Result<()> {
-        self.inner = TcpStream::connect((self.addr, self.port)).await?;
-        Ok(())
+    fn reconnect<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.inner = TcpStream::connect((self.addr, self.port)).await?;
+            Ok(())
+        })
     }
 }
 
-#[async_trait]
 impl Transport for TcpTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.try_read(buf)
@@ -64,8 +65,11 @@ impl Transport for TcpTransport {
         self.inner.try_write(buf)
     }
 
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        self.inner.ready(interest).await
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<Ready>> + Send + 'a>> {
+        Box::pin(async move { self.inner.ready(interest).await })
     }
 }
 

@@ -1,7 +1,7 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 use std::{fmt, io};
-
-use async_trait::async_trait;
 
 mod framed;
 pub use framed::*;
@@ -35,14 +35,12 @@ pub use windows::*;
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 /// Interface representing a connection that is reconnectable.
-#[async_trait]
 pub trait Reconnectable {
     /// Attempts to reconnect an already-established connection.
-    async fn reconnect(&mut self) -> io::Result<()>;
+    fn reconnect<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 }
 
 /// Interface representing a transport of raw bytes into and out of the system.
-#[async_trait]
 pub trait Transport: Reconnectable + fmt::Debug + Send + Sync {
     /// Tries to read data from the transport into the provided buffer, returning how many bytes
     /// were read.
@@ -63,10 +61,12 @@ pub trait Transport: Reconnectable + fmt::Debug + Send + Sync {
 
     /// Waits for the transport to be ready based on the given interest, returning the ready
     /// status.
-    async fn ready(&self, interest: Interest) -> io::Result<Ready>;
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Ready>> + Send + 'a>>;
 }
 
-#[async_trait]
 impl Transport for Box<dyn Transport> {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         Transport::try_read(AsRef::as_ref(self), buf)
@@ -76,28 +76,29 @@ impl Transport for Box<dyn Transport> {
         Transport::try_write(AsRef::as_ref(self), buf)
     }
 
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        Transport::ready(AsRef::as_ref(self), interest).await
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Ready>> + Send + 'a>> {
+        Box::pin(async move { Transport::ready(AsRef::as_ref(self), interest).await })
     }
 }
 
-#[async_trait]
 impl Reconnectable for Box<dyn Transport> {
-    async fn reconnect(&mut self) -> io::Result<()> {
-        Reconnectable::reconnect(AsMut::as_mut(self)).await
+    fn reconnect<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Reconnectable::reconnect(AsMut::as_mut(self)).await })
     }
 }
 
-#[async_trait]
 pub trait TransportExt {
     /// Waits for the transport to be readable to follow up with `try_read`.
-    async fn readable(&self) -> io::Result<()>;
+    fn readable(&self) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Waits for the transport to be writeable to follow up with `try_write`.
-    async fn writeable(&self) -> io::Result<()>;
+    fn writeable(&self) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Waits for the transport to be either readable or writeable.
-    async fn readable_or_writeable(&self) -> io::Result<()>;
+    fn readable_or_writeable(&self) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Reads exactly `n` bytes where `n` is the length of `buf` by continuing to call [`try_read`]
     /// until completed. Calls to [`readable`] are made to ensure the transport is ready. Returns
@@ -105,7 +106,10 @@ pub trait TransportExt {
     ///
     /// [`try_read`]: Transport::try_read
     /// [`readable`]: Transport::readable
-    async fn read_exact(&self, buf: &mut [u8]) -> io::Result<usize>;
+    fn read_exact<'a>(
+        &'a self,
+        buf: &'a mut [u8],
+    ) -> impl Future<Output = io::Result<usize>> + Send + 'a;
 
     /// Reads all bytes until EOF in this source, placing them into `buf`.
     ///
@@ -127,7 +131,10 @@ pub trait TransportExt {
     /// [`Ok(0)`]: Ok
     /// [`try_read`]: Transport::try_read
     /// [`readable`]: Transport::readable
-    async fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize>;
+    fn read_to_end<'a>(
+        &'a self,
+        buf: &'a mut Vec<u8>,
+    ) -> impl Future<Output = io::Result<usize>> + Send + 'a;
 
     /// Reads all bytes until EOF in this source, placing them into `buf`.
     ///
@@ -144,17 +151,19 @@ pub trait TransportExt {
     /// [`try_read`]: Transport::try_read
     /// [`readable`]: Transport::readable
     /// [`read_to_end`]: TransportExt::read_to_end
-    async fn read_to_string(&self, buf: &mut String) -> io::Result<usize>;
+    fn read_to_string<'a>(
+        &'a self,
+        buf: &'a mut String,
+    ) -> impl Future<Output = io::Result<usize>> + Send + 'a;
 
     /// Writes all of `buf` by continuing to call [`try_write`] until completed. Calls to
     /// [`writeable`] are made to ensure the transport is ready.
     ///
     /// [`try_write`]: Transport::try_write
     /// [`writable`]: Transport::writable
-    async fn write_all(&self, buf: &[u8]) -> io::Result<()>;
+    fn write_all<'a>(&'a self, buf: &'a [u8]) -> impl Future<Output = io::Result<()>> + Send + 'a;
 }
 
-#[async_trait]
 impl<T: Transport> TransportExt for T {
     async fn readable(&self) -> io::Result<()> {
         self.ready(Interest::READABLE).await?;
@@ -171,7 +180,7 @@ impl<T: Transport> TransportExt for T {
         Ok(())
     }
 
-    async fn read_exact(&self, buf: &mut [u8]) -> io::Result<usize> {
+    async fn read_exact<'a>(&'a self, buf: &'a mut [u8]) -> io::Result<usize> {
         let mut i = 0;
 
         while i < buf.len() {
@@ -202,7 +211,7 @@ impl<T: Transport> TransportExt for T {
         Ok(i)
     }
 
-    async fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
+    async fn read_to_end<'a>(&'a self, buf: &'a mut Vec<u8>) -> io::Result<usize> {
         let mut i = 0;
         let mut tmp = [0u8; 1024];
 
@@ -228,7 +237,7 @@ impl<T: Transport> TransportExt for T {
         }
     }
 
-    async fn read_to_string(&self, buf: &mut String) -> io::Result<usize> {
+    async fn read_to_string<'a>(&'a self, buf: &'a mut String) -> io::Result<usize> {
         let mut tmp = Vec::new();
         let n = self.read_to_end(&mut tmp).await?;
         buf.push_str(
@@ -237,7 +246,7 @@ impl<T: Transport> TransportExt for T {
         Ok(n)
     }
 
-    async fn write_all(&self, buf: &[u8]) -> io::Result<()> {
+    async fn write_all<'a>(&'a self, buf: &'a [u8]) -> io::Result<()> {
         let mut i = 0;
 
         while i < buf.len() {

@@ -15,7 +15,6 @@ default = []
 
 [dependencies]
 async-once-cell = "0.5.2"
-async-trait = "0.1.68"
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
 dirs = "5.0.1"
 distant-core = { version = "=0.20.0", path = "../distant-core" }

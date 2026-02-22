@@ -1,6 +1,6 @@
+use std::future::Future;
 use std::io;
-
-use async_trait::async_trait;
+use std::pin::Pin;
 
 use crate::auth::authenticator::Authenticator;
 use crate::auth::methods::AuthenticationMethod;
@@ -25,13 +25,15 @@ impl Default for NoneAuthenticationMethod {
     }
 }
 
-#[async_trait]
 impl AuthenticationMethod for NoneAuthenticationMethod {
     fn id(&self) -> &'static str {
         Self::ID
     }
 
-    async fn authenticate(&self, _: &mut dyn Authenticator) -> io::Result<()> {
-        Ok(())
+    fn authenticate<'a>(
+        &'a self,
+        _: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { Ok(()) })
     }
 }

@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{env, io};
 
-use async_trait::async_trait;
 use distant_core::protocol::{
     semver, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, Permissions,
     ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
@@ -37,7 +36,6 @@ impl Api {
     }
 }
 
-#[async_trait]
 impl DistantApi for Api {
     async fn read_file(&self, ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
         debug!(
@@ -300,6 +298,7 @@ impl DistantApi for Api {
         only: Vec<ChangeKind>,
         except: Vec<ChangeKind>,
     ) -> io::Result<()> {
+        let watcher = &self.state.watcher;
         let only = only.into_iter().collect::<ChangeKindSet>();
         let except = except.into_iter().collect::<ChangeKindSet>();
         debug!(
@@ -317,18 +316,16 @@ impl DistantApi for Api {
         )
         .await?;
 
-        self.state.watcher.watch(path).await?;
+        watcher.watch(path).await?;
 
         Ok(())
     }
 
     async fn unwatch(&self, ctx: Ctx, path: PathBuf) -> io::Result<()> {
+        let watcher = &self.state.watcher;
         debug!("[Conn {}] Unwatching {:?}", ctx.connection_id, path);
 
-        self.state
-            .watcher
-            .unwatch(ctx.connection_id, path.as_path())
-            .await?;
+        watcher.unwatch(ctx.connection_id, path.as_path()).await?;
         Ok(())
     }
 
@@ -340,7 +337,7 @@ impl DistantApi for Api {
         match tokio::fs::metadata(path.as_path()).await {
             Ok(_) => Ok(true),
             Err(x) if x.kind() == io::ErrorKind::NotFound => Ok(false),
-            Err(x) => return Err(x),
+            Err(x) => Err(x),
         }
     }
 
@@ -548,18 +545,20 @@ impl DistantApi for Api {
     }
 
     async fn search(&self, ctx: Ctx, query: SearchQuery) -> io::Result<SearchId> {
+        let search = &self.state.search;
         debug!(
             "[Conn {}] Performing search via {query:?}",
             ctx.connection_id,
         );
 
-        self.state.search.start(query, ctx.reply).await
+        search.start(query, ctx.reply).await
     }
 
     async fn cancel_search(&self, ctx: Ctx, id: SearchId) -> io::Result<()> {
+        let search = &self.state.search;
         debug!("[Conn {}] Cancelling search {id}", ctx.connection_id,);
 
-        self.state.search.cancel(id).await
+        search.cancel(id).await
     }
 
     async fn proc_spawn(
@@ -570,35 +569,38 @@ impl DistantApi for Api {
         current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
+        let process = &self.state.process;
         debug!(
             "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, pty: {:?}}}",
             ctx.connection_id, cmd, environment, current_dir, pty
         );
-        self.state
-            .process
+        process
             .spawn(cmd, environment, current_dir, pty, ctx.reply)
             .await
     }
 
     async fn proc_kill(&self, ctx: Ctx, id: ProcessId) -> io::Result<()> {
+        let process = &self.state.process;
         debug!("[Conn {}] Killing process {}", ctx.connection_id, id);
-        self.state.process.kill(id).await
+        process.kill(id).await
     }
 
     async fn proc_stdin(&self, ctx: Ctx, id: ProcessId, data: Vec<u8>) -> io::Result<()> {
+        let process = &self.state.process;
         debug!(
             "[Conn {}] Sending stdin to process {}",
             ctx.connection_id, id
         );
-        self.state.process.send_stdin(id, data).await
+        process.send_stdin(id, data).await
     }
 
     async fn proc_resize_pty(&self, ctx: Ctx, id: ProcessId, size: PtySize) -> io::Result<()> {
+        let process = &self.state.process;
         debug!(
             "[Conn {}] Resizing pty of process {} to {}",
             ctx.connection_id, id, size
         );
-        self.state.process.resize_pty(id, size).await
+        process.resize_pty(id, size).await
     }
 
     async fn system_info(&self, ctx: Ctx) -> io::Result<SystemInfo> {

@@ -1,6 +1,5 @@
 use std::io;
 
-use async_trait::async_trait;
 use distant_core::boxed_connect_handler;
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::Client;
@@ -12,7 +11,6 @@ use test_log::test;
 
 struct TestServerHandler;
 
-#[async_trait]
 impl ServerHandler for TestServerHandler {
     type Request = String;
     type Response = String;

@@ -1,6 +1,5 @@
 use std::io;
 
-use async_trait::async_trait;
 use tokio::net::ToSocketAddrs;
 
 use super::Connector;
@@ -23,7 +22,6 @@ impl<T> From<T> for TcpConnector<T> {
     }
 }
 
-#[async_trait]
 impl<T: ToSocketAddrs + Send> Connector for TcpConnector<T> {
     type Transport = TcpTransport;
 

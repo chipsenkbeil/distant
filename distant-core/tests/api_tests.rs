@@ -1,7 +1,7 @@
+use std::future::Future;
 use std::io;
 use std::path::PathBuf;
 
-use async_trait::async_trait;
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::Client as NetClient;
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
@@ -48,10 +48,13 @@ mod single {
     async fn should_support_single_request_returning_error() {
         struct TestApi;
 
-        #[async_trait]
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
-                Err(io::Error::new(io::ErrorKind::NotFound, "test error"))
+            fn read_file(
+                &self,
+                _ctx: Ctx,
+                _path: PathBuf,
+            ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+                async { Err(io::Error::new(io::ErrorKind::NotFound, "test error")) }
             }
         }
 
@@ -66,10 +69,13 @@ mod single {
     async fn should_support_single_request_returning_success() {
         struct TestApi;
 
-        #[async_trait]
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
-                Ok(b"hello world".to_vec())
+            fn read_file(
+                &self,
+                _ctx: Ctx,
+                _path: PathBuf,
+            ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+                async { Ok(b"hello world".to_vec()) }
             }
         }
 
@@ -93,15 +99,20 @@ mod batch_parallel {
     async fn should_support_multiple_requests_running_in_parallel() {
         struct TestApi;
 
-        #[async_trait]
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "slow" {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
+            fn read_file(
+                &self,
+                _ctx: Ctx,
+                path: PathBuf,
+            ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+                async move {
+                    if path.to_str().unwrap() == "slow" {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
 
-                let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-                Ok((time.as_millis() as u64).to_be_bytes().to_vec())
+                    let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                    Ok((time.as_millis() as u64).to_be_bytes().to_vec())
+                }
             }
         }
 
@@ -145,14 +156,19 @@ mod batch_parallel {
     async fn should_run_all_requests_even_if_some_fail() {
         struct TestApi;
 
-        #[async_trait]
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "fail" {
-                    return Err(io::Error::other("test error"));
-                }
+            fn read_file(
+                &self,
+                _ctx: Ctx,
+                path: PathBuf,
+            ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+                async move {
+                    if path.to_str().unwrap() == "fail" {
+                        return Err(io::Error::other("test error"));
+                    }
 
-                Ok(Vec::new())
+                    Ok(Vec::new())
+                }
             }
         }
 
@@ -209,15 +225,20 @@ mod batch_sequence {
     async fn should_support_multiple_requests_running_in_sequence() {
         struct TestApi;
 
-        #[async_trait]
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "slow" {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
+            fn read_file(
+                &self,
+                _ctx: Ctx,
+                path: PathBuf,
+            ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+                async move {
+                    if path.to_str().unwrap() == "slow" {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
 
-                let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-                Ok((time.as_millis() as u64).to_be_bytes().to_vec())
+                    let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                    Ok((time.as_millis() as u64).to_be_bytes().to_vec())
+                }
             }
         }
 
@@ -264,14 +285,19 @@ mod batch_sequence {
     async fn should_interrupt_any_requests_following_a_failure() {
         struct TestApi;
 
-        #[async_trait]
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "fail" {
-                    return Err(io::Error::other("test error"));
-                }
+            fn read_file(
+                &self,
+                _ctx: Ctx,
+                path: PathBuf,
+            ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
+                async move {
+                    if path.to_str().unwrap() == "fail" {
+                        return Err(io::Error::other("test error"));
+                    }
 
-                Ok(Vec::new())
+                    Ok(Vec::new())
+                }
             }
         }
 

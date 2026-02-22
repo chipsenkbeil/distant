@@ -345,7 +345,7 @@ where
         /// errors received by either shutdown channel are ignored.
         macro_rules! await_or_shutdown {
             ($(@save($id:ident, $tx:ident, $rx:ident))? $future:expr) => {{
-                let mut f = $future;
+                let mut f = std::pin::pin!($future);
 
                 loop {
                     let use_shutdown = match shutdown.try_recv() {
@@ -620,7 +620,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::auth::DummyAuthHandler;
-    use async_trait::async_trait;
     use test_log::test;
 
     use super::*;
@@ -631,7 +630,6 @@ mod tests {
 
     struct TestServerHandler;
 
-    #[async_trait]
     impl ServerHandler for TestServerHandler {
         type Request = u16;
         type Response = String;
@@ -763,7 +761,6 @@ mod tests {
     async fn should_terminate_if_accepting_connection_fails_on_server_handler() {
         struct BadAcceptServerHandler;
 
-        #[async_trait]
         impl ServerHandler for BadAcceptServerHandler {
             type Request = u16;
             type Response = String;
@@ -826,7 +823,6 @@ mod tests {
             fail_ready: Arc<AtomicBool>,
         }
 
-        #[async_trait]
         impl Transport for FakeTransport {
             fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
                 self.inner.try_read(buf)
@@ -836,19 +832,27 @@ mod tests {
                 self.inner.try_write(buf)
             }
 
-            async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-                if self.fail_ready.load(Ordering::Relaxed) {
-                    Err(io::Error::other("targeted ready failure"))
-                } else {
-                    self.inner.ready(interest).await
-                }
+            fn ready<'a>(
+                &'a self,
+                interest: Interest,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<Ready>> + Send + 'a>>
+            {
+                Box::pin(async move {
+                    if self.fail_ready.load(Ordering::Relaxed) {
+                        Err(io::Error::other("targeted ready failure"))
+                    } else {
+                        self.inner.ready(interest).await
+                    }
+                })
             }
         }
 
-        #[async_trait]
         impl Reconnectable for FakeTransport {
-            async fn reconnect(&mut self) -> io::Result<()> {
-                self.inner.reconnect().await
+            fn reconnect<'a>(
+                &'a mut self,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>>
+            {
+                Box::pin(async move { self.inner.reconnect().await })
             }
         }
 
@@ -1053,7 +1057,6 @@ mod tests {
     async fn should_be_able_to_shutdown_while_accepting_connection() {
         struct HangingAcceptServerHandler;
 
-        #[async_trait]
         impl ServerHandler for HangingAcceptServerHandler {
             type Request = ();
             type Response = ();
@@ -1107,7 +1110,6 @@ mod tests {
             tx: mpsc::Sender<()>,
         }
 
-        #[async_trait]
         impl ServerHandler for AcceptServerHandler {
             type Request = ();
             type Response = ();

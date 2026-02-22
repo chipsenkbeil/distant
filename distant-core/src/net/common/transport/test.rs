@@ -1,7 +1,5 @@
 use std::{fmt, io};
 
-use async_trait::async_trait;
-
 use super::{Interest, Ready, Reconnectable, Transport};
 
 pub type TryReadFn = Box<dyn Fn(&mut [u8]) -> io::Result<usize> + Send + Sync>;
@@ -33,14 +31,14 @@ impl fmt::Debug for TestTransport {
     }
 }
 
-#[async_trait]
 impl Reconnectable for TestTransport {
-    async fn reconnect(&mut self) -> io::Result<()> {
-        (self.f_reconnect)()
+    fn reconnect<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.f_reconnect)() })
     }
 }
 
-#[async_trait]
 impl Transport for TestTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         (self.f_try_read)(buf)
@@ -50,7 +48,10 @@ impl Transport for TestTransport {
         (self.f_try_write)(buf)
     }
 
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        (self.f_ready)(interest)
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<Ready>> + Send + 'a>> {
+        Box::pin(async move { (self.f_ready)(interest) })
     }
 }

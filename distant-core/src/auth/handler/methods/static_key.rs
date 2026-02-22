@@ -1,7 +1,8 @@
 use std::fmt::Display;
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 
-use async_trait::async_trait;
 use log::*;
 
 use crate::auth::handler::AuthMethodHandler;
@@ -34,26 +35,40 @@ impl<K> StaticKeyAuthMethodHandler<K> {
         Self::new(key, {
             struct __AuthMethodHandler;
 
-            #[async_trait]
             impl AuthMethodHandler for __AuthMethodHandler {
                 #[allow(clippy::diverging_sub_expression)]
-                async fn on_challenge(&mut self, _: Challenge) -> io::Result<ChallengeResponse> {
-                    unreachable!("on_challenge should be handled by StaticKeyAuthMethodHandler");
+                fn on_challenge<'a>(
+                    &'a mut self,
+                    _: Challenge,
+                ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>>
+                {
+                    Box::pin(async move {
+                        unreachable!(
+                            "on_challenge should be handled by StaticKeyAuthMethodHandler"
+                        );
+                    })
                 }
 
-                async fn on_verification(
-                    &mut self,
+                fn on_verification<'a>(
+                    &'a mut self,
                     _: Verification,
-                ) -> io::Result<VerificationResponse> {
-                    Ok(VerificationResponse { valid: true })
+                ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>>
+                {
+                    Box::pin(async move { Ok(VerificationResponse { valid: true }) })
                 }
 
-                async fn on_info(&mut self, _: Info) -> io::Result<()> {
-                    Ok(())
+                fn on_info<'a>(
+                    &'a mut self,
+                    _: Info,
+                ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+                    Box::pin(async move { Ok(()) })
                 }
 
-                async fn on_error(&mut self, _: Error) -> io::Result<()> {
-                    Ok(())
+                fn on_error<'a>(
+                    &'a mut self,
+                    _: Error,
+                ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+                    Box::pin(async move { Ok(()) })
                 }
             }
 
@@ -62,43 +77,59 @@ impl<K> StaticKeyAuthMethodHandler<K> {
     }
 }
 
-#[async_trait]
 impl<K> AuthMethodHandler for StaticKeyAuthMethodHandler<K>
 where
     K: Display + Send,
 {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        trace!("on_challenge({challenge:?})");
-        let mut answers = Vec::new();
-        for question in challenge.questions.iter() {
-            // Only challenges with a "key" label are allowed, all else will fail
-            if question.label != "key" {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Only 'key' challenges are supported",
-                ));
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_challenge({challenge:?})");
+            let mut answers = Vec::new();
+            for question in challenge.questions.iter() {
+                // Only challenges with a "key" label are allowed, all else will fail
+                if question.label != "key" {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Only 'key' challenges are supported",
+                    ));
+                }
+                answers.push(self.key.to_string());
             }
-            answers.push(self.key.to_string());
-        }
-        Ok(ChallengeResponse { answers })
+            Ok(ChallengeResponse { answers })
+        })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        trace!("on_verify({verification:?})");
-        self.handler.on_verification(verification).await
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_verify({verification:?})");
+            self.handler.on_verification(verification).await
+        })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        trace!("on_info({info:?})");
-        self.handler.on_info(info).await
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_info({info:?})");
+            self.handler.on_info(info).await
+        })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        trace!("on_error({error:?})");
-        self.handler.on_error(error).await
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_error({error:?})");
+            self.handler.on_error(error).await
+        })
     }
 }
 

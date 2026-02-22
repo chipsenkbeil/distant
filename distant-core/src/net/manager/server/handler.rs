@@ -1,8 +1,8 @@
 use std::future::Future;
 use std::io;
+use std::pin::Pin;
 
 use crate::auth::Authenticator;
-use async_trait::async_trait;
 
 use crate::net::client::UntypedClient;
 use crate::net::common::{Destination, Map};
@@ -18,29 +18,27 @@ pub type BoxedConnectHandler = Box<dyn ConnectHandler>;
 /// * `authenticator` is provided to support a challenge-based authentication while launching.
 ///
 /// Returns a [`Destination`] representing the new origin to use if a connection is desired.
-#[async_trait]
 pub trait LaunchHandler: Send + Sync {
-    async fn launch(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<Destination>;
+    fn launch<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>>;
 }
 
-#[async_trait]
 impl<F, R> LaunchHandler for F
 where
     F: Fn(&Destination, &Map, &mut dyn Authenticator) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<Destination>> + Send + 'static,
 {
-    async fn launch(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<Destination> {
-        self(destination, options, authenticator).await
+    fn launch<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
+        Box::pin(self(destination, options, authenticator))
     }
 }
 
@@ -88,29 +86,27 @@ macro_rules! boxed_launch_handler {
 /// * `authenticator` is provided to support a challenge-based authentication while connecting.
 ///
 /// Returns an [`UntypedClient`] representing the connection.
-#[async_trait]
 pub trait ConnectHandler: Send + Sync {
-    async fn connect(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<UntypedClient>;
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>>;
 }
 
-#[async_trait]
 impl<F, R> ConnectHandler for F
 where
     F: Fn(&Destination, &Map, &mut dyn Authenticator) -> R + Send + Sync + 'static,
     R: Future<Output = io::Result<UntypedClient>> + Send + 'static,
 {
-    async fn connect(
-        &self,
-        destination: &Destination,
-        options: &Map,
-        authenticator: &mut dyn Authenticator,
-    ) -> io::Result<UntypedClient> {
-        self(destination, options, authenticator).await
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(self(destination, options, authenticator))
     }
 }
 

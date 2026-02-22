@@ -1,7 +1,5 @@
 use std::io;
 
-use async_trait::async_trait;
-
 use super::Listener;
 
 /// Represents a [`Listener`] that wraps a different [`Listener`],
@@ -25,7 +23,6 @@ where
     }
 }
 
-#[async_trait]
 impl<L, F, T, U> Listener for MappedListener<L, F, T, U>
 where
     L: Listener<Output = T>,

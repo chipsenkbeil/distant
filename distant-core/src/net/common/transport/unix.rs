@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
-use async_trait::async_trait;
 use tokio::net::UnixStream;
 
 use super::{Interest, Ready, Reconnectable, Transport};
@@ -36,15 +35,17 @@ impl fmt::Debug for UnixSocketTransport {
     }
 }
 
-#[async_trait]
 impl Reconnectable for UnixSocketTransport {
-    async fn reconnect(&mut self) -> io::Result<()> {
-        self.inner = UnixStream::connect(self.path.as_path()).await?;
-        Ok(())
+    fn reconnect<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.inner = UnixStream::connect(self.path.as_path()).await?;
+            Ok(())
+        })
     }
 }
 
-#[async_trait]
 impl Transport for UnixSocketTransport {
     fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.try_read(buf)
@@ -54,8 +55,11 @@ impl Transport for UnixSocketTransport {
         self.inner.try_write(buf)
     }
 
-    async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        self.inner.ready(interest).await
+    fn ready<'a>(
+        &'a self,
+        interest: Interest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<Ready>> + Send + 'a>> {
+        Box::pin(async move { self.inner.ready(interest).await })
     }
 }
 

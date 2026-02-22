@@ -1,7 +1,7 @@
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::str::FromStr;
-
-use async_trait::async_trait;
 
 use crate::auth::authenticator::Authenticator;
 use crate::auth::methods::AuthenticationMethod;
@@ -22,7 +22,6 @@ impl<T> StaticKeyAuthenticationMethod<T> {
     }
 }
 
-#[async_trait]
 impl<T> AuthenticationMethod for StaticKeyAuthenticationMethod<T>
 where
     T: FromStr + PartialEq + Send + Sync,
@@ -31,26 +30,31 @@ where
         Self::ID
     }
 
-    async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()> {
-        let response = authenticator
-            .challenge(Challenge {
-                questions: vec![Question {
-                    label: "key".to_string(),
-                    text: "Provide a key: ".to_string(),
+    fn authenticate<'a>(
+        &'a self,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let response = authenticator
+                .challenge(Challenge {
+                    questions: vec![Question {
+                        label: "key".to_string(),
+                        text: "Provide a key: ".to_string(),
+                        options: Default::default(),
+                    }],
                     options: Default::default(),
-                }],
-                options: Default::default(),
-            })
-            .await?;
+                })
+                .await?;
 
-        if response.answers.is_empty() {
-            return Err(Error::non_fatal("missing answer").into_io_permission_denied());
-        }
+            if response.answers.is_empty() {
+                return Err(Error::non_fatal("missing answer").into_io_permission_denied());
+            }
 
-        match response.answers.into_iter().next().unwrap().parse::<T>() {
-            Ok(key) if key == self.key => Ok(()),
-            _ => Err(Error::non_fatal("answer does not match key").into_io_permission_denied()),
-        }
+            match response.answers.into_iter().next().unwrap().parse::<T>() {
+                Ok(key) if key == self.key => Ok(()),
+                _ => Err(Error::non_fatal("answer does not match key").into_io_permission_denied()),
+            }
+        })
     }
 }
 

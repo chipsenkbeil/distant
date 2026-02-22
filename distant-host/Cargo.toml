@@ -20,7 +20,6 @@ macos-fsevent = ["notify/macos_fsevent"]
 macos-kqueue = ["notify/macos_kqueue"]
 
 [dependencies]
-async-trait = "0.1.68"
 distant-core = { version = "=0.20.0", path = "../distant-core" }
 grep = "0.2.12"
 ignore = "0.4.20"

@@ -1098,7 +1098,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "assert_fs",
- "async-trait",
  "clap",
  "clap_complete",
  "config",
@@ -1143,7 +1142,6 @@ dependencies = [
 name = "distant-core"
 version = "0.20.0"
 dependencies = [
- "async-trait",
  "bitflags 2.10.0",
  "bytes",
  "chacha20poly1305",
@@ -1180,7 +1178,6 @@ name = "distant-host"
 version = "0.20.0"
 dependencies = [
  "assert_fs",
- "async-trait",
  "distant-core",
  "env_logger",
  "grep",
@@ -1210,7 +1207,6 @@ dependencies = [
  "anyhow",
  "assert_fs",
  "async-once-cell",
- "async-trait",
  "derive_more",
  "dirs 5.0.1",
  "distant-core",

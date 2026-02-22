@@ -1,7 +1,6 @@
 use std::net::IpAddr;
 use std::{fmt, io};
 
-use async_trait::async_trait;
 use tokio::net::TcpListener as TokioTcpListener;
 
 use super::Listener;
@@ -51,7 +50,6 @@ impl fmt::Debug for TcpListener {
     }
 }
 
-#[async_trait]
 impl Listener for TcpListener {
     type Output = TcpTransport;
 

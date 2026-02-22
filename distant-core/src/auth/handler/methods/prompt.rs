@@ -1,6 +1,7 @@
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 
-use async_trait::async_trait;
 use log::*;
 
 use crate::auth::handler::AuthMethodHandler;
@@ -24,67 +25,83 @@ impl<T, U> PromptAuthMethodHandler<T, U> {
     }
 }
 
-#[async_trait]
 impl<T, U> AuthMethodHandler for PromptAuthMethodHandler<T, U>
 where
     T: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
     U: Fn(&str) -> io::Result<String> + Send + Sync + 'static,
 {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        trace!("on_challenge({challenge:?})");
-        let mut answers = Vec::new();
-        for question in challenge.questions.iter() {
-            // Contains all prompt lines including same line
-            let mut lines = question.text.split('\n').collect::<Vec<_>>();
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_challenge({challenge:?})");
+            let mut answers = Vec::new();
+            for question in challenge.questions.iter() {
+                // Contains all prompt lines including same line
+                let mut lines = question.text.split('\n').collect::<Vec<_>>();
 
-            // Line that is prompt on same line as answer
-            let line = lines.pop().unwrap();
+                // Line that is prompt on same line as answer
+                let line = lines.pop().unwrap();
 
-            // Go ahead and display all other lines
-            for line in lines.into_iter() {
-                eprintln!("{line}");
+                // Go ahead and display all other lines
+                for line in lines.into_iter() {
+                    eprintln!("{line}");
+                }
+
+                // Get an answer from user input, or use a blank string as an answer
+                // if we fail to get input from the user
+                let answer = (self.password_prompt)(line).unwrap_or_default();
+
+                answers.push(answer);
             }
-
-            // Get an answer from user input, or use a blank string as an answer
-            // if we fail to get input from the user
-            let answer = (self.password_prompt)(line).unwrap_or_default();
-
-            answers.push(answer);
-        }
-        Ok(ChallengeResponse { answers })
+            Ok(ChallengeResponse { answers })
+        })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        trace!("on_verify({verification:?})");
-        match verification.kind {
-            VerificationKind::Host => {
-                eprintln!("{}", verification.text);
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_verify({verification:?})");
+            match verification.kind {
+                VerificationKind::Host => {
+                    eprintln!("{}", verification.text);
 
-                let answer = (self.text_prompt)("Enter [y/N]> ")?;
-                trace!("Verify? Answer = '{answer}'");
-                Ok(VerificationResponse {
-                    valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
-                })
+                    let answer = (self.text_prompt)("Enter [y/N]> ")?;
+                    trace!("Verify? Answer = '{answer}'");
+                    Ok(VerificationResponse {
+                        valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
+                    })
+                }
+                x => {
+                    error!("Unsupported verify kind: {x}");
+                    Ok(VerificationResponse { valid: false })
+                }
             }
-            x => {
-                error!("Unsupported verify kind: {x}");
-                Ok(VerificationResponse { valid: false })
-            }
-        }
+        })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        trace!("on_info({info:?})");
-        println!("{}", info.text);
-        Ok(())
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_info({info:?})");
+            println!("{}", info.text);
+            Ok(())
+        })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        trace!("on_error({error:?})");
-        eprintln!("{}: {}", error.kind, error.text);
-        Ok(())
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            trace!("on_error({error:?})");
+            eprintln!("{}: {}", error.kind, error.text);
+            Ok(())
+        })
     }
 }

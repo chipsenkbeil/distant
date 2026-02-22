@@ -1,27 +1,28 @@
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 
-use async_trait::async_trait;
 use dyn_clone::DynClone;
 use tokio::sync::{mpsc, oneshot};
 
 /// Interface representing functionality to shut down an active client.
-#[async_trait]
 pub trait Shutdown: DynClone + Send + Sync {
     /// Attempts to shutdown the client.
-    async fn shutdown(&self) -> io::Result<()>;
+    fn shutdown<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 }
 
-#[async_trait]
 impl Shutdown for mpsc::Sender<oneshot::Sender<io::Result<()>>> {
-    async fn shutdown(&self) -> io::Result<()> {
-        let (tx, rx) = oneshot::channel();
-        match self.send(tx).await {
-            Ok(_) => match rx.await {
-                Ok(x) => x,
+    fn shutdown<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            match self.send(tx).await {
+                Ok(_) => match rx.await {
+                    Ok(x) => x,
+                    Err(_) => Err(already_shutdown()),
+                },
                 Err(_) => Err(already_shutdown()),
-            },
-            Err(_) => Err(already_shutdown()),
-        }
+            }
+        })
     }
 }
 

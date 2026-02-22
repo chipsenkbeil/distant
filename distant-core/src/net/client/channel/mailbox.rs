@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::{io, time};
 
@@ -155,18 +154,18 @@ pub enum MailboxTryNextError {
     Closed,
 }
 
-#[async_trait]
 trait MailboxReceiver: Send + Sync {
     type Output;
 
     fn try_recv(&mut self) -> Result<Self::Output, MailboxTryNextError>;
 
-    async fn recv(&mut self) -> Option<Self::Output>;
+    fn recv<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Self::Output>> + Send + 'a>>;
 
     fn close(&mut self);
 }
 
-#[async_trait]
 impl<T: Send> MailboxReceiver for mpsc::Receiver<T> {
     type Output = T;
 
@@ -178,8 +177,11 @@ impl<T: Send> MailboxReceiver for mpsc::Receiver<T> {
         }
     }
 
-    async fn recv(&mut self) -> Option<Self::Output> {
-        mpsc::Receiver::recv(self).await
+    fn recv<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Self::Output>> + Send + 'a>>
+    {
+        Box::pin(async move { mpsc::Receiver::recv(self).await })
     }
 
     fn close(&mut self) {
@@ -192,7 +194,6 @@ struct MappedMailboxReceiver<T, U> {
     f: Box<dyn Fn(T) -> U + Send + Sync>,
 }
 
-#[async_trait]
 impl<T: Send, U: Send> MailboxReceiver for MappedMailboxReceiver<T, U> {
     type Output = U;
 
@@ -203,9 +204,14 @@ impl<T: Send, U: Send> MailboxReceiver for MappedMailboxReceiver<T, U> {
         }
     }
 
-    async fn recv(&mut self) -> Option<Self::Output> {
-        let value = self.rx.recv().await?;
-        Some((self.f)(value))
+    fn recv<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Self::Output>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let value = self.rx.recv().await?;
+            Some((self.f)(value))
+        })
     }
 
     fn close(&mut self) {
@@ -218,7 +224,6 @@ struct MappedOptMailboxReceiver<T, U> {
     f: Box<dyn Fn(T) -> Option<U> + Send + Sync>,
 }
 
-#[async_trait]
 impl<T: Send, U: Send> MailboxReceiver for MappedOptMailboxReceiver<T, U> {
     type Output = U;
 
@@ -232,15 +237,20 @@ impl<T: Send, U: Send> MailboxReceiver for MappedOptMailboxReceiver<T, U> {
         }
     }
 
-    async fn recv(&mut self) -> Option<Self::Output> {
-        // Continually receive a new value and convert it to Option<U>
-        // until Option<U> == Some(U) or we receive None from our inner receiver
-        loop {
-            let value = self.rx.recv().await?;
-            if let Some(x) = (self.f)(value) {
-                return Some(x);
+    fn recv<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Self::Output>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // Continually receive a new value and convert it to Option<U>
+            // until Option<U> == Some(U) or we receive None from our inner receiver
+            loop {
+                let value = self.rx.recv().await?;
+                if let Some(x) = (self.f)(value) {
+                    return Some(x);
+                }
             }
-        }
+        })
     }
 
     fn close(&mut self) {

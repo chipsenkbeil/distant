@@ -3,7 +3,6 @@ use std::io;
 use std::sync::Arc;
 
 use crate::auth::msg::AuthenticationResponse;
-use async_trait::async_trait;
 use log::*;
 use tokio::sync::{oneshot, RwLock};
 
@@ -200,7 +199,6 @@ impl ManagerServer {
     }
 }
 
-#[async_trait]
 impl ServerHandler for ManagerServer {
     type Request = ManagerRequest;
     type Response = ManagerResponse;

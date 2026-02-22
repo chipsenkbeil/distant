@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::str::FromStr;
 
-use async_trait::async_trait;
 use log::*;
 
 use crate::auth::authenticator::Authenticator;
@@ -108,18 +109,22 @@ impl From<Vec<Box<dyn AuthenticationMethod>>> for Verifier {
 }
 
 /// Represents an interface to authenticate using some method
-#[async_trait]
 pub trait AuthenticationMethod: Send + Sync {
     /// Returns a unique id to distinguish the method from other methods
     fn id(&self) -> &'static str;
 
     /// Performs authentication using the `authenticator` to submit challenges and other
     /// information based on the authentication method
-    async fn authenticate(&self, authenticator: &mut dyn Authenticator) -> io::Result<()>;
+    fn authenticate<'a>(
+        &'a self,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 }
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::mpsc;
 
     use test_log::test;
@@ -129,27 +134,31 @@ mod tests {
 
     struct SuccessAuthenticationMethod;
 
-    #[async_trait]
     impl AuthenticationMethod for SuccessAuthenticationMethod {
         fn id(&self) -> &'static str {
             "success"
         }
 
-        async fn authenticate(&self, _: &mut dyn Authenticator) -> io::Result<()> {
-            Ok(())
+        fn authenticate<'a>(
+            &'a self,
+            _: &'a mut dyn Authenticator,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+            Box::pin(async move { Ok(()) })
         }
     }
 
     struct FailAuthenticationMethod;
 
-    #[async_trait]
     impl AuthenticationMethod for FailAuthenticationMethod {
         fn id(&self) -> &'static str {
             "fail"
         }
 
-        async fn authenticate(&self, _: &mut dyn Authenticator) -> io::Result<()> {
-            Err(io::Error::from(io::ErrorKind::Other))
+        fn authenticate<'a>(
+            &'a self,
+            _: &'a mut dyn Authenticator,
+        ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+            Box::pin(async move { Err(io::Error::from(io::ErrorKind::Other)) })
         }
     }
 
