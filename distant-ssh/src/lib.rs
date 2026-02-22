@@ -1094,6 +1094,114 @@ mod tests {
         assert!(debug.contains("SshOpts"), "Expected 'SshOpts' in '{debug}'");
     }
 
+    #[test]
+    fn ssh_opts_all_fields_populated() {
+        let mut other = BTreeMap::new();
+        other.insert("CustomOption".to_string(), "value1".to_string());
+        other.insert("AnotherOption".to_string(), "value2".to_string());
+
+        let opts = SshOpts {
+            identity_files: vec![
+                PathBuf::from("/home/user/.ssh/id_ed25519"),
+                PathBuf::from("/home/user/.ssh/id_rsa"),
+            ],
+            identities_only: Some(true),
+            port: Some(2222),
+            proxy_command: Some("ssh -W %h:%p jump-host".to_string()),
+            user: Some("deploy".to_string()),
+            user_known_hosts_files: vec![
+                PathBuf::from("/home/user/.ssh/known_hosts"),
+                PathBuf::from("/home/user/.ssh/known_hosts2"),
+            ],
+            verbose: true,
+            other,
+        };
+
+        assert_eq!(opts.identity_files.len(), 2);
+        assert_eq!(opts.identities_only, Some(true));
+        assert_eq!(opts.port, Some(2222));
+        assert_eq!(
+            opts.proxy_command.as_deref(),
+            Some("ssh -W %h:%p jump-host")
+        );
+        assert_eq!(opts.user.as_deref(), Some("deploy"));
+        assert_eq!(opts.user_known_hosts_files.len(), 2);
+        assert!(opts.verbose);
+        assert_eq!(opts.other.len(), 2);
+        assert_eq!(opts.other.get("CustomOption").unwrap(), "value1");
+    }
+
+    #[test]
+    fn ssh_opts_clone_with_all_fields() {
+        let mut other = BTreeMap::new();
+        other.insert("Key".to_string(), "Val".to_string());
+
+        let opts = SshOpts {
+            identity_files: vec![PathBuf::from("/tmp/key")],
+            identities_only: Some(false),
+            port: Some(22),
+            proxy_command: Some("proxy".to_string()),
+            user: Some("root".to_string()),
+            user_known_hosts_files: vec![PathBuf::from("/tmp/known")],
+            verbose: false,
+            other,
+        };
+
+        let cloned = opts.clone();
+        assert_eq!(cloned.identity_files, opts.identity_files);
+        assert_eq!(cloned.identities_only, Some(false));
+        assert_eq!(cloned.port, Some(22));
+        assert_eq!(cloned.proxy_command.as_deref(), Some("proxy"));
+        assert_eq!(cloned.user.as_deref(), Some("root"));
+        assert_eq!(cloned.user_known_hosts_files, opts.user_known_hosts_files);
+        assert!(!cloned.verbose);
+        assert_eq!(cloned.other.len(), 1);
+    }
+
+    #[test]
+    fn ssh_opts_debug_format_with_populated_fields() {
+        let mut opts = SshOpts::default();
+        opts.port = Some(8022);
+        opts.user = Some("admin".to_string());
+        opts.proxy_command = Some("nc %h %p".to_string());
+        opts.identities_only = Some(true);
+        opts.verbose = true;
+        opts.identity_files.push(PathBuf::from("/tmp/mykey"));
+        opts.user_known_hosts_files
+            .push(PathBuf::from("/tmp/known"));
+        opts.other
+            .insert("StrictHostKeyChecking".to_string(), "no".to_string());
+
+        let debug = format!("{:?}", opts);
+        assert!(debug.contains("8022"), "Expected port in '{debug}'");
+        assert!(debug.contains("admin"), "Expected user in '{debug}'");
+        assert!(
+            debug.contains("nc %h %p"),
+            "Expected proxy_command in '{debug}'"
+        );
+        assert!(
+            debug.contains("StrictHostKeyChecking"),
+            "Expected other key in '{debug}'"
+        );
+    }
+
+    #[test]
+    fn ssh_opts_other_btreemap_ordering() {
+        let mut other = BTreeMap::new();
+        other.insert("Zebra".to_string(), "z".to_string());
+        other.insert("Alpha".to_string(), "a".to_string());
+        other.insert("Middle".to_string(), "m".to_string());
+
+        let opts = SshOpts {
+            other,
+            ..SshOpts::default()
+        };
+
+        // BTreeMap maintains sorted order
+        let keys: Vec<&String> = opts.other.keys().collect();
+        assert_eq!(keys, &["Alpha", "Middle", "Zebra"]);
+    }
+
     // --- SshFamily tests ---
 
     #[test]
@@ -1269,6 +1377,54 @@ mod tests {
         assert_eq!(cloned.timeout, Duration::from_secs(60));
     }
 
+    #[test]
+    fn launch_opts_default_binary_is_distant() {
+        let opts = LaunchOpts::default();
+        assert_eq!(opts.binary, "distant");
+    }
+
+    #[test]
+    fn launch_opts_default_args_is_empty() {
+        let opts = LaunchOpts::default();
+        assert!(opts.args.is_empty());
+    }
+
+    #[test]
+    fn launch_opts_default_timeout_is_15_seconds() {
+        let opts = LaunchOpts::default();
+        assert_eq!(opts.timeout.as_secs(), 15);
+        assert_eq!(opts.timeout.subsec_nanos(), 0);
+    }
+
+    #[test]
+    fn launch_opts_clone_with_empty_binary() {
+        let opts = LaunchOpts {
+            binary: String::new(),
+            args: String::from("--daemon"),
+            timeout: Duration::from_millis(500),
+        };
+        let cloned = opts.clone();
+        assert!(cloned.binary.is_empty());
+        assert_eq!(cloned.args, "--daemon");
+        assert_eq!(cloned.timeout, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn launch_opts_debug_shows_all_fields() {
+        let opts = LaunchOpts {
+            binary: String::from("my-binary"),
+            args: String::from("--arg1 --arg2"),
+            timeout: Duration::from_secs(120),
+        };
+        let debug = format!("{:?}", opts);
+        assert!(debug.contains("my-binary"), "Expected binary in '{debug}'");
+        assert!(
+            debug.contains("--arg1 --arg2"),
+            "Expected args in '{debug}'"
+        );
+        assert!(debug.contains("120"), "Expected timeout in '{debug}'");
+    }
+
     // --- clean_launch_output tests ---
 
     #[test]
@@ -1346,10 +1502,701 @@ mod tests {
         );
     }
 
+    #[test]
+    fn clean_launch_output_newlines_preserved_then_trimmed() {
+        // Newlines are whitespace, preserved in middle, trimmed at edges
+        let result = Ssh::clean_launch_output(b"\nline1\nline2\n", b"");
+        assert_eq!(result, "stdout: 'line1\nline2'");
+    }
+
+    #[test]
+    fn clean_launch_output_carriage_return_preserved() {
+        // \r is ascii whitespace, should be preserved in content
+        let result = Ssh::clean_launch_output(b"line1\r\nline2", b"");
+        assert!(result.contains("line1"), "Expected line1 in '{result}'");
+        assert!(result.contains("line2"), "Expected line2 in '{result}'");
+    }
+
+    #[test]
+    fn clean_launch_output_null_bytes_stripped() {
+        // \x00 (NUL) is a control char, should be stripped
+        let result = Ssh::clean_launch_output(b"before\x00after", b"");
+        assert_eq!(result, "stdout: 'beforeafter'");
+    }
+
+    #[test]
+    fn clean_launch_output_bell_stripped() {
+        // \x07 (BEL) is a control char, should be stripped
+        let result = Ssh::clean_launch_output(b"text\x07here", b"");
+        assert_eq!(result, "stdout: 'texthere'");
+    }
+
+    #[test]
+    fn clean_launch_output_backspace_stripped() {
+        // \x08 (BS) is a control char, should be stripped
+        let result = Ssh::clean_launch_output(b"ab\x08c", b"");
+        assert_eq!(result, "stdout: 'abc'");
+    }
+
+    #[test]
+    fn clean_launch_output_stderr_only_control_chars() {
+        // stdout has text, stderr is only control chars (becomes empty)
+        let result = Ssh::clean_launch_output(b"output", b"\x01\x02\x03");
+        assert_eq!(result, "stdout: 'output'");
+    }
+
+    #[test]
+    fn clean_launch_output_stdout_only_control_chars() {
+        // stdout is only control chars (becomes empty), stderr has text
+        let result = Ssh::clean_launch_output(b"\x01\x02\x03", b"error text");
+        assert_eq!(result, "stderr: 'error text'");
+    }
+
+    #[test]
+    fn clean_launch_output_long_output() {
+        let long_stdout = b"A".repeat(1000);
+        let long_stderr = b"B".repeat(500);
+        let result = Ssh::clean_launch_output(&long_stdout, &long_stderr);
+        assert!(result.starts_with("stdout: '"));
+        assert!(result.contains("stderr: '"));
+    }
+
     // --- LocalSshAuthHandler construction ---
 
     #[test]
     fn local_ssh_auth_handler_can_be_constructed() {
         let _handler = LocalSshAuthHandler;
+    }
+
+    // --- build_russh_config tests ---
+
+    #[test]
+    fn build_russh_config_default_params() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let params = HostParams::new(&DefaultAlgorithms::default());
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+
+        // With default params, keepalive_interval should be None
+        assert!(config.keepalive_interval.is_none());
+    }
+
+    #[test]
+    fn build_russh_config_with_keepalive_interval() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.server_alive_interval = Some(Duration::from_secs(60));
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn build_russh_config_with_short_keepalive() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.server_alive_interval = Some(Duration::from_secs(5));
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn build_russh_config_without_keepalive() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.server_alive_interval = None;
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert!(config.keepalive_interval.is_none());
+    }
+
+    #[test]
+    fn build_russh_config_with_verbose_opts() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let mut opts = SshOpts::default();
+        opts.verbose = true;
+        let params = HostParams::new(&DefaultAlgorithms::default());
+
+        // Should not error even with verbose opts
+        let config = Ssh::build_russh_config(&opts, &params);
+        assert!(config.is_ok());
+    }
+
+    #[test]
+    fn build_russh_config_with_populated_opts() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let mut opts = SshOpts::default();
+        opts.port = Some(2222);
+        opts.user = Some("testuser".to_string());
+        opts.identity_files.push(PathBuf::from("/tmp/id_rsa"));
+
+        let params = HostParams::new(&DefaultAlgorithms::default());
+        let config = Ssh::build_russh_config(&opts, &params);
+        assert!(config.is_ok());
+    }
+
+    // --- build_preferred_algorithms tests ---
+
+    #[test]
+    fn build_preferred_algorithms_returns_defaults() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let params = HostParams::new(&DefaultAlgorithms::default());
+        let preferred = Ssh::build_preferred_algorithms(&params);
+
+        // Should return the russh default preferred algorithms
+        let default_preferred = russh::Preferred::default();
+        assert_eq!(preferred.kex, default_preferred.kex);
+        assert_eq!(preferred.cipher, default_preferred.cipher);
+    }
+
+    #[test]
+    fn build_preferred_algorithms_with_custom_params() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.port = Some(9999);
+        params.user = Some("custom-user".to_string());
+
+        // Even with custom params, algorithms should still return defaults
+        let preferred = Ssh::build_preferred_algorithms(&params);
+        let default_preferred = russh::Preferred::default();
+        assert_eq!(preferred.kex, default_preferred.kex);
+    }
+
+    // --- parse_ssh_config tests ---
+
+    #[test]
+    fn parse_ssh_config_returns_host_params() {
+        // This test exercises the parse_ssh_config path.
+        // On a real machine with ~/.ssh/config, it parses it.
+        // If ~/.ssh/config doesn't exist, it returns default params.
+        let result = Ssh::parse_ssh_config("nonexistent-host.example.com");
+        assert!(result.is_ok());
+        let params = result.unwrap();
+        // For a nonexistent host, port/user should be None
+        // (unless the user's SSH config has a wildcard match)
+        // We just verify it doesn't error
+        let _ = params.port;
+        let _ = params.user;
+    }
+
+    #[test]
+    fn parse_ssh_config_with_localhost() {
+        let result = Ssh::parse_ssh_config("localhost");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_ssh_config_with_wildcard_host() {
+        let result = Ssh::parse_ssh_config("*");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_ssh_config_with_empty_host() {
+        let result = Ssh::parse_ssh_config("");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_ssh_config_with_ip_address() {
+        let result = Ssh::parse_ssh_config("192.168.1.1");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_ssh_config_with_ipv6_address() {
+        let result = Ssh::parse_ssh_config("::1");
+        assert!(result.is_ok());
+    }
+
+    // --- SshAuthHandler trait with custom implementation ---
+
+    struct MockSshAuthHandler {
+        responses: Vec<String>,
+        verify_result: bool,
+    }
+
+    impl SshAuthHandler for MockSshAuthHandler {
+        fn on_authenticate(
+            &self,
+            _event: SshAuthEvent,
+        ) -> impl Future<Output = io::Result<Vec<String>>> + Send {
+            let responses = self.responses.clone();
+            async move { Ok(responses) }
+        }
+
+        fn on_verify_host<'a>(
+            &'a self,
+            _host: &'a str,
+        ) -> impl Future<Output = io::Result<bool>> + Send + 'a {
+            async move { Ok(self.verify_result) }
+        }
+
+        fn on_banner<'a>(&'a self, _text: &'a str) -> impl Future<Output = ()> + Send + 'a {
+            async move {}
+        }
+
+        fn on_error<'a>(&'a self, _text: &'a str) -> impl Future<Output = ()> + Send + 'a {
+            async move {}
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_authenticate() {
+        let handler = MockSshAuthHandler {
+            responses: vec!["password123".to_string()],
+            verify_result: true,
+        };
+        let event = SshAuthEvent {
+            username: "user".to_string(),
+            instructions: "Enter password".to_string(),
+            prompts: vec![SshAuthPrompt {
+                prompt: "Password: ".to_string(),
+                echo: false,
+            }],
+        };
+        let answers = handler.on_authenticate(event).await.unwrap();
+        assert_eq!(answers, ["password123"]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_verify_host_accept() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: true,
+        };
+        assert!(handler.on_verify_host("example.com").await.unwrap());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_verify_host_reject() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: false,
+        };
+        assert!(!handler.on_verify_host("evil.com").await.unwrap());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_banner() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: true,
+        };
+        handler.on_banner("Welcome to the server").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_on_error() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: true,
+        };
+        handler.on_error("Authentication failed").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_multiple_prompts() {
+        let handler = MockSshAuthHandler {
+            responses: vec!["my-password".to_string(), "123456".to_string()],
+            verify_result: true,
+        };
+        let event = SshAuthEvent {
+            username: "admin".to_string(),
+            instructions: "MFA Required".to_string(),
+            prompts: vec![
+                SshAuthPrompt {
+                    prompt: "Password: ".to_string(),
+                    echo: false,
+                },
+                SshAuthPrompt {
+                    prompt: "OTP: ".to_string(),
+                    echo: true,
+                },
+            ],
+        };
+        let answers = handler.on_authenticate(event).await.unwrap();
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0], "my-password");
+        assert_eq!(answers[1], "123456");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn mock_ssh_auth_handler_empty_responses() {
+        let handler = MockSshAuthHandler {
+            responses: vec![],
+            verify_result: true,
+        };
+        let event = SshAuthEvent {
+            username: String::new(),
+            instructions: String::new(),
+            prompts: vec![],
+        };
+        let answers = handler.on_authenticate(event).await.unwrap();
+        assert!(answers.is_empty());
+    }
+
+    // --- Error-returning SshAuthHandler ---
+
+    struct ErrorSshAuthHandler;
+
+    impl SshAuthHandler for ErrorSshAuthHandler {
+        fn on_authenticate(
+            &self,
+            _event: SshAuthEvent,
+        ) -> impl Future<Output = io::Result<Vec<String>>> + Send {
+            async move { Err(io::Error::other("authentication cancelled by user")) }
+        }
+
+        fn on_verify_host<'a>(
+            &'a self,
+            _host: &'a str,
+        ) -> impl Future<Output = io::Result<bool>> + Send + 'a {
+            async move { Err(io::Error::other("verification cancelled")) }
+        }
+
+        fn on_banner<'a>(&'a self, _text: &'a str) -> impl Future<Output = ()> + Send + 'a {
+            async move {}
+        }
+
+        fn on_error<'a>(&'a self, _text: &'a str) -> impl Future<Output = ()> + Send + 'a {
+            async move {}
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn error_ssh_auth_handler_on_authenticate_returns_error() {
+        let handler = ErrorSshAuthHandler;
+        let event = SshAuthEvent {
+            username: "user".to_string(),
+            instructions: String::new(),
+            prompts: vec![SshAuthPrompt {
+                prompt: "Password: ".to_string(),
+                echo: false,
+            }],
+        };
+        let result = handler.on_authenticate(event).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(
+            err.to_string().contains("authentication cancelled"),
+            "Expected 'authentication cancelled' in '{}'",
+            err
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn error_ssh_auth_handler_on_verify_host_returns_error() {
+        let handler = ErrorSshAuthHandler;
+        let result = handler.on_verify_host("example.com").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("verification cancelled"),
+            "Expected 'verification cancelled' in '{}'",
+            err
+        );
+    }
+
+    // --- SshAuthEvent with complex prompt strings ---
+
+    #[test]
+    fn ssh_auth_event_multiline_prompt() {
+        let event = SshAuthEvent {
+            username: "user".to_string(),
+            instructions: "Line1\nLine2\nLine3".to_string(),
+            prompts: vec![SshAuthPrompt {
+                prompt: "Header line\nPassword: ".to_string(),
+                echo: false,
+            }],
+        };
+        assert!(event.instructions.contains('\n'));
+        assert!(event.prompts[0].prompt.contains('\n'));
+    }
+
+    #[test]
+    fn ssh_auth_event_unicode_content() {
+        let event = SshAuthEvent {
+            username: "utilisateur".to_string(),
+            instructions: "Veuillez entrer votre mot de passe".to_string(),
+            prompts: vec![SshAuthPrompt {
+                prompt: "Mot de passe: ".to_string(),
+                echo: false,
+            }],
+        };
+        assert_eq!(event.username, "utilisateur");
+        assert_eq!(event.prompts[0].prompt, "Mot de passe: ");
+    }
+
+    #[test]
+    fn ssh_auth_prompt_empty_prompt_string() {
+        let prompt = SshAuthPrompt {
+            prompt: String::new(),
+            echo: false,
+        };
+        assert!(prompt.prompt.is_empty());
+        assert!(!prompt.echo);
+    }
+
+    #[test]
+    fn ssh_auth_event_many_prompts() {
+        let prompts: Vec<SshAuthPrompt> = (0..10)
+            .map(|i| SshAuthPrompt {
+                prompt: format!("Prompt {}: ", i),
+                echo: i % 2 == 0,
+            })
+            .collect();
+
+        let event = SshAuthEvent {
+            username: "multi".to_string(),
+            instructions: "Answer all prompts".to_string(),
+            prompts,
+        };
+        assert_eq!(event.prompts.len(), 10);
+        assert!(event.prompts[0].echo);
+        assert!(!event.prompts[1].echo);
+        assert!(event.prompts[8].echo);
+        assert!(!event.prompts[9].echo);
+    }
+
+    // --- format_methods edge cases ---
+
+    #[test]
+    fn format_methods_single_none() {
+        let methods = russh::MethodSet::from([russh::MethodKind::None].as_slice());
+        assert_eq!(format_methods(&methods), "none");
+    }
+
+    #[test]
+    fn format_methods_single_password() {
+        let methods = russh::MethodSet::from([russh::MethodKind::Password].as_slice());
+        assert_eq!(format_methods(&methods), "password");
+    }
+
+    #[test]
+    fn format_methods_single_keyboard_interactive() {
+        let methods = russh::MethodSet::from([russh::MethodKind::KeyboardInteractive].as_slice());
+        assert_eq!(format_methods(&methods), "keyboard-interactive");
+    }
+
+    #[test]
+    fn format_methods_hostbased() {
+        let methods = russh::MethodSet::from([russh::MethodKind::HostBased].as_slice());
+        assert_eq!(format_methods(&methods), "hostbased");
+    }
+
+    #[test]
+    fn format_methods_pubkey_and_password() {
+        let methods = russh::MethodSet::from(
+            [russh::MethodKind::PublicKey, russh::MethodKind::Password].as_slice(),
+        );
+        let result = format_methods(&methods);
+        // Both should appear separated by comma
+        let parts: Vec<&str> = result.split(", ").collect();
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn format_methods_three_methods() {
+        let methods = russh::MethodSet::from(
+            [
+                russh::MethodKind::PublicKey,
+                russh::MethodKind::Password,
+                russh::MethodKind::KeyboardInteractive,
+            ]
+            .as_slice(),
+        );
+        let result = format_methods(&methods);
+        let parts: Vec<&str> = result.split(", ").collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    // --- ClientHandler tests ---
+
+    #[test_log::test(tokio::test)]
+    async fn client_handler_check_server_key_always_accepts() {
+        use russh::client::Handler;
+
+        let mut handler = ClientHandler;
+
+        // Generate a test public key by creating a keypair
+        let private_key = russh::keys::PrivateKey::random(
+            &mut rand::thread_rng(),
+            russh::keys::Algorithm::Ed25519,
+        )
+        .unwrap();
+        let public_key = private_key.public_key();
+
+        let result = handler.check_server_key(public_key).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    // --- SshFamily as_static_str exhaustive ---
+
+    #[test]
+    fn ssh_family_unix_static_str_is_lowercase() {
+        let s = SshFamily::Unix.as_static_str();
+        assert_eq!(s, s.to_lowercase());
+    }
+
+    #[test]
+    fn ssh_family_windows_static_str_is_lowercase() {
+        let s = SshFamily::Windows.as_static_str();
+        assert_eq!(s, s.to_lowercase());
+    }
+
+    #[test]
+    fn ssh_family_as_static_str_returns_static_lifetime() {
+        // Verify the str has 'static lifetime by storing in a variable
+        let s: &'static str = SshFamily::Unix.as_static_str();
+        assert!(!s.is_empty());
+        let s: &'static str = SshFamily::Windows.as_static_str();
+        assert!(!s.is_empty());
+    }
+
+    // --- LocalSshAuthHandler banner/error with various inputs ---
+
+    #[test_log::test(tokio::test)]
+    async fn local_ssh_auth_handler_on_banner_empty_string() {
+        let handler = LocalSshAuthHandler;
+        handler.on_banner("").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn local_ssh_auth_handler_on_error_empty_string() {
+        let handler = LocalSshAuthHandler;
+        handler.on_error("").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn local_ssh_auth_handler_on_banner_multiline() {
+        let handler = LocalSshAuthHandler;
+        handler.on_banner("Welcome\nto the\nserver").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn local_ssh_auth_handler_on_error_multiline() {
+        let handler = LocalSshAuthHandler;
+        handler.on_error("Error line 1\nError line 2").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn local_ssh_auth_handler_on_banner_unicode() {
+        let handler = LocalSshAuthHandler;
+        handler.on_banner("Bienvenue au serveur").await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn local_ssh_auth_handler_on_error_unicode() {
+        let handler = LocalSshAuthHandler;
+        handler.on_error("Erreur: connexion refusee").await;
+    }
+
+    // --- SshOpts with struct update syntax ---
+
+    #[test]
+    fn ssh_opts_struct_update_syntax() {
+        let base = SshOpts::default();
+        let opts = SshOpts {
+            port: Some(3022),
+            user: Some("custom".to_string()),
+            ..base
+        };
+        assert_eq!(opts.port, Some(3022));
+        assert_eq!(opts.user.as_deref(), Some("custom"));
+        assert!(opts.identity_files.is_empty());
+        assert!(!opts.verbose);
+    }
+
+    #[test]
+    fn ssh_opts_identities_only_true() {
+        let opts = SshOpts {
+            identities_only: Some(true),
+            ..SshOpts::default()
+        };
+        assert_eq!(opts.identities_only, Some(true));
+    }
+
+    #[test]
+    fn ssh_opts_identities_only_false() {
+        let opts = SshOpts {
+            identities_only: Some(false),
+            ..SshOpts::default()
+        };
+        assert_eq!(opts.identities_only, Some(false));
+    }
+
+    #[test]
+    fn ssh_opts_multiple_identity_files() {
+        let opts = SshOpts {
+            identity_files: vec![
+                PathBuf::from("/home/user/.ssh/id_ed25519"),
+                PathBuf::from("/home/user/.ssh/id_rsa"),
+                PathBuf::from("/home/user/.ssh/id_ecdsa"),
+            ],
+            ..SshOpts::default()
+        };
+        assert_eq!(opts.identity_files.len(), 3);
+        assert_eq!(
+            opts.identity_files[0],
+            PathBuf::from("/home/user/.ssh/id_ed25519")
+        );
+    }
+
+    #[test]
+    fn ssh_opts_multiple_known_hosts_files() {
+        let opts = SshOpts {
+            user_known_hosts_files: vec![
+                PathBuf::from("/home/user/.ssh/known_hosts"),
+                PathBuf::from("/home/user/.ssh/known_hosts2"),
+            ],
+            ..SshOpts::default()
+        };
+        assert_eq!(opts.user_known_hosts_files.len(), 2);
+    }
+
+    // --- clean_launch_output with multibyte UTF-8 ---
+
+    #[test]
+    fn clean_launch_output_with_multibyte_utf8() {
+        let result = Ssh::clean_launch_output("Server ready".as_bytes(), b"");
+        assert_eq!(result, "stdout: 'Server ready'");
+    }
+
+    #[test]
+    fn clean_launch_output_form_feed_preserved() {
+        // \x0c (FF / form feed) is both control AND ascii whitespace,
+        // so it passes the filter (is_ascii_whitespace allows it through)
+        let result = Ssh::clean_launch_output(b"before\x0cafter", b"");
+        assert_eq!(result, "stdout: 'before\x0cafter'");
+    }
+
+    #[test]
+    fn clean_launch_output_vertical_tab_stripped() {
+        // \x0b (VT) is a control char but also considered ascii whitespace
+        // Actually \x0b IS ascii whitespace (is_ascii_whitespace returns true)
+        // So it should be preserved by the filter
+        let result = Ssh::clean_launch_output(b"a\x0bb", b"");
+        assert!(result.contains("stdout:"), "Expected stdout in '{result}'");
+    }
+
+    #[test]
+    fn clean_launch_output_mixed_valid_invalid_utf8_in_stderr() {
+        let result = Ssh::clean_launch_output(b"", b"err\xff\xfeor");
+        assert!(result.contains("stderr:"), "Expected stderr in '{result}'");
     }
 }

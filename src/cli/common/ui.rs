@@ -209,3 +209,138 @@ impl Spinner {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // Ui::new — construction
+    // -------------------------------------------------------
+    #[test]
+    fn ui_new_does_not_panic() {
+        let _ui = Ui::new();
+    }
+
+    // -------------------------------------------------------
+    // Ui::is_interactive — reflects terminal detection
+    // -------------------------------------------------------
+    #[test]
+    fn ui_is_interactive_returns_bool() {
+        let ui = Ui::new();
+        // In CI / test runner, stderr is typically NOT a TTY
+        // We just verify it doesn't panic and returns a bool
+        let _result = ui.is_interactive();
+    }
+
+    // -------------------------------------------------------
+    // Ui::term — gives access to underlying terminal
+    // -------------------------------------------------------
+    #[test]
+    fn ui_term_returns_term_reference() {
+        let ui = Ui::new();
+        let _term = ui.term();
+    }
+
+    // -------------------------------------------------------
+    // Ui methods — verify they don't panic
+    // -------------------------------------------------------
+    #[test]
+    fn ui_success_does_not_panic() {
+        let ui = Ui::new();
+        ui.success("test success message");
+    }
+
+    #[test]
+    fn ui_warning_does_not_panic() {
+        let ui = Ui::new();
+        ui.warning("test warning message");
+    }
+
+    #[test]
+    fn ui_error_does_not_panic() {
+        let ui = Ui::new();
+        ui.error("test error message");
+    }
+
+    #[test]
+    fn ui_error_with_suggestion_does_not_panic() {
+        let ui = Ui::new();
+        ui.error_with_suggestion("error msg", "try this instead");
+    }
+
+    #[test]
+    fn ui_header_does_not_panic() {
+        let ui = Ui::new();
+        ui.header("test header");
+    }
+
+    #[test]
+    fn ui_dim_does_not_panic() {
+        let ui = Ui::new();
+        ui.dim("dimmed text");
+    }
+
+    #[test]
+    fn ui_status_does_not_panic() {
+        let ui = Ui::new();
+        ui.status("Status", "connected", StatusColor::Green);
+        ui.status("Status", "disconnected", StatusColor::Red);
+        ui.status("Status", "pending", StatusColor::Yellow);
+    }
+
+    #[test]
+    fn ui_write_line_does_not_panic() {
+        let ui = Ui::new();
+        ui.write_line("raw output");
+    }
+
+    // -------------------------------------------------------
+    // Spinner — non-interactive mode
+    // -------------------------------------------------------
+    #[test]
+    fn spinner_in_non_interactive_mode() {
+        let ui = Ui::new();
+        // When not interactive, spinner methods are no-ops
+        let spinner = ui.spinner("loading...");
+        spinner.set_message("still loading...");
+        // done/fail won't have a pb in non-interactive mode
+        // but should not panic regardless
+    }
+
+    #[test]
+    fn spinner_done_does_not_panic() {
+        let ui = Ui::new();
+        let spinner = ui.spinner("loading...");
+        spinner.done("done!");
+    }
+
+    #[test]
+    fn spinner_fail_does_not_panic() {
+        let ui = Ui::new();
+        let spinner = ui.spinner("loading...");
+        spinner.fail("failed!");
+    }
+
+    #[test]
+    fn spinner_progress_bar_reflects_interactivity() {
+        let ui = Ui::new();
+        let spinner = ui.spinner("loading...");
+        // In non-interactive mode (typical for tests), pb should be None
+        if !ui.is_interactive() {
+            assert!(spinner.progress_bar().is_none());
+        }
+    }
+
+    // -------------------------------------------------------
+    // StatusColor — enum variant existence
+    // -------------------------------------------------------
+    #[test]
+    fn status_color_variants_exist() {
+        let _green = StatusColor::Green;
+        let _red = StatusColor::Red;
+        let _yellow = StatusColor::Yellow;
+    }
+}

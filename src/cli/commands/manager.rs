@@ -272,3 +272,49 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // SERVICE_LABEL
+    // -------------------------------------------------------
+    #[test]
+    fn service_label_has_correct_fields() {
+        assert_eq!(SERVICE_LABEL.qualifier, "rocks");
+        assert_eq!(SERVICE_LABEL.organization, "distant");
+        assert_eq!(SERVICE_LABEL.application, "manager");
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — no extra plugins
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_with_no_extras_has_builtins() {
+        let map = build_plugin_map(Vec::new()).unwrap();
+        // Should contain "distant" and "ssh"
+        assert!(map.contains_key("distant"), "missing 'distant' scheme");
+        assert!(map.contains_key("ssh"), "missing 'ssh' scheme");
+    }
+
+    #[test]
+    fn build_plugin_map_builtins_have_correct_names() {
+        let map = build_plugin_map(Vec::new()).unwrap();
+        assert_eq!(map["distant"].name(), "distant");
+        assert_eq!(map["ssh"].name(), "ssh");
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — schemes are lowercased
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_schemes_are_lowercase() {
+        let map = build_plugin_map(Vec::new()).unwrap();
+        for key in map.keys() {
+            assert_eq!(key, &key.to_lowercase(), "scheme should be lowercase");
+        }
+    }
+}

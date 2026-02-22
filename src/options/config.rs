@@ -176,6 +176,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn default_raw_str_is_valid_toml() {
+        let raw = Config::default_raw_str();
+        assert!(!raw.is_empty());
+        // It should be parseable as a Config
+        let config: Config = toml_edit::de::from_str(raw).expect("default raw str must parse");
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn load_multi_with_nonexistent_custom_path_returns_error() {
+        let result = Config::load_multi(Some(PathBuf::from("/nonexistent/path/config.toml")));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_multi_with_no_custom_path_and_no_config_files_returns_default() {
+        // When none of the standard paths exist and no custom path is given,
+        // load_multi returns the default config. The standard paths may or may
+        // not exist on the test machine, but we verify the function doesn't panic.
+        let result = Config::load_multi(None);
+        assert!(result.is_ok());
+    }
+
     #[test(tokio::test)]
     async fn load_should_parse_config_from_specified_file() {
         use assert_fs::prelude::*;
