@@ -318,4 +318,235 @@ mod tests {
             debug_str
         );
     }
+
+    // --- to_other_error tests ---
+
+    #[test]
+    fn to_other_error_converts_string_to_io_error() {
+        let err = to_other_error("something went wrong");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn to_other_error_preserves_error_message() {
+        let err = to_other_error("specific error message");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("specific error message"),
+            "Expected error message in '{msg}'"
+        );
+    }
+
+    #[test]
+    fn to_other_error_converts_io_error() {
+        let original = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let converted = to_other_error(original);
+        assert_eq!(converted.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn to_other_error_converts_custom_error() {
+        #[derive(Debug)]
+        struct CustomError;
+        impl std::fmt::Display for CustomError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "custom error")
+            }
+        }
+        impl std::error::Error for CustomError {}
+
+        let err = to_other_error(CustomError);
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("custom error"),
+            "Expected 'custom error' in '{msg}'"
+        );
+    }
+
+    // --- ExecOutput equality, clone, and construction tests ---
+
+    #[test]
+    fn exec_output_equality() {
+        let a = ExecOutput {
+            success: true,
+            stdout: b"hello".to_vec(),
+            stderr: b"world".to_vec(),
+        };
+        let b = ExecOutput {
+            success: true,
+            stdout: b"hello".to_vec(),
+            stderr: b"world".to_vec(),
+        };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn exec_output_inequality_success() {
+        let a = ExecOutput {
+            success: true,
+            stdout: vec![],
+            stderr: vec![],
+        };
+        let b = ExecOutput {
+            success: false,
+            stdout: vec![],
+            stderr: vec![],
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn exec_output_inequality_stdout() {
+        let a = ExecOutput {
+            success: true,
+            stdout: b"abc".to_vec(),
+            stderr: vec![],
+        };
+        let b = ExecOutput {
+            success: true,
+            stdout: b"xyz".to_vec(),
+            stderr: vec![],
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn exec_output_inequality_stderr() {
+        let a = ExecOutput {
+            success: true,
+            stdout: vec![],
+            stderr: b"err1".to_vec(),
+        };
+        let b = ExecOutput {
+            success: true,
+            stdout: vec![],
+            stderr: b"err2".to_vec(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn exec_output_clone() {
+        let original = ExecOutput {
+            success: true,
+            stdout: b"output data".to_vec(),
+            stderr: b"error data".to_vec(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        assert_eq!(cloned.success, true);
+        assert_eq!(cloned.stdout, b"output data");
+        assert_eq!(cloned.stderr, b"error data");
+    }
+
+    #[test]
+    fn exec_output_empty_fields() {
+        let output = ExecOutput {
+            success: false,
+            stdout: vec![],
+            stderr: vec![],
+        };
+        assert!(!output.success);
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+
+    #[test]
+    fn exec_output_large_data() {
+        let big_stdout = vec![0x41u8; 10_000]; // 10KB of 'A'
+        let output = ExecOutput {
+            success: true,
+            stdout: big_stdout.clone(),
+            stderr: vec![],
+        };
+        assert_eq!(output.stdout.len(), 10_000);
+        assert_eq!(output.stdout, big_stdout);
+    }
+
+    #[test]
+    fn exec_output_alternate_debug_shows_lossy_strings() {
+        let output = ExecOutput {
+            success: true,
+            stdout: b"readable text".to_vec(),
+            stderr: b"error text".to_vec(),
+        };
+        let alt_debug = format!("{:#?}", output);
+        // Alternate format should show string representation
+        assert!(
+            alt_debug.contains("readable text"),
+            "Expected string stdout in alternate debug: {}",
+            alt_debug
+        );
+        assert!(
+            alt_debug.contains("error text"),
+            "Expected string stderr in alternate debug: {}",
+            alt_debug
+        );
+    }
+
+    #[test]
+    fn exec_output_normal_debug_shows_bytes() {
+        let output = ExecOutput {
+            success: true,
+            stdout: vec![72, 105], // "Hi"
+            stderr: vec![],
+        };
+        let normal_debug = format!("{:?}", output);
+        // Normal format should show byte arrays, e.g. [72, 105]
+        assert!(
+            normal_debug.contains("72") && normal_debug.contains("105"),
+            "Expected byte values in normal debug: {}",
+            normal_debug
+        );
+    }
+
+    // --- Additional convert_to_windows_path_string edge cases ---
+
+    #[test]
+    fn convert_lowercase_drive_letter() {
+        // /c/Users/test -> should handle lowercase drive letter
+        let result = convert_to_windows_path_string("/c/Users/test");
+        assert!(
+            result.is_some(),
+            "Should convert lowercase single-letter drive path"
+        );
+    }
+
+    #[test]
+    fn convert_empty_string_returns_none() {
+        assert_eq!(convert_to_windows_path_string(""), None);
+    }
+
+    #[test]
+    fn convert_slash_only_single_letter_no_further_components() {
+        // /C with no further path components
+        let result = convert_to_windows_path_string("/C");
+        assert!(
+            result.is_some(),
+            "Should handle single drive letter without trailing path"
+        );
+    }
+
+    #[test]
+    fn convert_windows_path_with_forward_slashes() {
+        // C:/Users/test should be treated as already a windows path
+        let result = convert_to_windows_path_string("C:/Users/test");
+        assert_eq!(result, Some("C:/Users/test".to_string()));
+    }
+
+    #[test]
+    fn convert_unc_style_returns_none() {
+        // A relative-looking path (no root, no prefix) should return None
+        let result = convert_to_windows_path_string("foo/bar/baz");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn convert_numeric_component_returns_none() {
+        // /1/path -> '1' is not alphabetic... wait, it is a single char but not alphabetic
+        // Actually '1'.is_alphabetic() is false, so this should return None
+        let result = convert_to_windows_path_string("/1/path");
+        assert_eq!(result, None);
+    }
 }
