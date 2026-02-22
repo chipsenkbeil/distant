@@ -618,13 +618,13 @@ mod tests {
         }
 
         let output = String::from_utf8_lossy(&stdout_data);
+        let output_path = std::path::PathBuf::from(output.trim());
+        let canonical_output = output_path.canonicalize().unwrap_or(output_path);
         let canonical_temp = temp_dir.canonicalize().unwrap_or(temp_dir);
-        assert!(
-            output
-                .trim()
-                .contains(&canonical_temp.to_string_lossy().to_string())
-                || canonical_temp.to_string_lossy().contains(output.trim()),
-            "Output '{output}' did not match expected temp dir '{}'",
+        assert_eq!(
+            canonical_output, canonical_temp,
+            "Output dir '{}' did not match expected temp dir '{}'",
+            canonical_output.display(),
             canonical_temp.display()
         );
     }
