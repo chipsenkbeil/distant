@@ -680,12 +680,8 @@ mod tests {
                 payload: std::borrow::Cow::Owned(good_payload),
             };
 
-            post_office
-                .deliver_untyped_response(bad_response)
-                .await;
-            post_office
-                .deliver_untyped_response(good_response)
-                .await;
+            post_office.deliver_untyped_response(bad_response).await;
+            post_office.deliver_untyped_response(good_response).await;
 
             // The typed mailbox should skip the bad response and return the good one
             let resp = mailbox.next().await.unwrap();
@@ -999,8 +995,14 @@ mod tests {
             let (mut channel1, _server, post_office) = setup(100);
             let mut channel2 = channel1.clone();
 
-            let req1 = Request::new(10u8).to_untyped_request().unwrap().into_owned();
-            let req2 = Request::new(20u8).to_untyped_request().unwrap().into_owned();
+            let req1 = Request::new(10u8)
+                .to_untyped_request()
+                .unwrap()
+                .into_owned();
+            let req2 = Request::new(20u8)
+                .to_untyped_request()
+                .unwrap()
+                .into_owned();
             let res1 = Response::new(req1.id.clone().into_owned(), 11u8)
                 .to_untyped_response()
                 .unwrap()

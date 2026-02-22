@@ -1192,7 +1192,10 @@ mod tests {
     fn remote_lsp_command_builder_methods_should_return_self() {
         let mut cmd = RemoteLspCommand::new();
         // All builder methods return &mut Self, allowing chaining
-        cmd.pty(None).environment(Environment::new()).current_dir(None).scheme(None);
+        cmd.pty(None)
+            .environment(Environment::new())
+            .current_dir(None)
+            .scheme(None);
     }
 
     // ------------------------------------------------------------------
@@ -1758,10 +1761,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::ProcStdin { data, .. } => {
-                assert_eq!(
-                    data,
-                    make_lsp_msg(serde_json::json!({"key": "value"}))
-                );
+                assert_eq!(data, make_lsp_msg(serde_json::json!({"key": "value"})));
             }
             x => panic!("Unexpected request: {:?}", x),
         }

@@ -1005,8 +1005,11 @@ mod tests {
     #[test]
     fn lsp_msg_parse_error_should_convert_to_io_error_for_all_variants() {
         // BadContent
-        let bad_content_err: LspMsgParseError =
-            LspMsgParseError::BadContent(serde_json::from_str::<LspContent>("!!!").unwrap_err().into());
+        let bad_content_err: LspMsgParseError = LspMsgParseError::BadContent(
+            serde_json::from_str::<LspContent>("!!!")
+                .unwrap_err()
+                .into(),
+        );
         let io_err: io::Error = bad_content_err.into();
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
 
@@ -1026,8 +1029,7 @@ mod tests {
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
 
         // IoError
-        let io_err: io::Error =
-            LspMsgParseError::IoError(io::Error::other("test")).into();
+        let io_err: io::Error = LspMsgParseError::IoError(io::Error::other("test")).into();
         assert_eq!(io_err.kind(), io::ErrorKind::Other);
 
         // UnexpectedEof

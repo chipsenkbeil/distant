@@ -622,7 +622,8 @@ mod tests {
         let canonical_output = output_path.canonicalize().unwrap_or(output_path);
         let canonical_temp = temp_dir.canonicalize().unwrap_or(temp_dir);
         assert_eq!(
-            canonical_output, canonical_temp,
+            canonical_output,
+            canonical_temp,
             "Output dir '{}' did not match expected temp dir '{}'",
             canonical_output.display(),
             canonical_temp.display()

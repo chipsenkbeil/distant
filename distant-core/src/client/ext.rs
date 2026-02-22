@@ -502,8 +502,7 @@ mod tests {
 
     use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
     use crate::protocol::{
-        self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, SystemInfo,
-        Version,
+        self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, SystemInfo, Version,
     };
     use crate::Client;
     use test_log::test;
@@ -524,9 +523,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.append_file("/test/path", vec![1, 2, 3]).await
-        });
+        let task =
+            tokio::spawn(async move { channel.append_file("/test/path", vec![1, 2, 3]).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
@@ -550,9 +548,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.append_file("/test/path", vec![1, 2, 3]).await
-        });
+        let task =
+            tokio::spawn(async move { channel.append_file("/test/path", vec![1, 2, 3]).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport
@@ -575,9 +572,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.append_file("/test/path", vec![1, 2, 3]).await
-        });
+        let task =
+            tokio::spawn(async move { channel.append_file("/test/path", vec![1, 2, 3]).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport
@@ -601,9 +597,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.append_file_text("/test/path", "hello").await
-        });
+        let task =
+            tokio::spawn(async move { channel.append_file_text("/test/path", "hello").await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
@@ -907,7 +902,9 @@ mod tests {
         let options = SetPermissionsOptions::default();
 
         let task = tokio::spawn(async move {
-            channel.set_permissions("/test/path", permissions, options).await
+            channel
+                .set_permissions("/test/path", permissions, options)
+                .await
         });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
@@ -1445,9 +1442,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.write_file("/test/file", vec![4, 5, 6]).await
-        });
+        let task =
+            tokio::spawn(async move { channel.write_file("/test/file", vec![4, 5, 6]).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
@@ -1471,9 +1467,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.write_file("/test/file", vec![4, 5, 6]).await
-        });
+        let task =
+            tokio::spawn(async move { channel.write_file("/test/file", vec![4, 5, 6]).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport
@@ -1500,9 +1495,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.write_file_text("/test/file", "hello world").await
-        });
+        let task =
+            tokio::spawn(async move { channel.write_file_text("/test/file", "hello world").await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
@@ -1526,9 +1520,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move {
-            channel.write_file_text("/test/file", "hello").await
-        });
+        let task =
+            tokio::spawn(async move { channel.write_file_text("/test/file", "hello").await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport

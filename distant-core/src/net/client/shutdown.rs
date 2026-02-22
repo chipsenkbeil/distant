@@ -65,9 +65,7 @@ mod tests {
         // Handler responds with an error
         tokio::spawn(async move {
             if let Some(responder) = rx.recv().await {
-                responder
-                    .send(Err(io::Error::other("custom error")))
-                    .ok();
+                responder.send(Err(io::Error::other("custom error"))).ok();
             }
         });
 
