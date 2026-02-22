@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -1370,8 +1372,8 @@ impl Format {
 mod tests {
     use std::time::Duration;
 
+    use distant_core::map;
     use distant_core::net::common::Host;
-    use distant_core::net::map;
 
     use super::*;
 

@@ -36,7 +36,7 @@ impl Cli {
     /// Initializes a logger for the CLI, returning a handle to the logger
     pub fn init_logger(&self) -> flexi_logger::LoggerHandle {
         use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
-        let modules = &["distant", "distant_core", "distant_net", "distant_ssh2"];
+        let modules = &["distant", "distant_core", "distant_ssh"];
 
         // Disable logging for everything but our binary, which is based on verbosity
         let mut builder = LogSpecification::builder();

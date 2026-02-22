@@ -6,7 +6,7 @@ use crate::common::utils::TrimmedLinesMatchPredicate;
 
 #[rstest]
 #[test_log::test]
-fn should_output_capabilities(ctx: DistantManagerCtx) {
+fn should_output_capabilities(ctx: ManagerCtx) {
     // Because all of our crates have the same version, we can expect it to match
     let version: semver::Version = env!("CARGO_PKG_VERSION").parse().unwrap();
 
@@ -22,13 +22,13 @@ fn should_output_capabilities(ctx: DistantManagerCtx) {
         version
     };
 
-    // Add the distant-local to the server version information
+    // Add the distant-host to the server version information
     let server_version = if version.build.is_empty() {
         let mut version = version;
-        version.build = semver::BuildMetadata::new("distant-local").unwrap();
+        version.build = semver::BuildMetadata::new("distant-host").unwrap();
         version
     } else {
-        let raw_build_str = format!("{}.{}", version.build.as_str(), "distant-local");
+        let raw_build_str = format!("{}.{}", version.build.as_str(), "distant-host");
         let mut version = version;
         version.build = semver::BuildMetadata::new(&raw_build_str).unwrap();
         version

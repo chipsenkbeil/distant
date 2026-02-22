@@ -5,7 +5,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_true_if_exists(ctx: DistantManagerCtx) {
+fn should_output_true_if_exists(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create file
@@ -22,7 +22,7 @@ fn should_output_true_if_exists(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_false_if_not_exists(ctx: DistantManagerCtx) {
+fn should_output_false_if_not_exists(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file

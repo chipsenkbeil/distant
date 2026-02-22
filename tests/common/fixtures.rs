@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
 use distant_core::net::common::Host;
-use distant_core::DistantSingleKeyCredentials;
+use distant_core::Credentials;
 use once_cell::sync::Lazy;
 use rstest::*;
 use serde_json::json;
@@ -25,7 +25,7 @@ const RETRY_PAUSE_DURATION: Duration = Duration::from_millis(250);
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
-    pub ctx: DistantManagerCtx,
+    pub ctx: ManagerCtx,
 
     #[deref]
     #[deref_mut]
@@ -33,13 +33,13 @@ pub struct CtxCommand<T> {
 }
 
 /// Context for some listening distant server
-pub struct DistantManagerCtx {
+pub struct ManagerCtx {
     manager: Child,
     server: Child,
     socket_or_pipe: String,
 }
 
-impl DistantManagerCtx {
+impl ManagerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
         eprintln!("Logging to {:?}", ROOT_LOG_DIR.as_path());
@@ -130,9 +130,7 @@ impl DistantManagerCtx {
                 let mut buf = [0u8; 1024];
                 while let Ok(n) = reader.read(&mut buf) {
                     lines.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if let Some(credentials) =
-                        DistantSingleKeyCredentials::find(&lines, /* strict */ false)
-                    {
+                    if let Some(credentials) = Credentials::find(&lines, /* strict */ false) {
                         return credentials;
                     }
                 }
@@ -307,7 +305,7 @@ fn random_log_file(prefix: &str) -> PathBuf {
     ))
 }
 
-impl Drop for DistantManagerCtx {
+impl Drop for ManagerCtx {
     /// Kills manager upon drop
     fn drop(&mut self) {
         let _ = self.manager.kill();
@@ -318,24 +316,24 @@ impl Drop for DistantManagerCtx {
 }
 
 #[fixture]
-pub fn ctx() -> DistantManagerCtx {
-    DistantManagerCtx::start()
+pub fn ctx() -> ManagerCtx {
+    ManagerCtx::start()
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: DistantManagerCtx) -> CtxCommand<Command> {
+pub fn lsp_cmd(ctx: ManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: DistantManagerCtx) -> CtxCommand<StdCommand> {
+pub fn action_std_cmd(ctx: ManagerCtx) -> CtxCommand<StdCommand> {
     let cmd = ctx.new_std_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn api_process(ctx: DistantManagerCtx) -> CtxCommand<ApiProcess> {
+pub fn api_process(ctx: ManagerCtx) -> CtxCommand<ApiProcess> {
     let child = ctx
         .new_std_cmd(vec!["api"])
         .spawn()

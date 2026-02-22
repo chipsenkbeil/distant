@@ -1,8 +1,9 @@
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
-use async_trait::async_trait;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{AuthHandler, AuthMethodHandler};
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
@@ -162,78 +163,102 @@ impl Default for JsonAuthHandler {
     }
 }
 
-#[async_trait]
 impl AuthHandler for JsonAuthHandler {
-    async fn on_initialization(
-        &mut self,
+    fn on_initialization<'a>(
+        &'a mut self,
         initialization: Initialization,
-    ) -> io::Result<InitializationResponse> {
-        self.tx
-            .send_blocking(&Authentication::Initialization(initialization))?;
-        let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx
+                .send_blocking(&Authentication::Initialization(initialization))?;
+            let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
 
-        match response {
-            AuthenticationResponse::Initialization(x) => Ok(x),
-            x => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unexpected response: {x:?}"),
-            )),
-        }
+            match response {
+                AuthenticationResponse::Initialization(x) => Ok(x),
+                x => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unexpected response: {x:?}"),
+                )),
+            }
+        })
     }
 
-    async fn on_start_method(&mut self, start_method: StartMethod) -> io::Result<()> {
-        self.tx
-            .send_blocking(&Authentication::StartMethod(start_method))?;
-        Ok(())
+    fn on_start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx
+                .send_blocking(&Authentication::StartMethod(start_method))?;
+            Ok(())
+        })
     }
 
-    async fn on_finished(&mut self) -> io::Result<()> {
-        self.tx.send_blocking(&Authentication::Finished)?;
-        Ok(())
+    fn on_finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx.send_blocking(&Authentication::Finished)?;
+            Ok(())
+        })
     }
 }
 
-#[async_trait]
 impl AuthMethodHandler for JsonAuthHandler {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        self.tx
-            .send_blocking(&Authentication::Challenge(challenge))?;
-        let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx
+                .send_blocking(&Authentication::Challenge(challenge))?;
+            let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
 
-        match response {
-            AuthenticationResponse::Challenge(x) => Ok(x),
-            x => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unexpected response: {x:?}"),
-            )),
-        }
+            match response {
+                AuthenticationResponse::Challenge(x) => Ok(x),
+                x => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unexpected response: {x:?}"),
+                )),
+            }
+        })
     }
 
-    async fn on_verification(
-        &mut self,
+    fn on_verification<'a>(
+        &'a mut self,
         verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        self.tx
-            .send_blocking(&Authentication::Verification(verification))?;
-        let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx
+                .send_blocking(&Authentication::Verification(verification))?;
+            let response = self.rx.recv_blocking::<AuthenticationResponse>()?;
 
-        match response {
-            AuthenticationResponse::Verification(x) => Ok(x),
-            x => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Unexpected response: {x:?}"),
-            )),
-        }
+            match response {
+                AuthenticationResponse::Verification(x) => Ok(x),
+                x => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unexpected response: {x:?}"),
+                )),
+            }
+        })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        self.tx.send_blocking(&Authentication::Info(info))?;
-        Ok(())
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx.send_blocking(&Authentication::Info(info))?;
+            Ok(())
+        })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        self.tx.send_blocking(&Authentication::Error(error))?;
-        Ok(())
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tx.send_blocking(&Authentication::Error(error))?;
+            Ok(())
+        })
     }
 }
 
@@ -262,83 +287,98 @@ impl Clone for PromptAuthHandler {
     }
 }
 
-#[async_trait]
 impl AuthHandler for PromptAuthHandler {}
 
-#[async_trait]
 impl AuthMethodHandler for PromptAuthHandler {
-    async fn on_challenge(&mut self, challenge: Challenge) -> io::Result<ChallengeResponse> {
-        let mut answers = Vec::new();
-        for question in challenge.questions.iter() {
-            let mut lines = question.text.split('\n').collect::<Vec<_>>();
-            let line = lines.pop().unwrap();
+    fn on_challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut answers = Vec::new();
+            for question in challenge.questions.iter() {
+                let mut lines = question.text.split('\n').collect::<Vec<_>>();
+                let line = lines.pop().unwrap();
 
-            let answer = match &self.pb {
-                Some(pb) => pb.suspend(|| {
-                    for l in &lines {
-                        eprintln!("{l}");
-                    }
-                    rpassword::prompt_password(line).unwrap_or_default()
-                }),
-                None => {
-                    for l in &lines {
-                        eprintln!("{l}");
-                    }
-                    rpassword::prompt_password(line).unwrap_or_default()
-                }
-            };
-            answers.push(answer);
-        }
-        Ok(ChallengeResponse { answers })
-    }
-
-    async fn on_verification(
-        &mut self,
-        verification: Verification,
-    ) -> io::Result<VerificationResponse> {
-        match verification.kind {
-            VerificationKind::Host => {
                 let answer = match &self.pb {
                     Some(pb) => pb.suspend(|| {
-                        eprintln!("{}", verification.text);
-                        let mut line = String::new();
-                        eprint!("Enter [y/N]> ");
-                        std::io::stdin().read_line(&mut line).ok();
-                        line
+                        for l in &lines {
+                            eprintln!("{l}");
+                        }
+                        rpassword::prompt_password(line).unwrap_or_default()
                     }),
                     None => {
-                        eprintln!("{}", verification.text);
-                        let mut line = String::new();
-                        eprint!("Enter [y/N]> ");
-                        std::io::stdin().read_line(&mut line).ok();
-                        line
+                        for l in &lines {
+                            eprintln!("{l}");
+                        }
+                        rpassword::prompt_password(line).unwrap_or_default()
                     }
                 };
-                Ok(VerificationResponse {
-                    valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
-                })
+                answers.push(answer);
             }
-            x => {
-                log::error!("Unsupported verify kind: {x}");
-                Ok(VerificationResponse { valid: false })
-            }
-        }
+            Ok(ChallengeResponse { answers })
+        })
     }
 
-    async fn on_info(&mut self, info: Info) -> io::Result<()> {
-        match &self.pb {
-            Some(pb) => pb.suspend(|| eprintln!("{}", info.text)),
-            None => eprintln!("{}", info.text),
-        }
-        Ok(())
+    fn on_verification<'a>(
+        &'a mut self,
+        verification: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            match verification.kind {
+                VerificationKind::Host => {
+                    let answer = match &self.pb {
+                        Some(pb) => pb.suspend(|| {
+                            eprintln!("{}", verification.text);
+                            let mut line = String::new();
+                            eprint!("Enter [y/N]> ");
+                            std::io::stdin().read_line(&mut line).ok();
+                            line
+                        }),
+                        None => {
+                            eprintln!("{}", verification.text);
+                            let mut line = String::new();
+                            eprint!("Enter [y/N]> ");
+                            std::io::stdin().read_line(&mut line).ok();
+                            line
+                        }
+                    };
+                    Ok(VerificationResponse {
+                        valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
+                    })
+                }
+                x => {
+                    log::error!("Unsupported verify kind: {x}");
+                    Ok(VerificationResponse { valid: false })
+                }
+            }
+        })
     }
 
-    async fn on_error(&mut self, error: Error) -> io::Result<()> {
-        match &self.pb {
-            Some(pb) => pb.suspend(|| eprintln!("{}: {}", error.kind, error.text)),
-            None => eprintln!("{}: {}", error.kind, error.text),
-        }
-        Ok(())
+    fn on_info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            match &self.pb {
+                Some(pb) => pb.suspend(|| eprintln!("{}", info.text)),
+                None => eprintln!("{}", info.text),
+            }
+            Ok(())
+        })
+    }
+
+    fn on_error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            match &self.pb {
+                Some(pb) => pb.suspend(|| eprintln!("{}: {}", error.kind, error.text)),
+                None => eprintln!("{}: {}", error.kind, error.text),
+            }
+            Ok(())
+        })
     }
 }
 

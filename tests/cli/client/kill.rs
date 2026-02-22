@@ -4,7 +4,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_kill_connection_by_id(ctx: DistantManagerCtx) {
+fn should_kill_connection_by_id(ctx: ManagerCtx) {
     // Get the connection ID from JSON status
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
@@ -49,7 +49,7 @@ fn should_kill_connection_by_id(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_fail_with_invalid_id(ctx: DistantManagerCtx) {
+fn should_fail_with_invalid_id(ctx: ManagerCtx) {
     let output = ctx
         .new_std_cmd(vec!["kill"])
         .arg("99999")

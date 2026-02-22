@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use distant_core::protocol::{Environment, PtySize};
-use distant_core::{DistantChannel, DistantChannelExt, RemoteCommand};
+use distant_core::{Channel, ChannelExt, RemoteCommand};
 use log::*;
 use terminal_size::{terminal_size, Height, Width};
 use termwiz::caps::Capabilities;
@@ -14,10 +14,10 @@ use super::super::common::RemoteProcessLink;
 use super::{CliError, CliResult};
 
 #[derive(Clone)]
-pub struct Shell(DistantChannel);
+pub struct Shell(Channel);
 
 impl Shell {
-    pub fn new(channel: DistantChannel) -> Self {
+    pub fn new(channel: Channel) -> Self {
         Self(channel)
     }
 

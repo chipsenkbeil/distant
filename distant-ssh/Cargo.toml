@@ -1,0 +1,52 @@
+[package]
+name = "distant-ssh"
+description = "Library to enable SSH protocol for use with distant sessions"
+categories = ["network-programming"]
+version = "0.20.0"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2021"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+
+[dependencies]
+async-once-cell = "0.5.2"
+derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
+dirs = "5.0.1"
+distant-core = { version = "=0.20.0", path = "../distant-core" }
+futures = "0.3.28"
+hex = "0.4.3"
+log = "0.4.18"
+rand = { version = "0.8.5", features = ["getrandom"] }
+rpassword = "7.2.0"
+russh = { version = "0.57", default-features = false, features = ["ring"] }
+russh-sftp = "2.1"
+shell-words = "1.1.0"
+ssh2-config-rs = "0.7"
+tokio = { version = "1.28.2", features = ["full"] }
+typed-path = "0.12.3"
+whoami = "1.4.0"
+winsplit = "0.1.0"
+
+# Optional serde support for data structures
+serde = { version = "1.0.163", features = ["derive"], optional = true }
+
+[dev-dependencies]
+anyhow = "1.0.71"
+assert_fs = "1.0.13"
+dunce = "1.0.4"
+env_logger = "0.10.0"
+indoc = "2.0.1"
+once_cell = "1.17.2"
+predicates = "3.0.3"
+rstest = "0.17.0"
+test-log = "0.2.11"
+which = "4.4.0"
+whoami = "1.4.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }

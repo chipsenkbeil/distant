@@ -5,8 +5,8 @@ use distant_core::net::auth::Verifier;
 use distant_core::net::common::{Host, SecretKey32, Version};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig};
 use distant_core::protocol::PROTOCOL_VERSION;
-use distant_core::DistantSingleKeyCredentials;
-use distant_local::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
+use distant_core::Credentials;
+use distant_host::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
 use log::*;
 
 use crate::options::ServerSubcommand;
@@ -59,7 +59,7 @@ fn run_daemon(_cmd: ServerSubcommand) -> CliResult {
         }
         let credentials = s[..n]
             .trim()
-            .parse::<DistantSingleKeyCredentials>()
+            .parse::<Credentials>()
             .context("Failed to parse server credentials")?;
 
         println!("\r");
@@ -143,7 +143,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                     "using an ephemeral port".to_string()
                 }
             );
-            let handler = distant_local::new_handler(LocalConfig {
+            let handler = distant_host::new_handler(LocalConfig {
                 watch: LocalWatchConfig {
                     native: !watch.watch_polling,
                     poll_interval: watch.watch_poll_interval.map(Into::into),
@@ -169,7 +169,7 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
                 .await
                 .with_context(|| format!("Failed to start server @ {addr} with {port}"))?;
 
-            let credentials = DistantSingleKeyCredentials {
+            let credentials = Credentials {
                 host: Host::from(addr),
                 port: server.port(),
                 key,

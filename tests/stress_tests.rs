@@ -7,7 +7,7 @@ use common::fixtures::*;
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_large_volume_of_requests(ctx: DistantManagerCtx) {
+fn should_handle_large_volume_of_requests(ctx: ManagerCtx) {
     // Create a temporary directory to house a file we create and edit
     // with a large volume of requests
     let root = assert_fs::TempDir::new().unwrap();
@@ -33,20 +33,20 @@ fn should_handle_large_volume_of_requests(ctx: DistantManagerCtx) {
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_wide_spread_of_clients(_ctx: DistantManagerCtx) {
+fn should_handle_wide_spread_of_clients(_ctx: ManagerCtx) {
     todo!();
 }
 
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_abrupt_client_disconnects(_ctx: DistantManagerCtx) {
+fn should_handle_abrupt_client_disconnects(_ctx: ManagerCtx) {
     todo!();
 }
 
 #[rstest]
 #[test_log::test]
 #[ignore]
-fn should_handle_badly_killing_client_shell_with_interactive_process(_ctx: DistantManagerCtx) {
+fn should_handle_badly_killing_client_shell_with_interactive_process(_ctx: ManagerCtx) {
     todo!();
 }

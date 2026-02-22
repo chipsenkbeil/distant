@@ -3,8 +3,8 @@ use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use distant_net::client::Channel;
-use distant_net::common::Request;
+use crate::net::client::Channel;
+use crate::net::common::Request;
 
 use crate::client::{
     RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
@@ -23,7 +23,7 @@ fn mismatched_response() -> io::Error {
 }
 
 /// Provides convenience functions on top of a [`Channel`]
-pub trait DistantChannelExt {
+pub trait ChannelExt {
     /// Appends to a remote file using the data from a collection of bytes
     fn append_file(
         &mut self,
@@ -184,9 +184,7 @@ macro_rules! make_body {
     }};
 }
 
-impl DistantChannelExt
-    for Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>>
-{
+impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>> {
     fn append_file(
         &mut self,
         path: impl Into<PathBuf>,

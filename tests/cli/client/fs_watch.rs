@@ -34,7 +34,7 @@ fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_watching_a_single_file(ctx: DistantManagerCtx) {
+fn should_support_watching_a_single_file(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
@@ -87,7 +87,7 @@ fn should_support_watching_a_single_file(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_watching_a_directory_recursively(ctx: DistantManagerCtx) {
+fn should_support_watching_a_directory_recursively(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -147,7 +147,7 @@ fn should_support_watching_a_directory_recursively(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let invalid_path = temp.to_path_buf().join("missing");
 

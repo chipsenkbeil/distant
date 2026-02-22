@@ -8,8 +8,7 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
 
 use crate::client::{
-    DistantChannel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin,
-    RemoteStdout,
+    Channel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin, RemoteStdout,
 };
 use crate::protocol::{Environment, PtySize};
 
@@ -70,7 +69,7 @@ impl RemoteLspCommand {
     /// the process like an LSP server
     pub async fn spawn(
         &mut self,
-        channel: DistantChannel,
+        channel: Channel,
         cmd: impl Into<String>,
     ) -> io::Result<RemoteLspProcess> {
         let mut command = RemoteCommand::new();
@@ -432,8 +431,8 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use distant_net::common::{FramedTransport, InmemoryTransport, Request, Response};
-    use distant_net::Client;
+    use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
+    use crate::net::Client;
     use test_log::test;
 
     use super::*;

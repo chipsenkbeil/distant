@@ -13,7 +13,7 @@ const FILE_CONTENTS: &str = indoc! {r#"
 
 #[rstest]
 #[test_log::test]
-fn should_print_out_file_contents(ctx: DistantManagerCtx) {
+fn should_print_out_file_contents(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str(FILE_CONTENTS).unwrap();
@@ -28,7 +28,7 @@ fn should_print_out_file_contents(ctx: DistantManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: DistantManagerCtx) {
+fn yield_an_error_when_fails(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("missing-file");
 

@@ -1098,7 +1098,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "assert_fs",
- "async-trait",
  "clap",
  "clap_complete",
  "config",
@@ -1107,8 +1106,8 @@ dependencies = [
  "dialoguer",
  "directories",
  "distant-core",
- "distant-local",
- "distant-ssh2",
+ "distant-host",
+ "distant-ssh",
  "env_logger",
  "file-mode",
  "flexi_logger",
@@ -1140,50 +1139,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-auth"
-version = "0.20.0"
-dependencies = [
- "async-trait",
- "derive_more",
- "env_logger",
- "log",
- "serde",
- "test-log",
- "tokio",
-]
-
-[[package]]
 name = "distant-core"
 version = "0.20.0"
 dependencies = [
- "async-trait",
  "bitflags 2.10.0",
  "bytes",
+ "chacha20poly1305",
+ "const-str",
  "derive_more",
- "distant-net",
- "distant-protocol",
+ "dyn-clone",
  "env_logger",
+ "flate2",
  "futures",
  "hex",
+ "hkdf",
  "log",
  "num_cpus",
  "once_cell",
+ "p256",
+ "paste",
  "rand 0.8.5",
  "regex",
+ "rmp",
+ "rmp-serde",
+ "semver 1.0.17",
  "serde",
  "serde_bytes",
  "serde_json",
+ "sha2 0.10.9",
  "strum",
+ "tempfile",
  "test-log",
  "tokio",
 ]
 
 [[package]]
-name = "distant-local"
+name = "distant-host"
 version = "0.20.0"
 dependencies = [
  "assert_fs",
- "async-trait",
  "distant-core",
  "env_logger",
  "grep",
@@ -1207,62 +1201,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "distant-net"
-version = "0.20.0"
-dependencies = [
- "async-trait",
- "bytes",
- "chacha20poly1305",
- "const-str",
- "derive_more",
- "distant-auth",
- "dyn-clone",
- "env_logger",
- "flate2",
- "hex",
- "hkdf",
- "log",
- "p256",
- "paste",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "semver 1.0.17",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2 0.10.9",
- "strum",
- "tempfile",
- "test-log",
- "tokio",
-]
-
-[[package]]
-name = "distant-protocol"
-version = "0.20.0"
-dependencies = [
- "bitflags 2.10.0",
- "const-str",
- "derive_more",
- "regex",
- "rmp",
- "rmp-serde",
- "semver 1.0.17",
- "serde",
- "serde_bytes",
- "serde_json",
- "strum",
-]
-
-[[package]]
-name = "distant-ssh2"
+name = "distant-ssh"
 version = "0.20.0"
 dependencies = [
  "anyhow",
  "assert_fs",
  "async-once-cell",
- "async-trait",
  "derive_more",
  "dirs 5.0.1",
  "distant-core",

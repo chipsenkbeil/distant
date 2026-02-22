@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::str::FromStr;
 use std::{fmt, io};
 
-use distant_net::common::{Destination, Host, SecretKey32};
+use crate::net::common::{Destination, Host, SecretKey32};
 use serde::de::Deserializer;
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -15,14 +15,14 @@ const SCHEME_WITH_SEP: &str = "distant://";
 /// Represents credentials used for a distant server that is maintaining a single key
 /// across all connections
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DistantSingleKeyCredentials {
+pub struct Credentials {
     pub host: Host,
     pub port: u16,
     pub key: SecretKey32,
     pub username: Option<String>,
 }
 
-impl fmt::Display for DistantSingleKeyCredentials {
+impl fmt::Display for Credentials {
     /// Converts credentials into string in the form of `distant://[username]:{key}@{host}:{port}`
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{SCHEME}://")?;
@@ -44,12 +44,12 @@ impl fmt::Display for DistantSingleKeyCredentials {
     }
 }
 
-impl FromStr for DistantSingleKeyCredentials {
+impl FromStr for Credentials {
     type Err = io::Error;
 
     /// Parse `distant://[username]:{key}@{host}:{port}` as credentials. Note that this requires the
     /// `distant` scheme to be included. If parsing without scheme is desired, call the
-    /// [`DistantSingleKeyCredentials::try_from_uri_ref`] method instead with `require_scheme`
+    /// [`Credentials::try_from_uri_ref`] method instead with `require_scheme`
     /// set to false
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let destination: Destination = s
@@ -81,7 +81,7 @@ impl FromStr for DistantSingleKeyCredentials {
     }
 }
 
-impl Serialize for DistantSingleKeyCredentials {
+impl Serialize for Credentials {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -90,7 +90,7 @@ impl Serialize for DistantSingleKeyCredentials {
     }
 }
 
-impl<'de> Deserialize<'de> for DistantSingleKeyCredentials {
+impl<'de> Deserialize<'de> for Credentials {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -99,13 +99,13 @@ impl<'de> Deserialize<'de> for DistantSingleKeyCredentials {
     }
 }
 
-impl DistantSingleKeyCredentials {
+impl Credentials {
     /// Searches a str for `distant://[username]:{key}@{host}:{port}`, returning the first matching
     /// credentials set if found, failing if anything is found immediately before or after the
     /// credentials that is not whitespace or control characters
     ///
     /// If `strict` is false, then the scheme can be preceded by any character
-    pub fn find(s: &str, strict: bool) -> Option<DistantSingleKeyCredentials> {
+    pub fn find(s: &str, strict: bool) -> Option<Credentials> {
         let is_boundary = |c| char::is_whitespace(c) || char::is_control(c);
 
         for (i, _) in s.match_indices(SCHEME_WITH_SEP) {
@@ -135,17 +135,17 @@ impl DistantSingleKeyCredentials {
 
     /// Equivalent to [`find(s, true)`].
     ///
-    /// [`find(s, true)`]: DistantSingleKeyCredentials::find
+    /// [`find(s, true)`]: Credentials::find
     #[inline]
-    pub fn find_strict(s: &str) -> Option<DistantSingleKeyCredentials> {
+    pub fn find_strict(s: &str) -> Option<Credentials> {
         Self::find(s, true)
     }
 
     /// Equivalent to [`find(s, false)`].
     ///
-    /// [`find(s, false)`]: DistantSingleKeyCredentials::find
+    /// [`find(s, false)`]: Credentials::find
     #[inline]
-    pub fn find_lax(s: &str) -> Option<DistantSingleKeyCredentials> {
+    pub fn find_lax(s: &str) -> Option<Credentials> {
         Self::find(s, false)
     }
 
@@ -157,10 +157,10 @@ impl DistantSingleKeyCredentials {
     }
 }
 
-impl TryFrom<DistantSingleKeyCredentials> for Destination {
+impl TryFrom<Credentials> for Destination {
     type Error = io::Error;
 
-    fn try_from(credentials: DistantSingleKeyCredentials) -> Result<Self, Self::Error> {
+    fn try_from(credentials: Credentials) -> Result<Self, Self::Error> {
         Ok(Destination {
             scheme: Some("distant".to_string()),
             username: credentials.username,
@@ -195,36 +195,36 @@ mod tests {
         format!("distant://{USER}:{key}@{HOST}:{PORT}")
     });
 
-    static CREDENTIALS_NO_USER: Lazy<DistantSingleKeyCredentials> =
+    static CREDENTIALS_NO_USER: Lazy<Credentials> =
         Lazy::new(|| CREDENTIALS_STR_NO_USER.parse().unwrap());
-    static CREDENTIALS_USER: Lazy<DistantSingleKeyCredentials> =
+    static CREDENTIALS_USER: Lazy<Credentials> =
         Lazy::new(|| CREDENTIALS_STR_USER.parse().unwrap());
 
     #[test]
     fn find_should_return_some_key_if_string_is_exact_match() {
-        let credentials = DistantSingleKeyCredentials::find(CREDENTIALS_STR_NO_USER.as_str(), true);
+        let credentials = Credentials::find(CREDENTIALS_STR_NO_USER.as_str(), true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
-        let credentials = DistantSingleKeyCredentials::find(CREDENTIALS_STR_USER.as_str(), true);
+        let credentials = Credentials::find(CREDENTIALS_STR_USER.as_str(), true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_USER);
     }
 
     #[test]
     fn find_should_return_some_key_if_there_is_a_match_with_only_whitespace_on_either_side() {
         let s = format!(" {} ", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!("\r{}\r", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!("\t{}\t", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!("\n{}\n", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
@@ -232,7 +232,7 @@ mod tests {
     fn find_should_return_some_key_if_there_is_a_match_with_only_control_characters_on_either_side()
     {
         let s = format!("\x1b{} \x1b", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
@@ -243,7 +243,7 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
@@ -255,14 +255,14 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_NO_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
     #[test]
     fn find_with_strict_false_should_ignore_any_character_preceding_scheme() {
         let s = format!("a{}", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, false);
+        let credentials = Credentials::find(&s, false);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
 
         let s = format!(
@@ -270,14 +270,14 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_NO_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s, false);
+        let credentials = Credentials::find(&s, false);
         assert_eq!(credentials.unwrap(), *CREDENTIALS_NO_USER);
     }
 
     #[test]
     fn find_with_strict_true_should_not_find_if_non_whitespace_and_control_preceding_scheme() {
         let s = format!("a{}", CREDENTIALS_STR_NO_USER.as_str());
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials, None);
 
         let s = format!(
@@ -285,25 +285,25 @@ mod tests {
             CREDENTIALS_STR_NO_USER.as_str(),
             CREDENTIALS_STR_NO_USER.as_str()
         );
-        let credentials = DistantSingleKeyCredentials::find(&s, true);
+        let credentials = Credentials::find(&s, true);
         assert_eq!(credentials, None);
     }
 
     #[test]
     fn find_should_return_none_if_no_match_found() {
         let s = "abc";
-        let credentials = DistantSingleKeyCredentials::find(s, true);
+        let credentials = Credentials::find(s, true);
         assert_eq!(credentials, None);
 
         let s = "abc";
-        let credentials = DistantSingleKeyCredentials::find(s, false);
+        let credentials = Credentials::find(s, false);
         assert_eq!(credentials, None);
     }
 
     #[test]
     fn display_should_not_wrap_ipv4_address() {
         let key = KEY.as_str();
-        let credentials = DistantSingleKeyCredentials {
+        let credentials = Credentials {
             host: Host::Ipv4(Ipv4Addr::LOCALHOST),
             port: 12345,
             username: None,
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn display_should_wrap_ipv6_address_in_square_brackets() {
         let key = KEY.as_str();
-        let credentials = DistantSingleKeyCredentials {
+        let credentials = Credentials {
             host: Host::Ipv6(Ipv6Addr::LOCALHOST),
             port: 12345,
             username: None,

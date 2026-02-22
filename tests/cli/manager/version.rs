@@ -4,7 +4,7 @@ use crate::common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_version(ctx: DistantManagerCtx) {
+fn should_output_version(ctx: ManagerCtx) {
     ctx.new_assert_cmd(vec!["manager", "version"])
         .assert()
         .success()
