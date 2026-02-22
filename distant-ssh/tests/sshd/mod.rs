@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -820,36 +819,22 @@ impl Drop for Sshd {
 pub struct MockSshAuthHandler;
 
 impl SshAuthHandler for MockSshAuthHandler {
-    fn on_authenticate(
-        &self,
-        event: SshAuthEvent,
-    ) -> impl Future<Output = io::Result<Vec<String>>> + Send {
-        async move {
-            debug!("on_authenticate: {:?}", event);
-            Ok(vec![String::new(); event.prompts.len()])
-        }
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
+        debug!("on_authenticate: {:?}", event);
+        Ok(vec![String::new(); event.prompts.len()])
     }
 
-    fn on_verify_host<'a>(
-        &'a self,
-        host: &'a str,
-    ) -> impl Future<Output = io::Result<bool>> + Send + 'a {
-        async move {
-            debug!("on_host_verify: {}", host);
-            Ok(true)
-        }
+    async fn on_verify_host(&self, host: &str) -> io::Result<bool> {
+        debug!("on_host_verify: {}", host);
+        Ok(true)
     }
 
-    fn on_banner<'a>(&'a self, text: &'a str) -> impl Future<Output = ()> + Send + 'a {
-        async move {
-            debug!("on_banner: {:?}", text);
-        }
+    async fn on_banner(&self, text: &str) {
+        debug!("on_banner: {:?}", text);
     }
 
-    fn on_error<'a>(&'a self, text: &'a str) -> impl Future<Output = ()> + Send + 'a {
-        async move {
-            debug!("on_error: {:?}", text);
-        }
+    async fn on_error(&self, text: &str) {
+        debug!("on_error: {:?}", text);
     }
 }
 
