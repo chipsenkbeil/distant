@@ -291,13 +291,38 @@ impl ManagerCtx {
     }
 }
 
-/// Path to distant binary
-fn bin_path() -> PathBuf {
-    // Try to find the binary via CARGO_BIN_EXE first (set during `cargo test`),
-    // then fall back to looking on PATH
-    std::env::var("CARGO_BIN_EXE_distant")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| which::which("distant").expect("distant binary not found"))
+/// Path to distant binary.
+pub fn bin_path() -> PathBuf {
+    // 1. Compile-time env var (available when called from the distant crate's own tests)
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_distant") {
+        let p = PathBuf::from(&path);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    // 2. Derive from current test exe: target/{profile}/deps/test -> target/{profile}/distant
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(deps_dir) = exe.parent() {
+            if let Some(profile_dir) = deps_dir.parent() {
+                let name = if cfg!(windows) {
+                    "distant.exe"
+                } else {
+                    "distant"
+                };
+                let candidate = profile_dir.join(name);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    // 3. Fall back to PATH
+    which::which("distant").expect(
+        "distant binary not found: not in CARGO_BIN_EXE_distant, \
+         not adjacent to test exe, and not on PATH",
+    )
 }
 
 fn random_log_file(prefix: &str) -> PathBuf {

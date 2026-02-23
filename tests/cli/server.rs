@@ -2,11 +2,7 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-fn bin_path() -> std::path::PathBuf {
-    std::env::var("CARGO_BIN_EXE_distant")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| which::which("distant").expect("distant binary not found"))
-}
+use distant_test_harness::manager::bin_path;
 
 #[test]
 fn server_listen_should_output_credentials_and_exit() {

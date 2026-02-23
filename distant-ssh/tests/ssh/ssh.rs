@@ -3,6 +3,7 @@ use std::time::Duration;
 use assert_fs::prelude::*;
 use distant_core::ChannelExt;
 use distant_ssh::{LaunchOpts, Ssh, SshFamily, SshOpts};
+use distant_test_harness::manager::bin_path;
 use rstest::*;
 use test_log::test;
 
@@ -139,7 +140,7 @@ async fn launch_with_nonexistent_binary_should_fail(sshd: Sshd) {
 async fn launch_and_connect_should_return_working_client(sshd: Sshd) {
     let ssh = load_ssh_client(&sshd).await;
     let opts = LaunchOpts {
-        binary: String::from("distant"),
+        binary: bin_path().to_string_lossy().to_string(),
         args: String::new(),
         timeout: Duration::from_secs(15),
     };
