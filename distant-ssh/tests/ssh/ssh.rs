@@ -128,7 +128,10 @@ async fn launch_with_nonexistent_binary_should_fail(sshd: Sshd) {
         timeout: Duration::from_secs(3),
     };
     let result = ssh.launch(opts).await;
-    assert!(result.is_err(), "Launch with nonexistent binary should fail");
+    assert!(
+        result.is_err(),
+        "Launch with nonexistent binary should fail"
+    );
 }
 
 #[test(tokio::test)]

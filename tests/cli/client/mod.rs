@@ -7,6 +7,7 @@ mod fs_read_file;
 mod fs_remove;
 mod fs_rename;
 mod fs_search;
+mod fs_set_permissions;
 mod fs_watch;
 mod fs_write;
 mod kill;

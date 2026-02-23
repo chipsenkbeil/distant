@@ -2099,7 +2099,10 @@ async fn exists_should_send_false_if_parent_directory_does_not_exist(
     let mut client = client.await;
     let path = std::path::PathBuf::from("/nonexistent_parent_abc123/nonexistent_child");
     let exists = client.exists(path).await.unwrap();
-    assert!(!exists, "Expected exists to be false for deeply nonexistent path");
+    assert!(
+        !exists,
+        "Expected exists to be false for deeply nonexistent path"
+    );
 }
 
 #[rstest]
@@ -2158,14 +2161,15 @@ async fn set_permissions_should_fail_if_path_does_not_exist(#[future] client: Ct
         )
         .await;
 
-    assert!(result.is_err(), "set_permissions on missing path should fail");
+    assert!(
+        result.is_err(),
+        "set_permissions on missing path should fail"
+    );
 }
 
 #[rstest]
 #[test(tokio::test)]
-async fn proc_spawn_with_pty_should_fail_if_current_dir_specified(
-    #[future] client: Ctx<Client>,
-) {
+async fn proc_spawn_with_pty_should_fail_if_current_dir_specified(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let current_dir = if cfg!(windows) { "C:\\temp" } else { "/tmp" };
     let result = client
@@ -2219,16 +2223,14 @@ async fn proc_spawn_should_report_nonzero_exit_code(#[future] client: Ctx<Client
     let mut client = client.await;
     let cmd = platform_cmd("sh -c 'exit 42'", "cmd /C exit 42");
     let proc = client
-        .spawn(
-            cmd,
-            Environment::new(),
-            None,
-            None,
-        )
+        .spawn(cmd, Environment::new(), None, None)
         .await
         .unwrap();
     let status = proc.wait().await.unwrap();
-    assert!(!status.success, "Process with exit 42 should not be success");
+    assert!(
+        !status.success,
+        "Process with exit 42 should not be success"
+    );
     assert_eq!(
         status.code,
         Some(42),

@@ -13,6 +13,7 @@ mod proc_spawn;
 mod remove;
 mod rename;
 mod search;
+mod set_permissions;
 mod system_info;
 mod version;
 mod watch;
