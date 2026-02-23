@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use assert_fs::prelude::*;
 use distant_core::ChannelExt;
-use distant_ssh::{Ssh, SshFamily, SshOpts};
+use distant_ssh::{LaunchOpts, Ssh, SshFamily, SshOpts};
 use rstest::*;
 use test_log::test;
 
@@ -76,4 +78,77 @@ async fn connect_with_verbose_should_succeed(sshd: Sshd) {
     let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
     ssh.authenticate(MockSshAuthHandler).await.unwrap();
     assert!(ssh.is_authenticated());
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn ssh_host_and_port_accessors(#[future] ssh: Ctx<Ssh>) {
+    let ssh = ssh.await;
+    // Host should be some variant of localhost (127.0.0.1 or ::1)
+    let host = ssh.host();
+    assert!(
+        host == "127.0.0.1" || host == "::1",
+        "Unexpected host: {}",
+        host
+    );
+    assert_eq!(ssh.port(), ssh.sshd.port);
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn authenticate_twice_should_succeed(sshd: Sshd) {
+    let mut ssh = load_ssh_client(&sshd).await;
+    // Already authenticated by load_ssh_client, call again should be a no-op
+    assert!(ssh.is_authenticated());
+    ssh.authenticate(MockSshAuthHandler).await.unwrap();
+    assert!(ssh.is_authenticated());
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn into_distant_pair_server_ref_is_alive(sshd: Sshd) {
+    let ssh = load_ssh_client(&sshd).await;
+    let (mut client, server_ref) = ssh.into_distant_pair().await.unwrap();
+    client.shutdown_on_drop(true);
+    assert!(!server_ref.is_finished(), "Server should be running");
+    let _ = client.system_info().await.unwrap();
+    assert!(
+        !server_ref.is_finished(),
+        "Server should still be running after request"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn launch_with_nonexistent_binary_should_fail(sshd: Sshd) {
+    let ssh = load_ssh_client(&sshd).await;
+    let opts = LaunchOpts {
+        binary: String::from("nonexistent_distant_binary_xyz_12345"),
+        args: String::new(),
+        timeout: Duration::from_secs(3),
+    };
+    let result = ssh.launch(opts).await;
+    assert!(result.is_err(), "Launch with nonexistent binary should fail");
+}
+
+#[test(tokio::test)]
+async fn connect_failure_error_should_be_connection_refused() {
+    let opts = SshOpts {
+        port: Some(1),
+        ..Default::default()
+    };
+    let result = Ssh::connect("127.0.0.1", opts).await;
+    match result {
+        Err(err) => {
+            // Should be a connection error
+            assert!(
+                err.kind() == std::io::ErrorKind::ConnectionRefused
+                    || err.kind() == std::io::ErrorKind::Other,
+                "Unexpected error kind: {:?} - {}",
+                err.kind(),
+                err
+            );
+        }
+        Ok(_) => panic!("Expected connection to fail"),
+    }
 }

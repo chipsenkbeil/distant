@@ -2034,3 +2034,205 @@ async fn proc_spawn_should_fail_if_current_dir_specified(#[future] client: Ctx<C
         .await;
     assert!(result.is_err());
 }
+
+#[rstest]
+#[test(tokio::test)]
+#[cfg_attr(all(windows, ci), ignore)]
+async fn dir_read_should_support_explicit_depth_greater_than_one(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let root_dir = assert_fs::TempDir::new().unwrap();
+    root_dir.child("file1").touch().unwrap();
+    let sub1 = root_dir.child("sub1");
+    sub1.create_dir_all().unwrap();
+    sub1.child("file2").touch().unwrap();
+    let sub2 = sub1.child("sub2");
+    sub2.create_dir_all().unwrap();
+    sub2.child("file3").touch().unwrap();
+
+    let (entries, _) = client
+        .read_dir(
+            root_dir.path().to_path_buf(),
+            /* depth */ 2,
+            /* absolute */ false,
+            /* canonicalize */ false,
+            /* include_root */ false,
+        )
+        .await
+        .unwrap();
+
+    // depth=2 should include root-level + sub1 contents, but NOT sub2/file3
+    let paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with("file1")),
+        "Missing file1: {:?}",
+        paths
+    );
+    assert!(
+        paths.iter().any(|p| p.ends_with("sub1")),
+        "Missing sub1: {:?}",
+        paths
+    );
+    assert!(
+        paths.iter().any(|p| p.ends_with("file2")),
+        "Missing file2 at depth 2: {:?}",
+        paths
+    );
+    // sub2 directory should appear at depth 2
+    assert!(
+        paths.iter().any(|p| p.ends_with("sub2")),
+        "Missing sub2 at depth 2: {:?}",
+        paths
+    );
+    // But file3 inside sub2 should NOT appear (that would be depth 3)
+    assert!(
+        !paths.iter().any(|p| p.ends_with("file3")),
+        "file3 should NOT appear at depth 2: {:?}",
+        paths
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn exists_should_send_false_if_parent_directory_does_not_exist(
+    #[future] client: Ctx<Client>,
+) {
+    let mut client = client.await;
+    let path = std::path::PathBuf::from("/nonexistent_parent_abc123/nonexistent_child");
+    let exists = client.exists(path).await.unwrap();
+    assert!(!exists, "Expected exists to be false for deeply nonexistent path");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn remove_should_support_deleting_a_single_file(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file-to-remove");
+    file.write_str("some content").unwrap();
+
+    client
+        .remove(file.path().to_path_buf(), /* force */ false)
+        .await
+        .unwrap();
+
+    file.assert(predicate::path::missing());
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn metadata_should_include_modified_timestamp(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("timestamped-file");
+    file.write_str("content").unwrap();
+
+    let metadata = client
+        .metadata(
+            file.path().to_path_buf(),
+            /* canonicalize */ false,
+            /* resolve_file_type */ false,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        metadata.modified.is_some(),
+        "Expected modified timestamp to be set: {:?}",
+        metadata
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+#[cfg_attr(not(unix), ignore)]
+async fn set_permissions_should_fail_if_path_does_not_exist(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let missing = temp.child("nonexistent");
+
+    let result = client
+        .set_permissions(
+            missing.path().to_path_buf(),
+            Permissions::readonly(),
+            Default::default(),
+        )
+        .await;
+
+    assert!(result.is_err(), "set_permissions on missing path should fail");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_with_pty_should_fail_if_current_dir_specified(
+    #[future] client: Ctx<Client>,
+) {
+    let mut client = client.await;
+    let current_dir = if cfg!(windows) { "C:\\temp" } else { "/tmp" };
+    let result = client
+        .spawn(
+            "echo hello".to_string(),
+            Environment::new(),
+            Some(std::path::PathBuf::from(current_dir)),
+            Some(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+        )
+        .await;
+    assert!(result.is_err(), "PTY spawn with current_dir should fail");
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_with_pty_should_capture_stdout(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let cmd = platform_cmd("echo pty_test_output", "echo pty_test_output");
+    let mut proc = client
+        .spawn(
+            cmd,
+            Environment::new(),
+            None,
+            Some(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+        )
+        .await
+        .unwrap();
+    // PTY combines stdout/stderr into stdout
+    let stdout = proc.stdout.as_mut().unwrap().read().await.unwrap();
+    let stdout_str = String::from_utf8_lossy(&stdout);
+    assert!(
+        stdout_str.contains("pty_test_output"),
+        "Expected stdout to contain 'pty_test_output', got '{}'",
+        stdout_str
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proc_spawn_should_report_nonzero_exit_code(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let cmd = platform_cmd("sh -c 'exit 42'", "cmd /C exit 42");
+    let proc = client
+        .spawn(
+            cmd,
+            Environment::new(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let status = proc.wait().await.unwrap();
+    assert!(!status.success, "Process with exit 42 should not be success");
+    assert_eq!(
+        status.code,
+        Some(42),
+        "Expected exit code 42, got {:?}",
+        status.code
+    );
+}
