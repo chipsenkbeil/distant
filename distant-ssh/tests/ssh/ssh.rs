@@ -146,7 +146,7 @@ async fn launch_and_connect_should_return_working_client(sshd: Sshd) {
     let mut client = ssh.launch_and_connect(opts).await.unwrap();
     let info = client.system_info().await.unwrap();
     assert_eq!(info.family, std::env::consts::FAMILY);
-    client.shutdown().await;
+    let _ = client.shutdown().await;
 }
 
 #[test(tokio::test)]

@@ -180,9 +180,11 @@ mod tests {
             host: Host::Name("host".to_string()),
             port: None,
         };
-        let dest_ref = &dest;
-        let r: &Destination = dest_ref.as_ref();
-        assert_eq!(r.host, Host::Name("host".to_string()));
+        // Exercise AsRef<Destination> for &Destination through a generic function
+        fn check_as_ref(r: impl AsRef<Destination>) {
+            assert_eq!(r.as_ref().host, Host::Name("host".to_string()));
+        }
+        check_as_ref(&dest);
     }
 
     #[test]
@@ -194,10 +196,11 @@ mod tests {
             host: Host::Name("host".to_string()),
             port: None,
         };
-        let mut dest_ref = &mut dest;
-        let m: &mut Destination = dest_ref.as_mut();
-        m.port = Some(22);
-        drop(m);
+        // Exercise AsMut<Destination> for &mut Destination through a generic function
+        fn check_as_mut(mut r: impl AsMut<Destination>) {
+            r.as_mut().port = Some(22);
+        }
+        check_as_mut(&mut dest);
         assert_eq!(dest.port, Some(22));
     }
 

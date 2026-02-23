@@ -90,6 +90,55 @@ impl Default for TestAuthenticator {
     }
 }
 
+#[cfg(any(test, feature = "tests"))]
+impl Authenticator for TestAuthenticator {
+    fn initialize<'a>(
+        &'a mut self,
+        initialization: Initialization,
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.initialize)(initialization) })
+    }
+
+    fn challenge<'a>(
+        &'a mut self,
+        challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.challenge)(challenge) })
+    }
+
+    fn verify<'a>(
+        &'a mut self,
+        verification: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        Box::pin(async move { (self.verify)(verification) })
+    }
+
+    fn info<'a>(
+        &'a mut self,
+        info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.info)(info) })
+    }
+
+    fn error<'a>(
+        &'a mut self,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.error)(error) })
+    }
+
+    fn start_method<'a>(
+        &'a mut self,
+        start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.start_method)(start_method) })
+    }
+
+    fn finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async move { (self.finished)() })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,54 +221,5 @@ mod tests {
     async fn test_authenticator_default_finished() {
         let mut auth = TestAuthenticator::default();
         auth.finished().await.unwrap();
-    }
-}
-
-#[cfg(any(test, feature = "tests"))]
-impl Authenticator for TestAuthenticator {
-    fn initialize<'a>(
-        &'a mut self,
-        initialization: Initialization,
-    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
-        Box::pin(async move { (self.initialize)(initialization) })
-    }
-
-    fn challenge<'a>(
-        &'a mut self,
-        challenge: Challenge,
-    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
-        Box::pin(async move { (self.challenge)(challenge) })
-    }
-
-    fn verify<'a>(
-        &'a mut self,
-        verification: Verification,
-    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
-        Box::pin(async move { (self.verify)(verification) })
-    }
-
-    fn info<'a>(
-        &'a mut self,
-        info: Info,
-    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
-        Box::pin(async move { (self.info)(info) })
-    }
-
-    fn error<'a>(
-        &'a mut self,
-        error: Error,
-    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
-        Box::pin(async move { (self.error)(error) })
-    }
-
-    fn start_method<'a>(
-        &'a mut self,
-        start_method: StartMethod,
-    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
-        Box::pin(async move { (self.start_method)(start_method) })
-    }
-
-    fn finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
-        Box::pin(async move { (self.finished)() })
     }
 }
