@@ -728,6 +728,104 @@ mod tests {
         use super::*;
 
         #[test]
+        fn from_u32_to_unix_metadata_and_back_round_trip() {
+            // 0o755 = owner rwx, group rx, other rx
+            let mode: u32 = 0o755;
+            let meta = UnixMetadata::from(mode);
+            assert!(meta.owner_read);
+            assert!(meta.owner_write);
+            assert!(meta.owner_exec);
+            assert!(meta.group_read);
+            assert!(!meta.group_write);
+            assert!(meta.group_exec);
+            assert!(meta.other_read);
+            assert!(!meta.other_write);
+            assert!(meta.other_exec);
+
+            // Round-trip back
+            let back: u32 = meta.into();
+            assert_eq!(back, mode);
+        }
+
+        #[test]
+        fn from_u32_to_unix_metadata_0o644() {
+            let mode: u32 = 0o644;
+            let meta = UnixMetadata::from(mode);
+            assert!(meta.owner_read);
+            assert!(meta.owner_write);
+            assert!(!meta.owner_exec);
+            assert!(meta.group_read);
+            assert!(!meta.group_write);
+            assert!(!meta.group_exec);
+            assert!(meta.other_read);
+            assert!(!meta.other_write);
+            assert!(!meta.other_exec);
+
+            let back: u32 = meta.into();
+            assert_eq!(back, mode);
+        }
+
+        #[test]
+        fn from_u32_to_unix_metadata_0o000() {
+            let mode: u32 = 0o000;
+            let meta = UnixMetadata::from(mode);
+            assert!(!meta.owner_read);
+            assert!(!meta.owner_write);
+            assert!(!meta.owner_exec);
+            assert!(!meta.group_read);
+            assert!(!meta.group_write);
+            assert!(!meta.group_exec);
+            assert!(!meta.other_read);
+            assert!(!meta.other_write);
+            assert!(!meta.other_exec);
+
+            let back: u32 = meta.into();
+            assert_eq!(back, mode);
+        }
+
+        #[test]
+        fn from_u32_to_unix_metadata_0o777() {
+            let mode: u32 = 0o777;
+            let meta = UnixMetadata::from(mode);
+            assert!(meta.owner_read);
+            assert!(meta.owner_write);
+            assert!(meta.owner_exec);
+            assert!(meta.group_read);
+            assert!(meta.group_write);
+            assert!(meta.group_exec);
+            assert!(meta.other_read);
+            assert!(meta.other_write);
+            assert!(meta.other_exec);
+
+            let back: u32 = meta.into();
+            assert_eq!(back, mode);
+        }
+
+        #[test]
+        fn is_readonly_when_no_write_bits() {
+            let meta = UnixMetadata::from(0o444u32);
+            assert!(meta.is_readonly());
+        }
+
+        #[test]
+        fn is_not_readonly_when_owner_write() {
+            let meta = UnixMetadata::from(0o644u32);
+            assert!(!meta.is_readonly());
+        }
+
+        #[test]
+        fn is_not_readonly_when_group_write() {
+            let meta = UnixMetadata::from(0o464u32);
+            assert!(!meta.is_readonly());
+        }
+
+        #[test]
+        fn is_not_readonly_when_other_write() {
+            let meta = UnixMetadata::from(0o446u32);
+            assert!(!meta.is_readonly());
+        }
+
+        #[test]
         fn should_be_able_to_serialize_to_json() {
             let metadata = UnixMetadata {
                 owner_read: true,
@@ -849,6 +947,121 @@ mod tests {
 
     mod windows_metadata {
         use super::*;
+
+        #[test]
+        fn from_u32_to_windows_metadata_and_back_round_trip() {
+            // ARCHIVE(0x20) | HIDDEN(0x2) | SYSTEM(0x4) = 0x26
+            let attrs: u32 = 0x26;
+            let meta = WindowsMetadata::from(attrs);
+            assert!(meta.archive);
+            assert!(!meta.compressed);
+            assert!(!meta.encrypted);
+            assert!(meta.hidden);
+            assert!(!meta.integrity_stream);
+            assert!(!meta.normal);
+            assert!(!meta.not_content_indexed);
+            assert!(!meta.no_scrub_data);
+            assert!(!meta.offline);
+            assert!(!meta.recall_on_data_access);
+            assert!(!meta.recall_on_open);
+            assert!(!meta.reparse_point);
+            assert!(!meta.sparse_file);
+            assert!(meta.system);
+            assert!(!meta.temporary);
+
+            let back: u32 = meta.into();
+            assert_eq!(back, attrs);
+        }
+
+        #[test]
+        fn from_u32_to_windows_metadata_zero() {
+            let meta = WindowsMetadata::from(0u32);
+            assert!(!meta.archive);
+            assert!(!meta.compressed);
+            assert!(!meta.encrypted);
+            assert!(!meta.hidden);
+            assert!(!meta.integrity_stream);
+            assert!(!meta.normal);
+            assert!(!meta.not_content_indexed);
+            assert!(!meta.no_scrub_data);
+            assert!(!meta.offline);
+            assert!(!meta.recall_on_data_access);
+            assert!(!meta.recall_on_open);
+            assert!(!meta.reparse_point);
+            assert!(!meta.sparse_file);
+            assert!(!meta.system);
+            assert!(!meta.temporary);
+
+            let back: u32 = meta.into();
+            assert_eq!(back, 0);
+        }
+
+        #[test]
+        fn from_u32_to_windows_metadata_all_flags() {
+            // Set all known flags
+            let all: u32 = 0x20
+                | 0x800
+                | 0x4000
+                | 0x2
+                | 0x8000
+                | 0x80
+                | 0x2000
+                | 0x20000
+                | 0x1000
+                | 0x400000
+                | 0x40000
+                | 0x400
+                | 0x200
+                | 0x4
+                | 0x100;
+            let meta = WindowsMetadata::from(all);
+            assert!(meta.archive);
+            assert!(meta.compressed);
+            assert!(meta.encrypted);
+            assert!(meta.hidden);
+            assert!(meta.integrity_stream);
+            assert!(meta.normal);
+            assert!(meta.not_content_indexed);
+            assert!(meta.no_scrub_data);
+            assert!(meta.offline);
+            assert!(meta.recall_on_data_access);
+            assert!(meta.recall_on_open);
+            assert!(meta.reparse_point);
+            assert!(meta.sparse_file);
+            assert!(meta.system);
+            assert!(meta.temporary);
+
+            let back: u32 = meta.into();
+            assert_eq!(back, all);
+        }
+
+        #[test]
+        fn from_u32_to_windows_metadata_individual_flags() {
+            // Test individual flags
+            let test_cases: Vec<(u32, &str)> = vec![
+                (0x20, "archive"),
+                (0x800, "compressed"),
+                (0x4000, "encrypted"),
+                (0x2, "hidden"),
+                (0x8000, "integrity_stream"),
+                (0x80, "normal"),
+                (0x2000, "not_content_indexed"),
+                (0x20000, "no_scrub_data"),
+                (0x1000, "offline"),
+                (0x400000, "recall_on_data_access"),
+                (0x40000, "recall_on_open"),
+                (0x400, "reparse_point"),
+                (0x200, "sparse_file"),
+                (0x4, "system"),
+                (0x100, "temporary"),
+            ];
+
+            for (flag, name) in test_cases {
+                let meta = WindowsMetadata::from(flag);
+                let back: u32 = meta.into();
+                assert_eq!(back, flag, "Round-trip failed for {name}");
+            }
+        }
 
         #[test]
         fn should_be_able_to_serialize_to_json() {

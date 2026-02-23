@@ -56,7 +56,8 @@ mod tests {
 
     #[test]
     fn default_creates_instance() {
-        let _method = NoneAuthenticationMethod;
+        let method = NoneAuthenticationMethod::default();
+        assert_eq!(method.id(), "none");
     }
 
     #[test]
