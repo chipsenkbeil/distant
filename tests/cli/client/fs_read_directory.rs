@@ -4,8 +4,8 @@ use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
-use crate::common::utils::regex_pred;
+use distant_test_harness::manager::*;
+use distant_test_harness::utils::regex_pred;
 
 /// Creates a directory in the form
 ///

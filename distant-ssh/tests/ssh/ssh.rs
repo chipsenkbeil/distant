@@ -4,7 +4,7 @@ use distant_ssh::{Ssh, SshFamily, SshOpts};
 use rstest::*;
 use test_log::test;
 
-use crate::sshd::*;
+use distant_test_harness::sshd::*;
 
 #[rstest]
 #[test(tokio::test)]

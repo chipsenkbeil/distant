@@ -1108,6 +1108,7 @@ dependencies = [
  "distant-core",
  "distant-host",
  "distant-ssh",
+ "distant-test-harness",
  "env_logger",
  "file-mode",
  "flexi_logger",
@@ -1179,6 +1180,7 @@ version = "0.20.0"
 dependencies = [
  "assert_fs",
  "distant-core",
+ "distant-test-harness",
  "env_logger",
  "grep",
  "ignore",
@@ -1211,6 +1213,7 @@ dependencies = [
  "derive_more",
  "dirs 5.0.1",
  "distant-core",
+ "distant-test-harness",
  "dunce",
  "env_logger",
  "futures",
@@ -1233,6 +1236,29 @@ dependencies = [
  "which",
  "whoami",
  "winsplit",
+]
+
+[[package]]
+name = "distant-test-harness"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "assert_fs",
+ "derive_more",
+ "distant-core",
+ "distant-host",
+ "distant-ssh",
+ "indoc",
+ "log",
+ "once_cell",
+ "predicates",
+ "rand 0.8.5",
+ "rstest",
+ "serde_json",
+ "tokio",
+ "which",
+ "whoami",
 ]
 
 [[package]]

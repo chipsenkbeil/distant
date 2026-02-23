@@ -5,7 +5,7 @@ use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 async fn wait_a_bit() {
     wait_millis(250).await;

@@ -5,7 +5,7 @@ use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 /// Creates a directory in the form
 ///

@@ -1,8 +1,8 @@
 use distant_core::protocol::{semver, PROTOCOL_VERSION};
 use rstest::*;
 
-use crate::common::fixtures::*;
-use crate::common::utils::TrimmedLinesMatchPredicate;
+use distant_test_harness::manager::*;
+use distant_test_harness::utils::predicates_ext::TrimmedLinesMatchPredicate;
 
 #[rstest]
 #[test_log::test]

@@ -15,7 +15,7 @@ use predicates::prelude::*;
 use rstest::*;
 use test_log::test;
 
-use crate::sshd::*;
+use distant_test_harness::sshd::*;
 
 /// Returns a platform-appropriate command string.
 /// On Unix, uses the unix_cmd; on Windows, uses the windows_cmd.

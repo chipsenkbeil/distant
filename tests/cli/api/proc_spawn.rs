@@ -2,8 +2,8 @@ use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::cli::scripts::*;
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
+use distant_test_harness::scripts::*;
 
 fn make_cmd(args: Vec<&str>) -> String {
     format!(

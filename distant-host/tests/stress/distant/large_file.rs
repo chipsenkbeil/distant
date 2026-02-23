@@ -3,7 +3,7 @@ use distant_core::ChannelExt;
 use rstest::*;
 use test_log::test;
 
-use crate::stress::fixtures::*;
+use distant_test_harness::host::*;
 
 // 64KB is maximum TCP packet size
 const MAX_TCP_PACKET_BYTES: usize = 65535;

@@ -1,8 +1,6 @@
 use assert_fs::prelude::*;
+use distant_test_harness::manager::*;
 use rstest::*;
-
-mod common;
-use common::fixtures::*;
 
 #[rstest]
 #[test_log::test]
