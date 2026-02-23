@@ -134,6 +134,21 @@ async fn launch_with_nonexistent_binary_should_fail(sshd: Sshd) {
     );
 }
 
+#[rstest]
+#[test(tokio::test)]
+async fn launch_and_connect_should_return_working_client(sshd: Sshd) {
+    let ssh = load_ssh_client(&sshd).await;
+    let opts = LaunchOpts {
+        binary: String::from("distant"),
+        args: String::new(),
+        timeout: Duration::from_secs(15),
+    };
+    let mut client = ssh.launch_and_connect(opts).await.unwrap();
+    let info = client.system_info().await.unwrap();
+    assert_eq!(info.family, std::env::consts::FAMILY);
+    client.shutdown().await;
+}
+
 #[test(tokio::test)]
 async fn connect_failure_error_should_be_connection_refused() {
     let opts = SshOpts {

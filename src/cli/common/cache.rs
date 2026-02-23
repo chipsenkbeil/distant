@@ -107,3 +107,96 @@ impl CacheData {
         tokio::fs::write(path, bytes).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_new_with_custom_path() {
+        let cache = Cache::new(PathBuf::from("/tmp/test-cache.toml"));
+        assert_eq!(*cache.data.selected, 0);
+    }
+
+    #[test]
+    fn cache_new_with_none_uses_default() {
+        let cache = Cache::new(None::<PathBuf>);
+        assert_eq!(*cache.data.selected, 0);
+    }
+
+    #[test]
+    fn cache_file_new_with_custom_path() {
+        let cf = CacheFile::new(PathBuf::from("/tmp/test.toml"));
+        assert_eq!(cf.path, PathBuf::from("/tmp/test.toml"));
+    }
+
+    #[test]
+    fn cache_file_new_with_none_uses_default() {
+        let cf = CacheFile::new(None::<PathBuf>);
+        assert_eq!(cf.path, CACHE_FILE_PATH.to_path_buf());
+    }
+
+    #[test]
+    fn cache_data_default_has_zero_selected() {
+        let data = CacheData::default();
+        assert_eq!(*data.selected, 0);
+    }
+
+    #[test]
+    fn cache_data_serialize_deserialize_round_trip() {
+        let data = CacheData::default();
+        let bytes = toml_edit::ser::to_vec(&data).unwrap();
+        let restored: CacheData = toml_edit::de::from_slice(&bytes).unwrap();
+        assert_eq!(*restored.selected, 0);
+    }
+
+    #[test]
+    fn cache_clone() {
+        let cache = Cache::new(PathBuf::from("/tmp/clone-test.toml"));
+        let cloned = cache.clone();
+        assert_eq!(*cloned.data.selected, *cache.data.selected);
+    }
+
+    #[tokio::test]
+    async fn cache_write_and_read_round_trip() {
+        let dir = assert_fs::TempDir::new().unwrap();
+        let path = dir.path().join("cache.toml");
+
+        let cache = Cache::new(path.clone());
+        cache.write_to_disk().await.unwrap();
+
+        let loaded = Cache::read_from_disk_or_default(path).await.unwrap();
+        assert_eq!(*loaded.data.selected, 0);
+    }
+
+    #[tokio::test]
+    async fn cache_read_from_nonexistent_returns_default() {
+        let dir = assert_fs::TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.toml");
+
+        let loaded = Cache::read_from_disk_or_default(path).await.unwrap();
+        assert_eq!(*loaded.data.selected, 0);
+    }
+
+    #[tokio::test]
+    async fn cache_data_read_invalid_toml_returns_error() {
+        let dir = assert_fs::TempDir::new().unwrap();
+        let path = dir.path().join("bad.toml");
+        tokio::fs::write(&path, b"{{invalid toml}}").await.unwrap();
+
+        let result = CacheData::read(&path).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn cache_data_write_creates_parent_directories() {
+        let dir = assert_fs::TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("dir").join("cache.toml");
+
+        let data = CacheData::default();
+        data.write(&path).await.unwrap();
+
+        assert!(path.exists());
+    }
+}
