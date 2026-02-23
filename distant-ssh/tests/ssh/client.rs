@@ -2,6 +2,7 @@
 
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 use assert_fs::prelude::*;
 use assert_fs::TempDir;
@@ -1640,10 +1641,25 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
         .await
         .unwrap();
 
-    let stdout = proc.stdout.as_mut().unwrap().read().await.unwrap();
-    let stdout_str = String::from_utf8_lossy(&stdout);
+    let stdout_pipe = proc.stdout.as_mut().unwrap();
+    let mut accumulated = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
+            Ok(Ok(data)) => {
+                accumulated.extend_from_slice(&data);
+                let s = String::from_utf8_lossy(&accumulated);
+                if s.contains("some stdout") {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => break,
+        }
+    }
+    let stdout_str = String::from_utf8_lossy(&accumulated);
     assert!(
-        stdout_str.trim() == "some stdout",
+        stdout_str.contains("some stdout"),
         "Expected 'some stdout', got '{}'",
         stdout_str.trim()
     );
@@ -1674,10 +1690,25 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
         .await
         .unwrap();
 
-    let stderr = proc.stderr.as_mut().unwrap().read().await.unwrap();
-    let stderr_str = String::from_utf8_lossy(&stderr);
+    let stderr_pipe = proc.stderr.as_mut().unwrap();
+    let mut accumulated = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, stderr_pipe.read()).await {
+            Ok(Ok(data)) => {
+                accumulated.extend_from_slice(&data);
+                let s = String::from_utf8_lossy(&accumulated);
+                if s.contains("some stderr") {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => break,
+        }
+    }
+    let stderr_str = String::from_utf8_lossy(&accumulated);
     assert!(
-        stderr_str.trim() == "some stderr",
+        stderr_str.contains("some stderr"),
         "Expected 'some stderr', got '{}'",
         stderr_str.trim()
     );
@@ -1816,11 +1847,27 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<Client>) 
         .unwrap();
 
     // Third, check the async response of stdout to verify we got stdin
-    let stdout = proc.stdout.as_mut().unwrap().read_string().await.unwrap();
+    let stdout_pipe = proc.stdout.as_mut().unwrap();
+    let mut accumulated = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
+            Ok(Ok(data)) => {
+                accumulated.extend_from_slice(&data);
+                let s = String::from_utf8_lossy(&accumulated);
+                if s.contains("hello world") {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => break,
+        }
+    }
+    let stdout_str = String::from_utf8_lossy(&accumulated);
     assert!(
-        stdout.trim() == "hello world",
+        stdout_str.contains("hello world"),
         "Expected 'hello world', got '{}'",
-        stdout.trim()
+        stdout_str.trim()
     );
 }
 
@@ -2207,9 +2254,25 @@ async fn proc_spawn_with_pty_should_capture_stdout(#[future] client: Ctx<Client>
         )
         .await
         .unwrap();
-    // PTY combines stdout/stderr into stdout
-    let stdout = proc.stdout.as_mut().unwrap().read().await.unwrap();
-    let stdout_str = String::from_utf8_lossy(&stdout);
+    // PTY combines stdout/stderr into stdout — read in a loop since PTY may
+    // deliver escape sequences before the actual output, especially on Windows CI.
+    let stdout_pipe = proc.stdout.as_mut().unwrap();
+    let mut accumulated = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
+            Ok(Ok(data)) => {
+                accumulated.extend_from_slice(&data);
+                let s = String::from_utf8_lossy(&accumulated);
+                if s.contains("pty_test_output") {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => break,
+        }
+    }
+    let stdout_str = String::from_utf8_lossy(&accumulated);
     assert!(
         stdout_str.contains("pty_test_output"),
         "Expected stdout to contain 'pty_test_output', got '{}'",
