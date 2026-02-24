@@ -8,11 +8,11 @@ use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
-use distant_core::net::common::Host;
 use distant_core::Credentials;
+use distant_core::net::common::Host;
 use once_cell::sync::Lazy;
 use rstest::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
@@ -193,7 +193,9 @@ impl ManagerCtx {
 
                 connect_cmd.arg(credentials.to_string());
 
-                eprintln!("[{i}/{MAX_RETRY_ATTEMPTS}] Host: {host} | Spawning connect cmd: {connect_cmd:?}");
+                eprintln!(
+                    "[{i}/{MAX_RETRY_ATTEMPTS}] Host: {host} | Spawning connect cmd: {connect_cmd:?}"
+                );
                 let output = connect_cmd.output().expect("Failed to connect to server");
 
                 if output.status.success() {
@@ -261,6 +263,33 @@ impl ManagerCtx {
 
         eprintln!("new_assert_cmd: {cmd:?}");
         cmd
+    }
+
+    /// Returns the binary path and argument list for a distant command.
+    /// Useful when an external library (e.g. `expectrl`) needs to spawn the process.
+    pub fn cmd_parts<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = &'a str>,
+    ) -> (PathBuf, Vec<String>) {
+        let mut args: Vec<String> = Vec::new();
+
+        for subcommand in subcommands {
+            args.push(subcommand.to_string());
+        }
+
+        args.push("--log-file".to_string());
+        args.push(random_log_file("client").to_string_lossy().to_string());
+        args.push("--log-level".to_string());
+        args.push("trace".to_string());
+
+        if cfg!(windows) {
+            args.push("--windows-pipe".to_string());
+        } else {
+            args.push("--unix-socket".to_string());
+        }
+        args.push(self.socket_or_pipe.clone());
+
+        (bin_path(), args)
     }
 
     /// Configures some distant command with an environment that can talk to a

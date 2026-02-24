@@ -2,8 +2,8 @@ use std::io;
 use std::path::Path;
 
 use crate::auth::Verifier;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::net::common::{UnixSocketListener, Version};
 use crate::net::server::{Server, ServerConfig, ServerHandler, UnixSocketServerRef};

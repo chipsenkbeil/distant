@@ -248,10 +248,12 @@ mod tests {
         };
         let result = no_pty.resize_pty(size);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Process does not use pty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Process does not use pty")
+        );
     }
 
     #[test]

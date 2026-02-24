@@ -502,8 +502,8 @@ mod tests {
             }
 
             #[test]
-            fn should_consume_with_first_parser_and_then_return_results_of_feeding_into_second_parser(
-            ) {
+            fn should_consume_with_first_parser_and_then_return_results_of_feeding_into_second_parser()
+             {
                 let (s, text) = parse_and_then(parse_cnt(2), parse_all)("abc").unwrap();
                 assert_eq!(s, "c");
                 assert_eq!(text, "ab");

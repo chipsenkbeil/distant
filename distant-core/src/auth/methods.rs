@@ -217,8 +217,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn verifier_should_fail_to_verify_if_initialization_yields_no_valid_authentication_methods(
-    ) {
+    async fn verifier_should_fail_to_verify_if_initialization_yields_no_valid_authentication_methods()
+     {
         let mut authenticator = TestAuthenticator {
             initialize: Box::new(|_| {
                 Ok(InitializationResponse {

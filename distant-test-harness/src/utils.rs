@@ -9,8 +9,8 @@ pub fn ci_path_to_string(path: &Path) -> String {
 pub mod predicates_ext {
     use std::fmt;
 
-    use predicates::reflection::PredicateReflection;
     use predicates::Predicate;
+    use predicates::reflection::PredicateReflection;
 
     /// Checks if lines of text match the provided, trimming each line
     /// of both before comparing.

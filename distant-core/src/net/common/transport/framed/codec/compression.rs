@@ -1,9 +1,9 @@
 use std::io::{self, Read};
 
+use flate2::Compression;
 use flate2::bufread::{
     DeflateDecoder, DeflateEncoder, GzDecoder, GzEncoder, ZlibDecoder, ZlibEncoder,
 };
-use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 use super::{Codec, Frame};

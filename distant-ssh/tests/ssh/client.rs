@@ -4,8 +4,8 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use assert_fs::prelude::*;
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 use distant_core::protocol::{
     ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, SearchQuery,
     SearchQueryCondition, SearchQueryTarget, SetPermissionsOptions,
@@ -415,10 +415,8 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ct
     assert_eq!(entries[3].depth, 2);
 }
 
-// NOTE: This is failing on windows as canonicalization of root path is not correct!
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_including_directory_in_returned_entries(
     #[future] client: Ctx<Client>,
 ) {
@@ -461,10 +459,8 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
     assert_eq!(entries[3].depth, 1);
 }
 
-// NOTE: This is failing on windows as canonicalization of root path is not correct!
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -498,10 +494,8 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<
     assert_eq!(entries[2].depth, 1);
 }
 
-// NOTE: This is failing on windows as the symlink does not get resolved!
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_returning_canonicalized_paths(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -1048,7 +1042,6 @@ async fn metadata_should_send_back_metadata_on_symlink_if_exists(#[future] clien
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn metadata_should_include_canonicalized_path_if_flag_specified(
     #[future] client: Ctx<Client>,
 ) {
@@ -2194,7 +2187,6 @@ async fn metadata_should_include_modified_timestamp(#[future] client: Ctx<Client
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_fail_if_path_does_not_exist(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();

@@ -6,7 +6,7 @@ use derive_more::IntoIterator;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::net::common::{utils, Value};
+use crate::net::common::{Value, utils};
 
 /// Generates a new [`Header`] of key/value pairs based on literals.
 ///

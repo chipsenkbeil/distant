@@ -973,8 +973,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn server_should_fail_if_unable_to_exchange_otp_for_reauthentication_with_existing_client(
-    ) {
+    async fn server_should_fail_if_unable_to_exchange_otp_for_reauthentication_with_existing_client()
+     {
         let (mut t1, t2) = FramedTransport::pair(100);
         let verifier = Verifier::none();
         let keychain = Keychain::new();
@@ -1374,8 +1374,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn reconnect_should_succeed_if_client_side_connection_fully_connects_and_synchronizes_with_server(
-    ) {
+    async fn reconnect_should_succeed_if_client_side_connection_fully_connects_and_synchronizes_with_server()
+     {
         let (mut client, transport, _verifier, keychain) = setup_reconnect_scenario().await;
         let mut transport = FramedTransport::plain(transport);
 

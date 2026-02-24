@@ -523,8 +523,8 @@ mod tests {
             assert_eq!(
                 remaining,
                 vec![
-                0xa4, b'm', b'o', b'r', b'e', // "more" (fixstr)
-            ]
+                    0xa4, b'm', b'o', b'r', b'e', // "more" (fixstr)
+                ]
             );
         }
     }

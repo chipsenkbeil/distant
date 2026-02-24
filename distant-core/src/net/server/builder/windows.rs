@@ -2,8 +2,8 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 
 use crate::auth::Verifier;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::net::common::{Version, WindowsPipeListener};
 use crate::net::server::{Server, ServerConfig, ServerHandler, WindowsPipeServerRef};

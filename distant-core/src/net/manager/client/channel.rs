@@ -2,8 +2,8 @@ use std::io;
 use std::ops::{Deref, DerefMut};
 
 use log::*;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::task::JoinHandle;
 
 use crate::net::client::{Client, ClientConfig, UntypedClient};

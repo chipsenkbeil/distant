@@ -332,10 +332,12 @@ mod tests {
             let mut rx = WaitRx::Dropped;
             let result = rx.recv().await;
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Internal resolver dropped"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Internal resolver dropped")
+            );
         }
 
         #[test_log::test(tokio::test)]

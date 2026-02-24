@@ -62,10 +62,8 @@ fn should_output_metadata_for_directory(ctx: ManagerCtx) {
         )));
 }
 
-// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore)]
 fn should_support_including_a_canonicalized_path(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 

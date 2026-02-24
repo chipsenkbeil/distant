@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::auth::msg::AuthenticationResponse;
 use log::*;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{RwLock, oneshot};
 
 use crate::net::common::{ConnectionId, Destination, Map};
 use crate::net::manager::{

@@ -1,7 +1,7 @@
 use std::io;
 
-use crate::auth::msg::{Authentication, AuthenticationResponse};
 use crate::auth::AuthHandler;
+use crate::auth::msg::{Authentication, AuthenticationResponse};
 use log::*;
 
 use crate::net::client::Client;
@@ -100,13 +100,13 @@ impl ManagerClient {
                 },
                 ManagerResponse::Launched { destination } => return Ok(destination),
                 ManagerResponse::Error { description } => {
-                    return Err(io::Error::other(description))
+                    return Err(io::Error::other(description));
                 }
                 x => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("Got unexpected response: {x:?}"),
-                    ))
+                    ));
                 }
             }
         }
@@ -199,13 +199,13 @@ impl ManagerClient {
                 },
                 ManagerResponse::Connected { id } => return Ok(id),
                 ManagerResponse::Error { description } => {
-                    return Err(io::Error::other(description))
+                    return Err(io::Error::other(description));
                 }
                 x => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("Got unexpected response: {x:?}"),
-                    ))
+                    ));
                 }
             }
         }

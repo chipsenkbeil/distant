@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 use std::{fmt, io, thread};
 
 use anyhow::Context;
-use assert_fs::prelude::*;
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 use derive_more::{Deref, DerefMut, Display};
 use distant_core::Client;
 use distant_ssh::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
@@ -329,11 +329,7 @@ impl SshdConfig {
     }
 
     const fn yes_str(yes: bool) -> &'static str {
-        if yes {
-            "yes"
-        } else {
-            "no"
-        }
+        if yes { "yes" } else { "no" }
     }
 }
 
@@ -508,7 +504,9 @@ impl Sshd {
                     continue;
                 }
                 Err(e) => {
-                    error!("sshd could not spawn on port {port} due to error: {e}, so trying next port");
+                    error!(
+                        "sshd could not spawn on port {port} due to error: {e}, so trying next port"
+                    );
                     if let Ok(log_content) = std::fs::read_to_string(&log_path) {
                         if !log_content.trim().is_empty() {
                             error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
@@ -625,7 +623,9 @@ impl Sshd {
                     if let Ok(version) = String::from_utf8(output.stdout) {
                         error!("Windows version: {}", version.trim());
                         if version.contains("2025") || version.contains("26100") {
-                            error!("Windows Server 2025 detected - requires SYSTEM file ownership for sshd");
+                            error!(
+                                "Windows Server 2025 detected - requires SYSTEM file ownership for sshd"
+                            );
                         }
                     }
                 }
@@ -634,7 +634,9 @@ impl Sshd {
                 if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output() {
                     if let Ok(status) = String::from_utf8(output.stdout) {
                         if status.contains("RUNNING") {
-                            error!("System SSH service is RUNNING - may conflict with test sshd instances");
+                            error!(
+                                "System SSH service is RUNNING - may conflict with test sshd instances"
+                            );
                         } else if status.contains("STOPPED") {
                             error!("System SSH service is STOPPED");
                         }

@@ -181,8 +181,8 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::protocol::ChangeKind;
     use crate::Client;
+    use crate::protocol::ChangeKind;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, Client) {
         let (t1, t2) = FramedTransport::pair(100);

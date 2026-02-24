@@ -4,9 +4,9 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::{fmt, io};
 
+use serde::Serialize;
 use serde::de::{DeserializeOwned, Deserializer, Error as SerdeError, Visitor};
 use serde::ser::Serializer;
-use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 

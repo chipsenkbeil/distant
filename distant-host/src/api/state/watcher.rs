@@ -12,7 +12,7 @@ use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
     Event as WatcherEvent, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
 };
-use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, FileIdMap};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debouncer_opt};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -118,7 +118,9 @@ impl WatcherBuilder {
                         //
                         // https://github.com/notify-rs/notify/issues/423
                         WatcherErrorKind::Io(x) if x.raw_os_error() == Some(38) => {
-                            warn!("Recommended watcher is unsupported! Falling back to polling watcher!");
+                            warn!(
+                                "Recommended watcher is unsupported! Falling back to polling watcher!"
+                            );
                             Ok(spawn_task!(
                                 new_debouncer!(PollWatcher, tx).map_err(io::Error::other)?
                             ))
@@ -500,10 +502,12 @@ mod tests {
 
         let result = channel.watch(registered).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal watcher task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal watcher task closed")
+        );
     }
 
     #[test(tokio::test)]
@@ -511,10 +515,12 @@ mod tests {
         let channel = WatcherChannel::default();
         let result = channel.unwatch(1, "/some/path").await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal watcher task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal watcher task closed")
+        );
     }
 
     // ---- WatcherState lifecycle ----
@@ -662,10 +668,12 @@ mod tests {
 
         let result = state.unwatch(1, temp.path()).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("is not being watched"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("is not being watched")
+        );
     }
 
     #[test(tokio::test)]
@@ -689,10 +697,12 @@ mod tests {
         // Try to unwatch with a different connection id
         let result = state.unwatch(999, temp.path()).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("is not being watched"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("is not being watched")
+        );
     }
 
     #[test(tokio::test)]

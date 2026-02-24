@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::{InmemoryTransport, Interest, Ready, Reconnectable, Transport};
-use crate::net::common::{utils, SecretKey32};
+use crate::net::common::{SecretKey32, utils};
 
 mod backup;
 mod codec;
@@ -491,7 +491,9 @@ impl<T: Transport> FramedTransport<T> {
                         "Transport terminated before getting replay stats",
                     )
                 })?;
-            trace!("Other stats: sent = {other_sent_cnt}, received = {other_received_cnt}, available = {other_available_cnt}");
+            trace!(
+                "Other stats: sent = {other_sent_cnt}, received = {other_received_cnt}, available = {other_available_cnt}"
+            );
 
             // Determine how many frames we need to resend. This will either be (sent - received) or
             // available frames, whichever is smaller.
@@ -771,7 +773,7 @@ impl<T: Transport> FramedTransport<T> {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Unknown compression type",
-                ))
+                ));
             }
             Some(ty) => {
                 let key = self.exchange_keys_impl(log_label).await?;
@@ -1511,8 +1513,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn synchronize_should_resend_available_frames_if_more_than_available_missing_on_other_side(
-    ) {
+    async fn synchronize_should_resend_available_frames_if_more_than_available_missing_on_other_side()
+     {
         let (mut t1, mut t2) = FramedTransport::pair(100);
 
         // Configure the backup such that we have sent two frames, and believe that we have
@@ -1788,8 +1790,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn synchronize_should_not_increment_the_sent_frames_or_store_replayed_frames_in_the_backup(
-    ) {
+    async fn synchronize_should_not_increment_the_sent_frames_or_store_replayed_frames_in_the_backup()
+     {
         let (mut t1, mut t2) = FramedTransport::pair(100);
 
         // Configure the backup such that we have sent two frames
@@ -2052,8 +2054,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn handshake_for_client_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
-    ) {
+    async fn handshake_for_client_should_fail_if_unable_to_receive_key_exchange_data_from_other_side()
+     {
         #[derive(Debug, Serialize, Deserialize)]
         struct Options {
             compression_types: Vec<CompressionType>,
@@ -2112,8 +2114,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type(
-    ) {
+    async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_compression_type()
+     {
         #[derive(Debug, Serialize, Deserialize)]
         struct Choice {
             compression_level: Option<CompressionLevel>,
@@ -2138,8 +2140,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type(
-    ) {
+    async fn handshake_for_server_should_fail_if_selected_codec_choice_uses_an_unknown_encryption_type()
+     {
         #[derive(Debug, Serialize, Deserialize)]
         struct Choice {
             compression_level: Option<CompressionLevel>,
@@ -2164,8 +2166,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn handshake_for_server_should_fail_if_unable_to_receive_key_exchange_data_from_other_side(
-    ) {
+    async fn handshake_for_server_should_fail_if_unable_to_receive_key_exchange_data_from_other_side()
+     {
         #[derive(Debug, Serialize, Deserialize)]
         struct Choice {
             compression_level: Option<CompressionLevel>,

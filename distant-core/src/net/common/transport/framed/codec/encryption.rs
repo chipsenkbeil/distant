@@ -134,8 +134,8 @@ impl Codec for EncryptionCodec {
 
         Ok(match self {
             Self::XChaCha20Poly1305 { cipher } => {
-                use chacha20poly1305::aead::Aead;
                 use chacha20poly1305::XNonce;
+                use chacha20poly1305::aead::Aead;
                 let item = frame.into_item();
                 let nonce = XNonce::from_slice(&nonce_bytes);
 
@@ -166,8 +166,8 @@ impl Codec for EncryptionCodec {
         // of the frame to tease out the decrypted frame item
         let item = match self {
             Self::XChaCha20Poly1305 { cipher } => {
-                use chacha20poly1305::aead::Aead;
                 use chacha20poly1305::XNonce;
+                use chacha20poly1305::aead::Aead;
                 let nonce = XNonce::from_slice(&frame.as_item()[..nonce_size]);
                 cipher
                     .decrypt(nonce, &frame.as_item()[nonce_size..])

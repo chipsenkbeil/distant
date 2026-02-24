@@ -2045,10 +2045,12 @@ mod tests {
 
         let result = channel.start(query, Box::new(reply)).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal search task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal search task closed")
+        );
     }
 
     #[test(tokio::test)]
@@ -2056,10 +2058,12 @@ mod tests {
         let channel = SearchChannel::default();
         let result = channel.cancel(42).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal search task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal search task closed")
+        );
     }
 
     // ---- SearchState lifecycle ----
@@ -2112,10 +2116,12 @@ mod tests {
         let state = SearchState::new();
         let result = state.cancel(99999).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Cancellation failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cancellation failed")
+        );
     }
 
     #[test(tokio::test)]

@@ -112,10 +112,8 @@ fn should_print_immediate_files_and_directories_by_default(ctx: ManagerCtx) {
         .stdout(expected);
 }
 
-// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore)]
 fn should_use_absolute_paths_if_specified(ctx: ManagerCtx) {
     let temp = make_directory();
 
@@ -138,10 +136,8 @@ fn should_use_absolute_paths_if_specified(ctx: ManagerCtx) {
         .stdout(expected);
 }
 
-// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore)]
 fn should_print_all_files_and_directories_if_depth_is_0(ctx: ManagerCtx) {
     let temp = make_directory();
 
@@ -184,10 +180,8 @@ fn should_print_all_files_and_directories_if_depth_is_0(ctx: ManagerCtx) {
         .stdout(expected);
 }
 
-// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore)]
 fn should_include_root_directory_if_specified(ctx: ManagerCtx) {
     let temp = make_directory();
 
@@ -226,10 +220,8 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
         .stderr(predicates::str::is_empty().not());
 }
 
-// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore)]
 fn should_support_canonicalize_flag(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let target_dir = temp.child("target_dir");

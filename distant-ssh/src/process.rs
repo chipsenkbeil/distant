@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use distant_core::net::server::Reply;
 use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
-use russh::client::Handle;
 use russh::ChannelMsg;
+use russh::client::Handle;
 use tokio::sync::mpsc;
 
 use crate::ClientHandler;

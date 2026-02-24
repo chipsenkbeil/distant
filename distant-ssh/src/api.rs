@@ -6,8 +6,8 @@ use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
 use distant_core::protocol::{
-    DirEntry, Environment, Metadata, Permissions, ProcessId, PtySize, SearchId, SearchQuery,
-    SetPermissionsOptions, SystemInfo, Version, PROTOCOL_VERSION,
+    DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, SearchId,
+    SearchQuery, SetPermissionsOptions, SystemInfo, Version,
 };
 use distant_core::{Api, Ctx};
 use log::*;
@@ -98,6 +98,19 @@ impl SshApi {
     /// SFTP protocol always uses Unix-style paths regardless of target OS.
     fn to_sftp_path(&self, path: PathBuf) -> io::Result<String> {
         to_sftp_path(path)
+    }
+
+    /// Converts an SFTP canonical path string to a native PathBuf.
+    /// On Windows SSH targets, SFTP returns Unix-style paths like `/C:/Users/...`
+    /// that need conversion to native Windows format.
+    fn sftp_path_to_native(&self, sftp_path: &str) -> PathBuf {
+        if self.family == SshFamily::Windows {
+            crate::utils::convert_to_windows_path_string(sftp_path)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(sftp_path))
+        } else {
+            PathBuf::from(sftp_path)
+        }
     }
 
     /// Apply permissions to a single path via SFTP, reading current mode and merging.
@@ -311,7 +324,7 @@ impl Api for SshApi {
             // When absolute or canonicalize paths are requested, use the canonicalized base path
             let base_path = if absolute || canonicalize {
                 match sftp.canonicalize(&sftp_path).await {
-                    Ok(canonical_str) => PathBuf::from(canonical_str),
+                    Ok(canonical_str) => self.sftp_path_to_native(&canonical_str),
                     Err(_) => path.clone(),
                 }
             } else {
@@ -321,6 +334,8 @@ impl Api for SshApi {
             let mut entries = Vec::new();
             let mut errors = Vec::new();
 
+            let family = self.family;
+
             // Helper function to read a single directory
             async fn read_single_dir(
                 sftp: &Arc<russh_sftp::client::SftpSession>,
@@ -328,8 +343,19 @@ impl Api for SshApi {
                 base_path: &PathBuf,
                 absolute: bool,
                 canonicalize: bool,
+                family: SshFamily,
             ) -> io::Result<Vec<DirEntry>> {
                 use distant_core::protocol::FileType;
+
+                let convert = |s: &str| -> PathBuf {
+                    if family == SshFamily::Windows {
+                        crate::utils::convert_to_windows_path_string(s)
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| PathBuf::from(s))
+                    } else {
+                        PathBuf::from(s)
+                    }
+                };
 
                 let dir_entries = sftp.read_dir(path).await.map_err(io::Error::other)?;
 
@@ -347,7 +373,7 @@ impl Api for SshApi {
                             let full_path = format!("{}/{}", path, filename);
                             match sftp.canonicalize(&full_path).await {
                                 Ok(canonical_str) => {
-                                    let canonical_path = PathBuf::from(canonical_str);
+                                    let canonical_path = convert(&canonical_str);
                                     canonical_path
                                         .strip_prefix(base_path)
                                         .map(|p| p.to_path_buf())
@@ -381,12 +407,19 @@ impl Api for SshApi {
             }
 
             // Read root directory
-            let mut root_entries =
-                read_single_dir(&sftp, &sftp_path, &base_path, absolute, canonicalize).await?;
+            let mut root_entries = read_single_dir(
+                &sftp,
+                &sftp_path,
+                &base_path,
+                absolute,
+                canonicalize,
+                family,
+            )
+            .await?;
 
             if include_root {
                 let root_path = match sftp.canonicalize(&sftp_path).await {
-                    Ok(p) => PathBuf::from(p),
+                    Ok(p) => self.sftp_path_to_native(&p),
                     Err(_) => path.clone(),
                 };
 
@@ -428,6 +461,7 @@ impl Api for SshApi {
                             &subdir_path,
                             absolute,
                             canonicalize,
+                            family,
                         )
                         .await
                         {
@@ -702,7 +736,7 @@ impl Api for SshApi {
 
             let canonical_path = if canonicalize {
                 match sftp.canonicalize(&sftp_path).await {
-                    Ok(p) => Some(PathBuf::from(p)),
+                    Ok(p) => Some(self.sftp_path_to_native(&p)),
                     Err(_) => None,
                 }
             } else {
@@ -845,7 +879,7 @@ impl Api for SshApi {
                 ctx.connection_id, cmd, environment, current_dir, pty
             );
 
-            use crate::process::{spawn_pty, spawn_simple, Process, SpawnResult};
+            use crate::process::{Process, SpawnResult, spawn_pty, spawn_simple};
 
             // Create cleanup closure that removes the process from tracking when it exits
             let make_cleanup = |processes_ref: Weak<RwLock<HashMap<ProcessId, Process>>>| {

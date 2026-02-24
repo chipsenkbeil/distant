@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use crate::auth::Verifier;
 use log::*;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
+use serde::de::DeserializeOwned;
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::{ConnectionState, RequestCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};

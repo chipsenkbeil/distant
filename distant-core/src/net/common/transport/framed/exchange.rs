@@ -1,8 +1,8 @@
 use std::convert::TryFrom;
 use std::io;
 
-use p256::ecdh::EphemeralSecret;
 use p256::PublicKey;
+use p256::ecdh::EphemeralSecret;
 use rand::rngs::OsRng;
 use sha2::Sha256;
 

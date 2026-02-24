@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::{
-    wait, ExitStatus, FutureReturn, InputChannel, OutputChannel, Process, ProcessId, ProcessKiller,
-    ProcessPty, PtySize, WaitRx,
+    ExitStatus, FutureReturn, InputChannel, OutputChannel, Process, ProcessId, ProcessKiller,
+    ProcessPty, PtySize, WaitRx, wait,
 };
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
 
@@ -108,14 +108,20 @@ impl PtyProcess {
                 match (child.try_wait(), kill_rx.try_recv()) {
                     (Ok(Some(status)), _) => {
                         trace!(
-                            "Pty process {id} has exited: success = {}",
-                            status.success()
+                            "Pty process {id} has exited: success = {}, code = {}",
+                            status.success(),
+                            status.exit_code()
                         );
 
+                        let code = status.exit_code();
                         if let Err(x) = wait_tx
                             .send(ExitStatus {
                                 success: status.success(),
-                                code: None,
+                                code: if code == 0 && status.success() {
+                                    None
+                                } else {
+                                    Some(code as i32)
+                                },
                             })
                             .await
                         {
@@ -328,7 +334,6 @@ impl ProcessPty for PtyProcessMaster {
 }
 
 #[cfg(test)]
-#[cfg(unix)]
 mod tests {
     //! Tests for `PtyProcess` covering spawn, process trait accessors, wait/exit,
     //! kill via clone, PTY resize/clone, and the `PtyProcessMaster` weak-reference machinery.
@@ -349,12 +354,67 @@ mod tests {
         }
     }
 
+    /// Returns (program, args) for a command that echoes text to stdout.
+    fn echo_cmd(msg: &str) -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "echo".into(), msg.into()])
+        } else {
+            ("echo", vec![msg.into()])
+        }
+    }
+
+    /// Returns (program, args) for a command that exits with a nonzero code.
+    fn failing_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "exit".into(), "1".into()])
+        } else {
+            ("false", vec![])
+        }
+    }
+
+    /// Returns (program, args) for a long-running command suitable for kill tests.
+    fn long_running_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            (
+                "cmd.exe",
+                vec![
+                    "/c".into(),
+                    "ping".into(),
+                    "-n".into(),
+                    "60".into(),
+                    "127.0.0.1".into(),
+                ],
+            )
+        } else {
+            ("sleep", vec!["60".into()])
+        }
+    }
+
+    /// Returns (program, args) for a command that prints the current directory.
+    fn pwd_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "cd".into()])
+        } else {
+            ("pwd", vec![])
+        }
+    }
+
+    /// Returns (program, args) for a command that prints all environment variables.
+    fn env_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "set".into()])
+        } else {
+            ("env", vec![])
+        }
+    }
+
     mod spawn {
         use super::*;
 
         #[test_log::test(tokio::test)]
         async fn with_valid_program_succeeds() {
-            let proc = PtyProcess::spawn("echo", ["hello"], empty_env(), None, default_size());
+            let (prog, args) = echo_cmd("hello");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size());
             assert!(proc.is_ok());
         }
 
@@ -373,9 +433,10 @@ mod tests {
         #[test_log::test(tokio::test)]
         async fn with_current_dir_succeeds() {
             let dir = tempfile::tempdir().unwrap();
+            let (prog, args) = pwd_cmd();
             let proc = PtyProcess::spawn(
-                "pwd",
-                Vec::<String>::new(),
+                prog,
+                args,
                 empty_env(),
                 Some(dir.path().to_path_buf()),
                 default_size(),
@@ -387,8 +448,8 @@ mod tests {
         async fn with_environment_variable() {
             let mut env = Environment::new();
             env.insert("MY_TEST_VAR".to_string(), "my_test_value".to_string());
-            let mut proc =
-                PtyProcess::spawn("env", Vec::<String>::new(), env, None, default_size()).unwrap();
+            let (prog, args) = env_cmd();
+            let mut proc = PtyProcess::spawn(prog, args, env, None, default_size()).unwrap();
 
             // Read stdout and verify the env var is actually visible to the spawned process
             let mut stdout = proc.take_stdout().unwrap();
@@ -409,36 +470,37 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn id_returns_a_value() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             let _id: ProcessId = proc.id();
         }
 
         #[test_log::test(tokio::test)]
         async fn stdin_is_some_initially() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.stdin().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn stdout_is_some_initially() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.stdout().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn stderr_is_always_none() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.stderr().is_none());
         }
 
         #[test_log::test(tokio::test)]
         async fn take_stdin_removes_it() {
+            let (prog, args) = echo_cmd("test");
             let mut proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             let stdin = proc.take_stdin();
             assert!(stdin.is_some());
             assert!(proc.stdin().is_none());
@@ -447,8 +509,9 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn take_stdout_removes_it() {
+            let (prog, args) = echo_cmd("test");
             let mut proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             let stdout = proc.take_stdout();
             assert!(stdout.is_some());
             assert!(proc.stdout().is_none());
@@ -457,29 +520,33 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn take_stderr_is_always_none() {
+            let (prog, args) = echo_cmd("test");
             let mut proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.take_stderr().is_none());
         }
 
         #[test_log::test(tokio::test)]
         async fn mut_stdin_is_some_initially() {
+            let (prog, args) = echo_cmd("test");
             let mut proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.mut_stdin().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn mut_stdout_is_some_initially() {
+            let (prog, args) = echo_cmd("test");
             let mut proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.mut_stdout().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn mut_stderr_is_always_none() {
+            let (prog, args) = echo_cmd("test");
             let mut proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             assert!(proc.mut_stderr().is_none());
         }
     }
@@ -489,8 +556,9 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn echo_exits_successfully_with_code_zero() {
+            let (prog, args) = echo_cmd("hello");
             let mut proc =
-                PtyProcess::spawn("echo", ["hello"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             let status = proc.wait().await.unwrap();
             assert!(status.success);
             assert_eq!(status.code, Some(0));
@@ -498,22 +566,18 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn false_command_exits_with_nonzero_status() {
-            let mut proc = PtyProcess::spawn(
-                "false",
-                Vec::<String>::new(),
-                empty_env(),
-                None,
-                default_size(),
-            )
-            .unwrap();
+            let (prog, args) = failing_cmd();
+            let mut proc =
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             let status = proc.wait().await.unwrap();
             assert!(!status.success);
         }
 
         #[test_log::test(tokio::test)]
         async fn kill_then_wait_returns_killed_status() {
+            let (prog, args) = long_running_cmd();
             let mut proc =
-                PtyProcess::spawn("sleep", ["60"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             ProcessKiller::kill(&mut proc).await.unwrap();
             let status = proc.wait().await.unwrap();
@@ -522,8 +586,9 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn wait_drops_pty_master() {
+            let (prog, args) = echo_cmd("done");
             let mut proc =
-                PtyProcess::spawn("echo", ["done"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             // Before wait, pty_size should return Some
             assert!(proc.pty_size().is_some());
@@ -540,8 +605,9 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn cloned_killer_can_kill_process() {
+            let (prog, args) = long_running_cmd();
             let mut proc =
-                PtyProcess::spawn("sleep", ["60"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
             let mut killer = proc.clone_killer();
             killer.kill().await.unwrap();
 
@@ -551,8 +617,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn clone_killer_returns_independent_killer() {
-            let proc =
-                PtyProcess::spawn("sleep", ["60"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = long_running_cmd();
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             let killer1 = proc.clone_killer();
             let _killer2 = killer1.clone_killer();
@@ -564,8 +630,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn pty_size_returns_some() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             let size = proc.pty_size();
             assert!(size.is_some());
@@ -576,8 +642,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn resize_pty_succeeds() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             let new_size = PtySize {
                 rows: 40,
@@ -596,8 +662,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn clone_pty_returns_working_clone() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             let pty_clone = proc.clone_pty();
             let size = pty_clone.pty_size();
@@ -608,8 +674,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn clone_pty_resize_succeeds() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             let pty_clone = proc.clone_pty();
             let new_size = PtySize {
@@ -651,8 +717,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn pty_master_method_returns_weak_ref() {
-            let proc =
-                PtyProcess::spawn("echo", ["test"], empty_env(), None, default_size()).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             // pty_master() should return a weak ref that can be upgraded
             let weak = proc.pty_master();
@@ -661,8 +727,9 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn pty_master_method_with_no_master_returns_default_weak() {
+            let (prog, args) = echo_cmd("done");
             let mut proc =
-                PtyProcess::spawn("echo", ["done"], empty_env(), None, default_size()).unwrap();
+                PtyProcess::spawn(prog, args, empty_env(), None, default_size()).unwrap();
 
             // Wait so that pty_master is taken
             let _status = proc.wait().await.unwrap();

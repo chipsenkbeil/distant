@@ -39,11 +39,7 @@ const PROTOCOL_VERSION_COMPAT: (semver::Comparator, semver::Comparator) = (
             // otherwise if we have a version like 1.2, then the upper bound is 2.0
             //
             // So only increment the major if it is greater than 0
-            if major > 0 {
-                major + 1
-            } else {
-                major
-            }
+            if major > 0 { major + 1 } else { major }
         },
         minor: {
             let major = const_str::parse!(env!("CARGO_PKG_VERSION_MAJOR"), u64);
@@ -53,11 +49,7 @@ const PROTOCOL_VERSION_COMPAT: (semver::Comparator, semver::Comparator) = (
             // otherwise if we have a version like 1.2, then the upper bound is 2.0
             //
             // So only increment the minor if major is 0
-            if major > 0 {
-                None
-            } else {
-                Some(minor + 1)
-            }
+            if major > 0 { None } else { Some(minor + 1) }
         },
         patch: None,
         pre: semver::Prerelease::EMPTY,

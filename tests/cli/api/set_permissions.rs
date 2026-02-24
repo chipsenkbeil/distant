@@ -53,6 +53,39 @@ async fn should_support_json_set_permissions_readonly(mut api_process: CtxComman
     assert!(meta.permissions().readonly(), "File should be readonly");
 }
 
+#[cfg(windows)]
+#[rstest]
+#[test(tokio::test)]
+async fn should_support_json_set_permissions_readonly(mut api_process: CtxCommand<ApiProcess>) {
+    validate_authentication(&mut api_process).await;
+
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("file");
+    file.write_str("test content").unwrap();
+
+    let id = rand::random::<u64>().to_string();
+    let req = json!({
+        "id": id,
+        "payload": {
+            "type": "set_permissions",
+            "path": file.to_path_buf(),
+            "permissions": {
+                "readonly": true,
+            },
+            "options": {},
+        },
+    });
+
+    let res = api_process.write_and_read_json(req).await.unwrap().unwrap();
+
+    assert_eq!(res["origin_id"], id, "JSON: {res}");
+    assert_eq!(res["payload"]["type"], "ok", "JSON: {res}");
+
+    // Verify the file is actually readonly
+    let meta = std::fs::metadata(file.path()).unwrap();
+    assert!(meta.permissions().readonly(), "File should be readonly");
+}
+
 #[cfg(unix)]
 #[rstest]
 #[test(tokio::test)]

@@ -372,8 +372,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn read_to_end_should_fail_if_try_read_encounters_error_other_than_would_block_and_interrupt(
-    ) {
+    async fn read_to_end_should_fail_if_try_read_encounters_error_other_than_would_block_and_interrupt()
+     {
         let transport = TestTransport {
             f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
             f_ready: Box::new(|_| Ok(Ready::READABLE)),
@@ -449,8 +449,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn read_to_string_should_fail_if_try_read_encounters_error_other_than_would_block_and_interrupt(
-    ) {
+    async fn read_to_string_should_fail_if_try_read_encounters_error_other_than_would_block_and_interrupt()
+     {
         let transport = TestTransport {
             f_try_read: Box::new(|_| Err(io::Error::from(io::ErrorKind::NotConnected))),
             f_ready: Box::new(|_| Ok(Ready::READABLE)),

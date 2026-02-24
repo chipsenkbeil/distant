@@ -179,7 +179,7 @@ mod tests {
         // major=1, minor=0, patch=0 in big-endian u64
         let mut bytes = [0u8; 24];
         bytes[7] = 1; // major = 1
-                      // minor and patch remain 0
+        // minor and patch remain 0
         let v = Version::from_be_bytes(bytes);
         assert_eq!(v.to_string(), "1.0.0");
     }
